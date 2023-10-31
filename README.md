@@ -41,11 +41,11 @@ Genesis supports simulating of vast range of robots, including
 Note that Genesis is the first-ever platform providing comprehensive support for **soft muscles** and **soft robot**, as well as their interaction with rigid robots. Genesis also ships with a URDF-like soft-robot configuration system.
 
 ## :white_check_mark: 🚀 Support for diverse physics backend solvers
-Various physics-based solvers tailored to different materials and needs  have been developed in the past decades. Some prioritize high **simulation fidelity**, while others favor **performance**, albeit sometimes sacrificing accuracy.
+Various physics-based solvers tailored to different materials and needs have been developed in the past decades. Some prioritize high **simulation fidelity**, while others favor **performance**, albeit sometimes sacrificing accuracy.
 
-Genesis, in contrast to its predecessors, natively supports a wide range of different physics solvers. Users are able to effortlessly toggle between solvers, depending on their specific requirements.
+Genesis, in contrast to existing simulation platforms, natively supports a wide range of different physics solvers. Users are able to effortlessly toggle between solvers, depending on their specific requirements.
 
-Our current supported solvers include:
+We have built a unified physics engine from the ground up, supporting solvers include:
   - Material Point Method (MPM)
   - Finite Element Method (FEM)
   - Position Based Dynamics (PBD)
