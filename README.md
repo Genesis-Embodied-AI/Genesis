@@ -11,7 +11,7 @@
 
 # What is Genesis?
 
-Genesis is a **generative** and **simulated** physical world for general-purpose robot learning, providing **unified** simulation platform supporting diverse range of materials, allowing simulating vast range of robotic tasks. 
+Genesis is a **generative** and **simulated** physical world for general-purpose robot learning, providing **unified** simulation platform supporting diverse range of materials, allowing simulating vast range of robotic tasks, meanwhile being **fully differentiable**.
 
 Genesis is also a _**next-gen**_ simulation infrastructure that natively supports **generative simulation**: a future paradigm combining generative AI and physically-grounded simulation, aiming for unlocking _**infinite and diverse data**_ for robotic agents to learn vast range of skills across diverse environments like never before.
 
