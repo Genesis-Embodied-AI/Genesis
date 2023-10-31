@@ -31,11 +31,12 @@ Genesis supports physics simulation of a wide range of materials encountered in 
 
 ## :white_check_mark: :robot: Support for diverse types of robots
 Genesis supports simulating of vast range of robots, including 
-  - 🦾 Robot arms
-  - 🦿 Legged robots
-  - :writing_hand: Dexterous hands
-  - 🖲️ Mobile robots
-  - :lizard: Soft robots
+  - 🦾 Robot arm
+  - 🦿 Legged robot
+  - :writing_hand: Dexterous hand
+  - 🖲️ Mobile robot
+  - 🚁 Drone
+  - :lizard: Soft robot
 
 Note that Genesis is the first-ever platform providing comprehensive support for **soft muscles** and **soft robot**, as well as their interaction with rigid robots. Genesis also ships with a URDF-like soft-robot configuration system.
 
