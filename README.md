@@ -11,7 +11,7 @@
 
 # What is Genesis?
 
-Genesis is a **generative** and **differentiaible** physical world for general-purpose robot learning, providing a **unified** simulation platform supporting diverse range of materials, allowing simulating vast range of robotic tasks, while being fully differentiable.
+Genesis is a **generative** and **differentiable** physical world for general-purpose robot learning, providing a **unified** simulation platform supporting diverse range of materials, allowing simulating vast range of robotic tasks, while being fully differentiable.
 
 Genesis is also a _**next-gen**_ simulation infrastructure that natively supports **generative simulation**: a future paradigm combining generative AI and physically-grounded simulation, aiming for unlocking _**infinite and diverse data**_ for robotic agents to learn vast range of skills across diverse environments like never before.
 
@@ -29,7 +29,7 @@ Genesis supports physics simulation of a wide range of materials encountered in 
 - :shirt: Thin-shell objects: :worm: ropes, :jeans: cloths, :page_facing_up: papers, :black_joker: cards, etc.
 - :hourglass_flowing_sand: Granular objects: sand, beans, etc.
 
-## :white_check_mark: :robot: Support for diverse types of robots
+## :white_check_mark: :robot: Support for various forms of robots
 Genesis supports simulating of vast range of robots, including 
   - 🦾 Robot arm
   - 🦿 Legged robot
@@ -40,7 +40,7 @@ Genesis supports simulating of vast range of robots, including
 
 Note that Genesis is the first-ever platform providing comprehensive support for **soft muscles** and **soft robot**, as well as their interaction with rigid robots. Genesis also ships with a URDF-like soft-robot configuration system.
 
-## :white_check_mark: 🚀 Support for diverse physics backend solvers
+## :white_check_mark: 🚀 Support for a wide spectrum of physics backend solvers
 Various physics-based solvers tailored to different materials and needs have been developed in the past decades. Some prioritize high **simulation fidelity**, while others favor **performance**, albeit sometimes sacrificing accuracy.
 
 Genesis, in contrast to existing simulation platforms, natively supports a wide range of different physics solvers. Users are able to effortlessly toggle between solvers, depending on their specific requirements.
@@ -63,20 +63,20 @@ Genesis is the first platform that integrate physics-based simulation of GelSigh
 
 
 ## :white_check_mark: :camera_flash: Ultra-fast ray-tracing based renderer
-Genesis provides both rasterization-based and ray-tracing-based rendering pipeline. Our ray tracer is ultra fast, providing real-time photo-realistic rendering at RL-sufficient resolution. Notably, users can effortlessly switch between different rendering backend with one line of code.
+Genesis provides both rasterization-based and ray-tracing-based rendering pipelines. Our ray tracer is ultra fast, providing real-time photo-realistic rendering at RL-sufficient resolution. Notably, users can effortlessly switch between different rendering backend with one line of code.
 
-## :white_check_mark: :boom: GPU-accelerated and fully differentiable
+## :white_check_mark: :boom: Massive parallel, GPU-accelerated and fully differentiable
 Genesis supports massive parallelization over GPUs, and supports efficient gradient checkpointing for differentiable simulation.
-Genesis is internally powered by [**Taichi**](https://github.com/taichi-dev/taichi), but users are shielded from any potential debugging intricacies associated with Taichi. Genesis implements a custom Tensor system (`Genesis.Tensor`) seamlessly integrated with PyTorch. This integration guarantees that the Genesis simulation pipeline mirrors the operation of a standard PyTorch neural network in both functionality and familiarity. Provided that input variables are `Genesis.Tensor`, users are able to compute custom loss using simulation outputs, and one simple call of `loss.backward()` will trigger gradient flow all the way back through time and back to input variables, allowing effortless gradient-based policy optimization.
+Genesis is internally powered by [**Taichi**](https://github.com/taichi-dev/taichi), but users are shielded from any potential debugging intricacies associated with Taichi. Genesis implements a custom Tensor system (`Genesis.Tensor`) seamlessly integrated with PyTorch. This integration guarantees that the Genesis simulation pipeline mirrors the operation of a standard PyTorch neural network in both functionality and familiarity. Provided that input variables are `Genesis.Tensor`, users are able to compute custom loss using simulation outputs, and one simple call of `loss.backward()` will trigger gradient flow all the way back through time. back to input variables, and optionally back to upstream torch-based policy networks, allowing effortless gradient-based policy optimization and gradient-accelerated RL policy learning.
 
 
 ## :white_check_mark: :baby: Optimized ease of use
-The rule of thumb we kept in mind is to make Genesis as user-friendly and intuitive as possible, ensuring a seamless experience even for those new to the realm of simulations. Genesis is fully embedded in Python. We provide a unified interface for loading various entities including URDF, MJCF, various forms of meshes, etc. With **one single line of code**, users are able to switch between different physics backend, or switch from rasterization to ray-tracing for rendering photorealistic visuals, or define physical properties of loaded objects.
+The rule of thumb we kept in mind during the development is to make Genesis as user-friendly and intuitive as possible, ensuring a seamless experience even for those new to the realm of simulations. Genesis is fully embedded in Python. We provide a unified interface for loading various entities including URDF, MJCF, various forms of meshes, etc. With **one single line of code**, users are able to switch between different physics backend, or switch from rasterization to ray-tracing for rendering photorealistic visuals, or define physical properties of loaded objects.
 
-## :white_check_mark: :milky_way: Most importantly, native support for [Generative Simulation](https://arxiv.org/abs/2305.10455)
+## :white_check_mark: :milky_way: Most importantly, native support for Generative Simulation
 Genesis, while being a powerful simulation infrastructure, natively embraces the upcoming paradigm of [Generative Simulation](https://arxiv.org/abs/2305.10455). Powered by generative AIs and physics-based simulations, generative simulation is a paradigm that automates generation of diverse environments, robots, tasks, skills, training supervisions (e.g. reward functions), thereby generating infinite and diverse training data and scaling up diverse skill learning for embodied AI agents, in a fully automated manner.
 
-Genesis provides a set of APIs for generating diverse targets, ranging from **interactable** and **actionable** environments, to different tasks, robots, and ultimately vast skills.
+Genesis provides a set of APIs for generating diverse components needed for embodied AI learning, ranging from **interactable** and **actionable** environments, to different tasks, robots, language descriptions, and ultimately vast skills.
 
 Users will be able to do the following:
 ```Python
@@ -100,4 +100,4 @@ gs.generate()
 
 
 ## Stay tuned :P
-Genesis is a joint effort between multiple universities and industrial partners, and is still under active development. The Genesis team is diligently working towards an alpha release soon. Stay tuned for updates!
+Genesis is a collaborative effort between multiple universities and industrial partners, and is still under active development. The Genesis team is diligently working towards an alpha release soon. Stay tuned for updates!
