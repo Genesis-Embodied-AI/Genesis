@@ -71,7 +71,7 @@ Genesis is internally powered by [**Taichi**](https://github.com/taichi-dev/taic
 
 
 ## :white_check_mark: :baby: Optimized ease of use
-The rule of thumb we kept in mind is to make Genesis as user-friendly and intuitive as possible, ensuring a seamless experience even for those new to the realm of simulations. Genesis is fully embedded in Python. With **one single line of code**, users are able to switch between different physics backend, or switching from rasterization to ray-tracing for rendering photorealistic visuals.
+The rule of thumb we kept in mind is to make Genesis as user-friendly and intuitive as possible, ensuring a seamless experience even for those new to the realm of simulations. Genesis is fully embedded in Python. We provide a unified interface for loading various entities including URDF, MJCF, various forms of meshes, etc. With **one single line of code**, users are able to switch between different physics backend, or switch from rasterization to ray-tracing for rendering photorealistic visuals, or define physical properties of loaded objects.
 
 ## :white_check_mark: :milky_way: Most importantly, native support for [Generative Simulation](https://arxiv.org/abs/2305.10455)
 Genesis, while being a powerful simulation infrastructure, natively embraces the upcoming paradigm of [Generative Simulation](https://arxiv.org/abs/2305.10455). Powered by generative AIs and physics-based simulations, generative simulation is a paradigm that automates generation of diverse environments, robots, tasks, skills, training supervisions (e.g. reward functions), thereby generating infinite and diverse training data and scaling up diverse skill learning for embodied AI agents, in a fully automated manner.
