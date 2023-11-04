@@ -59,7 +59,7 @@ We also provide contact resolving via multiple methods:
 
 
 ## :white_check_mark: :pinching_hand: Physically-accurate tactile sensor simulation, applicable to diverse material types
-Genesis is the first platform that integrate physics-based simulation of GelSight-type tacile sensors, providing dense state-based and RGB-based tactile feedback simulation when handling diverse range of materials.
+Genesis is the first platform that integrate physics-based simulation of GelSight-type tactile sensors, providing dense state-based and RGB-based tactile feedback simulation when handling diverse range of materials.
 
 
 ## :white_check_mark: :camera_flash: Ultra-fast ray-tracing based renderer
