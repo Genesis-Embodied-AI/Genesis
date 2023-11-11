@@ -53,13 +53,14 @@ We have built a unified physics engine from the ground up, supporting solvers in
   - Articulated Body Algorithm (ABA)-based Rigid Body Dynamics
 
 We also provide contact resolving via multiple methods:
+  - Shape primitives
   - Convex mesh
   - SDF-based non-convex contact
   - Incremental Potential Contact (IPC)
 
 
 ## :white_check_mark: :pinching_hand: Physically-accurate tactile sensor simulation, applicable to diverse material types
-Genesis is the first platform that integrate physics-based simulation of GelSight-type tactile sensors, providing dense state-based and RGB-based tactile feedback simulation when handling diverse range of materials.
+Genesis is the first platform that integrates physics-based simulation of GelSight-type tactile sensors, providing dense state-based and RGB-based tactile feedback simulation when handling diverse range of materials.
 
 
 ## :white_check_mark: :camera_flash: Ultra-fast ray-tracing based renderer
@@ -94,7 +95,7 @@ gs.generate('A UR-5 arm bends a noodle into a U-shape')
 
 # or, let it generate on its own
 gs.generate('A random robot learning a random but meaningful skill')
-# or simply let's it surprise you
+# or simply let it surprise you
 gs.generate()
 ```
 
