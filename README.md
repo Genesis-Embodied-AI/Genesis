@@ -19,6 +19,8 @@ Genesis is still under development, and will be made publicly available soon.
 
 # What can Genesis do?
 Genesis differs from prior simulation platforms with a number of distinct key features:
+## :white_check_mark:⚡⚡ Unprecedented lightning fast simulation speed (Million+ FPS)⚡⚡
+I can't help updating this here secretly: after a ton of engineering effort streamlining our underlying physics engine, Genesis now can potentially produce over millions of simulation steps per second for rigid body dynamics on a single RTX4090, way faster than any existing simulators. We are getting closer to a public release soon!
 
 ## :white_check_mark: :tshirt: Support for diverse range of materials and their coupling
 Genesis supports physics simulation of a wide range of materials encountered in humans and (future) robots' daily life, and coupling (interaction) between these objects, including:
