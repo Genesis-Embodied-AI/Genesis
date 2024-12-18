@@ -1,0 +1,10 @@
+links: 
+base
+link_0
+link_1
+link_0_helper
+
+joints: 
+joint_name: joint_0 joint_type: continuous parent_link: link_0_helper child_link: link_0
+joint_name: joint_1 joint_type: fixed parent_link: base child_link: link_1
+joint_name: joint_2 joint_type: prismatic parent_link: link_1 child_link: link_0_helper

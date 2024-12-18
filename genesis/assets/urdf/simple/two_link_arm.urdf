@@ -1,0 +1,82 @@
+<?xml version="1.0" ?>
+<robot name="two_link_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+    
+    <!-- materials -->
+    <material name="black">
+        <color rgba="0 0 0 0.7"/>
+    </material>
+    <material name="white">
+        <color rgba="1 1 1 0.7"/>
+    </material>
+
+    <!-- links -->
+    <link name="base"/>
+
+    <link name="arm1">
+        <inertial>
+            <origin rpy="0 0 0" xyz="0.5 0 0"/>
+            <mass value="1."/>
+            <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <box size="1 .1 .1"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0.5 0 0"/>
+            <material name="black"/>
+        </visual>
+        <collision>
+            <geometry>
+                <box size="1 .1 .1"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0.5 0 0"/>
+            <material name="black"/>
+        </collision>
+    </link>
+
+    <link name="arm2">
+        <inertial>
+            <origin rpy="0 0 0" xyz="0.5 0 0"/>
+            <mass value="1."/>
+            <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <box size="1 .1 .1"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0.5 0 0"/>
+            <material name="white"/>
+        </visual>
+        <collision>
+            <geometry>
+                <box size="1 .1 .1"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0.5 0 0"/>
+            <material name="white"/>
+        </collision>
+    </link>
+
+    <link name="endEffector"/>
+
+    <!-- joints -->
+    <joint name="baseHinge" type="continuous">
+        <axis rpy="0 0 0" xyz="0 1 0"/>
+        <parent link="base"/>
+        <child link="arm1"/>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+    </joint>
+
+    <joint name="interArm" type="continuous">
+        <axis rpy="0 0 0" xyz="0 0 1"/>
+        <parent link="arm1"/>
+        <child link="arm2"/>
+        <origin rpy="0 0 0" xyz="1 0 0"/>
+    </joint>
+
+    <joint name="ee_joint" type="fixed">
+        <parent link="arm2"/>
+        <child link="endEffector"/>
+        <origin rpy="0 0 0" xyz="1 0 0"/>
+    </joint>
+
+</robot>

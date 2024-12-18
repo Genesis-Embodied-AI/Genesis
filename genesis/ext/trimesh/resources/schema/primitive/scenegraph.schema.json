@@ -1,0 +1,25 @@
+{
+  "$id": "https://github.com/mikedh/trimesh/blob/main/trimesh/resources/schema/primitive/scenegraph.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+
+  "description": "A scene graph in the simplest possible JSON format.",
+  "type": "array",
+  "items": {
+    "type": "array",
+    "prefixItems": [
+      { "type": "string", "description": "Node name of frame from." },
+      { "type": "string", "description": "Node name of frame to." },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "type": "string",
+            "description": "Name of the geometry transformed to this frame."
+          },
+          "matrix": { "$ref": "transform.schema.json" }
+        }
+      }
+    ]
+  }
+}

@@ -1,102 +1,106 @@
 <div align="center">
-  <img width="500px" src="https://github.com/Genesis-Embodied-AI/Genesis/blob/main/images/logo.png"/>
+  <img src="imgs/big_text.png" alt="Genesis" width="85%">
   
-  ### A generative and simulated physical realm for general-purpose embodied-AI learning.
 </div>
 
 ---
+
 <div align="center">
-  <img src="https://github.com/Genesis-Embodied-AI/Genesis/blob/main/images/demo.png"/>
+  <img src="imgs/teaser.png" width="100%">
 </div>
 
+
 # What is Genesis?
+Genesis is a physics platform designed for general purpose *Robotics/Embodied AI/Physical AI* applications. It is simultaneously multiple things:
+1. A **universal physics engine** re-built from the ground up, capable of simulating a wide range of materials and physical phenomena.
+2. A **lightweight**, **ultra-fast**, **pythonic**, and **user-friendly** robotics simulation platform.
+3. A powerful and fast **photo-realistic rendering system**.
+3. A **generative data engine** that transforms user-prompted natural language description into various modalities of data.
 
-Genesis is a **generative** and **simulated** physical world for general-purpose robot learning, providing **unified** simulation platform supporting diverse range of materials, allowing simulating vast range of robotic tasks. 
+Powered by a universal physics engine re-designed and re-built from the ground up, Genesis integrates various physics solvers and their coupling into a unified framework. This core physics engine is further enhanced by a generative agent framework that operates at an upper level, aiming towards fully **automated data generation** for robotics and beyond. 
+Currently, we are open-sourcing the underlying physics engine and the simulation platform. The generative framework will be released in the near future.
 
-Genesis is also a _**next-gen**_ simulation infrastructure that natively supports **generative simulation**: a future paradigm combining generative AI and physically-grounded simulation, aiming for unlocking _**infinite and diverse data**_ for robotic agents to learn vast range of skills across diverse environments like never before.
+Genesis is built and will continuously evolve with the following ***long-term missions***:
+1. **Lowering the barrier** to using physics simulations and making robotics research accessible to everyone. (See our [commitment](https://genesis-world.readthedocs.io/en/latest/user_guide/overview/mission.html))
+2. **Unifying a wide spectrum of state-of-the-art physics solvers** into a single framework, allowing re-creating the whole physical world in a virtual realm with the highest possible physical, visual and sensory fidelity, using the most advanced simulation techniques.
+3. **Minimizing human effort** in collecting and generating data for robotics and other domains, letting the data flywheel spin on its own.
 
-Genesis is still under development, and will be made publicly available soon.
+## Key Features
+- **Speed**: Genesis delivers an unprecedented simulation speed -- over 43 million FPS when simulating a Frana robotic arm with a single RTX 4090 (430,000 faster than real-time).
+- **Cross-platform**: Genesis runs natively across different systems (Linux, MacOS, Windows), and across different compute backend (CPU, Nvidia GPU, AMD GPU, Apple Metal).
+- **Unification of various physics solvers**: Genesis develops a unified simulation framework that integrates various physics solvers: Rigid body, MPM, SPH, FEM, PBD, Stable Fluid.
+- **Support a wide range of material models**:  Genesis supports simulation (and the coupling) of rigid and articulated bodies, various types of liquids, gaseous phenomenon, deformable objects, thin-shell objects and granular materials.
+- **Support for a wide range of robots**: Robot arm, legged robot, drone, _soft robot_, etc., and extensive support for loading different file types: `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, etc.
+- **Photorealistic and high-performance ray-tracer**: Genesis supports native ray-tracing based rendering.
+- **Differentiability**: Genesis is designed to be fully compatible with differentiable simulation. Currently, our MPM solver and Tool Solver are differentiable, and differentiability for other solvers will be added soon (starting with rigid-body simulation).
+- **Physics-based Tactile Sensor**: Genesis involves a physics-based and differentiable [tactile sensor simulation module](https://github.com/Genesis-Embodied-AI/DiffTactile). This will be integrated to the public version soon (expected in verion 0.2.0).
+- **User-friendliness**: Genesis is designed in a way to make using simulation as simple as possible. From installation to API design, if there's anything you found counter-intuitive or difficult to use, please [let us know](https://github.com/Genesis-Embodied-AI/Genesis/issues).
 
-# What can Genesis do?
-Genesis differs from prior simulation platforms with a number of distinct key features:
+## Getting Started
+### Quick Installation
+Genesis is available via PyPI:
+```bash
+pip install genesis-world
+```
+You also need to install **PyTorch** following the [official instructions](https://pytorch.org/get-started/locally/).
 
-## :white_check_mark: :tshirt: Support for diverse range of materials and their coupling
-Genesis supports physics simulation of a wide range of materials encountered in humans and (future) robots' daily life, and coupling (interaction) between these objects, including:
-- :door: Rigid and articulated bodies
-- :sweat_drops: Liquid: Newtonian, non-Newtonian, viscosity, surface tension, etc.
-- :dash: Gaseous phenomenon: air flow, heat flow, etc.
-- :dumpling: Deformable objects: elastic, plastic, elasto-plastic
-- :shirt: Thin-shell objects: :worm: ropes, :jeans: cloths, :page_facing_up: papers, :black_joker: cards, etc.
-- :hourglass_flowing_sand: Granular objects: sand, beans, etc.
+### Documentation
+Please refer to our [documentation site](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) to for detailed installation steps, tutorials and API references.
 
-## :white_check_mark: :robot: Support for diverse types of robots
-Genesis supports simulating of vast range of robots, including 
-  - 🦾 Robot arms
-  - 🦿 Legged robots
-  - :writing_hand: Dexterous hands
-  - 🖲️ Mobile robots
-  - :lizard: Soft robots
+## Contributing to Genesis
 
-Note that Genesis is the first-ever platform providing comprehensive support for **soft muscles** and **soft robot**, as well as their interaction with rigid robots. Genesis also ships with a URDF-like soft-robot configuration system.
+The goal of the Genesis project is to build a fully transparent, user-friendly ecosystem where contributors from both robotics and computer graphics can **come together to collaboratively create a high-efficiency, realistic (both physically and visually) virtual world for robotics research and beyond**.
 
-## :white_check_mark: 🚀 Support for diverse physics backend solvers
-Various physics-based solvers tailored to different materials and needs  have been developed in the past decades. Some prioritize high **simulation fidelity**, while others favor **performance**, albeit sometimes sacrificing accuracy.
+We sincerely welcome *any forms of contributions* from the community to make the world a better place for robots. From **pull requests** for new features, **bug reports**, to even tiny **suggestions** that will make Genesis API more intuitive, all are wholeheartedly appreciated!
 
-Genesis, in contrast to its predecessors, natively supports a wide range of different physics solvers. Users are able to effortlessly toggle between solvers, depending on their specific requirements.
+## Support
+* Please use Github [Issues](https://github.com/Genesis-Embodied-AI/Genesis/issues) for bug reports and feature requests.
+* Please use GitHub [Discussions](https://github.com/Genesis-Embodied-AI/Genesis/discussions) for discussing ideas, and asking questions.
 
-Our current supported solvers include:
-  - Material Point Method (MPM)
-  - Finite Element Method (FEM)
-  - Position Based Dynamics (PBD)
-  - Smoothed-Particle Hydrodynamics (SPH)
-  - Articulated Body Algorithm (ABA)-based Rigid Body Dynamics
+## License and Acknowledgment
+The Genesis source code is licensed under Apache 2.0.
+The development of Genesis won't be possible without these amazing open-source projects:
+- [Taichi](https://github.com/taichi-dev/taichi) for providing a cross-platform compute backend
+- [FluidLab](https://github.com/zhouxian/FluidLab) for providing a reference MPM solver implementation
+- [SPH_Taichi](https://github.com/erizmr/SPH_Taichi) for providing a reference SPH solver implementation
+- [MuJoCo](https://github.com/google-deepmind/mujoco) and [Brax](https://github.com/google/brax) for providing reference for rigid body dynamics
+- [PyRender](https://github.com/mmatl/pyrender) for rasterization-based renderer
+- [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) and [LuisaRender](https://github.com/LuisaGroup/LuisaRender) for its ray-tracing DSL
+- [trimesh](https://github.com/mikedh/trimesh), [PyMeshLab](https://github.com/cnr-isti-vclab/PyMeshLab) and [CoACD](https://github.com/SarahWeiii/CoACD) for geometry processing
 
-We also provide contact resolving via multiple methods:
-  - Convex mesh
-  - SDF-based non-convex contact
-  - Incremental Potential Contact (IPC)
+## Papers behind Genesis
+Genesis is a large scale effort that integrates state-of-the-art technologies of various existing and on-going research work into a single system. Here we include a non-exhaustive list of all the papers that contributed to the Genesis project in one way or another:
 
+- Xian, Zhou, et al. "Fluidlab: A differentiable environment for benchmarking complex fluid manipulation." arXiv preprint arXiv:2303.02346 (2023).
+- Xu, Zhenjia, et al. "Roboninja: Learning an adaptive cutting policy for multi-material objects." arXiv preprint arXiv:2302.11553 (2023).
+- Wang, Yufei, et al. "Robogen: Towards unleashing infinite data for automated robot learning via generative simulation." arXiv preprint arXiv:2311.01455 (2023).
+- Wang, Tsun-Hsuan, et al. "Softzoo: A soft robot co-design benchmark for locomotion in diverse environments." arXiv preprint arXiv:2303.09555 (2023).
+- Wang, Tsun-Hsuan Johnson, et al. "Diffusebot: Breeding soft robots with physics-augmented generative diffusion models." Advances in Neural Information Processing Systems 36 (2023): 44398-44423.
+- Katara, Pushkal, Zhou Xian, and Katerina Fragkiadaki. "Gen2sim: Scaling up robot learning in simulation with generative models." 2024 IEEE International Conference on Robotics and Automation (ICRA). IEEE, 2024.
+- Si, Zilin, et al. "DiffTactile: A Physics-based Differentiable Tactile Simulator for Contact-rich Robotic Manipulation." arXiv preprint arXiv:2403.08716 (2024).
+- Wang, Yian, et al. "Thin-Shell Object Manipulations With Differentiable Physics Simulations." arXiv preprint arXiv:2404.00451 (2024).
+- Lin, Chunru, et al. "UBSoft: A Simulation Platform for Robotic Skill Learning in Unbounded Soft Environments." arXiv preprint arXiv:2411.12711 (2024).
+- Zhou, Wenyang, et al. "EMDM: Efficient motion diffusion model for fast and high-quality motion generation." European Conference on Computer Vision. Springer, Cham, 2025.
+- Qiao, Yi-Ling, Junbang Liang, Vladlen Koltun, and Ming C. Lin. "Scalable differentiable physics for learning and control." International Conference on Machine Learning. PMLR, 2020.
+- Qiao, Yi-Ling, Junbang Liang, Vladlen Koltun, and Ming C. Lin. "Efficient differentiable simulation of articulated bodies." In International Conference on Machine Learning, PMLR, 2021.
+- Qiao, Yi-Ling, Junbang Liang, Vladlen Koltun, and Ming Lin. "Differentiable simulation of soft multi-body systems." Advances in Neural Information Processing Systems 34 (2021).
+- Wan, Weilin, et al. "Tlcontrol: Trajectory and language control for human motion synthesis." arXiv preprint arXiv:2311.17135 (2023).
+- Wang, Yian, et al. "Architect: Generating Vivid and Interactive 3D Scenes with Hierarchical 2D Inpainting." arXiv preprint arXiv:2411.09823 (2024).
+- Zheng, Shaokun, et al. "LuisaRender: A high-performance rendering framework with layered and unified interfaces on stream architectures." ACM Transactions on Graphics (TOG) 41.6 (2022): 1-19.
+- Fan, Yingruo, et al. "Faceformer: Speech-driven 3d facial animation with transformers." Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2022.
+- Wu, Sichun, Kazi Injamamul Haque, and Zerrin Yumak. "ProbTalk3D: Non-Deterministic Emotion Controllable Speech-Driven 3D Facial Animation Synthesis Using VQ-VAE." Proceedings of the 17th ACM SIGGRAPH Conference on Motion, Interaction, and Games. 2024.
 
-## :white_check_mark: :pinching_hand: Physically-accurate tactile sensor simulation, applicable to diverse material types
-Genesis is the first platform that integrate physics-based simulation of GelSight-type tacile sensors, providing dense state-based and RGB-based tactile feedback simulation when handling diverse range of materials.
+... and many more on-going work.
 
-
-## :white_check_mark: :camera_flash: Ultra-fast ray-tracing based renderer
-Genesis provides both rasterization-based and ray-tracing-based rendering pipeline. Our ray tracer is ultra fast, providing real-time photo-realistic rendering at RL-sufficient resolution. Notably, users can effortlessly switch between different rendering backend with one line of code.
-
-## :white_check_mark: :boom: GPU-accelerated and fully differentiable
-Genesis supports massive parallelization over GPUs, and supports efficient gradient checkpointing for differentiable simulation.
-Genesis is internally powered by [**Taichi**](https://github.com/taichi-dev/taichi), but users are shielded from any potential debugging intricacies associated with Taichi. Genesis implements a custom Tensor system (`Genesis.Tensor`) seamlessly integrated with PyTorch. This integration guarantees that the Genesis simulation pipeline mirrors the operation of a standard PyTorch neural network in both functionality and familiarity. Provided that input variables are `Genesis.Tensor`, users are able to compute custom loss using simulation outputs, and one simple call of `loss.backward()` will trigger gradient flow all the way back through time and back to input variables, allowing effortless gradient-based policy optimization.
-
-
-## :white_check_mark: :baby: Optimized ease of use
-The rule of thumb we kept in mind is to make Genesis as user-friendly and intuitive as possible, ensuring a seamless experience even for those new to the realm of simulations. Genesis is fully embedded in Python. With **one single line of code**, users are able to switch between different physics backend, or switching from rasterization to ray-tracing for rendering photorealistic visuals.
-
-## :white_check_mark: :milky_way: Most importantly, native support for [Generative Simulation](https://arxiv.org/abs/2305.10455)
-Genesis, while being a powerful simulation infrastructure, natively embraces the upcoming paradigm of [Generative Simulation](https://arxiv.org/abs/2305.10455). Powered by generative AIs and physics-based simulations, generative simulation is a paradigm that automates generation of diverse environments, robots, tasks, skills, training supervisions (e.g. reward functions), thereby generating infinite and diverse training data and scaling up diverse skill learning for embodied AI agents, in a fully automated manner.
-
-Genesis provides a set of APIs for generating diverse targets, ranging from **interactable** and **actionable** environments, to different tasks, robots, and ultimately vast skills.
-
-Users will be able to do the following:
-```Python
-import genesis as gs
-# generate environments
-gs.generate('A robotic arm operating in a typical kitchen environment.')
-
-# generate robot
-gs.generate('A 6-DoF robotic arm with a mobile base, a camera attached to its wrist, and a tactile sensor on its gripper.')
-gs.generate('A bear-like soft robot walking in the sand.')
-
-# generate skills
-gs.generate('A Franka arm tossing trashes into a trashcan')
-gs.generate('A UR-5 arm bends a noodle into a U-shape')
-
-# or, let it generate on its own
-gs.generate('A random robot learning a random but meaningful skill')
-# or simply let's it surprise you
-gs.generate()
+## Citation
+If you used Genesis in your research, we would appreciate it if you could cite it. We are still working on a technical report, and before it's public, you could consider citing:
+```
+@software{Genesis,
+  author = {Genesis Authors},
+  title = {Genesis: A Universal and Generative Physics Engine for Robotics and Beyond},
+  month = {December},
+  year = {2024},
+  url = {https://github.com/Genesis-Embodied-AI/Genesis}
+}
 ```
 
-
-## Stay tuned :P
-Genesis is a joint effort between multiple universities and industrial partners, and is still under active development. The Genesis team is diligently working towards an alpha release soon. Stay tuned for updates!

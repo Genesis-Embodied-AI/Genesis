@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <asset>
+    <contributor>
+      <author>Blender User</author>
+      <authoring_tool>Blender 2.81.16 commit date:2019-11-20, commit time:14:27, hash:26bd5ebd42e3</authoring_tool>
+    </contributor>
+    <created>2020-01-13T19:28:23</created>
+    <modified>2020-01-13T19:28:23</modified>
+    <unit name="meter" meter="1"/>
+    <up_axis>Z_UP</up_axis>
+  </asset>
+  <library_effects>
+    <effect id="hatch-effect">
+      <profile_COMMON>
+        <newparam sid="hatch-surface">
+          <surface type="2D">
+            <init_from>hatch</init_from>
+          </surface>
+        </newparam>
+        <newparam sid="hatch-sampler">
+          <sampler2D>
+            <source>hatch-surface</source>
+          </sampler2D>
+        </newparam>
+        <technique sid="common">
+          <lambert>
+            <emission>
+              <color sid="emission">0 0 0 1</color>
+            </emission>
+            <diffuse>
+              <texture texture="hatch-sampler" texcoord="UVMap"/>
+            </diffuse>
+            <index_of_refraction>
+              <float sid="ior">1.45</float>
+            </index_of_refraction>
+          </lambert>
+        </technique>
+      </profile_COMMON>
+    </effect>
+  </library_effects>
+  <library_images>
+    <image id="hatch" name="hatch">
+      <init_from>hatch.jpg</init_from>
+    </image>
+  </library_images>
+  <library_materials>
+    <material id="hatch-material" name="hatch">
+      <instance_effect url="#hatch-effect"/>
+    </material>
+  </library_materials>
+  <library_geometries>
+    <geometry id="AM3_Application_Hatch_Detailed_HD_002-mesh" name="AM3 Application Hatch Detailed HD.002">
+      <mesh>
+        <source id="AM3_Application_Hatch_Detailed_HD_002-mesh-positions">
+          <float_array id="AM3_Application_Hatch_Detailed_HD_002-mesh-positions-array" count="96">-76.90127 -64.71254 0 -76.90127 -64.71254 5.500071 -76.90127 64.71254 0 -76.90127 64.71254 5.500071 76.90133 -64.71254 0 76.90133 -64.71254 5.500071 76.90133 64.71254 0 76.90133 64.71254 5.500071 -80.46286 11.54165 0 -91.00833 3.847216 0 -91.00833 -3.847217 0 -80.46286 -11.54165 0 -80.46286 -11.54165 5.500071 -91.00833 -3.847217 5.500071 -91.00833 3.847217 5.500071 -80.46286 11.54165 5.500071 80.46292 -11.54165 0 91.00839 -3.847217 0 91.00839 3.847217 0 80.46292 11.54165 0 80.46292 11.54165 5.500071 91.00839 3.847216 5.500071 91.00839 -3.847217 5.500071 80.46292 -11.54165 5.500071 -80.46286 38.12709 5.500071 80.46292 38.12709 0 -80.46286 38.12709 0 80.46292 38.12709 5.500071 -80.46286 -38.12709 0 80.46292 -38.12709 5.500071 -80.46286 -38.12709 5.500071 80.46292 -38.12709 0</float_array>
+          <technique_common>
+            <accessor source="#AM3_Application_Hatch_Detailed_HD_002-mesh-positions-array" count="32" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <source id="AM3_Application_Hatch_Detailed_HD_002-mesh-normals">
+          <float_array id="AM3_Application_Hatch_Detailed_HD_002-mesh-normals-array" count="63">-0.9911455 0.1327809 0 0 1 0 0.9911455 -0.1327809 0 0 -1 0 0 0 1 0 0 1 1 0 0 0.5894234 0.8078244 0 0.5894234 -0.8078244 0 -1 0 0 -0.5894234 -0.8078244 0 -0.5894234 0.8078243 -2.12521e-7 0.9911454 0.1327813 0 -0.9911454 -0.1327813 0 -0.9911454 0.1327813 0 0.9911454 -0.1327813 0 0 0 1 0.5894235 0.8078243 2.12521e-7 -0.5894234 0.8078244 0 0.9911455 0.1327809 0 -0.9911455 -0.1327809 0</float_array>
+          <technique_common>
+            <accessor source="#AM3_Application_Hatch_Detailed_HD_002-mesh-normals-array" count="21" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <source id="AM3_Application_Hatch_Detailed_HD_002-mesh-map">
+          <float_array id="AM3_Application_Hatch_Detailed_HD_002-mesh-map-array" count="276">0.8547119 0.7845032 0.8910338 0.6826047 0.8910338 0.7845032 0.8547118 0.6826048 0.8910338 0 0.8910338 0.6826047 0.963678 0.5650011 0.927356 0.7110616 0.927356 0.5650011 0.891034 0.7845032 0.927356 0.1018984 0.927356 0.7845032 0.1755681 0.9420632 0 0.07750421 0.1755678 0.05793678 0.679144 0.9420632 0.5035759 0.05793678 0.6791438 0.05793678 0.503576 0.9420632 0.4527625 0 0.5035759 0.05793678 0.4527627 1 0.4019491 0 0.4527625 0 0.4019494 1 0.3511358 0.05793678 0.4019491 0 0.963678 0.1460605 0.927356 0.2921209 0.927356 0.1460605 0.963678 0.2921209 0.927356 0.3343942 0.927356 0.2921209 0.963678 0.3343942 0.927356 0.3766674 0.927356 0.3343942 0.963678 0.3766674 0.927356 0.4189407 0.927356 0.3766674 0.927356 0.7971531 0.963678 0.7110617 0.963678 0.7971532 0.963678 0.07171952 1 0 1 0.07171952 0.8547119 0.9672312 0.8910339 0.9423143 0.8910339 0.9672312 0.8547119 0.9423143 0.8910339 0.8705947 0.8910339 0.9423143 0.963678 0 0.927356 0.1460605 0.9273561 0 0.8547118 0.9224958 0.6791438 0.05793678 0.8547117 0.07750409 0.8547119 0.8705947 0.8910338 0.7845032 0.8910339 0.8705947 0.891034 0.1018984 0.927356 0 0.927356 0.1018984 0.351136 0.9420632 0.1755678 0.05793678 0.3511358 0.05793678 0.963678 0.4189407 0.927356 0.5650011 0.927356 0.4189407 0.8547119 0.7845032 0.8547118 0.6826048 0.8910338 0.6826047 0.8547118 0.6826048 0.8547118 0 0.8910338 0 0.963678 0.5650011 0.963678 0.7110616 0.927356 0.7110616 0.891034 0.7845032 0.891034 0.1018984 0.927356 0.1018984 0.1755681 0.9420632 0 0.9224959 0 0.07750421 0.679144 0.9420632 0.503576 0.9420632 0.5035759 0.05793678 0.503576 0.9420632 0.4527627 1 0.4527625 0 0.4527627 1 0.4019494 1 0.4019491 0 0.4019494 1 0.351136 0.9420632 0.3511358 0.05793678 0.963678 0.1460605 0.963678 0.2921209 0.927356 0.2921209 0.963678 0.2921209 0.963678 0.3343942 0.927356 0.3343942 0.963678 0.3343942 0.963678 0.3766674 0.927356 0.3766674 0.963678 0.3766674 0.963678 0.4189407 0.927356 0.4189407 0.927356 0.7971531 0.927356 0.7110616 0.963678 0.7110617 0.963678 0.07171952 0.963678 0 1 0 0.8547119 0.9672312 0.8547119 0.9423143 0.8910339 0.9423143 0.8547119 0.9423143 0.8547119 0.8705947 0.8910339 0.8705947 0.963678 0 0.963678 0.1460605 0.927356 0.1460605 0.8547118 0.9224958 0.679144 0.9420632 0.6791438 0.05793678 0.8547119 0.8705947 0.8547119 0.7845032 0.8910338 0.7845032 0.891034 0.1018984 0.891034 0 0.927356 0 0.351136 0.9420632 0.1755681 0.9420632 0.1755678 0.05793678 0.963678 0.4189407 0.963678 0.5650011 0.927356 0.5650011</float_array>
+          <technique_common>
+            <accessor source="#AM3_Application_Hatch_Detailed_HD_002-mesh-map-array" count="138" stride="2">
+              <param name="S" type="float"/>
+              <param name="T" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <vertices id="AM3_Application_Hatch_Detailed_HD_002-mesh-vertices">
+          <input semantic="POSITION" source="#AM3_Application_Hatch_Detailed_HD_002-mesh-positions"/>
+        </vertices>
+        <triangles material="hatch-material" count="46">
+          <input semantic="VERTEX" source="#AM3_Application_Hatch_Detailed_HD_002-mesh-vertices" offset="0"/>
+          <input semantic="NORMAL" source="#AM3_Application_Hatch_Detailed_HD_002-mesh-normals" offset="1"/>
+          <input semantic="TEXCOORD" source="#AM3_Application_Hatch_Detailed_HD_002-mesh-map" offset="2" set="0"/>
+          <p>24 0 0 2 0 1 26 0 2 3 1 3 6 1 4 2 1 5 29 2 6 4 2 7 31 2 8 5 3 9 0 3 10 4 3 11 30 4 12 5 4 13 29 4 14 24 4 15 20 4 16 27 4 17 15 4 18 21 4 19 20 4 20 14 5 21 22 5 22 21 5 23 13 4 24 23 4 25 22 4 26 27 6 27 19 6 28 25 6 29 20 7 30 18 7 31 19 7 32 21 6 33 17 6 34 18 6 35 22 8 36 16 8 37 17 8 38 30 9 39 11 9 40 28 9 41 12 10 42 10 10 43 11 10 44 13 9 45 9 9 46 10 9 47 14 11 48 8 11 49 9 11 50 7 12 51 25 12 52 6 12 53 3 4 54 27 4 55 7 4 56 15 9 57 26 9 58 8 9 59 1 13 60 28 13 61 0 13 62 12 4 63 29 4 64 23 4 65 23 6 66 31 6 67 16 6 68 24 14 69 3 14 70 2 14 71 3 1 72 7 1 73 6 1 74 29 15 75 5 15 76 4 15 77 5 3 78 1 3 79 0 3 80 30 4 81 1 4 82 5 4 83 24 4 84 15 4 85 20 4 86 15 16 87 14 16 88 21 16 89 14 4 90 13 4 91 22 4 92 13 4 93 12 4 94 23 4 95 27 6 96 20 6 97 19 6 98 20 17 99 21 17 100 18 17 101 21 6 102 22 6 103 17 6 104 22 8 105 23 8 106 16 8 107 30 9 108 12 9 109 11 9 110 12 10 111 13 10 112 10 10 113 13 9 114 14 9 115 9 9 116 14 18 117 15 18 118 8 18 119 7 19 120 27 19 121 25 19 122 3 4 123 24 4 124 27 4 125 15 9 126 24 9 127 26 9 128 1 20 129 30 20 130 28 20 131 12 4 132 30 4 133 29 4 134 23 6 135 29 6 136 31 6 137</p>
+        </triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="Scene" name="Scene">
+      <node id="AM3_Application_Hatch_LP" name="AM3 Application Hatch LP" type="NODE">
+        <matrix sid="transform">0.001006675 0 0 0 0 9.99987e-4 0 0 0 0 9.99987e-4 0 0 0 0 1</matrix>
+        <instance_geometry url="#AM3_Application_Hatch_Detailed_HD_002-mesh" name="AM3 Application Hatch LP">
+          <bind_material>
+            <technique_common>
+              <instance_material symbol="hatch-material" target="#hatch-material">
+                <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
+              </instance_material>
+            </technique_common>
+          </bind_material>
+        </instance_geometry>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene>
+    <instance_visual_scene url="#Scene"/>
+  </scene>
+</COLLADA>

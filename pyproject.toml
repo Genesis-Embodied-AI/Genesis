@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# name = "genesis-world-nightly"
+# version = "0.0.3"
+name = "genesis-world"
+version = "0.2.0"
+description = "A universal and generative physics engine"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "psutil",
+    "scikit-image",
+    "taichi == 1.7.2",
+    "pydantic == 2.7.1",
+    "numpy == 1.26.4",
+    "six",
+    "PyOpenGL",
+    "freetype-py",
+    "pyglet",
+    "libigl",
+    "pygltflib == 1.16.0",
+    "mujoco == 3.2.5",
+    "pycollada",
+    "opencv-python",
+    "lxml",
+    "tetgen == 0.6.4",
+    "screeninfo",
+    "PyGEL3D",
+    "moviepy >= 2.0.0",
+    "numba",
+    "pymeshlab",
+    "coacd",
+    "OpenEXR",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["genesis", "genesis.*"]
+
+[tool.setuptools.package-data]
+genesis = [
+    "assets/*",
+    "ext/pyrender/fonts/*",
+    "ext/pyrender/shaders/*",
+    "ext/VolumeSampling",
+]
+
+[project.scripts]
+gs = "genesis._main:main"
+
+[project.optional-dependencies]
+gen = [
+    "openai",
+]
+docs = [
+    # Note that currently sphinx 7 does not work, so we must use v6.2.1. See https://github.com/kivy/kivy/issues/8230 which tracks this issue. Once fixed we can use a later version
+    "sphinx==6.2.1",
+    "sphinx-autobuild",
+    "pydata_sphinx_theme",
+    # For spelling
+    "sphinxcontrib.spelling",
+    # Type hints support
+    "sphinx-autodoc-typehints",
+    # Copy button for code snippets
+    "sphinx_copybutton",
+    # Markdown parser
+    "myst-parser",
+    "sphinx-subfigure",
+    "sphinxcontrib-video",
+    "sphinx-togglebutton",
+    "sphinx_design",
+]

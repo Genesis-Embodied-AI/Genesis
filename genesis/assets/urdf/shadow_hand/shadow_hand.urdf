@@ -1,0 +1,524 @@
+<?xml version="1.0" ?>
+<robot name="shadow_hand">
+
+    <!-- Forearm-Wrist-Palm Links -->
+    <link name="forearm">
+        <visual>
+            <geometry name="forearm_visual">
+                <mesh filename="meshes/visual/forearm.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="forearm_collision">
+                <mesh filename="meshes/collision/forearm.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="wrist">
+        <visual>
+            <geometry name="wrist_visual">
+                <mesh filename="meshes/visual/wrist.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="wrist_collision">
+                <mesh filename="meshes/collision/wrist.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="palm">
+        <visual>
+            <geometry name="palm_visual">
+                <mesh filename="meshes/visual/palm.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="palm_collision">
+                <mesh filename="meshes/collision/palm.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+
+    <!-- Forearm-Wrist Joints -->
+    <joint name="forearm_joint" type="revolute">
+        <parent link="forearm"/>
+        <child link="wrist"/>
+        <origin rpy="0 0 0" xyz="0 -0.010 0.213"/>
+        <axis xyz="0 1 0"/>
+        <limit effort="10.0" lower="-0.523598775598" upper="0.174532925199" velocity="2.0"/>
+    </joint>
+
+    <joint name="wrist_joint" type="revolute">
+        <parent link="wrist"/>
+        <child link="palm"/>
+        <origin rpy="0 0 0" xyz="0 0 0.034"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="5.0" lower="-0.698131700798" upper="0.488692190558" velocity="2.0"/>
+    </joint>
+
+
+    <!-- Thumb Links -->
+    <link name="thumb_base"/>
+
+    <link name="thumb_proximal">
+        <visual>
+            <geometry name="thumb_proximal_visual">
+                <mesh filename="meshes/visual/thumb_proximal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="thumb_proximal_collision">
+                <mesh filename="meshes/collision/thumb_proximal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="thumb_hub"/>
+
+    <link name="thumb_middle">
+        <visual>
+            <geometry name="thumb_middle_visual">
+                <mesh filename="meshes/visual/thumb_middle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="thumb_middle_collision">
+                <mesh filename="meshes/collision/thumb_middle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="thumb_distal">
+        <visual>
+            <geometry name="thumb_distal_visual">
+                <mesh filename="meshes/visual/thumb_distal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="thumb_distal_collision">
+                <mesh filename="meshes/collision/thumb_distal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+
+    <!-- Thumb Joints -->
+    <joint name="thumb_joint1" type="revolute">
+        <parent link="palm"/>
+        <child link="thumb_base"/>
+        <origin rpy="0 0.785398163397 0.0" xyz="0.034 -0.0085 0.029"/>
+        <axis xyz="0 0 -1"/>
+        <limit effort="4.0" lower="-1.0471975512" upper="1.0471975512" velocity="4.0"/>
+    </joint>
+
+    <joint name="thumb_joint2" type="revolute">
+        <parent link="thumb_base"/>
+        <child link="thumb_proximal"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0.0" upper="1.2217304764" velocity="4.0"/>
+    </joint>
+
+    <joint name="thumb_joint3" type="revolute">
+        <parent link="thumb_proximal"/>
+        <child link="thumb_hub"/>
+        <origin rpy="0 0 0" xyz="0 0 0.038"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="-0.209439510239" upper="0.209439510239" velocity="4.0"/>
+    </joint>
+
+    <joint name="thumb_joint4" type="revolute">
+        <parent link="thumb_hub"/>
+        <child link="thumb_middle"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="4.0" lower="-0.698131700798" upper="0.698131700798" velocity="2.0"/>
+    </joint>
+
+    <joint name="thumb_joint5" type="revolute">
+        <parent link="thumb_middle"/>
+        <child link="thumb_distal"/>
+        <origin rpy="0 0 -1.57079632679" xyz="0 0 0.032"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="4.0"/>
+    </joint>
+
+
+    <!-- Index Finger Links -->
+    <link name="index_finger_knuckle">
+        <visual>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="index_finger_knuckle_visual">
+                <mesh filename="meshes/visual/knuckle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="index_finger_knuckle_collision">
+                <mesh filename="meshes/collision/knuckle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="index_finger_proximal">
+        <visual>
+            <geometry name="index_finger_proximal_visual">
+                <mesh filename="meshes/visual/finger_proximal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="index_finger_proximal_collision">
+                <mesh filename="meshes/collision/finger_proximal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="index_finger_middle">
+        <visual>
+            <geometry name="index_finger_middle_visual">
+                <mesh filename="meshes/visual/finger_middle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="index_finger_middle_collision">
+                <mesh filename="meshes/collision/finger_middle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="index_finger_distal">
+        <visual>
+            <geometry name="index_finger_distal_visual">
+                <mesh filename="meshes/visual/finger_distal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="index_finger_distal_collision">
+                <mesh filename="meshes/collision/finger_distal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+
+    <!-- Index Finger Joints -->
+    <joint name="index_finger_joint1" type="revolute">
+        <parent link="palm"/>
+        <child link="index_finger_knuckle"/>
+        <origin rpy="0 0 0" xyz="0.033 0 0.095"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+    </joint>
+
+    <joint name="index_finger_join2" type="revolute">
+        <parent link="index_finger_knuckle"/>
+        <child link="index_finger_proximal"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="index_finger_joint3" type="revolute">
+        <parent link="index_finger_proximal"/>
+        <child link="index_finger_middle"/>
+        <origin rpy="0 0 0" xyz="0 0 0.045"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="index_finger_joint4" type="revolute">
+        <parent link="index_finger_middle"/>
+        <child link="index_finger_distal"/>
+        <origin rpy="0 0 0" xyz="0 0 0.025"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+
+    <!-- Middle Finger Links -->
+    <link name="middle_finger_knuckle">
+        <visual>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="middle_finger_knuckle_visual">
+                <mesh filename="meshes/visual/knuckle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="middle_finger_knuckle_collision">
+                <mesh filename="meshes/collision/knuckle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="middle_finger_proximal">
+        <visual>
+            <geometry name="middle_finger_proximal_visual">
+                <mesh filename="meshes/visual/finger_proximal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="middle_finger_proximal_collision">
+                <mesh filename="meshes/collision/finger_proximal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="middle_finger_middle">
+        <visual>
+            <geometry name="middle_finger_middle_visual">
+                <mesh filename="meshes/visual/finger_middle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="middle_finger_middle_collision">
+                <mesh filename="meshes/collision/finger_middle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="middle_finger_distal">
+        <visual>
+            <geometry name="middle_finger_distal_visual">
+                <mesh filename="meshes/visual/finger_distal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="middle_finger_distal_collision">
+                <mesh filename="meshes/collision/finger_distal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+
+    <!-- Middle Finger Joints -->
+    <joint name="middle_finger_joint1" type="revolute">
+        <parent link="palm"/>
+        <child link="middle_finger_knuckle"/>
+        <origin rpy="0 0 0" xyz="0.011 0 0.099"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+    </joint>
+
+    <joint name="middle_finger_joint2" type="revolute">
+        <parent link="middle_finger_knuckle"/>
+        <child link="middle_finger_proximal"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="middle_finger_joint3" type="revolute">
+        <parent link="middle_finger_proximal"/>
+        <child link="middle_finger_middle"/>
+        <origin rpy="0 0 0" xyz="0 0 0.045"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="middle_finger_joint4" type="revolute">
+        <parent link="middle_finger_middle"/>
+        <child link="middle_finger_distal"/>
+        <origin rpy="0 0 0" xyz="0 0 0.025"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+
+    <!-- Ring Finger Links -->
+    <link name="ring_finger_knuckle">
+        <visual>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="ring_finger_knuckle_visual">
+                <mesh filename="meshes/visual/knuckle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="ring_finger_knuckle_collision">
+                <mesh filename="meshes/collision/knuckle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="ring_finger_proximal">
+        <visual>
+            <geometry name="ring_finger_proximal_visual">
+                <mesh filename="meshes/visual/finger_proximal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="ring_finger_proximal_collision">
+                <mesh filename="meshes/collision/finger_proximal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="ring_finger_middle">
+        <visual>
+            <geometry name="ring_finger_middle_visual">
+                <mesh filename="meshes/visual/finger_middle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="ring_finger_middle_collision">
+                <mesh filename="meshes/collision/finger_middle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="ring_finger_distal">
+        <visual>
+            <geometry name="ring_finger_distal_visual">
+                <mesh filename="meshes/visual/finger_distal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="ring_finger_distal_collision">
+                <mesh filename="meshes/collision/finger_distal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+
+    <!-- Ring Finger Joints -->
+    <joint name="ring_finger_joint1" type="revolute">
+        <parent link="palm"/>
+        <child link="ring_finger_knuckle"/>
+        <origin rpy="0 0 0" xyz="-0.011 0 0.095"/>
+        <axis xyz="0 1 0"/>
+        <limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+    </joint>
+
+    <joint name="ring_finger_joint2" type="revolute">
+        <parent link="ring_finger_knuckle"/>
+        <child link="ring_finger_proximal"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="ring_finger_joint3" type="revolute">
+        <parent link="ring_finger_proximal"/>
+        <child link="ring_finger_middle"/>
+        <origin rpy="0 0 0" xyz="0 0 0.045"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="ring_finger_joint4" type="revolute">
+        <parent link="ring_finger_middle"/>
+        <child link="ring_finger_distal"/>
+        <origin rpy="0 0 0" xyz="0 0 0.025"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+
+    <!-- Little Finger Links -->
+    <link name="little_finger_metacarpal">
+        <visual>
+            <geometry name="little_finger_metacarpal_visual">
+                <mesh filename="meshes/visual/metacarpal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="little_finger_metacarpal_collision">
+                <mesh filename="meshes/collision/metacarpal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="little_finger_knuckle">
+        <visual>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="little_finger_knuckle_visual">
+                <mesh filename="meshes/visual/knuckle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin rpy="0 0 0" xyz="0 0 0.0005"/>
+            <geometry name="little_finger_knuckle_collision">
+                <mesh filename="meshes/collision/knuckle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="little_finger_proximal">
+        <visual>
+            <geometry name="little_finger_proximal_visual">
+                <mesh filename="meshes/visual/finger_proximal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="little_finger_proximal_collision">
+                <mesh filename="meshes/collision/finger_proximal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="little_finger_middle">
+        <visual>
+            <geometry name="little_finger_middle_visual">
+                <mesh filename="meshes/visual/finger_middle.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="little_finger_middle_collision">
+                <mesh filename="meshes/collision/finger_middle.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="little_finger_distal">
+        <visual>
+            <geometry name="little_finger_distal_visual">
+                <mesh filename="meshes/visual/finger_distal.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <geometry name="little_finger_distal_collision">
+                <mesh filename="meshes/collision/finger_distal.stl"/>
+            </geometry>
+        </collision>
+    </link>
+
+
+    <!-- Little Finger Joints -->
+    <joint name="little_finger_joint1" type="revolute">
+        <parent link="palm"/>
+        <child link="little_finger_metacarpal"/>
+        <origin rpy="0 0 0" xyz="-0.033 0 0.02071"/>
+        <axis xyz="0.573576436 0 0.819152044"/>
+        <limit effort="4.0" lower="0" upper="0.785398163397" velocity="2.0"/>
+    </joint>
+
+    <joint name="little_finger_joint2" type="revolute">
+        <parent link="little_finger_metacarpal"/>
+        <child link="little_finger_knuckle"/>
+        <origin rpy="0 0 0" xyz="0 0 0.06579"/>
+        <axis xyz="0 1 0"/>
+        <limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
+    </joint>
+
+    <joint name="little_finger_joint3" type="revolute">
+        <parent link="little_finger_knuckle"/>
+        <child link="little_finger_proximal"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="little_finger_joint4" type="revolute">
+        <parent link="little_finger_proximal"/>
+        <child link="little_finger_middle"/>
+        <origin rpy="0 0 0" xyz="0 0 0.045"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+    <joint name="little_finger_joint5" type="revolute">
+        <parent link="little_finger_middle"/>
+        <child link="little_finger_distal"/>
+        <origin rpy="0 0 0" xyz="0 0 0.025"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="4.0" lower="0" upper="1.57079632679" velocity="2.0"/>
+    </joint>
+
+</robot>

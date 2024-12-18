@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <asset>
+    <contributor>
+      <author>Blender User</author>
+      <authoring_tool>Blender 2.81.16 commit date:2019-11-20, commit time:14:27, hash:26bd5ebd42e3</authoring_tool>
+    </contributor>
+    <created>2020-01-07T14:47:32</created>
+    <modified>2020-01-07T14:47:32</modified>
+    <unit name="meter" meter="1"/>
+    <up_axis>Z_UP</up_axis>
+  </asset>
+  <library_effects>
+    <effect id="battery-effect">
+      <profile_COMMON>
+        <newparam sid="battery-surface">
+          <surface type="2D">
+            <init_from>battery</init_from>
+          </surface>
+        </newparam>
+        <newparam sid="battery-sampler">
+          <sampler2D>
+            <source>battery-surface</source>
+          </sampler2D>
+        </newparam>
+        <technique sid="common">
+          <lambert>
+            <emission>
+              <color sid="emission">0 0 0 1</color>
+            </emission>
+            <diffuse>
+              <texture texture="battery-sampler" texcoord="UVMap"/>
+            </diffuse>
+            <index_of_refraction>
+              <float sid="ior">1.45</float>
+            </index_of_refraction>
+          </lambert>
+        </technique>
+      </profile_COMMON>
+    </effect>
+  </library_effects>
+  <library_images>
+    <image id="battery" name="battery">
+      <init_from>battery.jpg</init_from>
+    </image>
+  </library_images>
+  <library_materials>
+    <material id="battery-material" name="battery">
+      <instance_effect url="#battery-effect"/>
+    </material>
+  </library_materials>
+  <library_geometries>
+    <geometry id="Cube-mesh" name="Cube">
+      <mesh>
+        <source id="Cube-mesh-positions">
+          <float_array id="Cube-mesh-positions-array" count="24">-0.225881 -0.06249898 -0.03684729 -0.225881 -0.06249898 0.03725165 -0.225881 0.06249898 -0.03684729 -0.225881 0.06249898 0.03725165 0.232213 -0.06249898 -0.03684729 0.232213 -0.06249898 0.03725165 0.232213 0.06249898 -0.03684729 0.232213 0.06249898 0.03725165</float_array>
+          <technique_common>
+            <accessor source="#Cube-mesh-positions-array" count="8" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <source id="Cube-mesh-normals">
+          <float_array id="Cube-mesh-normals-array" count="18">-1 0 0 0 1 0 1 0 0 0 -1 0 0 0 -1 0 0 1</float_array>
+          <technique_common>
+            <accessor source="#Cube-mesh-normals-array" count="6" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <source id="Cube-mesh-map">
+          <float_array id="Cube-mesh-map-array" count="72">0.8431081 0.2728654 1 0 1 0.2728654 0.6862162 1 0.8431079 0 0.8431081 1 0.8431081 0.5457308 1 0.2728654 1 0.5457308 0.6862159 0 0.5293241 1 0.5293239 0 0.264662 0 0.5293239 0.9999999 0.2646622 0.9999999 0.264662 0.9999999 0 0 0.2646618 0 0.8431081 0.2728654 0.8431081 0 1 0 0.6862162 1 0.6862161 0 0.8431079 0 0.8431081 0.5457308 0.8431081 0.2728654 1 0.2728654 0.6862159 0 0.6862161 1 0.5293241 1 0.264662 0 0.5293238 0 0.5293239 0.9999999 0.264662 0.9999999 1.73529e-7 0.9999999 0 0</float_array>
+          <technique_common>
+            <accessor source="#Cube-mesh-map-array" count="36" stride="2">
+              <param name="S" type="float"/>
+              <param name="T" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <vertices id="Cube-mesh-vertices">
+          <input semantic="POSITION" source="#Cube-mesh-positions"/>
+        </vertices>
+        <triangles material="battery-material" count="12">
+          <input semantic="VERTEX" source="#Cube-mesh-vertices" offset="0"/>
+          <input semantic="NORMAL" source="#Cube-mesh-normals" offset="1"/>
+          <input semantic="TEXCOORD" source="#Cube-mesh-map" offset="2" set="0"/>
+          <p>1 0 0 2 0 1 0 0 2 3 1 3 6 1 4 2 1 5 7 2 6 4 2 7 6 2 8 5 3 9 0 3 10 4 3 11 6 4 12 0 4 13 2 4 14 3 5 15 5 5 16 7 5 17 1 0 18 3 0 19 2 0 20 3 1 21 7 1 22 6 1 23 7 2 24 5 2 25 4 2 26 5 3 27 1 3 28 0 3 29 6 4 30 4 4 31 0 4 32 3 5 33 1 5 34 5 5 35</p>
+        </triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="Scene" name="Scene">
+      <node id="AM3_Battery_LP" name="AM3 Battery LP" type="NODE">
+        <matrix sid="transform">1 0 0 0 0 1 0 0 0 0 1 -0.03329167 0 0 0 1</matrix>
+        <instance_geometry url="#Cube-mesh" name="AM3 Battery LP">
+          <bind_material>
+            <technique_common>
+              <instance_material symbol="battery-material" target="#battery-material">
+                <bind_vertex_input semantic="UVMap" input_semantic="TEXCOORD" input_set="0"/>
+              </instance_material>
+            </technique_common>
+          </bind_material>
+        </instance_geometry>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene>
+    <instance_visual_scene url="#Scene"/>
+  </scene>
+</COLLADA>

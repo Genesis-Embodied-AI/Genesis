@@ -1,0 +1,19 @@
+# 3ds Max Wavefront OBJ Exporter v0.97b - (c)2007 guruware
+# File Created: 08.09.2021 15:39:52
+
+newmtl wood_Mat
+	Ns 10.000000
+	Ni 1.500000
+	d 1.000000
+	Tr 0.000000
+	Tf 1.000000 1.000000 1.000000 
+	illum 2
+	Ka 1.000000 1.000000 1.000000
+	Kd 1.000000 1.000000 1.000000
+	Ks 0.000000 0.000000 0.000000
+	Ke 0.000000 0.000000 0.000000
+	map_Ka wood_Mat_Diffuse.png
+	map_Kd wood_Mat_Diffuse.png
+	map_Ks wood_Mat_Specular.png
+	map_bump wood_Mat_Normal.png
+	bump wood_Mat_Normal.png

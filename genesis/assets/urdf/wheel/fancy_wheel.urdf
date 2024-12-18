@@ -1,0 +1,46 @@
+<?xml version="1.0" ?>
+<robot name="2link_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+    
+    <!-- materials -->
+    <material name="yellow">
+        <color rgba="0.6 0.7 0 0.7"/>
+    </material>
+    <material name="green">
+        <color rgba="0 0.6 0.8 0.7"/>
+    </material>
+
+    <!-- links -->
+    <link name="base"/>
+
+    <link name="arm1">
+        <inertial>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <mass value="150."/>
+            <inertia ixx="20.0" ixy="0" ixz="0" iyy="20.0" iyz="0" izz="20.0"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <mesh filename="package://fancy_wheel.obj" scale="0.3 0.3 0.3"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <material name="yellow"/>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://fancy_wheel.obj" scale="0.3 0.3 0.3"/>
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <material name="green"/>
+        </collision>
+    </link>
+
+
+    <!-- joints -->
+    <joint name="baseHinge_1" type="continuous">
+        <axis rpy="0 0 0" xyz="1 0 0"/>
+        <parent link="base"/>
+        <child link="arm1"/>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+    </joint>
+
+</robot>

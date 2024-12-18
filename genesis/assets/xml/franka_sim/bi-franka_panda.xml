@@ -1,0 +1,44 @@
+<mujoco model="bi-franka_panda v200">
+<!-- =================================================
+    Copyright 2018 Vikash Kumar
+    Model   :: Bi-Franka (MuJoCoV2.0)
+    Author  :: Vikash Kumar (vikashplus@gmail.com)
+    source  :: https://github.com/vikashplus/franka_sim
+    License :: Under Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+====================================================== -->
+
+    <include file="assets/basic_scene.xml"/>
+    <include file="assets/assets.xml"/>
+    <include file="assets/gripper_assets.xml"/>
+    <compiler meshdir=""/>
+
+    <default>
+        <default class='torso'>
+            <geom group='2' contype='0' conaffinity='0' rgba=".95 .99 .92 1"/>
+        </default>/
+    </default>
+
+    <worldbody>
+
+        <body name='torso' childclass='torso'>
+            <geom name='shoulders' type='capsule' size='.09' fromto='.15 0 1.6 -.15 0 1.6'/>
+            <geom name='absL' type='capsule' size='.09' fromto='.15 0 1.6 0.05 0 1.05'/>
+            <geom name='absR' type='capsule' size='.09' fromto='-.15 0 1.6 -.05 0 1.05'/>
+            <geom name='legs' type='capsule' size='.135' fromto='0 0 1.05 0 0 0.05'/>
+
+            <body name='leftarm' pos='0 0 1.6' euler='0 -1.57 1.57'>
+                <include file="assets/chain0.xml"/>
+            </body>
+
+            <body name='rightarm' pos='0 0 1.6' euler='0 1.57 1.57'>
+                <include file="assets/chain1.xml"/>
+            </body>
+
+        </body>
+
+    </worldbody>
+
+    <include file='assets/actuator0.xml'/>
+    <include file='assets/actuator1.xml'/>
+
+</mujoco>

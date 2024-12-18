@@ -1,0 +1,24 @@
+newmtl WormMaterial
+Ka 1.000 1.000 1.000   # Ambient color (default white)
+Kd 1.000 1.000 1.000   # Diffuse color (default white)
+Ks 0.500 0.500 0.500   # Specular color (default medium gray)
+Ns 50.0                # Specular highlight (shininess)
+d 1.0                  # Transparency (1.0 is fully opaque)
+illum 2                # Illumination model (2: diffuse and specular)
+
+# Base color texture
+map_Kd bdy_Base_Color.png
+
+# Height map (for displacement mapping)
+map_bump bdy_Height.png
+bump bdy_Height.png
+
+# Metallic map
+map_Ks bdy_Metallic.png
+
+# Normal map (DirectX format)
+map_bump bdy_Normal_DirectX.png
+bump bdy_Normal_DirectX.png
+
+# Roughness map
+map_Ns bdy_Roughness.png

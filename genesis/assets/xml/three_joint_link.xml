@@ -1,0 +1,49 @@
+<mujoco model="three_link_join">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option timestep="0.01" iterations="4" />
+
+  <default>
+    <joint armature="1" damping="1" limited="true"/>
+    <geom contype="0" conaffinity="0" condim="3" density="5.0" friction="1 0.5 0.5" rgba="0.8 0.6 0.4 1"/>
+  </default>
+  <asset>
+    <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.5" shininess="1" specular="1" texrepeat="60 60" texture="texplane"/>
+    <material name="geom" texture="texgeom" texuniform="true"/>
+  </asset>
+  <worldbody>
+    <light cutoff="100" diffuse="1 1 1" dir="-0 0 -1.3" directional="true" exponent="1" pos="0 0 1.3" specular=".1 .1 .1"/>
+    <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane"/>
+    <geom material="MatPlane" name="floor_vis" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane"/>
+
+
+
+    <body name="torso" pos="0 0 0.9">
+      <camera name="track" mode="trackcom" pos="0 -3 0.3" xyaxes="1 0 0 0 0 1"/>
+      <geom name="torso_geom" contype="1"  pos="0 0 0" size="0.08" type="sphere"/>
+      <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
+      <body name="front_left_leg" pos="0 0 0">
+        <geom fromto="0.0 0.0 0.0 0.2 0.2 0.0" name="aux_1_geom" size="0.08" type="capsule"/>
+        <body name="aux_1" pos="0.2 0.2 0">
+          <joint axis="0 0 1" name="hip_1" pos="0.0 0.0 0.0" range="-180 180" type="hinge"/>
+          <geom fromto="0.0 0.0 0.0 0.2 0.2 0.0" contype="1" name="left_leg_geom" size="0.08" type="capsule"/>
+          <geom name="left_leg_geom2" contype="1" pos="0.2 0.2 0" size="0.08" type="sphere" mass="0"/>
+          <body pos="0.2 0.2 0">
+            <joint axis="1 0 0" name="ankle_11" pos="0.0 0.0 0.0" range="-180 180"  type="hinge"/>
+            <joint axis="0 1 0" name="ankle_12" pos="0.0 0.0 0.0" range="-180 180"  type="hinge"/>
+            <geom fromto="0.0 0.0 0.0 0.6 0.6 0.0" contype="1" name="left_ankle_geom" size="0.08" type="capsule"/>
+            <geom name="left_foot_geom" contype="1" pos="0.6 0.6 0" size="0.08" type="sphere" mass="0"/>
+            <body pos="0.6 0.6 0">
+              <joint axis="-1 1 0" name="ankle_2" pos="0.0 0.0 0.0" type="ball"/>
+              <geom fromto="0.0 0.0 0.0 0.6 0.6 0.0" contype="1" name="left_ankle_geom2" size="0.08" type="capsule"/>
+              <geom name="left_foot_geom2" contype="1" pos="0.6 0.6 0" size="0.08" type="sphere" mass="0"/>
+            </body>
+
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

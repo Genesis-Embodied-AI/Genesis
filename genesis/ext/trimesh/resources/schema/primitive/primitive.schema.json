@@ -1,0 +1,22 @@
+{
+  "$id": "https://github.com/mikedh/trimesh/blob/main/trimesh/resources/schema/primitive/primitive.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "box.schema.json"
+    },
+    {
+      "$ref": "sphere.schema.json"
+    },
+    {
+      "$ref": "capsule.schema.json"
+    },
+    {
+      "$ref": "cylinder.schema.json"
+    },
+    {
+      "$ref": "extrusion.schema.json"
+    }
+  ],
+  "description": "A geometric primitive."
+}

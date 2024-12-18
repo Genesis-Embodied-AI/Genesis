@@ -1,0 +1,83 @@
+<mujocoinclude>
+<!-- =================================================
+    Copyright 2018 Vikash Kumar
+    Model   :: Franka (MuJoCoV2.0)
+    Author  :: Vikash Kumar (vikashplus@gmail.com)
+    source  :: https://github.com/vikashplus/franka_sim
+    License :: Under Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+====================================================== -->
+
+    <compiler angle="radian"/>
+    <!-- <option timestep="0.002" noslip_iterations="20"/> -->
+    <option timestep="0.002"/>
+    <size nuser_actuator="5"/>
+
+    <asset>
+        <mesh name="link0_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link0.stl"/>
+        <mesh name="link1_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link1.stl"/>
+        <mesh name="link2_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link2.stl"/>
+        <mesh name="link3_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link3.stl"/>
+        <mesh name="link4_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link4.stl"/>
+        <mesh name="link5_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link5.stl"/>
+        <mesh name="link6_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link6.stl"/>
+        <mesh name="link7_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link7.stl"/>
+        <mesh name="hand_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/hand.stl"/>
+        <mesh name="link0_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link0.stl"/>
+        <mesh name="link1_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link1.stl"/>
+        <mesh name="link2_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link2.stl"/>
+        <mesh name="link3_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link3.stl"/>
+        <mesh name="link3_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link3_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link4_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link4.stl"/>
+        <mesh name="link4_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link4_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link5_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link5.stl"/>
+        <mesh name="link5_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link5_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link6_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link6.stl"/>
+        <mesh name="link6_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link6_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link7_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link7.stl"/>
+        <mesh name="link7_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link7_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="hand_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/hand.stl"/>
+    </asset>
+
+    <default>
+        <default class="panda">
+            <joint pos="0 0 0" axis="0 0 1" limited="true"/>
+            <position forcelimited="true" ctrllimited="true" user="1002 40 2001 -0.005 0.005"/>
+            <default class="panda_viz">
+                <geom contype="0" conaffinity="0" group="0" type="mesh" rgba=".92 .92 .95 1"/>
+            </default>
+            <default class="panda_grey_viz">
+                <geom contype="0" conaffinity="0" group="0" type="mesh" rgba=".4 .4 .4 1"/>
+            </default>
+
+            <default class="panda_col">
+                <geom contype="1" conaffinity="1" group="3" type="mesh" rgba=".5 .6 .7 1"/>
+            </default>
+            <default class="panda_arm">
+                <joint damping="100"/>
+            </default>
+             <default class="panda_forearm">
+                <joint damping="10"/>
+            </default>
+             <default class="panda_finger">
+                <joint damping="100" armature='5'/>
+                <geom friction="1 0.5 0.0001" solref="0.01 1" solimp="0.8 0.9 0.001" margin="0.001" user="0" rgba="0.5 0.6 0.7 .4" contype="1" conaffinity="0" condim="6" group="3" />
+                <position user="1002 40 2001 -0.0001 0.0001"/>
+            </default>
+        </default>
+
+    </default>
+
+    <sensor>
+        <jointpos name="fr_arm_jp1" joint="panda0_joint1"/>
+        <jointpos name="fr_arm_jp2" joint="panda0_joint2"/>
+        <jointpos name="fr_arm_jp3" joint="panda0_joint3"/>
+        <jointpos name="fr_arm_jp4" joint="panda0_joint4"/>
+        <jointpos name="fr_arm_jp5" joint="panda0_joint5"/>
+        <jointvel name="fr_arm_jv1" joint="panda0_joint1"/>
+        <jointvel name="fr_arm_jv2" joint="panda0_joint2"/>
+        <jointvel name="fr_arm_jv3" joint="panda0_joint3"/>
+        <jointvel name="fr_arm_jv4" joint="panda0_joint4"/>
+        <jointvel name="fr_arm_jv5" joint="panda0_joint5"/>
+    </sensor>
+
+</mujocoinclude>

@@ -1,0 +1,114 @@
+<mujoco model="panda hand">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <option integrator="implicitfast"/>
+
+  <default>
+    <default class="panda">
+      <material specular="0.5" shininess="0.25"/>
+      <joint armature="0.1" damping="1" axis="0 0 1" range="-2.8973 2.8973"/>
+      <general dyntype="none" biastype="affine" ctrlrange="-2.8973 2.8973" forcerange="-87 87"/>
+      <default class="finger">
+        <joint axis="0 1 0" type="slide" range="0 0.04"/>
+      </default>
+
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom type="mesh" group="3"/>
+        <default class="fingertip_pad_collision_1">
+          <geom type="box" size="0.0085 0.004 0.0085" pos="0 0.0055 0.0445"/>
+        </default>
+        <default class="fingertip_pad_collision_2">
+          <geom type="box" size="0.003 0.002 0.003" pos="0.0055 0.002 0.05"/>
+        </default>
+        <default class="fingertip_pad_collision_3">
+          <geom type="box" size="0.003 0.002 0.003" pos="-0.0055 0.002 0.05"/>
+        </default>
+        <default class="fingertip_pad_collision_4">
+          <geom type="box" size="0.003 0.002 0.0035" pos="0.0055 0.002 0.0395"/>
+        </default>
+        <default class="fingertip_pad_collision_5">
+          <geom type="box" size="0.003 0.002 0.0035" pos="-0.0055 0.002 0.0395"/>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material class="panda" name="white" rgba="1 1 1 1"/>
+    <material class="panda" name="off_white" rgba="0.901961 0.921569 0.929412 1"/>
+    <material class="panda" name="black" rgba="0.25 0.25 0.25 1"/>
+
+    <!-- Collision meshes -->
+    <mesh name="hand_c" file="hand.stl"/>
+
+    <!-- Visual meshes -->
+    <mesh file="hand_0.obj"/>
+    <mesh file="hand_1.obj"/>
+    <mesh file="hand_2.obj"/>
+    <mesh file="hand_3.obj"/>
+    <mesh file="hand_4.obj"/>
+    <mesh file="finger_0.obj"/>
+    <mesh file="finger_1.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="hand" childclass="panda" quat="0 0 0 1">
+      <inertial mass="0.73" pos="-0.01 0 0.03" diaginertia="0.001 0.0025 0.0017"/>
+      <geom mesh="hand_0" material="off_white" class="visual"/>
+      <geom mesh="hand_1" material="black" class="visual"/>
+      <geom mesh="hand_2" material="black" class="visual"/>
+      <geom mesh="hand_3" material="white" class="visual"/>
+      <geom mesh="hand_4" material="off_white" class="visual"/>
+      <geom mesh="hand_c" class="collision"/>
+      <body name="left_finger" pos="0 0 0.0584">
+        <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
+        <joint name="finger_joint1" class="finger"/>
+        <geom mesh="finger_0" material="off_white" class="visual"/>
+        <geom mesh="finger_1" material="black" class="visual"/>
+        <geom mesh="finger_0" class="collision"/>
+        <geom class="fingertip_pad_collision_1"/>
+        <geom class="fingertip_pad_collision_2"/>
+        <geom class="fingertip_pad_collision_3"/>
+        <geom class="fingertip_pad_collision_4"/>
+        <geom class="fingertip_pad_collision_5"/>
+      </body>
+      <body name="right_finger" pos="0 0 0.0584" quat="0 0 0 1">
+        <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
+        <joint name="finger_joint2" class="finger"/>
+        <geom mesh="finger_0" material="off_white" class="visual"/>
+        <geom mesh="finger_1" material="black" class="visual"/>
+        <geom mesh="finger_0" class="collision"/>
+        <geom class="fingertip_pad_collision_1"/>
+        <geom class="fingertip_pad_collision_2"/>
+        <geom class="fingertip_pad_collision_3"/>
+        <geom class="fingertip_pad_collision_4"/>
+        <geom class="fingertip_pad_collision_5"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="hand" body2="left_finger"/>
+    <exclude body1="hand" body2="right_finger"/>
+  </contact>
+
+  <tendon>
+    <fixed name="split">
+      <joint joint="finger_joint1" coef="0.5"/>
+      <joint joint="finger_joint2" coef="0.5"/>
+    </fixed>
+  </tendon>
+
+  <equality>
+    <joint joint1="finger_joint1" joint2="finger_joint2" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+  </equality>
+
+  <actuator>
+    <!-- Remap original ctrlrange (0, 0.04) to (0, 255): 0.04 * 100 / 255 = 0.01568627451 -->
+    <general class="panda" name="actuator8" tendon="split" forcerange="-100 100" ctrlrange="0 255"
+      gainprm="0.01568627451 0 0" biasprm="0 -100 -10"/>
+  </actuator>
+</mujoco>

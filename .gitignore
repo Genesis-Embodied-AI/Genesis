@@ -1,4 +1,10 @@
+logs/
+tmp/
+MUJOCO_LOG.TXT
+imgui.ini
 .DS_Store
+sftp-config.json
+*.mp4
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -32,7 +38,6 @@ MANIFEST
 
 # debug
 examples/debug/*
-genesis/utils/process_image.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -76,7 +81,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+doc/_build/
 
 # PyBuilder
 target/

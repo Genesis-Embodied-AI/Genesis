@@ -1,0 +1,8 @@
+{
+    "face": "element face $face_count\nproperty list uchar int vertex_indices\n",
+    "vertex": "element vertex $vertex_count\nproperty float x\nproperty float y\nproperty float z\n",
+    "vertex_normal": "property float nx\nproperty float ny\nproperty float nz\n",
+    "color": "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n",
+    "intro": "ply\nformat $encoding 1.0\ncomment https://github.com/mikedh/trimesh\n",
+    "outro": "end_header\n"
+}

@@ -1,0 +1,29 @@
+<mujocoinclude>
+<!-- =================================================
+    Copyright 2018 Vikash Kumar
+    Model   :: Franka (MuJoCoV2.0)
+    Author  :: Vikash Kumar (vikashplus@gmail.com)
+    source  :: https://github.com/vikashplus/franka_sim
+    License :: Under Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+====================================================== -->
+
+    <asset>
+        <mesh name="finger_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/finger.stl" scale='1.75 1.0 1.75'/>
+        <mesh name="finger_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/finger.stl" scale='1.75 1.0 1.75'/>
+    </asset>
+
+    <default>
+        <default class="panda_overlay">
+            <joint limited="false" damping="1000" armature="1" frictionloss="10"/>
+            <geom contype="0" conaffinity="0" group="2" type="mesh" rgba=".42 0.42 0.42 .5"/>
+        </default>
+    </default>
+
+    <sensor>
+        <jointpos name="fr_fin_jp1" joint="panda0_finger_joint1"/>
+        <jointpos name="fr_fin_jp2" joint="panda0_finger_joint2"/>
+        <jointvel name="fr_fin_jv1" joint="panda0_finger_joint1"/>
+        <jointvel name="fr_fin_jv2" joint="panda0_finger_joint2"/>
+    </sensor>
+
+</mujocoinclude>
