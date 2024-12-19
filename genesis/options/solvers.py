@@ -483,5 +483,15 @@ class SFOptions(Options):
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     """
+    dt           : Optional[float] = None
+    res          : Optional[int] = 128
+    solver_iters : Optional[int] = 500
+    decay        : Optional[float] = 0.99
 
-    dt: Optional[float] = None
+    T_low        : Optional[float] = 1.0
+    T_high       : Optional[float] = 0.0
+
+    inlet_pos    : Optional[tuple[int, int, int]] = (0.6, 0.0, 0.1)
+    inlet_vel    : Optional[tuple[int, int, int]] = (0, 0, 1)
+    inlet_quat   : Optional[tuple[int, int, int, int]] = (1, 0, 0, 0)
+    inlet_s      : Optional[float] = 400.0

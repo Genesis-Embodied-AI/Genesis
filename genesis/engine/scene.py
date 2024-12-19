@@ -304,6 +304,13 @@ class Scene(RBC):
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'recon']."
                 )
 
+        elif isinstance(material, (gs.materials.SF.Smoke)):
+            if surface.vis_mode is None:
+                surface.vis_mode = 'particle'
+
+            if surface.vis_mode not in ['particle']:
+                gs.raise_exception(f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'recon'].")
+
         elif isinstance(material, (gs.materials.PBD.Base, gs.materials.MPM.Base, gs.materials.SPH.Base)):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
