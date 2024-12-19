@@ -39,7 +39,7 @@ class TimeElapser:
         pass
 
     def run(self):
-        # re-print logger msg from the begining of the previous line
+        # re-print logger msg from the beginning of the previous line
         self.logger.raw("\x1b[1F" + self.start_msg + " ")
         t_start = time.perf_counter()
         t_elapsed = time.perf_counter() - t_start
