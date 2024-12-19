@@ -36,7 +36,7 @@ Project Page: https://genesis-embodied-ai.github.io/
 - **Support for a wide range of robots**: Robot arm, legged robot, drone, _soft robot_, etc., and extensive support for loading different file types: `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, etc.
 - **Photorealistic and high-performance ray-tracer**: Genesis supports native ray-tracing based rendering.
 - **Differentiability**: Genesis is designed to be fully compatible with differentiable simulation. Currently, our MPM solver and Tool Solver are differentiable, and differentiability for other solvers will be added soon (starting with rigid-body simulation).
-- **Physics-based Tactile Sensor**: Genesis involves a physics-based and differentiable [tactile sensor simulation module](https://github.com/Genesis-Embodied-AI/DiffTactile). This will be integrated to the public version soon (expected in version 0.2.0).
+- **Physics-based Tactile Sensor**: Genesis involves a physics-based and differentiable [tactile sensor simulation module](https://github.com/Genesis-Embodied-AI/DiffTactile). This will be integrated to the public version soon (expected in version 0.3.0).
 - **User-friendliness**: Genesis is designed in a way to make using simulation as simple as possible. From installation to API design, if there's anything you found counter-intuitive or difficult to use, please [let us know](https://github.com/Genesis-Embodied-AI/Genesis/issues).
 
 ## Getting Started
@@ -66,6 +66,7 @@ The development of Genesis won't be possible without these amazing open-source p
 - [Taichi](https://github.com/taichi-dev/taichi): for providing a high-performance cross-platform compute backend. Kudos to all the members providing technical support from taichi!
 - [FluidLab](https://github.com/zhouxian/FluidLab) for providing a reference MPM solver implementation
 - [SPH_Taichi](https://github.com/erizmr/SPH_Taichi) for providing a reference SPH solver implementation
+- [Ten Minute Physics](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) and [PBF3D](https://github.com/WASD4959/PBF3D) for providing a reference PBD solver implementation
 - [MuJoCo](https://github.com/google-deepmind/mujoco) and [Brax](https://github.com/google/brax) for providing reference for rigid body dynamics
 - [libccd](https://github.com/danfis/libccd) for providing reference for collision detection
 - [PyRender](https://github.com/mmatl/pyrender) for rasterization-based renderer
