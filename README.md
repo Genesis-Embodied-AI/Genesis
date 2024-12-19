@@ -67,6 +67,7 @@ The development of Genesis won't be possible without these amazing open-source p
 - [FluidLab](https://github.com/zhouxian/FluidLab) for providing a reference MPM solver implementation
 - [SPH_Taichi](https://github.com/erizmr/SPH_Taichi) for providing a reference SPH solver implementation
 - [MuJoCo](https://github.com/google-deepmind/mujoco) and [Brax](https://github.com/google/brax) for providing reference for rigid body dynamics
+- [libccd](https://github.com/danfis/libccd) for providing reference for collision detection
 - [PyRender](https://github.com/mmatl/pyrender) for rasterization-based renderer
 - [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) and [LuisaRender](https://github.com/LuisaGroup/LuisaRender) for its ray-tracing DSL
 - [trimesh](https://github.com/mikedh/trimesh), [PyMeshLab](https://github.com/cnr-isti-vclab/PyMeshLab) and [CoACD](https://github.com/SarahWeiii/CoACD) for geometry processing
