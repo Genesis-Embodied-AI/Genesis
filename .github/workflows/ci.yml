@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-linux-gpu:
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      # matrix:
+      #   python-version: ["3.9"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Run Tests
+        run: |
+          docker run -u ci:ci --gpus all --rm -v ${{ github.workspace }}:/app cuda11_py11:latest \
+          bash -c "cd /app && \
+          sudo bash ./.github/workflows/setup_env.sh && \
+          pip install -e . && \
+          python -m unittest discover tests"
+
+      - name: Display Speed Test
+        run: cat speed_test.txt
+
+
+      - name: Upload Test Results as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: speed-test-results
+          path: speed_test.txt
