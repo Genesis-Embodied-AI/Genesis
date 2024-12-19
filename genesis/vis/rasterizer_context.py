@@ -8,8 +8,8 @@ import genesis.utils.particle as pu
 try:
     from genesis.ext import pyrender, trimesh
     from genesis.ext.pyrender.jit_render import JITRenderer
-except:
-    pass
+except Exception as e:
+    print(f"[Error]: {e}\n")
 from genesis.utils.misc import tensor_to_array
 
 
