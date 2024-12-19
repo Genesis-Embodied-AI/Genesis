@@ -64,7 +64,7 @@ class Viewer(RBC):
         elif gs.platform == "Windows":
             run_in_thread = False
             auto_start = False
-            gs.raise_exception("Viewer has some issues on Windows. Can anyone help?")
+            # gs.raise_exception("Viewer has some issues on Windows. Can anyone help?")
 
         self._pyrender_viewer = pyrender.Viewer(
             context=self.context,
