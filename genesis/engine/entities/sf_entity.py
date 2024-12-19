@@ -12,11 +12,14 @@ from genesis.ext import trimesh
 
 @ti.data_oriented
 class SFParticleEntity(ParticleEntity):
-    '''
+    """
     PBD-based entity represented solely by particles.
-    '''
+    """
+
     def __init__(self, scene, solver, material, morph, surface, particle_size, idx, particle_start):
-        super().__init__(scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False)
+        super().__init__(
+            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False
+        )
 
     def process_input(self, in_backward=False):
         # TODO: implement this
@@ -31,5 +34,5 @@ class SFParticleEntity(ParticleEntity):
         pass
 
     def update_particles(self, particles):
-        self._particles   = particles
+        self._particles = particles
         self._n_particles = particles.shape[0]

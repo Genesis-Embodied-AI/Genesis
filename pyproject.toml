@@ -34,6 +34,7 @@ dependencies = [
     "pymeshlab",
     "coacd",
     "OpenEXR",
+    "black",
 ]
 
 [tool.setuptools.packages.find]
@@ -47,6 +48,9 @@ genesis = [
     "ext/pyrender/shaders/*",
     "ext/VolumeSampling",
 ]
+
+[tool.black]
+line-length = 120
 
 [project.scripts]
 gs = "genesis._main:main"

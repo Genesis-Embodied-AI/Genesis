@@ -12,9 +12,9 @@ from .base_solver import Solver
 
 @ti.data_oriented
 class SFSolver(Solver):
-    '''
+    """
     Stable Fluid solver for eulerian-based gaseous simulation.
-    '''
+    """
 
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
@@ -22,14 +22,14 @@ class SFSolver(Solver):
         if options is None:
             return
 
-        self.n_grid        = options.res
-        self.dx            = 1 / self.n_grid
-        self.res           = (self.n_grid, self.n_grid, self.n_grid)
-        self.solver_iters  = options.solver_iters
-        self.decay         = options.decay
+        self.n_grid = options.res
+        self.dx = 1 / self.n_grid
+        self.res = (self.n_grid, self.n_grid, self.n_grid)
+        self.solver_iters = options.solver_iters
+        self.decay = options.decay
 
-        self.t             = 0.0
-        self.inlet_s       = options.inlet_s
+        self.t = 0.0
+        self.inlet_s = options.inlet_s
 
         self.jets = []
 
@@ -48,21 +48,20 @@ class SFSolver(Solver):
 
     def setup_fields(self):
         cell_state = ti.types.struct(
-            v     = gs.ti_vec3,
-            v_tmp = gs.ti_vec3,
-            div   = gs.ti_float,
-            p     = gs.ti_float,
-            q     = ti.types.vector(len(self.jets), gs.ti_float),
+            v=gs.ti_vec3,
+            v_tmp=gs.ti_vec3,
+            div=gs.ti_float,
+            p=gs.ti_float,
+            q=ti.types.vector(len(self.jets), gs.ti_float),
         )
 
-        self.grid    = cell_state.field(shape=self.res, layout=ti.Layout.SOA)
+        self.grid = cell_state.field(shape=self.res, layout=ti.Layout.SOA)
 
         # swap area for pressure projection solver
         self.p_swap = TexPair(
-            cur = ti.field(dtype=gs.ti_float, shape=self.res),
-            nxt = ti.field(dtype=gs.ti_float, shape=self.res),
+            cur=ti.field(dtype=gs.ti_float, shape=self.res),
+            nxt=ti.field(dtype=gs.ti_float, shape=self.res),
         )
-
 
     @ti.kernel
     def init_fields(self):
@@ -183,12 +182,11 @@ class SFSolver(Solver):
         I = max(0, min(self.n_grid - 1, I))
         return I
 
-
     @ti.func
     def is_free(self, u, v, w, du, dv, dw):
         flag = 1
 
-        I = ti.Vector([int(u+du), int(v+dv), int(w+dw)])
+        I = ti.Vector([int(u + du), int(v + dv), int(w + dw)])
         if (I < 0).any() or (I > self.n_grid - 1).any():
             flag = 0
 
@@ -196,10 +194,10 @@ class SFSolver(Solver):
 
     @ti.func
     def trilerp_scalar(self, qf, p, qf_idx):
-        '''
+        """
         p: position, within (0, 1).
         qf: field for interpolation
-        '''
+        """
         # convert position to grid index
         base_I = ti.floor(p - 0.5, gs.ti_int)
         p_I = p - 0.5
@@ -219,10 +217,10 @@ class SFSolver(Solver):
 
     @ti.func
     def trilerp(self, qf, p):
-        '''
+        """
         p: position, within (0, 1).
         qf: field for interpolation
-        '''
+        """
         # convert position to grid index
         base_I = ti.floor(p - 0.5, gs.ti_int)
         p_I = p - 0.5
@@ -243,9 +241,9 @@ class SFSolver(Solver):
     # RK3
     @ti.func
     def backtrace(self, vf, p, dt):
-        '''
+        """
         vf: velocity field
-        '''
+        """
         v1 = self.trilerp(vf, p)
         p1 = p - 0.5 * dt * v1
         v2 = self.trilerp(vf, p1)
@@ -268,6 +266,7 @@ class SFSolver(Solver):
 
     def reset_grad(self):
         return None
+
 
 class TexPair:
     def __init__(self, cur, nxt):

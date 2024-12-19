@@ -10,4 +10,4 @@ class Smoke(Base):
 
     @property
     def sampler(self):
-        return 'regular'
+        return "regular"

@@ -7,18 +7,20 @@ import cv2
 
 import genesis as gs
 
+
 @ti.data_oriented
 class Jet(object):
     def __init__(
-            self,
-            world_center,
-            jet_radius,
-            orbit_radius,
-            orbit_radius_vel,
-            orbit_init_degree,
-            orbit_tau,
-            sub_orbit_radius,
-            sub_orbit_tau):
+        self,
+        world_center,
+        jet_radius,
+        orbit_radius,
+        orbit_radius_vel,
+        orbit_init_degree,
+        orbit_tau,
+        sub_orbit_radius,
+        sub_orbit_tau,
+    ):
         self.world_center = ti.Vector(world_center)
         self.orbit_radius = orbit_radius
         self.orbit_radius_vel = orbit_radius_vel
@@ -35,8 +37,7 @@ class Jet(object):
     @ti.func
     def get_pos(self, t: float):
         rel_pos = ti.Vector([self.orbit_radius + t * self.orbit_radius_vel, 0.0, 0.0])
-        rot_mat = ti.math.rot_by_axis(
-            ti.Vector([0.0, 1.0, 0.0]), self.orbit_init_radian + t * self.orbit_tau)[:3, :3]
+        rot_mat = ti.math.rot_by_axis(ti.Vector([0.0, 1.0, 0.0]), self.orbit_init_radian + t * self.orbit_tau)[:3, :3]
         rel_pos = rot_mat @ rel_pos
         return rel_pos
 
@@ -73,9 +74,9 @@ class Jet(object):
 def main():
 
     ########################## init ##########################
-    gs.init(seed=0, precision='32', logging_level='debug')
+    gs.init(seed=0, precision="32", logging_level="debug")
 
-    video_path = Path(__file__).parent / 'video'
+    video_path = Path(__file__).parent / "video"
     video_path.mkdir(exist_ok=True, parents=True)
 
     res = 384
@@ -109,7 +110,9 @@ def main():
             orbit_tau=orbit_tau,
             sub_orbit_radius=sub_orbit_radius,
             jet_radius=jet_radius,
-            sub_orbit_tau=sub_orbit_tau) for orbit_init_degree in np.linspace(0, 360, 3, endpoint=False)
+            sub_orbit_tau=sub_orbit_tau,
+        )
+        for orbit_init_degree in np.linspace(0, 360, 3, endpoint=False)
     ]
     scene.sim.solvers[-1].set_jets(jets)
 
@@ -122,16 +125,16 @@ def main():
 
     for i in range(num_steps):
 
-        scalars = scene.sim.solvers[-1].grid.q.to_numpy().astype(np.float32) # (res, res, res, 3)
+        scalars = scene.sim.solvers[-1].grid.q.to_numpy().astype(np.float32)  # (res, res, res, 3)
         scalars[scalars < 1e-4] = 0
         layer = scalars[:, res // 2, :]
 
         rgb = (255 * layer).astype(np.uint8)
-        cv2.imwrite(str(video_path / f'{i:04d}.png'), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(str(video_path / f"{i:04d}.png"), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
 
         for _ in range(substeps):
             scene.step()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
