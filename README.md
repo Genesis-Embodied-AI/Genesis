@@ -29,14 +29,14 @@ Genesis is built and will continuously evolve with the following ***long-term mi
 Project Page: https://genesis-embodied-ai.github.io/
 
 ## Key Features
-- **Speed**: Genesis delivers an unprecedented simulation speed -- over 43 million FPS when simulating a Frana robotic arm with a single RTX 4090 (430,000 faster than real-time).
+- **Speed**: Genesis delivers an unprecedented simulation speed -- over 43 million FPS when simulating a Franka robotic arm with a single RTX 4090 (430,000 times faster than real-time).
 - **Cross-platform**: Genesis runs natively across different systems (Linux, MacOS, Windows), and across different compute backend (CPU, Nvidia GPU, AMD GPU, Apple Metal).
 - **Unification of various physics solvers**: Genesis develops a unified simulation framework that integrates various physics solvers: Rigid body, MPM, SPH, FEM, PBD, Stable Fluid.
 - **Support a wide range of material models**:  Genesis supports simulation (and the coupling) of rigid and articulated bodies, various types of liquids, gaseous phenomenon, deformable objects, thin-shell objects and granular materials.
 - **Support for a wide range of robots**: Robot arm, legged robot, drone, _soft robot_, etc., and extensive support for loading different file types: `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, etc.
 - **Photorealistic and high-performance ray-tracer**: Genesis supports native ray-tracing based rendering.
 - **Differentiability**: Genesis is designed to be fully compatible with differentiable simulation. Currently, our MPM solver and Tool Solver are differentiable, and differentiability for other solvers will be added soon (starting with rigid-body simulation).
-- **Physics-based Tactile Sensor**: Genesis involves a physics-based and differentiable [tactile sensor simulation module](https://github.com/Genesis-Embodied-AI/DiffTactile). This will be integrated to the public version soon (expected in verion 0.2.0).
+- **Physics-based Tactile Sensor**: Genesis involves a physics-based and differentiable [tactile sensor simulation module](https://github.com/Genesis-Embodied-AI/DiffTactile). This will be integrated to the public version soon (expected in version 0.2.0).
 - **User-friendliness**: Genesis is designed in a way to make using simulation as simple as possible. From installation to API design, if there's anything you found counter-intuitive or difficult to use, please [let us know](https://github.com/Genesis-Embodied-AI/Genesis/issues).
 
 ## Getting Started
@@ -48,7 +48,7 @@ pip install genesis-world
 You also need to install **PyTorch** following the [official instructions](https://pytorch.org/get-started/locally/).
 
 ### Documentation
-Please refer to our [documentation site](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) to for detailed installation steps, tutorials and API references.
+Please refer to our [documentation site](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) for detailed installation steps, tutorials and API references.
 
 ## Contributing to Genesis
 
