@@ -19,7 +19,7 @@ Genesis is a physics platform designed for general purpose *Robotics/Embodied AI
 
 Powered by a universal physics engine re-designed and re-built from the ground up, Genesis integrates various physics solvers and their coupling into a unified framework. This core physics engine is further enhanced by a generative agent framework that operates at an upper level, aiming towards fully **automated data generation** for robotics and beyond. 
 
-Currently, we are open-sourcing the **underlying physics engine and the simulation platform**. Our generative framework is a modular system that incorporates many different generative modules, each handling a certain range of data modalities, routed by a high level agent. Access to our generative feature will be gradually rolled out in the near future.
+Currently, we are open-sourcing the **underlying physics engine and the simulation platform**. Our generative framework is a modular system that incorporates many different generative modules, each handling a certain range of data modalities, routed by a high level agent. Some of the modules integrated existing papers and some are still under submission. Access to our generative feature will be gradually rolled out in the near future. If you are interested, feel free to explore more the [paper list](#papers-behind-genesis) below.
 
 Genesis is built and will continuously evolve with the following ***long-term missions***:
 1. **Lowering the barrier** to using physics simulations and making robotics research accessible to everyone. (See our [commitment](https://genesis-world.readthedocs.io/en/latest/user_guide/overview/mission.html))
