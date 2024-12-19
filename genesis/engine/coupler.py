@@ -186,18 +186,20 @@ class Coupler(RBC):
         If we decouple grid_op with coupling with different solvers, we need to run grid-level operations for each coupling pair, which is inefficient.
         """
         for I in ti.grouped(ti.ndrange(*self.mpm_solver.grid_res)):
-            if self.mpm_solver.grid[f, I].mass > gs.EPS:
+            mass = self.mpm_solver.grid[f, I].mass
+            if mass > gs.EPS:
+                # Precompute frequently used variables
+                pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
+                mass_mpm = mass / self.mpm_solver._p_vol_scale
+
                 #################### MPM grid op ####################
                 # Momentum to velocity
-                vel_mpm = (1 / self.mpm_solver.grid[f, I].mass) * self.mpm_solver.grid[f, I].vel_in
+                vel_mpm = (1 / mass) * self.mpm_solver.grid[f, I].vel_in
 
-                # gravity
+                # Gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[None]
 
-                pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
-                mass_mpm = self.mpm_solver.grid[f, I].mass / self.mpm_solver._p_vol_scale
-
-                # external force fields
+                # External force fields
                 for i_ff in ti.static(range(len(self.mpm_solver._ffs))):
                     vel_mpm += self.mpm_solver._ffs[i_ff].get_acc(pos, vel_mpm, t) * self.mpm_solver.substep_dt
 
@@ -207,54 +209,42 @@ class Coupler(RBC):
 
                 #################### MPM <-> Rigid ####################
                 if ti.static(self._rigid_mpm):
-                    vel_mpm = self._func_collide_with_rigid(
-                        f,
-                        pos,
-                        vel_mpm,
-                        mass_mpm,
-                    )
+                    vel_mpm = self._func_collide_with_rigid(f, pos, vel_mpm, mass_mpm)
 
                 #################### MPM <-> SPH ####################
                 if ti.static(self._mpm_sph):
-                    # using the lower corner of MPM cell to find the corresponding SPH base cell
                     base = self.sph_solver.sh.pos_to_grid(pos - 0.5 * self.mpm_solver.dx)
-
-                    # ---------- SPH -> MPM ----------
                     sph_vel = ti.Vector([0.0, 0.0, 0.0])
                     colliding_particles = 0
+
                     for offset in ti.grouped(
                         ti.ndrange(self.mpm_sph_stencil_size, self.mpm_sph_stencil_size, self.mpm_sph_stencil_size)
                     ):
                         slot_idx = self.sph_solver.sh.grid_to_slot(base + offset)
-                        for i in range(
-                            self.sph_solver.sh.slot_start[slot_idx],
-                            self.sph_solver.sh.slot_start[slot_idx] + self.sph_solver.sh.slot_size[slot_idx],
-                        ):
-                            if (
-                                ti.abs(pos - self.sph_solver.particles_reordered.pos[i]).max()
-                                < self.mpm_solver.dx * 0.5
-                            ):
+                        start = self.sph_solver.sh.slot_start[slot_idx]
+                        end = start + self.sph_solver.sh.slot_size[slot_idx]
+
+                        for i in range(start, end):
+                            if ti.abs(pos - self.sph_solver.particles_reordered.pos[i]).max() < self.mpm_solver.dx * 0.5:
                                 sph_vel += self.sph_solver.particles_reordered.vel[i]
                                 colliding_particles += 1
+
                     if colliding_particles > 0:
                         vel_old = vel_mpm
                         vel_mpm = sph_vel / colliding_particles
 
-                        # ---------- MPM -> SPH ----------
+                        # MPM -> SPH
                         delta_mv = mass_mpm * (vel_mpm - vel_old)
 
                         for offset in ti.grouped(
                             ti.ndrange(self.mpm_sph_stencil_size, self.mpm_sph_stencil_size, self.mpm_sph_stencil_size)
                         ):
                             slot_idx = self.sph_solver.sh.grid_to_slot(base + offset)
-                            for i in range(
-                                self.sph_solver.sh.slot_start[slot_idx],
-                                self.sph_solver.sh.slot_start[slot_idx] + self.sph_solver.sh.slot_size[slot_idx],
-                            ):
-                                if (
-                                    ti.abs(pos - self.sph_solver.particles_reordered.pos[i]).max()
-                                    < self.mpm_solver.dx * 0.5
-                                ):
+                            start = self.sph_solver.sh.slot_start[slot_idx]
+                            end = start + self.sph_solver.sh.slot_size[slot_idx]
+
+                            for i in range(start, end):
+                                if ti.abs(pos - self.sph_solver.particles_reordered.pos[i]).max() < self.mpm_solver.dx * 0.5:
                                     self.sph_solver.particles_reordered[i].vel = (
                                         self.sph_solver.particles_reordered[i].vel
                                         - delta_mv / self.sph_solver.particles_info_reordered[i].mass
@@ -262,45 +252,38 @@ class Coupler(RBC):
 
                 #################### MPM <-> PBD ####################
                 if ti.static(self._mpm_pbd):
-                    # using the lower corner of MPM cell to find the corresponding PBD base cell
                     base = self.pbd_solver.sh.pos_to_grid(pos - 0.5 * self.mpm_solver.dx)
-
-                    # ---------- PBD -> MPM ----------
                     pbd_vel = ti.Vector([0.0, 0.0, 0.0])
                     colliding_particles = 0
+
                     for offset in ti.grouped(
                         ti.ndrange(self.mpm_pbd_stencil_size, self.mpm_pbd_stencil_size, self.mpm_pbd_stencil_size)
                     ):
                         slot_idx = self.pbd_solver.sh.grid_to_slot(base + offset)
-                        for i in range(
-                            self.pbd_solver.sh.slot_start[slot_idx],
-                            self.pbd_solver.sh.slot_start[slot_idx] + self.pbd_solver.sh.slot_size[slot_idx],
-                        ):
-                            if (
-                                ti.abs(pos - self.pbd_solver.particles_reordered.pos[i]).max()
-                                < self.mpm_solver.dx * 0.5
-                            ):
+                        start = self.pbd_solver.sh.slot_start[slot_idx]
+                        end = start + self.pbd_solver.sh.slot_size[slot_idx]
+
+                        for i in range(start, end):
+                            if ti.abs(pos - self.pbd_solver.particles_reordered.pos[i]).max() < self.mpm_solver.dx * 0.5:
                                 pbd_vel += self.pbd_solver.particles_reordered.vel[i]
                                 colliding_particles += 1
+
                     if colliding_particles > 0:
                         vel_old = vel_mpm
                         vel_mpm = pbd_vel / colliding_particles
 
-                        # ---------- MPM -> PBD ----------
+                        # MPM -> PBD
                         delta_mv = mass_mpm * (vel_mpm - vel_old)
 
                         for offset in ti.grouped(
                             ti.ndrange(self.mpm_pbd_stencil_size, self.mpm_pbd_stencil_size, self.mpm_pbd_stencil_size)
                         ):
                             slot_idx = self.pbd_solver.sh.grid_to_slot(base + offset)
-                            for i in range(
-                                self.pbd_solver.sh.slot_start[slot_idx],
-                                self.pbd_solver.sh.slot_start[slot_idx] + self.pbd_solver.sh.slot_size[slot_idx],
-                            ):
-                                if (
-                                    ti.abs(pos - self.pbd_solver.particles_reordered.pos[i]).max()
-                                    < self.mpm_solver.dx * 0.5
-                                ):
+                            start = self.pbd_solver.sh.slot_start[slot_idx]
+                            end = start + self.pbd_solver.sh.slot_size[slot_idx]
+
+                            for i in range(start, end):
+                                if ti.abs(pos - self.pbd_solver.particles_reordered.pos[i]).max() < self.mpm_solver.dx * 0.5:
                                     if self.pbd_solver.particles_reordered[i].free:
                                         self.pbd_solver.particles_reordered[i].vel = (
                                             self.pbd_solver.particles_reordered[i].vel
@@ -309,6 +292,7 @@ class Coupler(RBC):
 
                 #################### MPM boundary ####################
                 _, self.mpm_solver.grid[f, I].vel_out = self.mpm_solver.boundary.impose_pos_vel(pos, vel_mpm)
+
 
     @ti.kernel
     def mpm_surface_to_particle(self, f: ti.i32):
