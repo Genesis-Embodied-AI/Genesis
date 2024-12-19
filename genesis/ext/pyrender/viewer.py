@@ -14,15 +14,8 @@ import OpenGL
 
 import genesis as gs
 
-try:
-    from Tkinter import Tk
-    from Tkinter import tkFileDialog as filedialog
-except Exception:
-    try:
-        from tkinter import Tk
-        from tkinter import filedialog as filedialog
-    except Exception:
-        pass
+from tkinter import Tk
+from tkinter import filedialog
 
 import pyglet
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
