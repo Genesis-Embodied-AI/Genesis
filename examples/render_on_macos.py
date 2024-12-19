@@ -1,9 +1,5 @@
 import argparse
-
-import torch
-
 import genesis as gs
-
 
 def main():
 
@@ -60,8 +56,8 @@ def run_sim(scene, enable_vis):
         if i > 200:
             break
 
-    if enable_vis:
-        scene.viewer.stop()
+    # if enable_vis:
+    #    scene.viewer.stop()
 
 
 if __name__ == "__main__":
