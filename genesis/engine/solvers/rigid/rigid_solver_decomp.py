@@ -2256,6 +2256,42 @@ class RigidSolver(Solver):
                 n_awake_links = ti.atomic_add(self.n_awake_links[i_b], 1)
                 self.awake_links[n_awake_links, i_b] = i_l
 
+    def apply_links_external_force(self, force, links_idx, envs_idx=None):
+        force, links_idx, envs_idx = self._validate_2D_io_variables(force, links_idx, 3, envs_idx, idx_name="links_idx")
+
+        self._kernel_apply_links_external_force(force, links_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_apply_links_external_force(
+        self,
+        force: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in ti.static(range(3)):
+                self.links_state[links_idx[i_l_], envs_idx[i_b_]].cfrc_ext_vel[i] -= force[i_b_, i_l_, i]
+
+    def apply_links_external_torque(self, torque, links_idx, envs_idx=None):
+        torque, links_idx, envs_idx = self._validate_2D_io_variables(
+            torque, links_idx, 3, envs_idx, idx_name="links_idx"
+        )
+
+        self._kernel_apply_links_external_torque(torque, links_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_apply_links_external_torque(
+        self,
+        torque: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in ti.static(range(3)):
+                self.links_state[links_idx[i_l_], envs_idx[i_b_]].cfrc_ext_ang[i] -= torque[i_b_, i_l_, i]
+
     @ti.func
     def _func_apply_external_force(self, pos, force, link_idx, batch_idx):
         torque = (pos - self.links_state[link_idx, batch_idx].COM).cross(force)
