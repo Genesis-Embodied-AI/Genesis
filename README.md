@@ -1,6 +1,5 @@
 <div align="center">
   <img src="imgs/big_text.png" alt="Genesis" width="85%">
-  
 </div>
 
 ---
@@ -9,45 +8,73 @@
   <img src="imgs/teaser.png" width="100%">
 </div>
 
+<div align="left">
+  <a href="https://pypi.org/project/genesis-world/">
+    <img alt="PyPI - Version" src="https://img.shields.io/pypi/v/genesis-world">
+  </a>
+  <a href="https://pypi.org/project/genesis-world/">
+    <img alt="PyPI - Downloads" src="https://img.shields.io/pypi/dm/genesis-world">
+  </a>
+  <a href="https://github.com/Genesis-Embodied-AI/Genesis/issues">
+    <img alt="GitHub Issues" src="https://img.shields.io/github/issues/Genesis-Embodied-AI/Genesis">
+  </a>
+  <a href="https://github.com/Genesis-Embodied-AI/Genesis/discussions">
+    <img alt="GitHub Discussions" src="https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis">
+  </a>
+</div>
+
+<p align="center">
+  <a href="./README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
+  <a href="./README_CN.md"><img alt="简体中文版自述文件" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
+</p>
 
 # What is Genesis?
+
 Genesis is a physics platform designed for general purpose *Robotics/Embodied AI/Physical AI* applications. It is simultaneously multiple things:
+
 1. A **universal physics engine** re-built from the ground up, capable of simulating a wide range of materials and physical phenomena.
 2. A **lightweight**, **ultra-fast**, **pythonic**, and **user-friendly** robotics simulation platform.
 3. A powerful and fast **photo-realistic rendering system**.
 4. A **generative data engine** that transforms user-prompted natural language description into various modalities of data.
 
-Powered by a universal physics engine re-designed and re-built from the ground up, Genesis integrates various physics solvers and their coupling into a unified framework. This core physics engine is further enhanced by a generative agent framework that operates at an upper level, aiming towards fully **automated data generation** for robotics and beyond. 
+Powered by a universal physics engine re-designed and re-built from the ground up, Genesis integrates various physics solvers and their coupling into a unified framework. This core physics engine is further enhanced by a generative agent framework that operates at an upper level, aiming towards fully **automated data generation** for robotics and beyond.
 
 Currently, we are open-sourcing the **underlying physics engine and the simulation platform**. Our generative framework is a modular system that incorporates many different generative modules, each handling a certain range of data modalities, routed by a high level agent. Some of the modules integrated existing papers and some are still under submission. Access to our generative feature will be gradually rolled out in the near future. If you are interested, feel free to explore more the [paper list](#papers-behind-genesis) below.
 
 Genesis is built and will continuously evolve with the following ***long-term missions***:
+
 1. **Lowering the barrier** to using physics simulations and making robotics research accessible to everyone. (See our [commitment](https://genesis-world.readthedocs.io/en/latest/user_guide/overview/mission.html))
 2. **Unifying a wide spectrum of state-of-the-art physics solvers** into a single framework, allowing re-creating the whole physical world in a virtual realm with the highest possible physical, visual and sensory fidelity, using the most advanced simulation techniques.
 3. **Minimizing human effort** in collecting and generating data for robotics and other domains, letting the data flywheel spin on its own.
 
-Project Page: https://genesis-embodied-ai.github.io/
+Project Page: <https://genesis-embodied-ai.github.io/>
 
 ## Key Features
+
 - **Speed**: Genesis delivers an unprecedented simulation speed -- over 43 million FPS when simulating a Franka robotic arm with a single RTX 4090 (430,000 times faster than real-time).
 - **Cross-platform**: Genesis runs natively across different systems (Linux, MacOS, Windows), and across different compute backend (CPU, Nvidia GPU, AMD GPU, Apple Metal).
 - **Unification of various physics solvers**: Genesis develops a unified simulation framework that integrates various physics solvers: Rigid body, MPM, SPH, FEM, PBD, Stable Fluid.
 - **Support a wide range of material models**:  Genesis supports simulation (and the coupling) of rigid and articulated bodies, various types of liquids, gaseous phenomenon, deformable objects, thin-shell objects and granular materials.
-- **Support for a wide range of robots**: Robot arm, legged robot, drone, _soft robot_, etc., and extensive support for loading different file types: `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, etc.
+- **Support for a wide range of robots**: Robot arm, legged robot, drone, *soft robot*, etc., and extensive support for loading different file types: `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, etc.
 - **Photorealistic and high-performance ray-tracer**: Genesis supports native ray-tracing based rendering.
 - **Differentiability**: Genesis is designed to be fully compatible with differentiable simulation. Currently, our MPM solver and Tool Solver are differentiable, and differentiability for other solvers will be added soon (starting with rigid-body simulation).
 - **Physics-based Tactile Sensor**: Genesis involves a physics-based and differentiable [tactile sensor simulation module](https://github.com/Genesis-Embodied-AI/DiffTactile). This will be integrated to the public version soon (expected in version 0.3.0).
 - **User-friendliness**: Genesis is designed in a way to make using simulation as simple as possible. From installation to API design, if there's anything you found counter-intuitive or difficult to use, please [let us know](https://github.com/Genesis-Embodied-AI/Genesis/issues).
 
 ## Getting Started
+
 ### Quick Installation
+
 Genesis is available via PyPI:
+
 ```bash
 pip install genesis-world  # Requires Python >=3.9;
 ```
+
 You also need to install **PyTorch** following the [official instructions](https://pytorch.org/get-started/locally/).
 
 ### Documentation
+
 Please refer to our [documentation site](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) for detailed installation steps, tutorials and API references.
 
 ## Contributing to Genesis
@@ -57,12 +84,16 @@ The goal of the Genesis project is to build a fully transparent, user-friendly e
 We sincerely welcome *any forms of contributions* from the community to make the world a better place for robots. From **pull requests** for new features, **bug reports**, to even tiny **suggestions** that will make Genesis API more intuitive, all are wholeheartedly appreciated!
 
 ## Support
-* Please use Github [Issues](https://github.com/Genesis-Embodied-AI/Genesis/issues) for bug reports and feature requests.
-* Please use GitHub [Discussions](https://github.com/Genesis-Embodied-AI/Genesis/discussions) for discussing ideas, and asking questions.
+
+- Please use Github [Issues](https://github.com/Genesis-Embodied-AI/Genesis/issues) for bug reports and feature requests.
+
+- Please use GitHub [Discussions](https://github.com/Genesis-Embodied-AI/Genesis/discussions) for discussing ideas, and asking questions.
 
 ## License and Acknowledgment
+
 The Genesis source code is licensed under Apache 2.0.
 The development of Genesis won't be possible without these amazing open-source projects:
+
 - [Taichi](https://github.com/taichi-dev/taichi): for providing a high-performance cross-platform compute backend. Kudos to all the members providing technical support from taichi!
 - [FluidLab](https://github.com/zhouxian/FluidLab) for providing a reference MPM solver implementation
 - [SPH_Taichi](https://github.com/erizmr/SPH_Taichi) for providing a reference SPH solver implementation
@@ -74,6 +105,7 @@ The development of Genesis won't be possible without these amazing open-source p
 - [trimesh](https://github.com/mikedh/trimesh), [PyMeshLab](https://github.com/cnr-isti-vclab/PyMeshLab) and [CoACD](https://github.com/SarahWeiii/CoACD) for geometry processing
 
 ## Papers behind Genesis
+
 Genesis is a large scale effort that integrates state-of-the-art technologies of various existing and on-going research work into a single system. Here we include a non-exhaustive list of all the papers that contributed to the Genesis project in one way or another:
 
 - Xian, Zhou, et al. "Fluidlab: A differentiable environment for benchmarking complex fluid manipulation." arXiv preprint arXiv:2303.02346 (2023).
@@ -99,7 +131,9 @@ Genesis is a large scale effort that integrates state-of-the-art technologies of
 ... and many more on-going work.
 
 ## Citation
+
 If you used Genesis in your research, we would appreciate it if you could cite it. We are still working on a technical report, and before it's public, you could consider citing:
+
 ```
 @software{Genesis,
   author = {Genesis Authors},
@@ -109,4 +143,3 @@ If you used Genesis in your research, we would appreciate it if you could cite i
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
 }
 ```
-
