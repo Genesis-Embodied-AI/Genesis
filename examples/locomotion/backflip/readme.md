@@ -8,7 +8,7 @@ To try Go2 backflips, follow these steps:
     ```
 2. Place the downloaded checkpoints into the `backflip` directory.
 
-For advanced training code, including features like domain randomization and reference rewards for backflip, visit the repository:
+For advanced training code, including features like domain randomization and reference rewards for backflip, visit this repository:
 
 ```
 https://github.com/ziyanx02/Genesis-backflip
