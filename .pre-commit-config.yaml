@@ -1,0 +1,6 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 23.9.1  # Use the latest version or specify the version you prefer
+    hooks:
+      - id: black
+        args: ["--config=pyproject.toml"] 

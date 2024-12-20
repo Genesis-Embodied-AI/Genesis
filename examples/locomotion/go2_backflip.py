@@ -64,7 +64,9 @@ def get_cfgs():
             "dof_vel": 0.05,
         },
     }
-    reward_cfg = {"reward_scales": {},}
+    reward_cfg = {
+        "reward_scales": {},
+    }
     command_cfg = {
         "num_commands": 3,
         "lin_vel_x_range": [0, 0],
@@ -76,16 +78,14 @@ def get_cfgs():
 
 
 class BackflipEnv(Go2Env):
-
     def get_observations(self):
-
         phase = torch.pi * self.episode_length_buf[:, None] / self.max_episode_length
         self.obs_buf = torch.cat(
             [
-                self.base_ang_vel * self.obs_scales['ang_vel'],  # 3
+                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
                 self.projected_gravity,  # 3
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales['dof_pos'],  # 12
-                self.dof_vel * self.obs_scales['dof_vel'],  # 12
+                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
+                self.dof_vel * self.obs_scales["dof_vel"],  # 12
                 self.actions,  # 12
                 self.last_actions,  # 12
                 torch.sin(phase),
@@ -104,6 +104,7 @@ class BackflipEnv(Go2Env):
         super().step(actions)
         self.get_observations()
         return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
+
 
 def main():
     parser = argparse.ArgumentParser()
