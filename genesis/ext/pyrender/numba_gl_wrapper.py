@@ -30,7 +30,6 @@ if platform.platform().lower().startswith("windows"):
 import OpenGL.GL as GL
 from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
 from OpenGL.raw.GL.VERSION.GL_2_0 import _EXTENSION_NAME
-from OpenGL import platform as GLplatform
 
 
 class GLWrapper:
@@ -75,7 +74,7 @@ class GLWrapper:
             )
         except:
             func_type = func_type()
-            func_ptr = glplatform.createExtensionFunction(
+            func_ptr = GL.platform.createExtensionFunction(
                 func_name,
                 dll,
                 resultType=func_type.restype,
