@@ -991,9 +991,14 @@ class Collider:
             i_gb, i_ga = i_ga, i_gb
 
         is_plane = self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+
+        i_la = self._solver.geoms_info[i_ga].link_idx
+        i_lb = self._solver.geoms_info[i_gb].link_idx
+        is_self_pair = self._solver.links_info.root_idx[i_la] == self._solver.links_info.root_idx[i_lb]
         multi_contact = (
             self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
+            and not is_self_pair
         )
         if is_plane:
             self._func_plane_contact(i_ga, i_gb, multi_contact, i_b)
