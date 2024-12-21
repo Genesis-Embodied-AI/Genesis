@@ -9,6 +9,7 @@ RUN apt update && apt install -y \
     wget \
     curl \
     libgl1-mesa-glx \
+    libegl-dev \
     libxrender1 \
     libglib2.0-0 \
     ffmpeg \
@@ -20,4 +21,6 @@ RUN apt update && apt install -y \
 COPY . /workspace
 WORKDIR /workspace
 
-RUN pip install --no-cache-dir PyOpenGL==3.1.6 && pip install -e . --no-cache-dir
+RUN pip install --upgrade --no-cache-dir pip && \
+    pip install --no-cache-dir PyOpenGL==3.1.6 && \
+    pip install -e . --no-cache-dir
