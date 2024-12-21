@@ -77,7 +77,7 @@ If you would like to try out the latest version, we suggest you to git clone fro
 
 ### Documentation
 
-Please refer to our [documentation site (English)](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) / [(Chinese）](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)for detailed installation steps, tutorials and API references. 
+Please refer to our [documentation site (English)](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) / [(Chinese)](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html) for detailed installation steps, tutorials and API references. 
 
 ## Contributing to Genesis
 
