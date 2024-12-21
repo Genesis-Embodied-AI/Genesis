@@ -11,7 +11,14 @@ import genesis.utils.particle as pu
 from genesis.engine import entities
 from genesis.ext import trimesh
 
-LRP_PATH = os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin")
+# try to import LuisaRenderPy from the path specified by the environment variable LRP_PATH
+lrp_path_env = os.getenv('LRP_PATH')
+
+if lrp_path_env:
+    LRP_PATH = lrp_path_env
+else:
+    # the default path
+    LRP_PATH = os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin")
 try:
     sys.path.append(LRP_PATH)
     import LuisaRenderPy
