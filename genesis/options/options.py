@@ -43,11 +43,15 @@ class Options(BaseModel, RBC):
     def _repr_type(cls):
         return f"<{cls.__module__}.{cls.__qualname__}>".replace("genesis", "gs")
 
-    def __repr__(self) -> str:
+    def __repr__(self):
+        if not __debug__:
+            self.__colorized__repr__()
+
+    def __colorized__repr__(self) -> str:
         property_attrs = self.__dict__.keys()
         max_attr_len = max([len(attr) for attr in property_attrs])
 
-        repr_str = f"{colors.CORN}{'─'*(max_attr_len + 3)} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─' * (max_attr_len + 3)}\n"
+        repr_str = f"{colors.CORN}{'─' * (max_attr_len + 3)} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─' * (max_attr_len + 3)}\n"
 
         for attr in property_attrs:
             formatted_str = f"{colors.BLUE}'{attr}'{formats.RESET}"
