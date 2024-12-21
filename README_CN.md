@@ -75,7 +75,7 @@ pip install genesis-world  # 需要 Python >=3.9;
 
 ### 文档
 
-请参阅我们的 [文档网站](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) 以获取详细的安装步骤、教程和 API 参考。
+请参阅我们的 [文档网站（英文）](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)/[（中文）](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)以获取详细的安装步骤、教程和 API 参考。
 
 ## 贡献 Genesis
 
