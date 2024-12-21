@@ -8,7 +8,6 @@ import genesis as gs
 
 
 def main():
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
@@ -45,11 +44,21 @@ def main():
 
     ########################## build ##########################
     scene.build()
+    
+    gs.tools.run_in_another_thread(fn=run_sim, args=(scene, drone, args.vis))
+    if args.vis:
+        scene.viewer.start()
+
+
+def run_sim(scene, drone, enable_vis):
     traj = pkl.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fly_traj.pkl"), "rb"))
     for i in range(len(traj)):
         # 14468 is hover rpm
         drone.set_propellels_rpm((1 + 0.05 * traj[i]) * 14468.429183500699)
         scene.step()
+    
+    if enable_vis:
+        scene.viewer.stop()
 
 
 if __name__ == "__main__":
