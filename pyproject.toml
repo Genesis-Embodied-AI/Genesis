@@ -28,13 +28,14 @@ dependencies = [
     "lxml",
     "tetgen == 0.6.4",
     "screeninfo",
-    "PyGEL3D",
+    "PyGEL3D == 0.1.0",
     "moviepy >= 2.0.0",
     "numba",
     "pymeshlab",
     "coacd",
     "OpenEXR",
     "black",
+    "torch",
 ]
 
 [tool.setuptools.packages.find]
