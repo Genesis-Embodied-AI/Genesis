@@ -47,6 +47,8 @@ pip install genesis-world  # Requires Python >=3.9;
 ```
 You also need to install **PyTorch** following the [official instructions](https://pytorch.org/get-started/locally/).
 
+If you would like to try out the latest version, we suggest you to git clone from the repo and do `pip install -e .` instead of via PyPI.
+
 ### Documentation
 Please refer to our [documentation site](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) for detailed installation steps, tutorials and API references.
 
