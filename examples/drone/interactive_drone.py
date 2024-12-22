@@ -10,6 +10,7 @@ class DroneController:
     def __init__(self):
         self.thrust = 14468.429183500699  # Base hover RPM - constant hover
         self.rotation_delta = 200  # Differential RPM for rotation
+        self.thrust_delta = 10  # Amount to change thrust by when accelerating/decelerating
         self.running = True
         self.rpms = [self.thrust] * 4
         self.pressed_keys = set()
@@ -36,6 +37,18 @@ class DroneController:
 
         # Reset RPMs to hover thrust
         self.rpms = [self.thrust] * 4
+
+        # Acceleration (Spacebar) - All rotors spin faster
+        if keyboard.Key.space in self.pressed_keys:
+            self.thrust += self.thrust_delta
+            self.rpms = [self.thrust] * 4
+            print("Accelerating")
+
+        # Deceleration (Left Shift) - All rotors spin slower
+        if keyboard.Key.shift in self.pressed_keys:
+            self.thrust -= self.thrust_delta
+            self.rpms = [self.thrust] * 4
+            print("Decelerating")
 
         # Forward (North) - Front rotors spin faster
         if keyboard.Key.up in self.pressed_keys:
