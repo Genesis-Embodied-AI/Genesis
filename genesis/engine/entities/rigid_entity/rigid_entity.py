@@ -2182,6 +2182,10 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        geom_indices = []
+        for i in link_indices:
+            for j in range(self._links[i].n_geoms):
+                geom_indices.append(self._links[i]._geom_start + j)
         self._solver.set_geoms_friction_ratio(
             torch.cat(
                 [
@@ -2190,9 +2194,7 @@ class RigidEntity(Entity):
                 ],
                 dim=-1,
             ),
-            torch.tensor(
-                [[self._links[j]._geom_start + i for i in range(self._links[j].n_geoms)] for j in link_indices]
-            ).view(-1),
+            geom_indices,
             envs_idx,
         )
 
@@ -2216,6 +2218,38 @@ class RigidEntity(Entity):
 
         for link in self._links:
             link.set_friction(friction)
+
+    def set_mass_shift(self, mass_shift, link_indices, envs_idx=None):
+        """
+        Set the mass shift of specified links.
+        Parameters
+        ----------
+        mass : torch.Tensor, shape (n_envs, n_links)
+            The mass shift
+        link_indices : array_like
+            The indices of the links to set mass shift.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        for i in range(len(link_indices)):
+            link_indices[i] += self._link_start
+        self._solver.set_links_mass_shift(mass_shift, link_indices, envs_idx)
+
+    def set_COM_shift(self, com_shift, link_indices, envs_idx=None):
+        """
+        Set the center of mass (COM) shift of specified links.
+        Parameters
+        ----------
+        com : torch.Tensor, shape (n_envs, n_links, 3)
+            The COM shift
+        link_indices : array_like
+            The indices of the links to set COM shift.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        for i in range(len(link_indices)):
+            link_indices[i] += self._link_start
+        self._solver.set_links_COM_shift(com_shift, link_indices, envs_idx)
 
     @gs.assert_built
     def get_mass(self):
