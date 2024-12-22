@@ -55,18 +55,18 @@ class DroneController:
 
         # Left (West) - Left rotors spin faster
         if keyboard.Key.left in self.pressed_keys:
-            self.rpms[0] += self.rotation_delta  # Front left
-            self.rpms[2] += self.rotation_delta  # Back left
-            self.rpms[1] -= self.rotation_delta  # Front right
-            self.rpms[3] -= self.rotation_delta  # Back right
-            print("Moving Left")
-
-        # Right (East) - Right rotors spin faster
-        if keyboard.Key.right in self.pressed_keys:
             self.rpms[0] -= self.rotation_delta  # Front left
             self.rpms[2] -= self.rotation_delta  # Back left
             self.rpms[1] += self.rotation_delta  # Front right
             self.rpms[3] += self.rotation_delta  # Back right
+            print("Moving Left")
+
+        # Right (East) - Right rotors spin faster
+        if keyboard.Key.right in self.pressed_keys:
+            self.rpms[0] += self.rotation_delta  # Front left
+            self.rpms[2] += self.rotation_delta  # Back left
+            self.rpms[1] -= self.rotation_delta  # Front right
+            self.rpms[3] -= self.rotation_delta  # Back right
             print("Moving Right")
 
         self.rpms = np.clip(self.rpms, 0, 25000)
