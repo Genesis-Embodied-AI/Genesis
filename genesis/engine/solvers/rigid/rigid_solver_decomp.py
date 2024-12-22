@@ -3356,6 +3356,56 @@ class RigidSolver(Solver):
             for i in ti.static(range(3)):
                 self.links_state[links_idx[i_l_], envs_idx[i_b_]].i_pos_shift[i] = com[i_b_, i_l_, i]
 
+    def _set_links_info(self, tensor, links_idx, name, envs_idx=None):
+        if self._options.batch_links_info:
+            tensor, links_idx, envs_idx = self._validate_1D_io_variables(tensor, links_idx, envs_idx, idx_name='links_idx')
+        else:
+            tensor, links_idx = self._validate_1D_io_variables(tensor, links_idx, idx_name='links_idx', batched=False)
+            envs_idx = torch.empty(())
+
+        if name == "invweight":
+            self._kernel_set_links_invweight(tensor, links_idx, envs_idx)
+        elif name == "inertial_mass":
+            self._kernel_set_links_inertial_mass(tensor, links_idx, envs_idx)
+        else:
+            gs.raise_exception(f"Invalid `name` {name}.")
+
+    def set_links_inertial_mass(self, invweight, links_idx, envs_idx=None):
+        self._set_links_info(invweight, links_idx, "inertial_mass", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_links_inertial_mass(
+        self,
+        inertial_mass: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_links_info):
+            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+                self.links_info[links_idx[i_l_], envs_idx[i_b_]].inertial_mass = inertial_mass[i_b_, i_l_]
+        else:
+            for i_l_ in range(links_idx.shape[0]):
+                self.links_info[links_idx[i_l_]].inertial_mass = inertial_mass[i_l_]
+
+    def set_links_invweight(self, invweight, links_idx, envs_idx=None):
+        self._set_links_info(invweight, links_idx, "invweight", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_links_invweight(
+        self,
+        invweight: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_links_info):
+            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+                self.links_info[links_idx[i_l_], envs_idx[i_b_]].invweight = invweight[i_b_, i_l_]
+        else:
+            for i_l_ in range(links_idx.shape[0]):
+                self.links_info[links_idx[i_l_]].invweight = invweight[i_l_]
+
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx, envs_idx=None):
         friction_ratio, geoms_idx, envs_idx = self._validate_1D_io_variables(
             friction_ratio, geoms_idx, envs_idx, idx_name="geoms_idx"
@@ -3418,13 +3468,42 @@ class RigidSolver(Solver):
 
             self.dofs_info[I].sol_params[0] = self._substep_dt * 2
 
-    def set_dofs_kp(self, kp, dofs_idx, envs_idx=None):
+    def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         if self._options.batch_dofs_info:
-            kp, dofs_idx, envs_idx = self._validate_1D_io_variables(kp, dofs_idx, envs_idx)
+            for i, tensor in enumerate(tensor_list):
+                if i == (len(tensor_list) - 1):
+                    tensor_list[i], dofs_idx, envs_idx = self._validate_1D_io_variables(tensor, dofs_idx, envs_idx)
+                else:
+                    tensor_list[i], _, _ = self._validate_1D_io_variables(tensor, dofs_idx, envs_idx)
         else:
-            kp, dofs_idx = self._validate_1D_io_variables(kp, dofs_idx, batched=False)
+            for i, tensor in enumerate(tensor_list):
+                if i == (len(tensor_list) - 1):
+                    tensor_list[i], _ = self._validate_1D_io_variables(tensor, dofs_idx, batched=False)
+                else:
+                    tensor_list[i], dofs_idx = self._validate_1D_io_variables(tensor, dofs_idx, batched=False)
             envs_idx = torch.empty(())
-        self._kernel_set_dofs_kp(kp, dofs_idx, envs_idx)
+
+        if name == "kp":
+            self._kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx)
+        elif name == "kv":
+            self._kernel_set_dofs_kv(tensor_list[0], dofs_idx, envs_idx)
+        elif name == "force_range":
+            self._kernel_set_dofs_force_range(tensor_list[0], tensor_list[1], dofs_idx, envs_idx)
+        elif name == "stiffness":
+            self._kernel_set_dofs_stiffness(tensor_list[0], dofs_idx, envs_idx)
+        elif name == "invweight":
+            self._kernel_set_dofs_invweight(tensor_list[0], dofs_idx, envs_idx)
+        elif name == "armature":
+            self._kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx)
+        elif name == "damping":
+            self._kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx)
+        elif name == "limit":
+            self._kernel_set_dofs_limit(tensor_list[0], tensor_list[1], dofs_idx, envs_idx)
+        else:
+            gs.raise_exception(f"Invalid `name` {name}.")
+
+    def set_dofs_kp(self, kp, dofs_idx, envs_idx=None):
+        self._set_dofs_info([kp], dofs_idx, "kp", envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_kp(
@@ -3442,12 +3521,7 @@ class RigidSolver(Solver):
                 self.dofs_info[dofs_idx[i_d_]].kp = kp[i_d_]
 
     def set_dofs_kv(self, kv, dofs_idx, envs_idx=None):
-        if self._options.batch_dofs_info:
-            kv, dofs_idx, envs_idx = self._validate_1D_io_variables(kv, dofs_idx, envs_idx)
-        else:
-            kv, dofs_idx = self._validate_1D_io_variables(kv, dofs_idx, batched=False)
-            envs_idx = torch.empty(())
-        self._kernel_set_dofs_kv(kv, dofs_idx, envs_idx)
+        self._set_dofs_info([kv], dofs_idx, "kv", envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_kv(
@@ -3465,18 +3539,7 @@ class RigidSolver(Solver):
                 self.dofs_info[dofs_idx[i_d_]].kv = kv[i_d_]
 
     def set_dofs_force_range(self, lower, upper, dofs_idx, envs_idx=None):
-        if self._options.batch_dofs_info:
-            lower, _, _ = self._validate_1D_io_variables(lower, dofs_idx, envs_idx)
-            upper, dofs_idx, envs_idx = self._validate_1D_io_variables(upper, dofs_idx, envs_idx)
-        else:
-            lower, _ = self._validate_1D_io_variables(lower, dofs_idx, batched=False)
-            upper, dofs_idx = self._validate_1D_io_variables(upper, dofs_idx, batched=False)
-            envs_idx = torch.empty(())
-
-        if (lower > upper).any():
-            gs.raise_exception("`lower` should be less than or equal to `upper`.")
-
-        self._kernel_set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
+        self._set_dofs_info([lower, upper], dofs_idx, "force_range", envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_force_range(
@@ -3495,6 +3558,99 @@ class RigidSolver(Solver):
             for i_d_ in range(dofs_idx.shape[0]):
                 self.dofs_info[dofs_idx[i_d_]].force_range[0] = lower[i_d_]
                 self.dofs_info[dofs_idx[i_d_]].force_range[1] = upper[i_d_]
+
+    def set_dofs_stiffness(self, stiffness, dofs_idx, envs_idx=None):
+        self._set_dofs_info([stiffness], dofs_idx, "stiffness", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_dofs_stiffness(
+        self,
+        stiffness: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].stiffness = stiffness[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].stiffness = stiffness[i_d_]
+
+    def set_dofs_invweight(self, invweight, dofs_idx, envs_idx=None):
+        self._set_dofs_info([invweight], dofs_idx, "invweight", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_dofs_invweight(
+        self,
+        invweight: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].invweight = invweight[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].invweight = invweight[i_d_]
+
+    def set_dofs_armature(self, armature, dofs_idx, envs_idx=None):
+        self._set_dofs_info([armature], dofs_idx, "armature", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_dofs_armature(
+        self,
+        armature: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].armature = armature[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].armature = armature[i_d_]
+
+    def set_dofs_damping(self, damping, dofs_idx, envs_idx=None):
+        self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_dofs_damping(
+        self,
+        damping: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].damping = damping[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].damping = damping[i_d_]
+
+    def set_dofs_limit(self, lower, upper, dofs_idx, envs_idx=None):
+        self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
+
+    @ti.kernel
+    def _kernel_set_dofs_limit(
+        self,
+        lower: ti.types.ndarray(),
+        upper: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].limit[0] = lower[i_b_, i_d_]
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].limit[1] = upper[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].limit[0] = lower[i_d_]
+                self.dofs_info[dofs_idx[i_d_]].limit[1] = upper[i_d_]
 
     def set_dofs_velocity(self, velocity, dofs_idx, envs_idx=None):
         velocity, dofs_idx, envs_idx = self._validate_1D_io_variables(velocity, dofs_idx, envs_idx)
@@ -3770,6 +3926,58 @@ class RigidSolver(Solver):
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].i_pos_shift[i]
 
+    def _get_links_info(self, links_idx, name, envs_idx=None):
+        if self._options.batch_links_info:
+            tensor, links_idx, envs_idx = self._validate_1D_io_variables(None, links_idx, envs_idx, idx_name="links_idx")
+        else:
+            tensor, links_idx = self._validate_1D_io_variables(None, links_idx, idx_name="links_idx", batched=False)
+            envs_idx = torch.empty(())
+
+        if name == "invweight":
+            self._kernel_get_links_invweight(tensor, links_idx, envs_idx)
+            return tensor
+        elif name == "inertial_mass":
+            self._kernel_get_links_inertial_mass(tensor, links_idx, envs_idx)
+            return tensor
+        else:
+            gs.raise_exception(f"Invalid `name` {name}.")
+
+    def get_links_inertial_mass(self, links_idx, envs_idx=None):
+        return self._get_links_info(links_idx, "inertial_mass", envs_idx)
+
+    @ti.kernel
+    def _kernel_get_links_inertial_mass(
+        self,
+        tensor: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_links_info):
+            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_l_] = self.links_info[links_idx[i_l_], envs_idx[i_b_]].inertial_mass
+        else:
+            for i_l_ in range(links_idx.shape[0]):
+                tensor[i_l_] = self.links_info[links_idx[i_l_]].inertial_mass
+
+    def get_links_invweight(self, links_idx, envs_idx=None):
+        return self._get_links_info(links_idx, "invweight", envs_idx)
+
+    @ti.kernel
+    def _kernel_get_links_invweight(
+        self,
+        tensor: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_links_info):
+            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_l_] = self.links_info[links_idx[i_l_], envs_idx[i_b_]].invweight
+        else:
+            for i_l_ in range(links_idx.shape[0]):
+                tensor[i_l_] = self.links_info[links_idx[i_l_]].invweight
+
     def get_geoms_friction_ratio(self, geoms_idx, envs_idx=None):
         tensor, geoms_idx, envs_idx = self._validate_1D_io_variables(None, geoms_idx, envs_idx, idx_name="geoms_idx")
 
@@ -3935,6 +4143,18 @@ class RigidSolver(Solver):
     def get_dofs_limit(self, dofs_idx, envs_idx=None):
         return self._get_dofs_info(dofs_idx, "limit", envs_idx)
 
+    def get_dofs_stiffness(self, dofs_idx, envs_idx=None):
+        return self._get_dofs_info(dofs_idx, "stiffness", envs_idx)
+
+    def get_dofs_invweight(self, dofs_idx, envs_idx=None):
+        return self._get_dofs_info(dofs_idx, "invweight", envs_idx)
+
+    def get_dofs_armature(self, dofs_idx, envs_idx=None):
+        return self._get_dofs_info(dofs_idx, "armature", envs_idx)
+
+    def get_dofs_damping(self, dofs_idx, envs_idx=None):
+        return self._get_dofs_info(dofs_idx, "damping", envs_idx)
+
     def _get_dofs_info(self, dofs_idx, name, envs_idx=None):
         if self._options.batch_dofs_info:
             tensor, dofs_idx, envs_idx = self._validate_1D_io_variables(None, dofs_idx, envs_idx)
@@ -3961,6 +4181,22 @@ class RigidSolver(Solver):
             upper = torch.empty_like(tensor)
             self._kernel_get_dofs_limit(lower, upper, dofs_idx, envs_idx)
             return lower, upper
+
+        elif name == "stiffness":
+            self._kernel_get_dofs_stiffness(tensor, dofs_idx, envs_idx)
+            return tensor
+
+        elif name == "invweight":
+            self._kernel_get_dofs_invweight(tensor, dofs_idx, envs_idx)
+            return tensor
+
+        elif name == "armature":
+            self._kernel_get_dofs_armature(tensor, dofs_idx, envs_idx)
+            return tensor
+
+        elif name == "damping":
+            self._kernel_get_dofs_damping(tensor, dofs_idx, envs_idx)
+            return tensor
 
         else:
             gs.raise_exception()
@@ -4030,6 +4266,66 @@ class RigidSolver(Solver):
             for i_d_ in range(dofs_idx.shape[0]):
                 lower[i_d_] = self.dofs_info[dofs_idx[i_d_]].limit[0]
                 upper[i_d_] = self.dofs_info[dofs_idx[i_d_]].limit[1]
+
+    @ti.kernel
+    def _kernel_get_dofs_stiffness(
+        self,
+        tensor: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].stiffness
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].stiffness
+
+    @ti.kernel
+    def _kernel_get_dofs_invweight(
+        self,
+        tensor: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].invweight
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].invweight
+
+    @ti.kernel
+    def _kernel_get_dofs_armature(
+        self,
+        tensor: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].armature
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].armature
+
+    @ti.kernel
+    def _kernel_get_dofs_damping(
+        self,
+        tensor: ti.types.ndarray(),
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].damping
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].damping
 
     @ti.kernel
     def _kernel_set_drone_rpm(

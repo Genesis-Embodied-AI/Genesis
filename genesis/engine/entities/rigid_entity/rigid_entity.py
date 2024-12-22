@@ -1568,6 +1568,14 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang(np.arange(self.link_start, self.link_end), envs_idx)
 
     @gs.assert_built
+    def get_links_inertial_mass(self, ls_idx_local=None, envs_idx=None):
+        return self._solver.get_links_inertial_mass(self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_links_invweight(self, ls_idx_local=None, envs_idx=None):
+        return self._solver.get_links_invweight(self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
     def set_pos(self, pos, zero_velocity=True, envs_idx=None):
         """
         Set position of the entity's base link.
@@ -1700,6 +1708,18 @@ class RigidEntity(Entity):
     def _get_dofs_idx(self, dofs_idx_local=None):
         return self._get_dofs_idx_local(dofs_idx_local) + self._dof_start
 
+    def _get_ls_idx_local(self, ls_idx_local=None):
+        if ls_idx_local is None:
+            ls_idx_local = torch.arange(self.n_links, dtype=torch.int32, device=gs.device)
+        else:
+            ls_idx_local = torch.as_tensor(ls_idx_local, dtype=gs.tc_int)
+            if (ls_idx_local < 0).any() or (ls_idx_local >= self.n_links).any():
+                gs.raise_exception('`ls_idx_local` exceeds valid range.')
+        return ls_idx_local
+
+    def _get_ls_idx(self, ls_idx_local=None):
+        return self._get_ls_idx_local(ls_idx_local) + self._link_start
+
     @gs.assert_built
     def set_qpos(self, qpos, qs_idx_local=None, zero_velocity=True, envs_idx=None):
         """
@@ -1772,6 +1792,22 @@ class RigidEntity(Entity):
         """
 
         self._solver.set_dofs_force_range(lower, upper, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_stiffness(self, stiffness, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_stiffness(stiffness, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_invweight(self, invweight, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_invweight(invweight, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_armature(self, armature, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_armature(armature, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_damping(self, damping, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_damping(damping, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
     def set_dofs_velocity(self, velocity, dofs_idx_local=None, envs_idx=None):
@@ -2040,6 +2076,22 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx), envs_idx)
 
     @gs.assert_built
+    def get_dofs_stiffness(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_stiffness(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_invweight(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_invweight(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_armature(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_armature(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_damping(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_damping(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
     def zero_all_dofs_velocity(self, envs_idx=None):
         """
         Zero the velocity of all the entity's dofs.
@@ -2270,6 +2322,14 @@ class RigidEntity(Entity):
         for i in range(len(link_indices)):
             link_indices[i] += self._link_start
         self._solver.set_links_COM_shift(com_shift, link_indices, envs_idx)
+
+    @gs.assert_built
+    def set_links_inertial_mass(self, inertial_mass, ls_idx_local=None, envs_idx=None):
+        self._solver.set_links_inertial_mass(inertial_mass, self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_links_invweight(self, invweight, ls_idx_local=None, envs_idx=None):
+        self._solver.set_links_invweight(invweight, self._get_ls_idx(ls_idx_local), envs_idx)
 
     @gs.assert_built
     def get_mass(self):
