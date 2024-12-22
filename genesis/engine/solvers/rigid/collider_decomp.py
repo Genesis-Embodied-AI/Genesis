@@ -51,6 +51,10 @@ class Collider:
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
+        if self._solver._options.batch_links_info:
+            links_root_idx = links_root_idx[:, 0]
+            links_parent_idx = links_parent_idx[:, 0]
+            links_is_fixed = links_is_fixed[:, 0]
         n_possible_pairs = 0
         for i in range(self._solver.n_geoms):
             for j in range(i + 1, self._solver.n_geoms):

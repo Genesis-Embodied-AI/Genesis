@@ -1722,7 +1722,7 @@ class RigidEntity(Entity):
             self.zero_all_dofs_velocity(envs_idx)
 
     @gs.assert_built
-    def set_dofs_kp(self, kp, dofs_idx_local=None):
+    def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' positional gains for the PD controller.
 
@@ -1732,12 +1732,14 @@ class RigidEntity(Entity):
             The positional gains to set.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
 
-        self._solver.set_dofs_kp(kp, self._get_dofs_idx(dofs_idx_local))
+        self._solver.set_dofs_kp(kp, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def set_dofs_kv(self, kv, dofs_idx_local=None):
+    def set_dofs_kv(self, kv, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' velocity gains for the PD controller.
 
@@ -1747,11 +1749,13 @@ class RigidEntity(Entity):
             The velocity gains to set.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        self._solver.set_dofs_kv(kv, self._get_dofs_idx(dofs_idx_local))
+        self._solver.set_dofs_kv(kv, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def set_dofs_force_range(self, lower, upper, dofs_idx_local=None):
+    def set_dofs_force_range(self, lower, upper, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' force range.
 
@@ -1763,9 +1767,11 @@ class RigidEntity(Entity):
             The upper bounds of the force range.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
 
-        self._solver.set_dofs_force_range(lower, upper, self._get_dofs_idx(dofs_idx_local))
+        self._solver.set_dofs_force_range(lower, upper, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
     def set_dofs_velocity(self, velocity, dofs_idx_local=None, envs_idx=None):
@@ -1954,7 +1960,7 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_position(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_kp(self, dofs_idx_local=None):
+    def get_dofs_kp(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the positional gain (kp) for the entity's dofs used by the PD controller.
 
@@ -1962,16 +1968,18 @@ class RigidEntity(Entity):
         ----------
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        kp : torch.Tensor, shape (n_dofs,)
+        kp : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The positional gain (kp) for the entity's dofs.
         """
-        return self._solver.get_dofs_kp(self._get_dofs_idx(dofs_idx_local))
+        return self._solver.get_dofs_kp(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_kv(self, dofs_idx_local=None):
+    def get_dofs_kv(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the velocity gain (kv) for the entity's dofs used by the PD controller.
 
@@ -1979,16 +1987,18 @@ class RigidEntity(Entity):
         ----------
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        kv : torch.Tensor, shape (n_dofs,)
+        kv : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The velocity gain (kv) for the entity's dofs.
         """
-        return self._solver.get_dofs_kv(self._get_dofs_idx(dofs_idx_local))
+        return self._solver.get_dofs_kv(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_force_range(self, dofs_idx_local=None):
+    def get_dofs_force_range(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the force range (min and max limits) for the entity's dofs.
 
@@ -1996,18 +2006,20 @@ class RigidEntity(Entity):
         ----------
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        lower_limit : torch.Tensor, shape (n_dofs,)
+        lower_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The lower limit of the force range for the entity's dofs.
-        upper_limit : torch.Tensor, shape (n_dofs,)
+        upper_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The upper limit of the force range for the entity's dofs.
         """
-        return self._solver.get_dofs_force_range(self._get_dofs_idx(dofs_idx_local))
+        return self._solver.get_dofs_force_range(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_limit(self, dofs_idx=None):
+    def get_dofs_limit(self, dofs_idx=None, envs_idx=None):
         """
         Get the positional limits (min and max) for the entity's dofs.
 
@@ -2015,15 +2027,17 @@ class RigidEntity(Entity):
         ----------
         dofs_idx : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        lower_limit : torch.Tensor, shape (n_dofs,)
+        lower_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The lower limit of the positional limits for the entity's dofs.
-        upper_limit : torch.Tensor, shape (n_dofs,)
+        upper_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The upper limit of the positional limits for the entity's dofs.
         """
-        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx))
+        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx), envs_idx)
 
     @gs.assert_built
     def zero_all_dofs_velocity(self, envs_idx=None):

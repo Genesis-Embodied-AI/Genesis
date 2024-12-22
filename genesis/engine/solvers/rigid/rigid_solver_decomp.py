@@ -3418,44 +3418,65 @@ class RigidSolver(Solver):
 
             self.dofs_info[I].sol_params[0] = self._substep_dt * 2
 
-    def set_dofs_kp(self, kp, dofs_idx):
-        kp, dofs_idx = self._validate_1D_io_variables(kp, dofs_idx, batched=False)
-        self._kernel_set_dofs_kp(kp, dofs_idx)
+    def set_dofs_kp(self, kp, dofs_idx, envs_idx=None):
+        if self._options.batch_dofs_info:
+            kp, dofs_idx, envs_idx = self._validate_1D_io_variables(kp, dofs_idx, envs_idx)
+        else:
+            kp, dofs_idx = self._validate_1D_io_variables(kp, dofs_idx, batched=False)
+            envs_idx = torch.empty(())
+        self._kernel_set_dofs_kp(kp, dofs_idx, envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_kp(
         self,
         kp: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            self.dofs_info[dofs_idx[i_d_]].kp = kp[i_d_]
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].kp = kp[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].kp = kp[i_d_]
 
-    def set_dofs_kv(self, kv, dofs_idx):
-        kv, dofs_idx = self._validate_1D_io_variables(kv, dofs_idx, batched=False)
-        self._kernel_set_dofs_kv(kv, dofs_idx)
+    def set_dofs_kv(self, kv, dofs_idx, envs_idx=None):
+        if self._options.batch_dofs_info:
+            kv, dofs_idx, envs_idx = self._validate_1D_io_variables(kv, dofs_idx, envs_idx)
+        else:
+            kv, dofs_idx = self._validate_1D_io_variables(kv, dofs_idx, batched=False)
+            envs_idx = torch.empty(())
+        self._kernel_set_dofs_kv(kv, dofs_idx, envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_kv(
         self,
         kv: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            self.dofs_info[dofs_idx[i_d_]].kv = kv[i_d_]
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].kv = kv[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].kv = kv[i_d_]
 
-    def set_dofs_force_range(self, lower, upper, dofs_idx):
-        lower, _ = self._validate_1D_io_variables(lower, dofs_idx, batched=False)
-        upper, dofs_idx = self._validate_1D_io_variables(upper, dofs_idx, batched=False)
+    def set_dofs_force_range(self, lower, upper, dofs_idx, envs_idx=None):
+        if self._options.batch_dofs_info:
+            lower, _, _ = self._validate_1D_io_variables(lower, dofs_idx, envs_idx)
+            upper, dofs_idx, envs_idx = self._validate_1D_io_variables(upper, dofs_idx, envs_idx)
+        else:
+            lower, _ = self._validate_1D_io_variables(lower, dofs_idx, batched=False)
+            upper, dofs_idx = self._validate_1D_io_variables(upper, dofs_idx, batched=False)
+            envs_idx = torch.empty(())
 
         if (lower > upper).any():
             gs.raise_exception("`lower` should be less than or equal to `upper`.")
 
-        self._kernel_set_dofs_force_range(lower, upper, dofs_idx)
+        self._kernel_set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_force_range(
@@ -3463,12 +3484,17 @@ class RigidSolver(Solver):
         lower: ti.types.ndarray(),
         upper: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            self.dofs_info[dofs_idx[i_d_]].force_range[0] = lower[i_d_]
-            self.dofs_info[dofs_idx[i_d_]].force_range[1] = upper[i_d_]
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].force_range[0] = lower[i_b_, i_d_]
+                self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].force_range[1] = upper[i_b_, i_d_]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                self.dofs_info[dofs_idx[i_d_]].force_range[0] = lower[i_d_]
+                self.dofs_info[dofs_idx[i_d_]].force_range[1] = upper[i_d_]
 
     def set_dofs_velocity(self, velocity, dofs_idx, envs_idx=None):
         velocity, dofs_idx, envs_idx = self._validate_1D_io_variables(velocity, dofs_idx, envs_idx)
@@ -3910,26 +3936,30 @@ class RigidSolver(Solver):
         return self._get_dofs_info(dofs_idx, "limit", envs_idx)
 
     def _get_dofs_info(self, dofs_idx, name, envs_idx=None):
-        tensor, dofs_idx = self._validate_1D_io_variables(None, dofs_idx, batched=False)
+        if self._options.batch_dofs_info:
+            tensor, dofs_idx, envs_idx = self._validate_1D_io_variables(None, dofs_idx, envs_idx)
+        else:
+            tensor, dofs_idx = self._validate_1D_io_variables(None, dofs_idx, batched=False)
+            envs_idx = torch.empty(())
 
         if name == "kp":
-            self._kernel_get_dofs_kp(tensor, dofs_idx)
+            self._kernel_get_dofs_kp(tensor, dofs_idx, envs_idx)
             return tensor
 
         elif name == "kv":
-            self._kernel_get_dofs_kv(tensor, dofs_idx)
+            self._kernel_get_dofs_kv(tensor, dofs_idx, envs_idx)
             return tensor
 
         elif name == "force_range":
             lower = torch.empty_like(tensor)
             upper = torch.empty_like(tensor)
-            self._kernel_get_dofs_force_range(lower, upper, dofs_idx)
+            self._kernel_get_dofs_force_range(lower, upper, dofs_idx, envs_idx)
             return lower, upper
 
         elif name == "limit":
             lower = torch.empty_like(tensor)
             upper = torch.empty_like(tensor)
-            self._kernel_get_dofs_limit(lower, upper, dofs_idx)
+            self._kernel_get_dofs_limit(lower, upper, dofs_idx, envs_idx)
             return lower, upper
 
         else:
@@ -3940,22 +3970,30 @@ class RigidSolver(Solver):
         self,
         tensor: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].kp
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].kp
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].kp
 
     @ti.kernel
     def _kernel_get_dofs_kv(
         self,
         tensor: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].kv
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                tensor[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].kv
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                tensor[i_d_] = self.dofs_info[dofs_idx[i_d_]].kv
 
     @ti.kernel
     def _kernel_get_dofs_force_range(
@@ -3963,12 +4001,17 @@ class RigidSolver(Solver):
         lower: ti.types.ndarray(),
         upper: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            lower[i_d_] = self.dofs_info[dofs_idx[i_d_]].force_range[0]
-            upper[i_d_] = self.dofs_info[dofs_idx[i_d_]].force_range[1]
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                lower[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].force_range[0]
+                upper[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].force_range[1]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                lower[i_d_] = self.dofs_info[dofs_idx[i_d_]].force_range[0]
+                upper[i_d_] = self.dofs_info[dofs_idx[i_d_]].force_range[1]
 
     @ti.kernel
     def _kernel_get_dofs_limit(
@@ -3976,12 +4019,17 @@ class RigidSolver(Solver):
         lower: ti.types.ndarray(),
         upper: ti.types.ndarray(),
         dofs_idx: ti.types.ndarray(),
-        # TODO: batch
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_ in range(dofs_idx.shape[0]):
-            lower[i_d_] = self.dofs_info[dofs_idx[i_d_]].limit[0]
-            upper[i_d_] = self.dofs_info[dofs_idx[i_d_]].limit[1]
+        if ti.static(self._options.batch_dofs_info):
+            for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+                lower[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].limit[0]
+                upper[i_b_, i_d_] = self.dofs_info[dofs_idx[i_d_], envs_idx[i_b_]].limit[1]
+        else:
+            for i_d_ in range(dofs_idx.shape[0]):
+                lower[i_d_] = self.dofs_info[dofs_idx[i_d_]].limit[0]
+                upper[i_d_] = self.dofs_info[dofs_idx[i_d_]].limit[1]
 
     @ti.kernel
     def _kernel_set_drone_rpm(
