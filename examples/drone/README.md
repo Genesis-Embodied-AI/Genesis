@@ -16,7 +16,7 @@ A real-time interactive drone simulation where you can control the drone using k
 
 Run with:
 ```bash
-python interactive_drone.py -v
+python interactive_drone.py -v -m
 ```
 
 ### 2. Automated Flight (`fly.py`)
@@ -24,7 +24,7 @@ A pre-programmed drone flight simulation that follows a predefined trajectory st
 
 Run with:
 ```bash
-python fly.py -v  # -v flag enables visualization
+python fly.py -v -m
 ```
 
 ## Technical Details
@@ -33,7 +33,7 @@ python fly.py -v  # -v flag enables visualization
 - Base hover RPM is approximately 14468
 - Movement is achieved by varying individual rotor RPMs to create directional thrust
 - The simulation uses realistic physics including gravity and aerodynamics
-- Visualization is optimized for macOS using threaded rendering
+- Visualization is optimized for macOS using threaded rendering when run with `-m` flag
 
 ## Controls Implementation
 
