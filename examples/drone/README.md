@@ -10,6 +10,8 @@ A real-time interactive drone simulation where you can control the drone using k
 - ↓ (Down Arrow): Move Backward (South)
 - ← (Left Arrow): Move Left (West)
 - → (Right Arrow): Move Right (East)
+- Space: Increase Thrust (Accelerate)
+- Left Shift: Decrease Thrust (Decelerate)
 - ESC: Quit
 
 Run with:
