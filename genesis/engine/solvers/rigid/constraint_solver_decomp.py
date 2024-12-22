@@ -168,10 +168,7 @@ class ConstraintSolver:
 
                     if ti.static(self.sparse_solve):
                         self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-
-                    imp, aref = gu.imp_aref(
-                        self._solver._sol_contact_resolve_time, impact.sol_params, -impact.penetration, jac_qvel
-                    )
+                    imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel)
 
                     diag = t + impact.friction * impact.friction * t
                     diag *= 2 * impact.friction * impact.friction * (1 - imp) / ti.max(imp, gs.EPS)
@@ -199,12 +196,7 @@ class ConstraintSolver:
 
                     jac = side
                     jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
-                    imp, aref = gu.imp_aref(
-                        self._solver._sol_contact_resolve_time,
-                        self._solver.dofs_info[i_d].sol_params,
-                        pos,
-                        jac_qvel,
-                    )
+                    imp, aref = gu.imp_aref(self._solver.dofs_info[i_d].sol_params, pos, jac_qvel)
                     diag = self._solver.dofs_info[i_d].invweight * (pos < 0) * (1 - imp) / (imp + gs.EPS)
                     aref = aref * (pos < 0)
                     if pos < 0:
