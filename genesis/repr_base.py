@@ -31,7 +31,11 @@ class RBC:
             repr_str += f", material: {self.material}"
         return repr_str
 
-    def __repr__(self) -> str:
+    def __repr__(self):
+        if not __debug__:
+            self.__colorized__repr__()
+
+    def __colorized__repr__(self) -> str:
         all_attrs = self.__dir__()
         property_attrs = []
 
@@ -55,7 +59,7 @@ class RBC:
                 continue
             idx = content.find(">")
             # format with italic and color
-            formatted_content = f"{colors.MINT}{formats.ITALIC}{content[:idx+1]}{formats.RESET}{colors.MINT}{content[idx+1:]}{formats.RESET}"
+            formatted_content = f"{colors.MINT}{formats.ITALIC}{content[:idx + 1]}{formats.RESET}{colors.MINT}{content[idx + 1:]}{formats.RESET}"
             # in case it's multi-line
             if isinstance(getattr(self, attr), gs.List):
                 # 4 = 2 x ' + : + space
@@ -81,7 +85,7 @@ class RBC:
         right_line_len = max(right_line_len, min_line_len)
 
         repr_str = (
-            f"{colors.CORN}{'─'*left_line_len} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─'*right_line_len}\n"
+            f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─' * right_line_len}\n"
             + repr_str
         )
 
