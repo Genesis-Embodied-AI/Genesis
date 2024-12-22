@@ -666,7 +666,8 @@ class RigidEntity(Entity):
         tgt_link_pos = self._solver.links_state[tgt_link_idx, i_b].pos
         i_l = tgt_link_idx
         while i_l > -1:
-            l_info = self._solver.links_info[i_l]
+            I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
+            l_info = self._solver.links_info[I_l]
             l_state = self._solver.links_state[i_l, i_b]
 
             if l_info.joint_type == gs.JOINT_TYPE.FIXED:
@@ -674,8 +675,9 @@ class RigidEntity(Entity):
 
             elif l_info.joint_type == gs.JOINT_TYPE.REVOLUTE:
                 i_d = l_info.dof_start
+                I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                 i_d_jac = i_d - self._dof_start
-                rotation = gu.ti_transform_by_quat(self._solver.dofs_info[i_d].motion_ang, l_state.quat)
+                rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
                 translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                 self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -687,8 +689,9 @@ class RigidEntity(Entity):
 
             elif l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
                 i_d = l_info.dof_start
+                I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                 i_d_jac = i_d - self._dof_start
-                translation = gu.ti_transform_by_quat(self._solver.dofs_info[i_d].motion_vel, l_state.quat)
+                translation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_vel, l_state.quat)
 
                 self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                 self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -706,7 +709,8 @@ class RigidEntity(Entity):
                 for i_d_ in range(3):
                     i_d = l_info.dof_start + i_d_ + 3
                     i_d_jac = i_d - self._dof_start
-                    rotation = self._solver.dofs_info[i_d].motion_ang
+                    I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                    rotation = self._solver.dofs_info[I_d].motion_ang
                     translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -1156,8 +1160,10 @@ class RigidEntity(Entity):
                     # Resample init q
                     if respect_joint_limit and i_sample < max_samples - 1:
                         for i_l in range(self.link_start, self.link_end):
-                            l_info = self._solver.links_info[i_l]
-                            dof_info = self._solver.dofs_info[l_info.dof_start]
+                            I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
+                            l_info = self._solver.links_info[I_l]
+                            I_dof_start = [l_info.dof_start, i_b] if ti.static(self.solver._options.batch_dofs_info) else l_info.dof_start
+                            dof_info = self._solver.dofs_info[I_dof_start]
                             q_start = l_info.q_start
 
                             if l_info.joint_type == gs.JOINT_TYPE.FREE:
