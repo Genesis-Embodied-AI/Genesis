@@ -1,32 +1,14 @@
-<div align="center">
-  <img src="imgs/big_text.png" alt="Genesis" width="85%">
-</div>
+![Genesis](imgs/big_text.png)
 
----
+![Teaser](imgs/teaser.png)
 
-<div align="center">
-  <img src="imgs/teaser.png" width="100%">
-</div>
+[![PyPI - Version](https://img.shields.io/pypi/v/genesis-world)](https://pypi.org/project/genesis-world/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/genesis-world)](https://pypi.org/project/genesis-world/)
+[![GitHub Issues](https://img.shields.io/github/issues/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/issues)
+[![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/discussions)
 
-<div align="left">
-  <a href="https://pypi.org/project/genesis-world/">
-    <img alt="PyPI - Version" src="https://img.shields.io/pypi/v/genesis-world">
-  </a>
-  <a href="https://pypi.org/project/genesis-world/">
-    <img alt="PyPI - Downloads" src="https://img.shields.io/pypi/dm/genesis-world">
-  </a>
-  <a href="https://github.com/Genesis-Embodied-AI/Genesis/issues">
-    <img alt="GitHub Issues" src="https://img.shields.io/github/issues/Genesis-Embodied-AI/Genesis">
-  </a>
-  <a href="https://github.com/Genesis-Embodied-AI/Genesis/discussions">
-    <img alt="GitHub Discussions" src="https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis">
-  </a>
-</div>
-
-<p align="center">
-  <a href="./README.md"><img alt="README in English" src="https://img.shields.io/badge/English-d9d9d9"></a>
-  <a href="./README_CN.md"><img alt="简体中文版自述文件" src="https://img.shields.io/badge/简体中文-d9d9d9"></a>
-</p>
+[![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
+[![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 
 # 概述
 
