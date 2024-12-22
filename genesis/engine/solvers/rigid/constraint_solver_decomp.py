@@ -112,9 +112,9 @@ class ConstraintSolver:
 
                 d1, d2 = gu.orthogonals(impact.normal)
 
-                t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[link_b_maybe_batch].invweight * (
-                    link_b > -1
-                )
+                t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+                    link_b_maybe_batch
+                ].invweight * (link_b > -1)
                 for i in range(4):
                     n = -d1 * f - impact.normal
                     if i == 1:
@@ -145,7 +145,9 @@ class ConstraintSolver:
                             link = link_b
 
                         while link > -1:
-                            link_maybe_batch = [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
+                            link_maybe_batch = (
+                                [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
+                            )
 
                             # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
                             for i_d_ in range(self._solver.links_info[link_maybe_batch].n_dofs):

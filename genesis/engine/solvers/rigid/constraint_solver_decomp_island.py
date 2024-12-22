@@ -138,7 +138,9 @@ class ConstraintSolverIsland:
 
             d1, d2 = gu.orthogonals(impact.normal)
 
-            t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[link_b_maybe_batch].invweight * (link_b > -1)
+            t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+                link_b_maybe_batch
+            ].invweight * (link_b > -1)
 
             for i in range(4):
                 n = -d1 * f - impact.normal

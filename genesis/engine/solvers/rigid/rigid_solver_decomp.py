@@ -346,7 +346,7 @@ class RigidSolver(Solver):
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.dofs_info):
-            i = I[0] # batching (if any) will be the second dim
+            i = I[0]  # batching (if any) will be the second dim
 
             for j in ti.static(range(3)):
                 self.dofs_info[I].motion_ang[j] = dofs_motion_ang[i, j]
@@ -2499,7 +2499,9 @@ class RigidSolver(Solver):
                         q_end = l_info.q_end
 
                         for j_d in range(q_end - q_start):
-                            I_d = [dof_start + j_d, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + j_d
+                            I_d = (
+                                [dof_start + j_d, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + j_d
+                            )
                             self.dofs_state[dof_start + j_d, i_b].qf_passive = (
                                 -self.qpos[q_start + j_d, i_b] * self.dofs_info[I_d].stiffness
                             )
@@ -3358,9 +3360,11 @@ class RigidSolver(Solver):
 
     def _set_links_info(self, tensor, links_idx, name, envs_idx=None):
         if self._options.batch_links_info:
-            tensor, links_idx, envs_idx = self._validate_1D_io_variables(tensor, links_idx, envs_idx, idx_name='links_idx')
+            tensor, links_idx, envs_idx = self._validate_1D_io_variables(
+                tensor, links_idx, envs_idx, idx_name="links_idx"
+            )
         else:
-            tensor, links_idx = self._validate_1D_io_variables(tensor, links_idx, idx_name='links_idx', batched=False)
+            tensor, links_idx = self._validate_1D_io_variables(tensor, links_idx, idx_name="links_idx", batched=False)
             envs_idx = torch.empty(())
 
         if name == "invweight":
@@ -3928,7 +3932,9 @@ class RigidSolver(Solver):
 
     def _get_links_info(self, links_idx, name, envs_idx=None):
         if self._options.batch_links_info:
-            tensor, links_idx, envs_idx = self._validate_1D_io_variables(None, links_idx, envs_idx, idx_name="links_idx")
+            tensor, links_idx, envs_idx = self._validate_1D_io_variables(
+                None, links_idx, envs_idx, idx_name="links_idx"
+            )
         else:
             tensor, links_idx = self._validate_1D_io_variables(None, links_idx, idx_name="links_idx", batched=False)
             envs_idx = torch.empty(())

@@ -1162,7 +1162,11 @@ class RigidEntity(Entity):
                         for i_l in range(self.link_start, self.link_end):
                             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
                             l_info = self._solver.links_info[I_l]
-                            I_dof_start = [l_info.dof_start, i_b] if ti.static(self.solver._options.batch_dofs_info) else l_info.dof_start
+                            I_dof_start = (
+                                [l_info.dof_start, i_b]
+                                if ti.static(self.solver._options.batch_dofs_info)
+                                else l_info.dof_start
+                            )
                             dof_info = self._solver.dofs_info[I_dof_start]
                             q_start = l_info.q_start
 
@@ -1714,7 +1718,7 @@ class RigidEntity(Entity):
         else:
             ls_idx_local = torch.as_tensor(ls_idx_local, dtype=gs.tc_int)
             if (ls_idx_local < 0).any() or (ls_idx_local >= self.n_links).any():
-                gs.raise_exception('`ls_idx_local` exceeds valid range.')
+                gs.raise_exception("`ls_idx_local` exceeds valid range.")
         return ls_idx_local
 
     def _get_ls_idx(self, ls_idx_local=None):
