@@ -224,13 +224,13 @@ class ConstraintSolverIsland:
             e_info = self.entities_info[i_e]
 
             for i_l in range(e_info.link_start, e_info.link_end):
-                I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
+                I_l = [i_l, i_b] if ti.static(self._solver._options.batch_links_info) else i_l
                 l_info = self._solver.links_info[I_l]
                 if l_info.joint_type == gs.JOINT_TYPE.REVOLUTE or l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
 
                     i_q = l_info.q_start
                     i_d = l_info.dof_start
-                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+                    I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
                     pos_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
                     pos_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
                     pos = min(min(pos_min, pos_max), 0)
