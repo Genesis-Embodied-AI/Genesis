@@ -283,6 +283,8 @@ def parse_visual_and_col_mesh(morph, surface):
 def parse_mesh_trimesh(path, group_by_material, scale, surface):
     meshes = []
     for _, mesh in trimesh.load(path, force="scene", group_material=group_by_material, process=False).geometry.items():
+        if mesh.volume < 0.0:
+            mesh.faces = np.fliplr(mesh.faces)
         meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface))
     return meshes
 
