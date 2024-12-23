@@ -57,6 +57,24 @@ You also need to install **PyTorch** following the [official instructions](https
 
 If you would like to try out the latest version, we suggest you to git clone from the repo and do `pip install -e .` instead of via PyPI.
 
+### Docker Installation
+You can use the Dockerfile provided in the repository to build a docker image:
+```bash
+docker build -t genesis .
+```
+
+And then run the examples inside the docker image:
+```bash
+xhost +local:root # Allow the container to access the display
+
+docker run --gpus all --rm -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix/:/tmp/.X11-unix genesis python examples/tutorials/hello_genesis.py
+
+# Or with docker-compose
+docker compose up
+``` 
+
+You need to install [Docker](https://www.docker.com/) and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) to be able to run the container with GPU support.
+
 ### Documentation
 
 Please refer to our [documentation site (English)](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) / [(Chinese)](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html) for detailed installation steps, tutorials and API references. 
