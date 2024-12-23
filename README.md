@@ -58,12 +58,15 @@ You also need to install **PyTorch** following the [official instructions](https
 If you would like to try out the latest version, we suggest you to git clone from the repo and do `pip install -e .` instead of via PyPI.
 
 ### Docker Installation
+
 You can use the Dockerfile provided in the repository to build a docker image:
+
 ```bash
 docker build -t genesis .
 ```
 
 And then run the examples inside the docker image:
+
 ```bash
 xhost +local:root # Allow the container to access the display
 
