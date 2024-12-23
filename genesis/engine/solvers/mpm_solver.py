@@ -385,7 +385,7 @@ class MPMSolver(Solver):
                         )
                         self.grid[f, base - self._grid_offset + offset].mass += weight * self.particles_info[i].mass
 
-                    if self.particles_info[i].free == 0: # non-free particles behave as boundary conditions
+                    if self.particles_info[i].free == 0:  # non-free particles behave as boundary conditions
                         self.grid[f, base - self._grid_offset + offset].vel_in = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.kernel
