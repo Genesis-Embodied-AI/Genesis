@@ -42,10 +42,10 @@ class List(list, RBC):
     def _repr_elem_colorized(self, elem, common_length=0):
         content = self._repr_elem(elem, common_length)
         idx = content.find(">")
-        formatted_content = f"{colors.BLUE}{formats.ITALIC}{content[:idx+1]}{formats.RESET}{content[idx+1:]}"
+        formatted_content = f"{colors.BLUE}{formats.ITALIC}{content[:idx + 1]}{formats.RESET}{content[idx + 1:]}"
         idx = formatted_content.find(":")
         if idx >= 0:
-            formatted_content = f"{formatted_content[:idx]}{colors.GRAY}:{colors.MINT}{formatted_content[idx+1:]}"
+            formatted_content = f"{formatted_content[:idx]}{colors.GRAY}:{colors.MINT}{formatted_content[idx + 1:]}"
         formatted_content += formats.RESET
         return formatted_content
 
@@ -73,6 +73,10 @@ class List(list, RBC):
         return repr_str
 
     def __repr__(self):
+        if not __debug__:
+            self.__colorized__repr__()
+
+    def __colorized__repr__(self):
         repr_str = f"{colors.BLUE}{self._repr_type()}(len={colors.MINT}{formats.UNDERLINE}{len(self)}{formats.RESET}{colors.BLUE}, ["
 
         if len(self) == 0:

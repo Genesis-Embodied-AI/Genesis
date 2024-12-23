@@ -351,7 +351,7 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.dofs_info[i].sol_params[j] = dofs_sol_params[i, j]
 
-            self.dofs_info[i].sol_params[0] = self._substep_dt * 2
+            self.dofs_info[i].sol_params[0] = self._sol_contact_resolve_time
 
             self.dofs_info[i].armature = dofs_armature[i]
             self.dofs_info[i].invweight = dofs_invweight[i]
@@ -776,6 +776,7 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.geoms_info[i].data[j] = geoms_data[i, j]
                 self.geoms_info[i].sol_params[j] = geoms_sol_params[i, j]
+            self.geoms_info[i].sol_params[0] = self._sol_contact_resolve_time
 
             self.geoms_info[i].sol_params[0] = ti.max(self.geoms_info[i].sol_params[0], self._substep_dt * 2)
 
@@ -3318,6 +3319,28 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             self.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
+
+    def set_global_sol_params(self, sol_params):
+        """
+        Solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
+        Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
+        """
+        assert len(sol_params) == 7
+        self._kernel_set_global_sol_params(sol_params)
+
+    @ti.kernel
+    def _kernel_set_global_sol_params(self, sol_params: ti.types.ndarray()):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i in range(self.n_geoms):
+            for j in ti.static(range(7)):
+                self.geoms_info[i].sol_params[j] = sol_params[j]
+
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i, b in ti.ndrange(self.n_dofs, self._B):
+            for j in ti.static(range(7)):
+                self.dofs_info[i].sol_params[j] = sol_params[j]
+
+            self.dofs_info[i].sol_params[0] = self._substep_dt * 2
 
     def set_dofs_kp(self, kp, dofs_idx):
         kp, dofs_idx = self._validate_1D_io_variables(kp, dofs_idx, batched=False)
