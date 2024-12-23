@@ -1,0 +1,17 @@
+services:
+  genesis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: genesis:latest
+    runtime: nvidia
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    command: python examples/tutorials/hello_genesis.py
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [ gpu ]
