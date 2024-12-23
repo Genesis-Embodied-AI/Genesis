@@ -90,6 +90,20 @@ class Nowhere(Morph):
             gs.raise_exception("`n_particles` should be greater than 0.")
 
 
+class Points(Morph):
+    """
+    For environment entity with all points
+    """
+    points_path: str = None
+    points: Optional[tuple] = None
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.points = np.loadtxt(self.points_path)
+
+        if self.points.shape[1] != 3:
+            gs.raise_exception("`points` should be a 2D array with shape (N, 3).")
+
+
 ############################ Shape Primitives ############################
 
 

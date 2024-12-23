@@ -183,6 +183,9 @@ class ParticleEntity(Entity):
 
         elif isinstance(self._morph, (gs.options.morphs.Primitive, gs.options.morphs.Mesh)):
             particles = self._vmesh.particlize(self._particle_size, self.sampler)
+        
+        elif isinstance(self._morph, gs.options.morphs.Points):
+            particles = self._morph.points
 
         elif isinstance(self._morph, gs.options.morphs.Nowhere):
             particles = pu.nowhere_particles(self._morph.n_particles)
@@ -235,6 +238,11 @@ class ParticleEntity(Entity):
                 self._vfaces = np.array([])
             origin = np.mean(self._morph.poss)
 
+        elif isinstance(self._morph, gs.options.morphs.Points):
+            self._vverts = np.array([])
+            self._vfaces = np.array([])
+            origin = np.array(particles, dtype=gs.np_float)
+        
         else:
             # transform vmesh
             self._vmesh.apply_transform(gu.trans_quat_to_T(np.array(self._morph.pos), np.array(self._morph.quat)))

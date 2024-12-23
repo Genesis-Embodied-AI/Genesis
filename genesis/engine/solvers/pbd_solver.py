@@ -870,6 +870,16 @@ class PBDSolver(Solver):
     @ti.kernel
     def _kernel_fix_particle(self, particle_idx: ti.i32):
         self.particles[particle_idx].free = 0
+    
+    @gs.assert_built
+    def fix_all_particle(self):
+        self._kernel_fix_all_particle()
+
+    @ti.kernel
+    def _kernel_fix_all_particle(self):
+        for i in range(self._n_particles):
+            self.particles[i].free = 0
+            self.particles_info[i].mat_type = self.MATS.CLOTH
 
     @gs.assert_built
     def set_particle_position(self, particle_idx, pos):
