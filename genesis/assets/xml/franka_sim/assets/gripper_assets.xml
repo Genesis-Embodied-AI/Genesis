@@ -8,8 +8,8 @@
 ====================================================== -->
 
     <asset>
-        <mesh name="finger_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/finger.stl" scale='1.75 1.0 1.75'/>
-        <mesh name="finger_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/finger.stl" scale='1.75 1.0 1.75'/>
+        <mesh name="finger_col" file="../meshes/collision/finger.stl" scale='1.75 1.0 1.75'/>
+        <mesh name="finger_viz" file="../meshes/collision/finger.stl" scale='1.75 1.0 1.75'/>
     </asset>
 
     <default>
