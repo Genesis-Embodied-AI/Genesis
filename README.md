@@ -50,7 +50,7 @@ Project Page: <https://genesis-embodied-ai.github.io/>
 - **Wide range of material models**: Simulation and coupling of rigid bodies, liquids, gases, deformable objects, thin-shell objects, and granular materials.
 - **Compatibility with various robots**: Robotic arms, legged robots, drones, *soft robots*, and support for loading `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, and more.
 - **Photo-realistic rendering**: Native ray-tracing-based rendering.
-- **Differentiability**: Fully compatible with differentiable simulation (MPM solver and Tool Solver already available).
+- **Differentiability**: Genesis is designed to be fully differentiable. Currently, our MPM solver and Tool Solver support differentiability, with other solvers planned for future versions.
 - **Physics-based tactile simulation**: Differentiable [tactile sensor simulation](https://github.com/Genesis-Embodied-AI/DiffTactile) coming soon (expected in version 0.3.0).
 - **User-friendliness**: Designed for simplicity, with intuitive installation and APIs.
 
@@ -111,12 +111,12 @@ The Genesis source code is licensed under Apache 2.0.
 
 Genesis's development has been made possible thanks to these open-source projects:
 
-- [Taichi](https://github.com/taichi-dev/taichi): High-performance cross-platform compute backend.
+- [Taichi](https://github.com/taichi-dev/taichi): High-performance cross-platform compute backend. Kudos to the Taichi team for their technical support!
 - [FluidLab](https://github.com/zhouxian/FluidLab): Reference MPM solver implementation.
 - [SPH_Taichi](https://github.com/erizmr/SPH_Taichi): Reference SPH solver implementation.
 - [Ten Minute Physics](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) and [PBF3D](https://github.com/WASD4959/PBF3D): Reference PBD solver implementations.
-- [MuJoCo](https://github.com/google-deepmind/mujoco): Rigid body dynamics reference.
-- [libccd](https://github.com/danfis/libccd): Collision detection reference.
+- [MuJoCo](https://github.com/google-deepmind/mujoco): Reference for rigid body dynamics.
+- [libccd](https://github.com/danfis/libccd): Reference for collision detection.
 - [PyRender](https://github.com/mmatl/pyrender): Rasterization-based renderer.
 - [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) and [LuisaRender](https://github.com/LuisaGroup/LuisaRender): Ray-tracing DSL.
 
@@ -145,6 +145,7 @@ Genesis is a large scale effort that integrates state-of-the-art technologies of
 - Dou, Zhiyang, et al. "C· ase: Learning conditional adversarial skill embeddings for physics-based characters." SIGGRAPH Asia 2023 Conference Papers. 2023.
 
 ... and many more on-going work.
+
 ## Citation
 
 If you use Genesis in your research, please consider citing:
@@ -157,4 +158,3 @@ If you use Genesis in your research, please consider citing:
   year = {2024},
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
 }
-```
