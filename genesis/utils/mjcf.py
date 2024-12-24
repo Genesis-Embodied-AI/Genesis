@@ -301,6 +301,11 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 uv_coordinates /= uv_coordinates.max(axis=0)
                 image = Image.open(os.path.join(assets_dir, tex_path))
                 image_array = np.array(image)
+                if image_array.ndim == 2:  # convert gray image to RGBA
+                    rgba = np.zeros((image_array.shape[0], image_array.shape[1], 4), dtype=np.uint8)
+                    rgba[:, :, :3] = image_array[:, :, None]
+                    rgba[:, :, 3] = 255
+                    image_array = rgba
                 tex_repeat = mj.mat_texrepeat[mat_id].astype(int)
                 image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
