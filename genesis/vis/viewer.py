@@ -67,6 +67,7 @@ class Viewer(RBC):
             gs.raise_exception("Viewer has some issues on Windows. Can anyone help?")
 
         self._pyrender_viewer = pyrender.Viewer(
+            scene=self.scene,
             context=self.context,
             viewport_size=self._res,
             run_in_thread=run_in_thread,

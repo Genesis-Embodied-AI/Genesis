@@ -183,6 +183,7 @@ class Viewer(pyglet.window.Window):
 
     def __init__(
         self,
+        scene,
         context,
         viewport_size=None,
         render_flags=None,
@@ -201,6 +202,7 @@ class Viewer(pyglet.window.Window):
         if viewport_size is None:
             viewport_size = (640, 480)
         self.gs_context = context
+        self.render_scene = scene
         self._scene = context._scene
         self._viewport_size = viewport_size
         self._render_lock = RLock()
@@ -291,8 +293,10 @@ class Viewer(pyglet.window.Window):
                 "     [v]: vertex normal",
                 "     [w]: world frame",
                 "     [l]: link frame",
+                "     [x]: reset window",
                 "     [d]: wireframe",
                 "     [c]: camera & frustrum",
+                "     [Space]: pause rendering",
                 "   [F11]: full-screen mode",
             ],
         ]
@@ -853,7 +857,18 @@ class Viewer(pyglet.window.Window):
         # S saves the current frame as an image
         elif symbol == pyglet.window.key.S:
             self._save_image()
-
+        elif symbol == pyglet.window.key.SPACE:
+            if not self.gs_context.pause_rendering_shown:
+                self.render_lock.acquire()
+                self.gs_context.pause_rendering_shown = True
+                # gs.logger.info("pause_rendering......")
+            else:
+                self.render_lock.release()
+                self.gs_context.pause_rendering_shown = False
+                # gs.logger.info("start_rendering......")
+        elif symbol == pyglet.window.key.X:
+            self.render_scene.reset()
+            # gs.logger.info("Start reset......")
         # T toggles through geom types
         # elif symbol == pyglet.window.key.T:
         #     if self.gs_context.rigid_shown == 'visual':
@@ -1221,6 +1236,10 @@ class Viewer(pyglet.window.Window):
             return (self.viewport_size[0] - TEXT_PADDING, self.viewport_size[1] - TEXT_PADDING)
         elif location == TextAlign.TOP_CENTER:
             return (self.viewport_size[0] / 2.0, self.viewport_size[1] - TEXT_PADDING)
+
+    @scene.setter
+    def scene(self, value):
+        self._scene = value
 
 
 __all__ = ["Viewer"]
