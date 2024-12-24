@@ -52,6 +52,10 @@ Thank you for your interest in contributing to Genesis! We welcome contributions
      pre-commit install
      ```
      After this, `pre-commit` will automatically check and clean up code whenever you make a commit.
+- (Optional) You can run CI tests locally to ensure you pass the online CI checks.
+  ```python
+  python -m unittest discover tests
+  ```
 - In the title of your Pull Request, please include [BUG FIX], [FEATURE] or [MISC] to indicate the purpose.
 - In the description, please provide example code or commands for testing.
 
