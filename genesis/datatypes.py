@@ -123,8 +123,8 @@ class List(list, RBC):
         right_line_len = line_len - left_line_len
 
         repr_str = (
-                f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{header}{formats.RESET} {colors.CORN}{'─' * right_line_len}{formats.RESET}\n"
-                + repr_str
+            f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{header}{formats.RESET} {colors.CORN}{'─' * right_line_len}{formats.RESET}\n"
+            + repr_str
         )
 
         return repr_str

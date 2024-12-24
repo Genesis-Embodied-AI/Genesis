@@ -85,8 +85,8 @@ class RBC:
         right_line_len = max(right_line_len, min_line_len)
 
         repr_str = (
-                f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─' * right_line_len}\n"
-                + repr_str
+            f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─' * right_line_len}\n"
+            + repr_str
         )
 
         return repr_str
