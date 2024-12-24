@@ -118,6 +118,8 @@ class Viewer(pyglet.window.Window):
     - ``w``: Toggles wireframe mode
       (scene default, flip wireframes, all wireframe, or all solid).
     - ``z``: Resets the camera to the initial view.
+    - ``x``: Resets simulation to initial state.
+    - ``Space``: Pause simulation util pressing Space again
 
     Note
     ----
@@ -293,10 +295,10 @@ class Viewer(pyglet.window.Window):
                 "     [v]: vertex normal",
                 "     [w]: world frame",
                 "     [l]: link frame",
-                "     [x]: reset window",
+                "     [x]: reset simulation",
                 "     [d]: wireframe",
                 "     [c]: camera & frustrum",
-                "     [Space]: pause rendering",
+                "     [Space]: pause simulation",
                 "   [F11]: full-screen mode",
             ],
         ]
@@ -859,7 +861,7 @@ class Viewer(pyglet.window.Window):
             self._save_image()
         elif symbol == pyglet.window.key.SPACE:
             if not self.gs_context.pause_rendering_shown:
-                self.render_lock.acquire()
+                self.render_lock.acquire(blocking=False)
                 self.gs_context.pause_rendering_shown = True
                 # gs.logger.info("pause_rendering......")
             else:
