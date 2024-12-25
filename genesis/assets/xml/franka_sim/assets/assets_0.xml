@@ -13,29 +13,29 @@
     <size nuser_actuator="5"/>
 
     <asset>
-        <mesh name="link0_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link0.stl"/>
-        <mesh name="link1_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link1.stl"/>
-        <mesh name="link2_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link2.stl"/>
-        <mesh name="link3_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link3.stl"/>
-        <mesh name="link4_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link4.stl"/>
-        <mesh name="link5_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link5.stl"/>
-        <mesh name="link6_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link6.stl"/>
-        <mesh name="link7_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/link7.stl"/>
-        <mesh name="hand_col" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/collision/hand.stl"/>
-        <mesh name="link0_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link0.stl"/>
-        <mesh name="link1_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link1.stl"/>
-        <mesh name="link2_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link2.stl"/>
-        <mesh name="link3_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link3.stl"/>
-        <mesh name="link3_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link3_dark.stl" scale="1.01 1.01 1.01"/>
-        <mesh name="link4_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link4.stl"/>
-        <mesh name="link4_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link4_dark.stl" scale="1.01 1.01 1.01"/>
-        <mesh name="link5_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link5.stl"/>
-        <mesh name="link5_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link5_dark.stl" scale="1.01 1.01 1.01"/>
-        <mesh name="link6_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link6.stl"/>
-        <mesh name="link6_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link6_dark.stl" scale="1.01 1.01 1.01"/>
-        <mesh name="link7_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link7.stl"/>
-        <mesh name="link7_dark_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/link7_dark.stl" scale="1.01 1.01 1.01"/>
-        <mesh name="hand_viz" file="/home/zhouxian/git/Genesis-dev/genesis/assets/xml/franka_sim/meshes/visual/hand.stl"/>
+        <mesh name="link0_col" file="../meshes/collision/link0.stl"/>
+        <mesh name="link1_col" file="../meshes/collision/link1.stl"/>
+        <mesh name="link2_col" file="../meshes/collision/link2.stl"/>
+        <mesh name="link3_col" file="../meshes/collision/link3.stl"/>
+        <mesh name="link4_col" file="../meshes/collision/link4.stl"/>
+        <mesh name="link5_col" file="../meshes/collision/link5.stl"/>
+        <mesh name="link6_col" file="../meshes/collision/link6.stl"/>
+        <mesh name="link7_col" file="../meshes/collision/link7.stl"/>
+        <mesh name="hand_col" file="../meshes/collision/hand.stl"/>
+        <mesh name="link0_viz" file="../meshes/visual/link0.stl"/>
+        <mesh name="link1_viz" file="../meshes/visual/link1.stl"/>
+        <mesh name="link2_viz" file="../meshes/visual/link2.stl"/>
+        <mesh name="link3_viz" file="../meshes/visual/link3.stl"/>
+        <mesh name="link3_dark_viz" file="../meshes/visual/link3_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link4_viz" file="../meshes/visual/link4.stl"/>
+        <mesh name="link4_dark_viz" file="../meshes/visual/link4_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link5_viz" file="../meshes/visual/link5.stl"/>
+        <mesh name="link5_dark_viz" file="../meshes/visual/link5_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link6_viz" file="../meshes/visual/link6.stl"/>
+        <mesh name="link6_dark_viz" file="../meshes/visual/link6_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="link7_viz" file="../meshes/visual/link7.stl"/>
+        <mesh name="link7_dark_viz" file="../meshes/visual/link7_dark.stl" scale="1.01 1.01 1.01"/>
+        <mesh name="hand_viz" file="../meshes/visual/hand.stl"/>
     </asset>
 
     <default>

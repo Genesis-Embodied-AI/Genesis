@@ -77,3 +77,7 @@ docs = [
     "sphinx-togglebutton",
     "sphinx_design",
 ]
+render = [
+    "pybind11[global]",
+    "open3d",
+]

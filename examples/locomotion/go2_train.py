@@ -96,7 +96,7 @@ def get_cfgs():
         "termination_if_pitch_greater_than": 10,
         # base pose
         "base_init_pos": [0.0, 0.0, 0.42],
-        "base_init_quat": [0.0, 0.0, 0.0, 1.0],
+        "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,

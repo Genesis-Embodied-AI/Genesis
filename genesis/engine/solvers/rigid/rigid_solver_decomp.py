@@ -351,7 +351,7 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.dofs_info[i].sol_params[j] = dofs_sol_params[i, j]
 
-            self.dofs_info[i].sol_params[0] = self._substep_dt * 2
+            self.dofs_info[i].sol_params[0] = self._sol_contact_resolve_time
 
             self.dofs_info[i].armature = dofs_armature[i]
             self.dofs_info[i].invweight = dofs_invweight[i]
@@ -776,6 +776,7 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.geoms_info[i].data[j] = geoms_data[i, j]
                 self.geoms_info[i].sol_params[j] = geoms_sol_params[i, j]
+            self.geoms_info[i].sol_params[0] = self._sol_contact_resolve_time
 
             self.geoms_info[i].sol_params[0] = ti.max(self.geoms_info[i].sol_params[0], self._substep_dt * 2)
 
@@ -2256,6 +2257,42 @@ class RigidSolver(Solver):
                 n_awake_links = ti.atomic_add(self.n_awake_links[i_b], 1)
                 self.awake_links[n_awake_links, i_b] = i_l
 
+    def apply_links_external_force(self, force, links_idx, envs_idx=None):
+        force, links_idx, envs_idx = self._validate_2D_io_variables(force, links_idx, 3, envs_idx, idx_name="links_idx")
+
+        self._kernel_apply_links_external_force(force, links_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_apply_links_external_force(
+        self,
+        force: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in ti.static(range(3)):
+                self.links_state[links_idx[i_l_], envs_idx[i_b_]].cfrc_ext_vel[i] -= force[i_b_, i_l_, i]
+
+    def apply_links_external_torque(self, torque, links_idx, envs_idx=None):
+        torque, links_idx, envs_idx = self._validate_2D_io_variables(
+            torque, links_idx, 3, envs_idx, idx_name="links_idx"
+        )
+
+        self._kernel_apply_links_external_torque(torque, links_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_apply_links_external_torque(
+        self,
+        torque: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in ti.static(range(3)):
+                self.links_state[links_idx[i_l_], envs_idx[i_b_]].cfrc_ext_ang[i] -= torque[i_b_, i_l_, i]
+
     @ti.func
     def _func_apply_external_force(self, pos, force, link_idx, batch_idx):
         torque = (pos - self.links_state[link_idx, batch_idx].COM).cross(force)
@@ -3282,6 +3319,28 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             self.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
+
+    def set_global_sol_params(self, sol_params):
+        """
+        Solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
+        Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
+        """
+        assert len(sol_params) == 7
+        self._kernel_set_global_sol_params(sol_params)
+
+    @ti.kernel
+    def _kernel_set_global_sol_params(self, sol_params: ti.types.ndarray()):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i in range(self.n_geoms):
+            for j in ti.static(range(7)):
+                self.geoms_info[i].sol_params[j] = sol_params[j]
+
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i, b in ti.ndrange(self.n_dofs, self._B):
+            for j in ti.static(range(7)):
+                self.dofs_info[i].sol_params[j] = sol_params[j]
+
+            self.dofs_info[i].sol_params[0] = self._substep_dt * 2
 
     def set_dofs_kp(self, kp, dofs_idx):
         kp, dofs_idx = self._validate_1D_io_variables(kp, dofs_idx, batched=False)
