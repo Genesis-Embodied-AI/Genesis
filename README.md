@@ -11,6 +11,9 @@
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 
 # Genesis
+## 🔥 News
+- [2024-12-25] Created a docker with Ray Tracing rendering support
+- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)
 
 ## Table of Contents
 
@@ -18,12 +21,11 @@
 2. [Key Features](#key-features)
 3. [Quick Installation](#quick-installation)
 4. [Documentation](#documentation)
-5. [Example Usage](#example-usage)
-6. [Contributing to Genesis](#contributing-to-genesis)
-7. [Support](#support)
-8. [License and Acknowledgments](#license-and-acknowledgments)
-9. [Associated Papers](#associated-papers)
-10. [Citation](#citation)
+5. [Contributing to Genesis](#contributing-to-genesis)
+6. [Support](#support)
+7. [License and Acknowledgments](#license-and-acknowledgments)
+8. [Associated Papers](#associated-papers)
+9. [Citation](#citation)
 
 ## What is Genesis?
 
