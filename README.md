@@ -74,6 +74,26 @@ cd Genesis
 pip install -e .
 ```
 
+## Docker Support
+
+If you want to use Genesis from Docker, you can first build the Docker image as:
+
+```bash
+docker build -t genesis -f docker/Dockerfile docker
+```
+
+Then you can run the examples inside the docker image (mounted to `/workspace/examples`):
+
+```bash
+xhost +local:root # Allow the container to access the display
+
+docker run --gpus all --rm -it \
+-e DISPLAY=$DISPLAY \
+-v /tmp/.X11-unix/:/tmp/.X11-unix \
+-v $PWD:/workspace \
+genesis
+```
+
 ## Documentation
 
 Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) and [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
