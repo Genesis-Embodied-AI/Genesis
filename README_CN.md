@@ -55,6 +55,26 @@ pip install genesis-world  # 需要 Python >=3.9;
 
 您还需要按照 [官方说明](https://pytorch.org/get-started/locally/) 安装 **PyTorch**。
 
+### Docker 支持
+
+如果您想通过 Docker 使用 Genesis，您可以首先构建 Docker 镜像，命令如下：
+
+```bash
+docker build -t genesis -f docker/Dockerfile docker
+```
+
+然后，您可以在 Docker 镜像内运行示例代码（挂载到 `/workspace/examples`）：
+
+```bash
+xhost +local:root # 允许容器访问显示器
+
+docker run --gpus all --rm -it \
+-e DISPLAY=$DISPLAY \
+-v /tmp/.X11-unix/:/tmp/.X11-unix \
+-v $PWD:/workspace \
+genesis
+```
+
 ### 文档
 
 请参阅我们的 [文档网站（英文）](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)/[（中文）](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)以获取详细的安装步骤、教程和 API 参考。
