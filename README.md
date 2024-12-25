@@ -12,7 +12,7 @@
 
 # Genesis
 ## 🔥 News
-- [2024-12-25] Created a docker with Ray Tracing rendering support
+- [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
 - [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)
 
 ## Table of Contents
@@ -20,12 +20,13 @@
 1. [What is Genesis?](#what-is-genesis)
 2. [Key Features](#key-features)
 3. [Quick Installation](#quick-installation)
-4. [Documentation](#documentation)
-5. [Contributing to Genesis](#contributing-to-genesis)
-6. [Support](#support)
-7. [License and Acknowledgments](#license-and-acknowledgments)
-8. [Associated Papers](#associated-papers)
-9. [Citation](#citation)
+4. [Docker](#docker)
+5. [Documentation](#documentation)
+6. [Contributing to Genesis](#contributing-to-genesis)
+7. [Support](#support)
+8. [License and Acknowledgments](#license-and-acknowledgments)
+9. [Associated Papers](#associated-papers)
+10. [Citation](#citation)
 
 ## What is Genesis?
 
@@ -74,7 +75,7 @@ cd Genesis
 pip install -e .
 ```
 
-## Docker Support
+## Docker
 
 If you want to use Genesis from Docker, you can first build the Docker image as:
 
