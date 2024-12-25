@@ -187,6 +187,7 @@ class Viewer(pyglet.window.Window):
         self,
         scene,
         context,
+        viewer,
         viewport_size=None,
         render_flags=None,
         viewer_flags=None,
@@ -205,6 +206,7 @@ class Viewer(pyglet.window.Window):
             viewport_size = (640, 480)
         self.gs_context = context
         self.render_scene = scene
+        self._viewer = viewer
         self._scene = context._scene
         self._viewport_size = viewport_size
         self._render_lock = RLock()
@@ -215,9 +217,8 @@ class Viewer(pyglet.window.Window):
         self._should_close = False
         self._run_in_thread = run_in_thread
         self._seg_node_map = context.seg_node_map
-
+        self._pause_draw = False
         self._video_saver = None
-
         self._default_render_flags = {
             "flip_wireframe": False,
             "all_wireframe": False,
@@ -631,7 +632,7 @@ class Viewer(pyglet.window.Window):
 
     def on_draw(self):
         """Redraw the scene into the viewing window."""
-        if self._renderer is None:
+        if self._renderer is None or self._pause_draw:
             return
 
         if self.run_in_thread or not self.auto_start:
@@ -861,12 +862,14 @@ class Viewer(pyglet.window.Window):
             self._save_image()
         elif symbol == pyglet.window.key.SPACE:
             if not self.gs_context.pause_rendering_shown:
-                self.render_lock.acquire(blocking=False)
+                self._pause_draw = True
                 self.gs_context.pause_rendering_shown = True
+                self._viewer._pause_render_flag = True
                 # gs.logger.info("pause_rendering......")
             else:
-                self.render_lock.release()
+                self._pause_draw = False
                 self.gs_context.pause_rendering_shown = False
+                self._viewer._pause_render_flag = False
                 # gs.logger.info("start_rendering......")
         elif symbol == pyglet.window.key.X:
             self.render_scene.reset()

@@ -101,7 +101,7 @@ class Visualizer(RBC):
             self._context.build(self._scene)
 
         if self._viewer is not None:
-            self._viewer.build(self._scene)
+            self._viewer.build(self._scene, self._viewer)
             self.viewer_lock = self._viewer.lock
         else:
             self.viewer_lock = DummyViewerLock()
@@ -129,12 +129,14 @@ class Visualizer(RBC):
     def update(self, force=True):
         if force:  # force update
             self.reset()
-
-        if self._viewer is not None:
+        if self._viewer is not None and not self._viewer._pause_render_flag:
+            # gs.logger.info("Updating viewer in visualizer.....")
             if self._viewer.is_alive():
                 self._viewer.update()
             else:
                 gs.raise_exception("Viewer closed.")
+        # else:
+        # gs.logger.info("Skip updating viewer in visualizer.....")
 
     def update_visual_states(self):
         """
