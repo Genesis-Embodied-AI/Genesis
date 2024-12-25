@@ -72,20 +72,6 @@ cd Genesis
 pip install -e .
 ```
 
-## Example Usage
-
-```python
-from genesis import Simulation
-
-# Initialize a simulation
-sim = Simulation()
-
-# Run the simulation
-sim.run()
-```
-
-This simple example demonstrates how to initialize and execute a basic simulation. For more advanced scenarios, refer to our [documentation](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html).
-
 ## Documentation
 
 Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) and [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
