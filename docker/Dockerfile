@@ -1,5 +1,4 @@
 ARG CUDA_VERSION=12.1
-ARG PYTHON_VERSION=3.11
 
 # ===============================================================
 # Stage 1: Build LuisaRender
@@ -7,11 +6,10 @@ ARG PYTHON_VERSION=3.11
 FROM pytorch/pytorch:2.5.1-cuda${CUDA_VERSION}-cudnn9-devel AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV NVIDIA_DRIVER_CAPABILITIES all
+ARG PYTHON_VERSION=3.11
 
 # Install necessary packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    sudo \
     build-essential \
     manpages-dev \
     libvulkan-dev \
@@ -22,9 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     wget
-RUN sudo add-apt-repository ppa:ubuntu-toolchain-r/test && \
-    sudo apt update && \
-    sudo apt install -y --no-install-recommends \
+RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
+    apt update && \
+    apt install -y --no-install-recommends \
     gcc-11 \
     g++-11 \
     gcc-11 g++-11 patchelf && \
@@ -58,11 +56,12 @@ RUN chmod +x ./build_luisa.sh && ./build_luisa.sh ${PYTHON_VERSION}
 # ===============================================================
 FROM pytorch/pytorch:2.5.1-cuda${CUDA_VERSION}-cudnn9-devel
 
+ARG PYTHON_VERSION=3.11
 ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    sudo \
     tmux \
     git \
     curl \
@@ -80,8 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan-dev \
     libgles2 \
     libglvnd0 \
-    libglx0 \ 
-    nvidia-utils-535 \
+    libglx0 \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
