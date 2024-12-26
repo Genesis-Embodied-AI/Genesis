@@ -19,7 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     git \
     curl \
-    wget
+    wget \
+    dos2unix
+
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
     apt update && \
     apt install -y --no-install-recommends \
@@ -48,8 +50,12 @@ WORKDIR /workspace
 RUN git clone https://github.com/Genesis-Embodied-AI/Genesis.git && \
     cd Genesis && \
     git submodule update --init --recursive
-COPY build_luisa.sh /workspace/build_luisa.sh
-RUN chmod +x ./build_luisa.sh && ./build_luisa.sh ${PYTHON_VERSION}
+
+COPY build_luisa.sh /workspace/
+RUN ls -la /workspace && \
+    dos2unix /workspace/build_luisa.sh && \
+    chmod +x /workspace/build_luisa.sh && \
+    ./build_luisa.sh ${PYTHON_VERSION}
 
 # ===============================================================
 # Stage 2: Runtime Environment
