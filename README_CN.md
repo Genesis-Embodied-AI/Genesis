@@ -1,3 +1,5 @@
+<div align="center">
+
 ![Genesis](imgs/big_text.png)
 
 ![Teaser](imgs/teaser.png)
@@ -10,26 +12,37 @@
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 
-# 概述
+</div>
 
-Genesis 是一个为通用 *机器人/嵌入式 AI/物理 AI* 应用设计的物理平台。它同时具备多种功能：
+# Genesis 通用物理引擎
 
-1. 一个从头开始重建的 **通用物理引擎**，能够模拟各种材料和物理现象。
-2. 一个 **轻量级**、**超快**、**Python 风格** 和 **用户友好** 的机器人模拟平台。
-3. 一个强大且快速的 **照片级真实感渲染系统**。
-4. 一个 **生成数据引擎**，将用户提示的自然语言描述转换为各种数据模式。
+## 目录
 
-Genesis 由一个重新设计和重建的通用物理引擎驱动，集成了各种物理求解器及其耦合到一个统一的框架中。这个核心物理引擎通过一个生成代理框架在上层进行增强，旨在实现机器人及其他领域的完全 **自动化数据生成**。
+1. [概述](#概述)
+2. [主要特点](#主要特点)
+3. [快速入门](#快速入门)
+4. [参与贡献](#参与贡献)
+5. [帮助支持](#帮助支持)
+6. [许可证与致谢](#许可证和致谢)
+7. [相关论文](#genesis-背后的论文)
+8. [引用](#引用)
 
-目前，我们正在开源 **底层物理引擎和模拟平台**。我们的生成框架是一个模块化系统，包含许多不同的生成模块，每个模块处理一定范围的数据模式，由一个高级代理路由。一些模块集成了现有的论文，一些仍在提交中。我们的生成功能将逐步开放。如果您感兴趣，请参阅下面的 [论文列表](#papers-behind-genesis)。
+## 概述
 
-Genesis 的构建和持续发展基于以下 ***长期使命***：
+Genesis 是专为 *机器人/嵌入式 AI/物理 AI* 应用设计的通用物理平台，集成了以下核心功能：
 
-1. **降低使用物理模拟的门槛**，使机器人研究对所有人都可访问。（参见我们的 [承诺](https://genesis-world.readthedocs.io/en/latest/user_guide/overview/mission.html)）
-2. **将各种最先进的物理求解器统一到一个框架中**，使用最先进的模拟技术在虚拟领域中重新创建整个物理世界，达到最高的物理、视觉和感官保真度。
-3. **最小化人类在收集和生成机器人及其他领域数据上的努力**，让数据飞轮自行旋转。
+- **通用物理引擎**: 从底层重建,支持多种材料和物理现象模拟
+- **机器人模拟平台**: 轻量、高速、Python友好的开发环境
+- **真实感渲染**: 内置光线追踪渲染系统
+- **生成数据引擎**: 自然语言驱动的多模态数据生成
 
-项目页面：<https://genesis-embodied-ai.github.io/>
+我们的长期使命:
+
+- 降低物理模拟使用门槛
+- 统一各类物理求解器
+- 实现数据生成自动化
+
+项目主页: <https://genesis-embodied-ai.github.io/>
 
 ## 主要特点
 
@@ -43,29 +56,50 @@ Genesis 的构建和持续发展基于以下 ***长期使命***：
 - **基于物理的触觉传感器**：Genesis 包含一个基于物理的可微分 [触觉传感器模拟模块](https://github.com/Genesis-Embodied-AI/DiffTactile)。这将很快集成到公共版本中（预计在 0.3.0 版本中）。
 - **用户友好性**：Genesis 设计为尽可能简化模拟的使用。从安装到 API 设计，如果有任何您觉得不直观或难以使用的地方，请 [告诉我们](https://github.com/Genesis-Embodied-AI/Genesis/issues)。
 
-## 入门
+## 快速入门
 
-### 快速安装
+### 安装
 
 Genesis 可通过 PyPI 获取：
 
 ```bash
-pip install genesis-world  # 需要 Python >=3.9;
+pip install genesis-world  # 需要 Python >=3.9
 ```
 
-您还需要按照 [官方说明](https://pytorch.org/get-started/locally/) 安装 **PyTorch**。
+同时需要按照[官方指南](https://pytorch.org/get-started/locally/)安装 PyTorch。
+
+### Docker 支持
+
+如果您想通过 Docker 使用 Genesis，您可以首先构建 Docker 镜像，命令如下：
+
+```bash
+docker build -t genesis -f docker/Dockerfile docker
+```
+
+然后，您可以在 Docker 镜像内运行示例代码（挂载到 `/workspace/examples`）：
+
+```bash
+xhost +local:root # 允许容器访问显示器
+
+docker run --gpus all --rm -it \
+-e DISPLAY=$DISPLAY \
+-v /tmp/.X11-unix/:/tmp/.X11-unix \
+-v $PWD:/workspace \
+genesis
+```
 
 ### 文档
 
-请参阅我们的 [文档网站（英文）](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)/[（中文）](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)以获取详细的安装步骤、教程和 API 参考。
+- [英文文档](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)
+- [中文文档](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)
 
-## 贡献 Genesis
+## 参与贡献
 
 Genesis 项目的目标是构建一个完全透明、用户友好的生态系统，让来自机器人和计算机图形学的贡献者 **共同创建一个高效、真实（物理和视觉上）的虚拟世界，用于机器人研究及其他领域**。
 
 我们真诚地欢迎来自社区的 *任何形式的贡献*，以使世界对机器人更友好。从 **新功能的拉取请求**、**错误报告**，到甚至是使 Genesis API 更直观的微小 **建议**，我们都全心全意地感谢！
 
-## 支持
+## 帮助支持
 
 - 请使用 Github [Issues](https://github.com/Genesis-Embodied-AI/Genesis/issues) 报告错误和提出功能请求。
 
@@ -116,7 +150,7 @@ Genesis 是一个大规模的努力，将各种现有和正在进行的研究工
 
 如果您在研究中使用了 Genesis，我们将非常感谢您引用它。我们仍在撰写技术报告，在其公开之前，您可以考虑引用：
 
-```
+```bibtex
 @software{Genesis,
   author = {Genesis Authors},
   title = {Genesis: A Universal and Generative Physics Engine for Robotics and Beyond},
