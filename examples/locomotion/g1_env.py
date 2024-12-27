@@ -296,34 +296,34 @@ class G1Env:
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])/1.0
+        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
 
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw)
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error / self.reward_cfg["tracking_sigma"])/1.0
+        return torch.exp(-ang_vel_error / self.reward_cfg["tracking_sigma"])
 
     def _reward_lin_vel_z(self):
         # Penalize z axis base linear velocity
-        return torch.square(self.base_lin_vel[:, 2])/1.0
+        return torch.square(self.base_lin_vel[:, 2])
 
     def _reward_action_rate(self):
         # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)/1.0
+        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
 
     def _reward_similar_to_default(self):
         # Penalize joint poses far away from default pose
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)/1.0
+        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
 
     def _reward_base_height(self):
         # Penalize base height away from target
         return torch.square(self.base_pos[:, 2] - self.reward_cfg[
-            "base_height_target"])/1.0
+            "base_height_target"])
 
     def _reward_alive(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
         # Under BSD-3 License
-        return 1.0/1.0
+        return 1.0
 
     def _reward_gait_contact(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
@@ -333,7 +333,7 @@ class G1Env:
             is_stance = self.leg_phase[:, i] < 0.55
             contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
             res += ~(contact ^ is_stance)
-        return res/1.0
+        return res
     
     def _reward_gait_swing(self):
         res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
@@ -341,7 +341,7 @@ class G1Env:
             is_swing = self.leg_phase[:, i] >= 0.55
             contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
             res += ~(contact ^ is_swing)
-        return res/1.0
+        return res
 
     def _reward_contact_no_vel(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
@@ -350,7 +350,7 @@ class G1Env:
                              dim=2) > 1.
         contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
         penalize = torch.square(contact_feet_vel[:, :, :3])
-        return torch.sum(penalize, dim=(1, 2))/1.0
+        return torch.sum(penalize, dim=(1, 2))
 
     def _reward_feet_swing_height(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
@@ -359,9 +359,9 @@ class G1Env:
                              dim=2) > 1.0
         pos_error = torch.square(self.feet_pos[:, :, 2] - self.reward_cfg[
             "feet_height_target"]) * ~contact
-        return torch.sum(pos_error, dim=(1))/1.0
+        return torch.sum(pos_error, dim=(1))
 
     def _reward_orientation(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
         # Under BSD-3 License
-        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)/1.0
+        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
