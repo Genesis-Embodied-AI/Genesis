@@ -51,6 +51,10 @@ class Collider:
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
+        if self._solver._options.batch_links_info:
+            links_root_idx = links_root_idx[:, 0]
+            links_parent_idx = links_parent_idx[:, 0]
+            links_is_fixed = links_is_fixed[:, 0]
         n_possible_pairs = 0
         for i in range(self._solver.n_geoms):
             for j in range(i + 1, self._solver.n_geoms):
@@ -164,10 +168,13 @@ class Collider:
                     i_la = self.contact_data[i_c, i_b].link_a
                     i_lb = self.contact_data[i_c, i_b].link_b
 
+                    I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+                    I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+
                     # pair of hibernated-fixed links -> hibernated contact
                     # TODO: we should also include hibernated-hibernated links and wake up the whole contact island once a new collision is detected
-                    if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[i_lb].is_fixed) or (
-                        self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[i_la].is_fixed
+                    if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
+                        self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
                     ):
                         i_c_hibernated = self.n_contacts_hibernated[i_b]
                         if i_c != i_c_hibernated:
@@ -549,6 +556,8 @@ class Collider:
     def _func_check_collision_valid(self, i_ga, i_gb, i_b):
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
+        I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+        I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
         is_valid = True
 
         # geoms in the same link
@@ -558,22 +567,22 @@ class Collider:
         # self collision
         if (
             ti.static(not self._solver._enable_self_collision)
-            and self._solver.links_info[i_la].root_idx == self._solver.links_info[i_lb].root_idx
+            and self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx
         ):
             is_valid = False
 
         # adjacent links
-        if self._solver.links_info[i_la].parent_idx == i_lb or self._solver.links_info[i_lb].parent_idx == i_la:
+        if self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la:
             is_valid = False
 
         # pair of fixed links
-        if self._solver.links_info[i_la].is_fixed and self._solver.links_info[i_lb].is_fixed:
+        if self._solver.links_info[I_la].is_fixed and self._solver.links_info[I_lb].is_fixed:
             is_valid = False
 
         # hibernated <-> fixed links
         if ti.static(self._solver._use_hibernation):
-            if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[i_lb].is_fixed) or (
-                self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[i_la].is_fixed
+            if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
+                self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
             ):
                 is_valid = False
 
@@ -994,7 +1003,9 @@ class Collider:
 
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
-        is_self_pair = self._solver.links_info.root_idx[i_la] == self._solver.links_info.root_idx[i_lb]
+        I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+        I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+        is_self_pair = self._solver.links_info.root_idx[I_la] == self._solver.links_info.root_idx[I_lb]
         multi_contact = (
             self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
