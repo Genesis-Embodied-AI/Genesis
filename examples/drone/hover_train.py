@@ -15,10 +15,10 @@ def get_train_cfg(exp_name, max_iterations):
         "algorithm": {
             "clip_param": 0.2,
             "desired_kl": 0.01,
-            "entropy_coef": 0.01,
+            "entropy_coef": 0.002,
             "gamma": 0.99,
             "lam": 0.95,
-            "learning_rate": 0.001,
+            "learning_rate": 0.0003,
             "max_grad_norm": 1.0,
             "num_learning_epochs": 5,
             "num_mini_batches": 4,
@@ -70,6 +70,7 @@ def get_cfgs():
         "base_init_pos": [0.0, 0.0, 1.0],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 15.0,
+        "at_target_threshold": 0.1,
         "resampling_time_s": 3.0,
         # "action_scale": 0.25,
         "simulate_action_latency": True,
@@ -84,10 +85,13 @@ def get_cfgs():
         },
     }
     reward_cfg = {
+        "yaw_lambda": -10.0,
         "reward_scales": {
-            "target": 5.0,
-            "smooth": -0.001,
-            "crash": 1.0,
+            "target": 10.0,
+            "smooth": -1e-4,
+            "yaw": 0.01,
+            "angular": -2e-4,
+            "crash": -10.0,
         }
     }
     command_cfg = {
@@ -103,7 +107,7 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
-    parser.add_argument("-B", "--num_envs", type=int, default=4096)
+    parser.add_argument("-B", "--num_envs", type=int, default=8192)
     parser.add_argument("--max_iterations", type=int, default=500)
     args = parser.parse_args()
 

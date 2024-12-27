@@ -33,7 +33,7 @@ class HoverEnv:
             sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
             viewer_options=gs.options.ViewerOptions(
                 max_FPS=60,
-                camera_pos=(2.0, 0.0, 2.5),
+                camera_pos=(3.0, 0.0, 3.0),
                 camera_lookat=(0.0, 0.0, 1.0),
                 camera_fov=40,
             ),
@@ -97,16 +97,31 @@ class HoverEnv:
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["pos_y_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["pos_z_range"], (len(envs_idx),), self.device)
 
+    # def _at_target(self, envs_idx):
+    #     at_target = (
+    #         (torch.norm(self.rel_pos[envs_idx], dim=1) < self.env_cfg["at_target_threshold"])
+    #         .nonzero(as_tuple=False)
+    #         .flatten()
+    #     )
+    #     return envs_idx[at_target]
+    
+    def _at_target(self):
+        at_target = (
+            (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"])
+            .nonzero(as_tuple=False)
+            .flatten()
+        )
+        return at_target
+
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.actions.cpu()
-
-        # exec_actions = self.last_actions if self.simulate_action_latency else self.actions
+        # exec_actions = self.last_actions.cpu() if self.simulate_action_latency else self.actions.cpu()
         # target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
         # self.drone.control_dofs_position(target_dof_pos)
 
         # 14468 is hover rpm
-        self.drone.set_propellels_rpm((1 + exec_actions) * 14468.429183500699)
+        self.drone.set_propellels_rpm((1 + exec_actions*0.8) * 14468.429183500699)
         self.scene.step()
 
         # update buffers
@@ -124,11 +139,13 @@ class HoverEnv:
         self.base_ang_vel[:] = transform_by_quat(self.drone.get_ang(), inv_base_quat)
 
         # resample commands
-        envs_idx = (
-            (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
-            .nonzero(as_tuple=False)
-            .flatten()
-        )
+        # envs_idx = (
+        #     (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
+        #     .nonzero(as_tuple=False)
+        #     .flatten()
+        # )
+        # envs_idx = self._at_target(envs_idx)
+        envs_idx = self._at_target()
         self._resample_commands(envs_idx)
 
         # check termination and reset
@@ -221,8 +238,18 @@ class HoverEnv:
     def _reward_smooth(self):
         smooth_rew = torch.sum(torch.square(self.actions - self.last_actions), dim=1)
         return smooth_rew
+
+    def _reward_yaw(self):
+        yaw = self.base_euler[:, 2]
+        yaw = torch.where(yaw > 180, yaw - 360, yaw)/180*3.14159    # use rad for yaw_reward
+        yaw_rew = torch.exp(self.reward_cfg["yaw_lambda"] * torch.abs(yaw))
+        return yaw_rew
     
+    def _reward_angular(self):
+        angular_rew = torch.norm(self.base_ang_vel/3.14159, dim=1)
+        return angular_rew
+
     def _reward_crash(self):
         crash_rew = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
-        crash_rew[self.crash_condition] = -1
+        crash_rew[self.crash_condition] = 1
         return crash_rew
