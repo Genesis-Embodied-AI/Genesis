@@ -194,6 +194,7 @@ class RigidOptions(Options):
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
     use_contact_island: bool = False
+    box_box_detection: bool = False  # use mujoco's box-box detection. This is slower but more stable.
 
     # hibernation threshold
     use_hibernation: bool = False
