@@ -311,10 +311,6 @@ class G1Env:
         # Penalize changes in actions
         return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
 
-    def _reward_similar_to_default(self):
-        # Penalize joint poses far away from default pose
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
-
     def _reward_base_height(self):
         # Penalize base height away from target
         return torch.square(self.base_pos[:, 2] - self.reward_cfg[
@@ -365,3 +361,18 @@ class G1Env:
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
         # Under BSD-3 License
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
+    
+    def _reward_hip_pos(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
+        return torch.sum(torch.square(self.dof_pos[:,[1,2,7,8]]), dim=1)
+    
+    def _reward_ang_vel_xy(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
+        return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
+    
+    def _reward_dof_vel(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
+        return torch.sum(torch.square(self.dof_vel), dim=1)

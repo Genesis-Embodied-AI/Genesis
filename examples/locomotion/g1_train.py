@@ -121,14 +121,16 @@ def get_cfgs():
             "tracking_ang_vel": 0.5,
             "alive": 0.15,
             "gait_contact": 0.18,
-            "gait_swing": -0.18,
+            "gait_swing": -0.05,
             "lin_vel_z": -2.0,
+            "ang_vel_xy": -0.05,
             "base_height": -10.0,
             "action_rate": -0.01,
-            "similar_to_default": -0.2,
             "contact_no_vel": -0.2,
             "feet_swing_height": -20.0,
-            "orientation": -0.0,
+            "orientation": -1.0,
+            "hip_pos": -1.0,
+            "dof_vel": -0.001,
         },
     }
     command_cfg = {
@@ -145,7 +147,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="g1-walking")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=120)
+    parser.add_argument("--max_iterations", type=int, default=100)
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
