@@ -1,3 +1,5 @@
+import inspect
+
 import genesis as gs
 import genesis.utils.repr as ru
 from genesis.styles import colors, formats, styless
@@ -31,9 +33,16 @@ class RBC:
             repr_str += f", material: {self.material}"
         return repr_str
 
+    def _is_debugger(self) -> bool:
+        """Detect if running under a debugger (VSCode or PyCharm)."""
+        for frame in inspect.stack():
+            if any(module in frame.filename for module in ("debugpy", "ptvsd", "pydevd")):
+                return True
+        return False
+
     def __repr__(self):
-        if not __debug__:
-            self.__colorized__repr__()
+        if not self._is_debugger():
+            return self.__colorized__repr__()
 
     def __colorized__repr__(self) -> str:
         all_attrs = self.__dir__()
