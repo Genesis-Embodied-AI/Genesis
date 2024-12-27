@@ -92,9 +92,8 @@ def get_cfgs():
         "kp": 120.0,
         "kd": 3.0,
         # termination
-        "termination_if_roll_greater_than": 180,  # degree
-        "termination_if_pitch_greater_than": 180,
         "terminate_after_contacts_on": ["pelvis"],
+        "termination_if_pelvis_z_less_than": 0.2,
         # base pose
         "base_init_pos": [0.0, 0.0, 0.8],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
@@ -105,7 +104,7 @@ def get_cfgs():
         "clip_actions": 100.0,
     }
     obs_cfg = {
-        "num_obs": 45,
+        "num_obs": 47,
         "obs_scales": {
             "lin_vel": 2.0,
             "ang_vel": 0.25,
@@ -122,13 +121,13 @@ def get_cfgs():
             "tracking_ang_vel": 0.5,
             "alive": 0.15,
             "gait_contact": 0.18,
+            "gait_swing": -0.18,
             "lin_vel_z": -2.0,
             "base_height": -10.0,
             "action_rate": -0.01,
             "similar_to_default": -0.2,
             "contact_no_vel": -0.2,
-            "hip_pos": -0.1,
-            "feet_swing_height": -10000.0,
+            "feet_swing_height": -20.0,
             "orientation": -0.0,
         },
     }
@@ -146,7 +145,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="g1-walking")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("--max_iterations", type=int, default=120)
     args = parser.parse_args()
 
     gs.init(logging_level="warning")

@@ -1,5 +1,6 @@
 import torch
 import math
+import numpy as np
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
 
@@ -112,7 +113,7 @@ class G1Env:
         )
         self.extras = dict()  # extra information for logging
 
-        # Modified
+        # Modified Physics
         self.contact_forces = self.robot.get_links_net_contact_force()
         self.left_foot_link = self.robot.get_link(name='left_ankle_roll_link')
         self.right_foot_link = self.robot.get_link(
@@ -132,6 +133,8 @@ class G1Env:
         self.phase_left = self.phase
         self.phase_right = (self.phase + offset) % 1
         self.leg_phase = torch.cat([self.phase_left.unsqueeze(1), self.phase_right.unsqueeze(1)], dim=-1)
+        self.sin_phase = torch.sin(2 * np.pi * self.phase ).unsqueeze(1)
+        self.cos_phase = torch.cos(2 * np.pi * self.phase ).unsqueeze(1)
 
         termination_contact_names = self.env_cfg["terminate_after_contacts_on"]
         self.termination_contact_indices = []
@@ -181,15 +184,7 @@ class G1Env:
         self.pelvis_link = self.robot.get_link(name='pelvis')
         self.pelvis_id_local = self.pelvis_link.idx_local
         self.pelvis_pos = self.links_pos[:, self.pelvis_id_local, :]
-        self.reset_buf |= torch.abs(self.pelvis_pos[:, 2]) < 0.15
-        # self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
-        # self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
-        # self.reset_buf = torch.any(
-        #     torch.norm(self.contact_forces[
-        #         :,
-        #         self.termination_contact_indices, :],
-        #         dim=-1) > 1.0,
-        #     dim=1)
+        self.reset_buf |= torch.abs(self.pelvis_pos[:, 2]) < self.env_cfg["termination_if_pelvis_z_less_than"]
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
         self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=self.device, dtype=gs.tc_float)
@@ -197,30 +192,7 @@ class G1Env:
 
         self.reset_idx(self.reset_buf.nonzero(as_tuple=False).flatten())
 
-        # compute reward
-        self.rew_buf[:] = 0.0
-        for name, reward_func in self.reward_functions.items():
-            rew = reward_func() * self.reward_scales[name]
-            self.rew_buf += rew
-            self.episode_sums[name] += rew
-
-        # compute observations
-        self.obs_buf = torch.cat(
-            [
-                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
-                self.projected_gravity,  # 3
-                self.commands * self.commands_scale,  # 3
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
-                self.dof_vel * self.obs_scales["dof_vel"],  # 12
-                self.actions,  # 12
-            ],
-            axis=-1,
-        )
-
-        self.last_actions[:] = self.actions[:]
-        self.last_dof_vel[:] = self.dof_vel[:]
-
-        # Modified
+        # Modified Physics
         self.contact_forces = self.robot.get_links_net_contact_force()
         self.left_foot_link = self.robot.get_link(name='left_ankle_roll_link')
         self.right_foot_link = self.robot.get_link(
@@ -240,6 +212,33 @@ class G1Env:
         self.phase_left = self.phase
         self.phase_right = (self.phase + offset) % 1
         self.leg_phase = torch.cat([self.phase_left.unsqueeze(1), self.phase_right.unsqueeze(1)], dim=-1)
+        self.sin_phase = torch.sin(2 * np.pi * self.phase ).unsqueeze(1)
+        self.cos_phase = torch.cos(2 * np.pi * self.phase ).unsqueeze(1)
+
+        # compute reward
+        self.rew_buf[:] = 0.0
+        for name, reward_func in self.reward_functions.items():
+            rew = reward_func() * self.reward_scales[name]
+            self.rew_buf += rew
+            self.episode_sums[name] += rew
+
+        # compute observations
+        self.obs_buf = torch.cat(
+            [
+                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
+                self.projected_gravity,  # 3
+                self.commands * self.commands_scale,  # 3
+                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
+                self.dof_vel * self.obs_scales["dof_vel"],  # 12
+                self.actions,  # 12
+                self.sin_phase, # 1
+                self.cos_phase, # 1
+            ],
+            axis=-1,
+        )
+
+        self.last_actions[:] = self.actions[:]
+        self.last_dof_vel[:] = self.dof_vel[:]
 
         return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
 
@@ -297,33 +296,32 @@ class G1Env:
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])
+        return torch.exp(-lin_vel_error / self.reward_cfg["tracking_sigma"])/1.0
 
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw)
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error / self.reward_cfg["tracking_sigma"])
+        return torch.exp(-ang_vel_error / self.reward_cfg["tracking_sigma"])/1.0
 
     def _reward_lin_vel_z(self):
         # Penalize z axis base linear velocity
-        return torch.square(self.base_lin_vel[:, 2])
+        return torch.square(self.base_lin_vel[:, 2])/1.0
 
     def _reward_action_rate(self):
         # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
+        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)/1.0
 
     def _reward_similar_to_default(self):
         # Penalize joint poses far away from default pose
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
+        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)/1.0
 
     def _reward_base_height(self):
         # Penalize base height away from target
         return torch.square(self.base_pos[:, 2] - self.reward_cfg[
-            "base_height_target"])
+            "base_height_target"])/1.0
 
     def _reward_alive(self):
-        # Reward for staying alive
-        return 1.0
+        return 1.0/1.0
 
     def _reward_gait_contact(self):
         res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
@@ -331,7 +329,15 @@ class G1Env:
             is_stance = self.leg_phase[:, i] < 0.55
             contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
             res += ~(contact ^ is_stance)
-        return res
+        return res/1.0
+    
+    def _reward_gait_swing(self):
+        res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        for i in range(self.feet_num):
+            is_swing = self.leg_phase[:, i] >= 0.55
+            contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
+            res += ~(contact ^ is_swing)
+        return res/1.0
 
     def _reward_contact_no_vel(self):
         # Foot contacting the ground should has no velocity
@@ -339,18 +345,14 @@ class G1Env:
                              dim=2) > 1.
         contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
         penalize = torch.square(contact_feet_vel[:, :, :3])
-        return torch.sum(penalize, dim=(1, 2))
-
-    def _reward_hip_pos(self):
-        return torch.sum(torch.square(self.dof_pos[:, [1, 2, 7, 8]]), dim=1)
+        return torch.sum(penalize, dim=(1, 2))/1.0
 
     def _reward_feet_swing_height(self):
         contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
                              dim=2) > 1.0
         pos_error = torch.square(self.feet_pos[:, :, 2] - self.reward_cfg[
             "feet_height_target"]) * ~contact
-        return torch.sum(pos_error, dim=(1))
+        return torch.sum(pos_error, dim=(1))/1.0
 
     def _reward_orientation(self):
-        # Penalize non flat base orientation
-        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
+        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)/1.0
