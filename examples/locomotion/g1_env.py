@@ -321,9 +321,13 @@ class G1Env:
             "base_height_target"])/1.0
 
     def _reward_alive(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
         return 1.0/1.0
 
     def _reward_gait_contact(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
         res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         for i in range(self.feet_num):
             is_stance = self.leg_phase[:, i] < 0.55
@@ -340,7 +344,8 @@ class G1Env:
         return res/1.0
 
     def _reward_contact_no_vel(self):
-        # Foot contacting the ground should has no velocity
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
         contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
                              dim=2) > 1.
         contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
@@ -348,6 +353,8 @@ class G1Env:
         return torch.sum(penalize, dim=(1, 2))/1.0
 
     def _reward_feet_swing_height(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
         contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
                              dim=2) > 1.0
         pos_error = torch.square(self.feet_pos[:, :, 2] - self.reward_cfg[
@@ -355,4 +362,6 @@ class G1Env:
         return torch.sum(pos_error, dim=(1))/1.0
 
     def _reward_orientation(self):
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
+        # Under BSD-3 License
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)/1.0
