@@ -69,18 +69,16 @@ def get_cfgs():
         # base pose
         "base_init_pos": [0.0, 0.0, 1.0],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 5.0,
-        "resampling_time_s": 5.0,
+        "episode_length_s": 15.0,
+        "resampling_time_s": 3.0,
         # "action_scale": 0.25,
-        # "simulate_action_latency": True,
+        "simulate_action_latency": True,
         "clip_actions": 1.0,
     }
     obs_cfg = {
         "num_obs": 17,
         "obs_scales": {
             "rel_pos": 1 / 3.0,
-            "euler_xy": 1 / 180,
-            "euler_z": 1 / 360,
             "lin_vel": 1 / 3.0,
             "ang_vel": 1 / 3.14159,
         },
@@ -106,7 +104,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=1000)
+    parser.add_argument("--max_iterations", type=int, default=500)
     args = parser.parse_args()
 
     gs.init(logging_level="warning")

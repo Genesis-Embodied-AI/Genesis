@@ -12,7 +12,8 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
-    parser.add_argument("--ckpt", type=int, default=100)
+    parser.add_argument("--ckpt", type=int, default=500)
+    parser.add_argument("--record", action="store_true", default=False)
     args = parser.parse_args()
 
     gs.init()
@@ -36,11 +37,18 @@ def main():
     policy = runner.get_inference_policy(device="cuda:0")
 
     obs, _ = env.reset()
+    if args.record:
+        env.cam.start_recording()
+
+    max_sim_step = int(env_cfg["episode_length_s"]/0.01)    # 0.01 is the simulation time step
     with torch.no_grad():
-        while True:
+        for i in range(max_sim_step):
             actions = policy(obs)
             obs, _, rews, dones, infos = env.step(actions)
-
+            if args.record:
+                env.cam.render()
+    if args.record:
+        env.cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
 if __name__ == "__main__":
     main()
