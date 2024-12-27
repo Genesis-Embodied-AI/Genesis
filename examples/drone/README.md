@@ -27,6 +27,50 @@ Run with:
 python fly.py -v -m
 ```
 
+### 3. Hover Environment (`hover_env.py`, `hover_train.py`, `hover_eval.py`)
+
+The hover environment (`hover_env.py`) is designed to train a drone to maintain a stable hover position by reaching randomly generated target points. The environment includes:
+
+ - Initialization of the scene and entities (plane, drone and target).
+ - Reward functions to provide feedback to the agent based on its performance in reaching the target points.
+ - **Command resampling to generate new random target points** and environment reset functionalities to ensure continuous training.
+
+**Acknowledgement**: The reward design is inspired by [Champion-level drone racing using deep
+reinforcement learning (Nature 2023)](https://www.nature.com/articles/s41586-023-06419-4.pdf)
+
+#### 3.0 Installation
+
+At this stage, we have defined the environments. Now, we use the PPO implementation from `rsl-rl` to train the policy. Follow these installation steps:
+
+```bash
+# Install rsl_rl.
+git clone https://github.com/leggedrobotics/rsl_rl
+cd rsl_rl && git checkout v1.0.2 && pip install -e .
+
+# Install tensorboard.
+pip install tensorboard
+```
+
+#### 3.1 Training
+
+Train the drone hovering policy using the `HoverEnv` environment.
+
+Run with:
+
+```bash
+python hover_train.py -e drone-hovering -B 8192 --max_iterations 500
+```
+
+#### 3.2 Evaluation
+
+Evaluate the trained drone hovering policy.
+
+Run with:
+
+```bash
+python hover_eval.py -e drone-hovering --ckpt 500 --record
+```
+
 ## Technical Details
 
 - The drone model used is the Crazyflie 2.X (`urdf/drones/cf2x.urdf`)
