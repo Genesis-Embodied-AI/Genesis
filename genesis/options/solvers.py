@@ -185,6 +185,10 @@ class RigidOptions(Options):
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
 
+    # batching info
+    batch_links_info: Optional[bool] = False
+    batch_dofs_info: Optional[bool] = False
+
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.CG
     iterations: int = 100

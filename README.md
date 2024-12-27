@@ -11,14 +11,17 @@
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 
 # Genesis
+## 🔥 News
+- [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
+- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)
 
 ## Table of Contents
 
 1. [What is Genesis?](#what-is-genesis)
 2. [Key Features](#key-features)
 3. [Quick Installation](#quick-installation)
-4. [Documentation](#documentation)
-5. [Example Usage](#example-usage)
+4. [Docker](#docker)
+5. [Documentation](#documentation)
 6. [Contributing to Genesis](#contributing-to-genesis)
 7. [Support](#support)
 8. [License and Acknowledgments](#license-and-acknowledgments)
@@ -70,6 +73,26 @@ For the latest version, clone the repository and install locally:
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
 pip install -e .
+```
+
+## Docker
+
+If you want to use Genesis from Docker, you can first build the Docker image as:
+
+```bash
+docker build -t genesis -f docker/Dockerfile docker
+```
+
+Then you can run the examples inside the docker image (mounted to `/workspace/examples`):
+
+```bash
+xhost +local:root # Allow the container to access the display
+
+docker run --gpus all --rm -it \
+-e DISPLAY=$DISPLAY \
+-v /tmp/.X11-unix/:/tmp/.X11-unix \
+-v $PWD:/workspace \
+genesis
 ```
 
 ## Documentation

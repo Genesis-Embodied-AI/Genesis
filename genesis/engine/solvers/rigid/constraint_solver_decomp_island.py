@@ -131,12 +131,16 @@ class ConstraintSolverIsland:
             impact = self._collider.contact_data[i_col, i_b]
             link_a = impact.link_a
             link_b = impact.link_b
+            link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
+            link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
             f = impact.friction
             pos = impact.pos
 
             d1, d2 = gu.orthogonals(impact.normal)
 
-            t = self._solver.links_info[link_a].invweight + self._solver.links_info[link_b].invweight * (link_b > -1)
+            t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+                link_b_maybe_batch
+            ].invweight * (link_b > -1)
 
             for i in range(4):
                 n = -d1 * f - impact.normal
@@ -170,10 +174,11 @@ class ConstraintSolverIsland:
                         link = link_b
 
                     while link > -1:
+                        link_maybe_batch = [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
 
                         # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
                         for i_d_ in range(self._solver.links_info[link].n_dofs):
-                            i_d = self._solver.links_info[link].dof_end - 1 - i_d_
+                            i_d = self._solver.links_info[link_maybe_batch].dof_end - 1 - i_d_
 
                             cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
@@ -190,7 +195,7 @@ class ConstraintSolverIsland:
                                 self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
                                 con_n_relevant_dofs += 1
 
-                        link = self._solver.links_info[link].parent_idx
+                        link = self._solver.links_info[link_maybe_batch].parent_idx
 
                 if ti.static(self.sparse_solve):
                     self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
@@ -207,8 +212,8 @@ class ConstraintSolverIsland:
 
             if ti.static(self._solver._use_hibernation):
                 # wake up entities
-                self._solver._func_wakeup_entity(self._solver.links_info[link_a].entity_idx, i_b)
-                self._solver._func_wakeup_entity(self._solver.links_info[link_b].entity_idx, i_b)
+                self._solver._func_wakeup_entity(self._solver.links_info[link_a_maybe_batch].entity_idx, i_b)
+                self._solver._func_wakeup_entity(self._solver.links_info[link_b_maybe_batch].entity_idx, i_b)
 
     @ti.func
     def add_joint_limit_constraints(self, island, i_b):
@@ -219,22 +224,23 @@ class ConstraintSolverIsland:
             e_info = self.entities_info[i_e]
 
             for i_l in range(e_info.link_start, e_info.link_end):
-
-                l_info = self._solver.links_info[i_l]
+                I_l = [i_l, i_b] if ti.static(self._solver._options.batch_links_info) else i_l
+                l_info = self._solver.links_info[I_l]
                 if l_info.joint_type == gs.JOINT_TYPE.REVOLUTE or l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
 
                     i_q = l_info.q_start
                     i_d = l_info.dof_start
-                    pos_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[i_d].limit[0]
-                    pos_max = self._solver.dofs_info[i_d].limit[1] - self._solver.qpos[i_q, i_b]
+                    I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
+                    pos_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
+                    pos_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
                     pos = min(min(pos_min, pos_max), 0)
 
                     side = ((pos_min < pos_max) * 2 - 1) * (pos < 0)
 
                     jac = side
                     jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
-                    imp, aref = gu.imp_aref(self._solver.dofs_info[i_d].sol_params, pos, jac_qvel)
-                    diag = self._solver.dofs_info[i_d].invweight * (pos < 0) * (1 - imp) / (imp + gs.EPS)
+                    imp, aref = gu.imp_aref(self._solver.dofs_info[I_d].sol_params, pos, jac_qvel)
+                    diag = self._solver.dofs_info[I_d].invweight * (pos < 0) * (1 - imp) / (imp + gs.EPS)
                     aref = aref * (pos < 0)
                     if pos < 0:
                         n_con = self.n_constraints[i_b]
