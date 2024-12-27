@@ -185,6 +185,27 @@ class MPMEntity(ParticleEntity):
 
             self.set_muscle_direction(muscle_direction)
 
+    def set_free(self, free):
+        self._assert_active()
+
+        self.solver._kernel_set_free(
+            self._particle_start,
+            self._n_particles,
+            free,
+        )
+
+    def get_free(self):
+        self._assert_active()
+
+        free = gs.zeros((self._n_particles,), dtype=int, requires_grad=False, scene=self._scene)
+        self.solver._kernel_get_free(
+            self._particle_start,
+            self._n_particles,
+            free,
+        )
+
+        return free
+
     @ti.kernel
     def clear_grad(self, f: ti.i32):
         for i in range(self.n_particles):
