@@ -8,7 +8,7 @@ def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
 
-class Go2Env:
+class G1Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, device="cuda"):
         self.device = torch.device(device)
 
@@ -58,7 +58,7 @@ class Go2Env:
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.robot = self.scene.add_entity(
             gs.morphs.URDF(
-                file="urdf/g1/urdf/go2.urdf",
+                file="urdf/g1/g1_12dof.urdf",
                 pos=self.base_init_pos.cpu().numpy(),
                 quat=self.base_init_quat.cpu().numpy(),
             ),
@@ -112,6 +112,36 @@ class Go2Env:
         )
         self.extras = dict()  # extra information for logging
 
+        # Modified
+        self.contact_forces = self.robot.get_links_net_contact_force()
+        self.left_foot_link = self.robot.get_link(name='left_ankle_roll_link')
+        self.right_foot_link = self.robot.get_link(
+            name='right_ankle_roll_link')
+        self.left_foot_id_local = self.left_foot_link.idx_local
+        self.right_foot_id_local = self.right_foot_link.idx_local
+        self.feet_indices = [self.left_foot_id_local,
+                             self.right_foot_id_local]
+        self.feet_num = len(self.feet_indices)
+        self.links_vel = self.robot.get_links_vel()
+        self.feet_vel = self.links_vel[:, self.feet_indices, :]
+        self.links_pos = self.robot.get_links_pos()
+        self.feet_pos = self.links_pos[:, self.feet_indices, :]
+        period = 0.8
+        offset = 0.5
+        self.phase = (self.episode_length_buf * self.dt) % period / period
+        self.phase_left = self.phase
+        self.phase_right = (self.phase + offset) % 1
+        self.leg_phase = torch.cat([self.phase_left.unsqueeze(1), self.phase_right.unsqueeze(1)], dim=-1)
+
+        termination_contact_names = self.env_cfg["terminate_after_contacts_on"]
+        self.termination_contact_indices = []
+        for name in termination_contact_names:
+            link = self.robot.get_link(name)
+            link_id_local = link.idx_local
+            self.termination_contact_indices.append(link_id_local)
+        
+
+
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), self.device)
@@ -148,8 +178,18 @@ class Go2Env:
 
         # check termination and reset
         self.reset_buf = self.episode_length_buf > self.max_episode_length
-        self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
-        self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
+        self.pelvis_link = self.robot.get_link(name='pelvis')
+        self.pelvis_id_local = self.pelvis_link.idx_local
+        self.pelvis_pos = self.links_pos[:, self.pelvis_id_local, :]
+        self.reset_buf |= torch.abs(self.pelvis_pos[:, 2]) < 0.15
+        # self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
+        # self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
+        # self.reset_buf = torch.any(
+        #     torch.norm(self.contact_forces[
+        #         :,
+        #         self.termination_contact_indices, :],
+        #         dim=-1) > 1.0,
+        #     dim=1)
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
         self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=self.device, dtype=gs.tc_float)
@@ -179,6 +219,27 @@ class Go2Env:
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
+
+        # Modified
+        self.contact_forces = self.robot.get_links_net_contact_force()
+        self.left_foot_link = self.robot.get_link(name='left_ankle_roll_link')
+        self.right_foot_link = self.robot.get_link(
+            name='right_ankle_roll_link')
+        self.left_foot_id_local = self.left_foot_link.idx_local
+        self.right_foot_id_local = self.right_foot_link.idx_local
+        self.feet_indices = [self.left_foot_id_local,
+                             self.right_foot_id_local]
+        self.feet_num = len(self.feet_indices)
+        self.links_vel = self.robot.get_links_vel()
+        self.feet_vel = self.links_vel[:, self.feet_indices, :]
+        self.links_pos = self.robot.get_links_pos()
+        self.feet_pos = self.links_pos[:, self.feet_indices, :]
+        period = 0.8
+        offset = 0.5
+        self.phase = (self.episode_length_buf * self.dt) % period / period
+        self.phase_left = self.phase
+        self.phase_right = (self.phase + offset) % 1
+        self.leg_phase = torch.cat([self.phase_left.unsqueeze(1), self.phase_right.unsqueeze(1)], dim=-1)
 
         return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
 
@@ -257,4 +318,39 @@ class Go2Env:
 
     def _reward_base_height(self):
         # Penalize base height away from target
-        return torch.square(self.base_pos[:, 2] - self.reward_cfg["base_height_target"])
+        return torch.square(self.base_pos[:, 2] - self.reward_cfg[
+            "base_height_target"])
+
+    def _reward_alive(self):
+        # Reward for staying alive
+        return 1.0
+
+    def _reward_gait_contact(self):
+        res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        for i in range(self.feet_num):
+            is_stance = self.leg_phase[:, i] < 0.55
+            contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
+            res += ~(contact ^ is_stance)
+        return res
+
+    def _reward_contact_no_vel(self):
+        # Foot contacting the ground should has no velocity
+        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
+                             dim=2) > 1.
+        contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
+        penalize = torch.square(contact_feet_vel[:, :, :3])
+        return torch.sum(penalize, dim=(1, 2))
+
+    def _reward_hip_pos(self):
+        return torch.sum(torch.square(self.dof_pos[:, [1, 2, 7, 8]]), dim=1)
+
+    def _reward_feet_swing_height(self):
+        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
+                             dim=2) > 1.0
+        pos_error = torch.square(self.feet_pos[:, :, 2] - self.reward_cfg[
+            "feet_height_target"]) * ~contact
+        return torch.sum(pos_error, dim=(1))
+
+    def _reward_orientation(self):
+        # Penalize non flat base orientation
+        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
