@@ -32,7 +32,7 @@ class HoverEnv:
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
             viewer_options=gs.options.ViewerOptions(
-                max_FPS=60,
+                max_FPS=env_cfg["max_visualize_FPS"],
                 camera_pos=(3.0, 0.0, 3.0),
                 camera_lookat=(0.0, 0.0, 1.0),
                 camera_fov=40,
@@ -50,19 +50,36 @@ class HoverEnv:
         # add plane
         self.scene.add_entity(gs.morphs.Plane())
 
+        # add target
+        if self.env_cfg["visualize_target"]:
+            self.target = self.scene.add_entity(morph=gs.morphs.Mesh(
+                                    file="meshes/sphere.obj",
+                                    scale=0.05, 
+                                    fixed=True, 
+                                    collision=False,
+                                ),
+                                surface=gs.surfaces.Rough(
+                                    diffuse_texture=gs.textures.ColorTexture(
+                                        color=(1.0, 0.5, 0.5),
+                                    ),
+                                ),
+                            )
+
+        # add camera
+        if self.env_cfg["visualize_camera"]:
+            self.cam = self.scene.add_camera(
+                res=(640, 480),
+                pos=(3.5, 0.0, 2.5),
+                lookat=(0, 0, 0.5),
+                fov=30,
+                GUI=True,
+            )
+
         # add drone
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.drone = self.scene.add_entity(gs.morphs.Drone(file="urdf/drones/cf2x.urdf"))
-
-        self.cam = self.scene.add_camera(
-            res=(640, 480),
-            pos=(3.5, 0.0, 2.5),
-            lookat=(0, 0, 0.5),
-            fov=30,
-            GUI=True,
-        )
 
         # build scene
         self.scene.build(n_envs=num_envs)
@@ -96,15 +113,9 @@ class HoverEnv:
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["pos_x_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["pos_y_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["pos_z_range"], (len(envs_idx),), self.device)
+        if self.target is not None:
+            self.target.set_pos(self.commands[envs_idx], zero_velocity=True, envs_idx=envs_idx)
 
-    # def _at_target(self, envs_idx):
-    #     at_target = (
-    #         (torch.norm(self.rel_pos[envs_idx], dim=1) < self.env_cfg["at_target_threshold"])
-    #         .nonzero(as_tuple=False)
-    #         .flatten()
-    #     )
-    #     return envs_idx[at_target]
-    
     def _at_target(self):
         at_target = (
             (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"])
@@ -139,12 +150,6 @@ class HoverEnv:
         self.base_ang_vel[:] = transform_by_quat(self.drone.get_ang(), inv_base_quat)
 
         # resample commands
-        # envs_idx = (
-        #     (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
-        #     .nonzero(as_tuple=False)
-        #     .flatten()
-        # )
-        # envs_idx = self._at_target(envs_idx)
         envs_idx = self._at_target()
         self._resample_commands(envs_idx)
 

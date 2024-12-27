@@ -22,6 +22,13 @@ def main():
     env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
     reward_cfg["reward_scales"] = {}
 
+    # visualize the target
+    env_cfg["visualize_target"] = True
+    # for video recording
+    env_cfg["visualize_camera"] = args.record
+    # set the max FPS for visualization
+    env_cfg["max_visualize_FPS"] = 60
+
     env = HoverEnv(
         num_envs=1,
         env_cfg=env_cfg,
@@ -37,18 +44,20 @@ def main():
     policy = runner.get_inference_policy(device="cuda:0")
 
     obs, _ = env.reset()
-    if args.record:
-        env.cam.start_recording()
 
-    max_sim_step = int(env_cfg["episode_length_s"]/0.01)    # 0.01 is the simulation time step
+    max_sim_step = int(env_cfg["episode_length_s"]*env_cfg["max_visualize_FPS"])
     with torch.no_grad():
-        for i in range(max_sim_step):
-            actions = policy(obs)
-            obs, _, rews, dones, infos = env.step(actions)
-            if args.record:
+        if args.record:
+            env.cam.start_recording()
+            for _ in range(max_sim_step):
+                actions = policy(obs)
+                obs, _, rews, dones, infos = env.step(actions)
                 env.cam.render()
-    if args.record:
-        env.cam.stop_recording(save_to_filename="video.mp4", fps=60)
+            env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
+        else:
+            for _ in range(max_sim_step):
+                actions = policy(obs)
+                obs, _, rews, dones, infos = env.step(actions)
 
 if __name__ == "__main__":
     main()

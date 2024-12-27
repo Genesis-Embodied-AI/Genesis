@@ -72,9 +72,12 @@ def get_cfgs():
         "episode_length_s": 15.0,
         "at_target_threshold": 0.1,
         "resampling_time_s": 3.0,
-        # "action_scale": 0.25,
         "simulate_action_latency": True,
         "clip_actions": 1.0,
+        # visualization
+        "visualize_target": False,
+        "visualize_camera": False,
+        "max_visualize_FPS": 60,
     }
     obs_cfg = {
         "num_obs": 17,
