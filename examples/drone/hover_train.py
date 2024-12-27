@@ -86,7 +86,7 @@ def get_cfgs():
         },
     }
     reward_cfg = {
-        "reward_scales":{
+        "reward_scales": {
             "target": 5.0,
             "smooth": -0.001,
             "crash": 1.0,
