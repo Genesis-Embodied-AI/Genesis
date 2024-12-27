@@ -38,6 +38,19 @@ The hover environment (`hover_env.py`) is designed to train a drone to maintain 
 **Acknowledgement**: The reward design is inspired by [Champion-level drone racing using deep
 reinforcement learning (Nature 2023)](https://www.nature.com/articles/s41586-023-06419-4.pdf)
 
+#### 3.0 Installation
+
+At this stage, we have defined the environments. Now, we use the PPO implementation from `rsl-rl` to train the policy. Follow these installation steps:
+
+```bash
+# Install rsl_rl.
+git clone https://github.com/leggedrobotics/rsl_rl
+cd rsl_rl && git checkout v1.0.2 && pip install -e .
+
+# Install tensorboard.
+pip install tensorboard
+```
+
 #### 3.1 Training
 
 Train the drone hovering policy using the `HoverEnv` environment.
