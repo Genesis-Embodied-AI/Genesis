@@ -296,7 +296,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 texturedir = extract_compiler_attributes(xml_path)["texturedir"]
                 assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
 
-                uv_coordinates = tmesh.vertices[:, :2]
+                uv_coordinates = tmesh.vertices[:, :2].copy()
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
                 image = Image.open(os.path.join(assets_dir, tex_path))
