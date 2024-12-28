@@ -103,7 +103,7 @@ if __name__ == "__main__":
     m.opt.timestep = simulation_dt
 
     # load policy
-    env_cfg, obs_cfg, _, _, train_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
+    env_cfg, obs_cfg, _, _, train_cfg, _ = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
     env = dummy_env(1, env_cfg, obs_cfg)
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
     runner.load(policy_path)

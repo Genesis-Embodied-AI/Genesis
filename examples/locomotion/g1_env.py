@@ -3,14 +3,14 @@ import math
 import numpy as np
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
-
+import random
 
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
 
 class G1Env:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, device="cuda"):
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, domain_rand_cfg, show_viewer=False, device="cuda"):
         self.device = torch.device(device)
 
         self.num_envs = num_envs
@@ -27,6 +27,7 @@ class G1Env:
         self.obs_cfg = obs_cfg
         self.reward_cfg = reward_cfg
         self.command_cfg = command_cfg
+        self.domain_rand_cfg = domain_rand_cfg
 
         self.obs_scales = obs_cfg["obs_scales"]
         self.reward_scales = reward_cfg["reward_scales"]
@@ -51,7 +52,7 @@ class G1Env:
         )
 
         # add plain
-        self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        self.plane = self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
 
         # add robot
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
@@ -142,8 +143,6 @@ class G1Env:
             link = self.robot.get_link(name)
             link_id_local = link.idx_local
             self.termination_contact_indices.append(link_id_local)
-        
-
 
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), self.device)
@@ -215,6 +214,16 @@ class G1Env:
         self.sin_phase = torch.sin(2 * np.pi * self.phase ).unsqueeze(1)
         self.cos_phase = torch.cos(2 * np.pi * self.phase ).unsqueeze(1)
 
+        # Domain Randomization
+        if(self.domain_rand_cfg['randomize_friction']):
+            self.randomize_friction()
+        
+        if(self.domain_rand_cfg['randomize_base_mass']):
+            self.randomize_base_mass()
+
+        if(self.domain_rand_cfg['push_robots']):
+            self.push_robots()
+
         # compute reward
         self.rew_buf[:] = 0.0
         for name, reward_func in self.reward_functions.items():
@@ -241,6 +250,39 @@ class G1Env:
         self.last_dof_vel[:] = self.dof_vel[:]
 
         return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
+    
+    def randomize_friction(self):
+        friction_range = self.domain_rand_cfg['friction_range']
+        self.robot.set_friction_ratio(
+            friction_ratio = friction_range[0] +\
+                torch.rand(self.num_envs, self.robot.n_links) *\
+                (friction_range[1] - friction_range[0]),
+            link_indices=np.arange(0, self.robot.n_links))
+        self.plane.set_friction_ratio(
+            friction_ratio = friction_range[0] +\
+                torch.rand(self.num_envs, self.plane.n_links) *\
+                (friction_range[1] - friction_range[0]),
+            link_indices=np.arange(0, self.plane.n_links))
+    
+    def randomize_base_mass(self):
+        added_mass_range = self.domain_rand_cfg['added_mass_range']        
+
+        self.robot.set_mass_shift(
+            mass_shift = added_mass_range[0] +\
+                torch.rand(self.num_envs, self.robot.n_links) *\
+                (added_mass_range[1] - added_mass_range[0]),
+            link_indices=np.arange(0, self.robot.n_links))
+
+    def push_robots(self):
+        max_vel = self.domain_rand_cfg['max_push_vel_xy']
+        new_base_lin_vel = gs_rand_float(-max_vel, max_vel, (self.num_envs, 3), device=self.device)
+        d_vel = new_base_lin_vel - self.base_lin_vel[:, :3]
+        d_pos = d_vel * self.dt
+        d_pos = d_pos.unsqueeze(1).expand(-1, self.robot.n_links, -1)
+
+        self.robot.set_COM_shift(
+            com_shift = d_pos,
+            link_indices=np.arange(0, self.robot.n_links))
 
     def get_observations(self):
         return self.obs_buf

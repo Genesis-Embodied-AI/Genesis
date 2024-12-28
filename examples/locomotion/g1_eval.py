@@ -18,8 +18,11 @@ def main():
     gs.init()
 
     log_dir = f"logs/{args.exp_name}"
-    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
+    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg, domain_rand_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
     reward_cfg["reward_scales"] = {}
+    domain_rand_cfg['randomize_friction'] = False
+    domain_rand_cfg['randomize_base_mass'] = False
+    domain_rand_cfg['push_robots'] = False
 
     env = G1Env(
         num_envs=1,
@@ -27,6 +30,7 @@ def main():
         obs_cfg=obs_cfg,
         reward_cfg=reward_cfg,
         command_cfg=command_cfg,
+        domain_rand_cfg = domain_rand_cfg,
         show_viewer=True,
     )
 
@@ -47,5 +51,5 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/locomotion/g1_eval.py -e g1-walking -v --ckpt 100
+python examples/locomotion/g1_eval.py -e g1-walking --ckpt 100
 """

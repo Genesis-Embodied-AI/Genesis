@@ -121,7 +121,7 @@ def get_cfgs():
             "tracking_ang_vel": 0.5,
             "alive": 0.15,
             "gait_contact": 0.18,
-            "gait_swing": -0.05,
+            "gait_swing": -0.18,
             "lin_vel_z": -2.0,
             "ang_vel_xy": -0.05,
             "base_height": -10.0,
@@ -139,8 +139,17 @@ def get_cfgs():
         "lin_vel_y_range": [0, 0],
         "ang_vel_range": [0, 0],
     }
+    domain_rand_cfg = {
+        'randomize_friction': True,
+        'friction_range': [0.1, 1.25],
+        'randomize_base_mass': True,
+        'added_mass_range': [-1.0, 3.0],
+        'push_robots': True,
+        'push_interval_s': 5.0,
+        'max_push_vel_xy': 1.5,
+    }
 
-    return env_cfg, obs_cfg, reward_cfg, command_cfg
+    return env_cfg, obs_cfg, reward_cfg, command_cfg, domain_rand_cfg
 
 
 def main():
@@ -153,7 +162,7 @@ def main():
     gs.init(logging_level="warning")
 
     log_dir = f"logs/{args.exp_name}"
-    env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
+    env_cfg, obs_cfg, reward_cfg, command_cfg, domain_rand_cfg = get_cfgs()
     train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     if os.path.exists(log_dir):
@@ -161,13 +170,15 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
 
     env = G1Env(
-        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
+        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg,
+        reward_cfg=reward_cfg, command_cfg=command_cfg,
+        domain_rand_cfg=domain_rand_cfg
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
 
     pickle.dump(
-        [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
+        [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg, domain_rand_cfg],
         open(f"{log_dir}/cfgs.pkl", "wb"),
     )
 
