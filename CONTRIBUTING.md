@@ -7,9 +7,10 @@ Thank you for your interest in contributing to Genesis! We welcome contributions
 - [Submitting Code Changes](#submitting-code-changes)
 - [Reviewing and Merging](#reviewing-and-merging)
 - [Questions and Discussions](#questions-and-discussions)
+
 ---
 
-### Reporting Bugs
+## Reporting Bugs
 
 - Before reporting a bug, please search through existing issues to check if it has already been reported.
 
@@ -36,36 +37,44 @@ Thank you for your interest in contributing to Genesis! We welcome contributions
   Add any other context about the problem here.
   ```
 
-### Suggesting Features
+## Suggesting Features
+
 - If you have a feature idea, please create an issue labeled `enhancement`.
 - In the created issue, please provide context, expected outcomes, and potential.
 
-### Submitting Code Changes
+## Submitting Code Changes
 
 - We use the `pre-commit` configuration to automatically clean up code before committing. Install and run `pre-commit` as follows:
   1. Install `pre-commit`:
+
      ```bash
      pip install pre-commit
      ```
+
   2. Install hooks from the configuration file:
+
      ```bash
      pre-commit install
      ```
+
      After this, `pre-commit` will automatically check and clean up code whenever you make a commit.
 - (Optional) You can run CI tests locally to ensure you pass the online CI checks.
+
   ```python
   python -m unittest discover tests
   ```
+
 - In the title of your Pull Request, please include [BUG FIX], [FEATURE] or [MISC] to indicate the purpose.
 - In the description, please provide example code or commands for testing.
 
-### Reviewing and Merging
+## Reviewing and Merging
 
 - PRs require at least one approval before merging.
 - Automated checks (e.g., CI tests) must pass.
 - Use `Squash and Merge` for a clean commit history.
 
-### Questions and Discussions
+## Questions and Discussions
+
 - Use [Discussions](https://github.com/Genesis-Embodied-AI/Genesis/discussions) for open-ended topics.
 <!-- 
 ### Join Us
