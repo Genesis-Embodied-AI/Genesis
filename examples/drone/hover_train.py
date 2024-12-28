@@ -95,7 +95,7 @@ def get_cfgs():
             "yaw": 0.01,
             "angular": -2e-4,
             "crash": -10.0,
-        }
+        },
     }
     command_cfg = {
         "num_commands": 3,
