@@ -10,6 +10,7 @@
 [![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/discussions)
 
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
+[![README en Français](https://img.shields.io/badge/Francais-d9d9d9)](./README_FR.md)
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 [![日本語版 README](https://img.shields.io/badge/日本語-d9d9d9)](./README_JA.md)
 
