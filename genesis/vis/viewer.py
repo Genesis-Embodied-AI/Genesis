@@ -39,18 +39,17 @@ class Viewer(RBC):
         self._camera_init_lookat = options.camera_lookat
         self._camera_up = options.camera_up
         self._camera_fov = options.camera_fov
-
+        self._pause_render_flag = False
         self.context = context
 
         if self._max_FPS is not None:
             self.rate = Rate(self._max_FPS)
 
-    def build(self, scene):
+    def build(self, scene, viewer):
         self.scene = scene
-
         # set viewer camera
         self.setup_camera()
-
+        self.viewer = viewer
         # viewer
         if gs.platform == "Linux":
             run_in_thread = True
@@ -68,6 +67,7 @@ class Viewer(RBC):
 
         self._pyrender_viewer = pyrender.Viewer(
             scene=self.scene,
+            viewer=self.viewer,
             context=self.context,
             viewport_size=self._res,
             run_in_thread=run_in_thread,
@@ -75,6 +75,7 @@ class Viewer(RBC):
             view_center=self._camera_init_lookat,
             shadow=self.context.shadow,
             plane_reflection=self.context.plane_reflection,
+            update_flag=self._pause_render_flag,
             viewer_flags={
                 "window_title": f"Genesis {gs.__version__}",
                 "refresh_rate": self._refresh_rate,
@@ -112,6 +113,7 @@ class Viewer(RBC):
     def update(self):
         with self.lock:
             buffer_updates = self.context.update()
+            # gs.logger.info(f"Updating viewer....")
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
 
