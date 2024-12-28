@@ -8,12 +8,6 @@ import random
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
-def check_nans(tensor):
-    if torch.isnan(tensor).any():
-        print("The tensor contains NaN values.")
-    else:
-        print("The tensor does not contain NaN values.")
-
 class G1Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, domain_rand_cfg, show_viewer=False, device="cuda"):
         self.device = torch.device(device)
@@ -51,6 +45,7 @@ class G1Env:
                 dt=self.dt,
                 constraint_solver=gs.constraint_solver.Newton,
                 enable_collision=True,
+                enable_self_collision=True,
                 enable_joint_limit=True,
             ),
             show_viewer=show_viewer,
@@ -142,12 +137,11 @@ class G1Env:
         self.sin_phase = torch.sin(2 * np.pi * self.phase ).unsqueeze(1)
         self.cos_phase = torch.cos(2 * np.pi * self.phase ).unsqueeze(1)
         self.pelvis_link = self.robot.get_link(name='pelvis')
+        self.pelvis_mass = self.pelvis_link.get_mass()
         self.pelvis_id_local = self.pelvis_link.idx_local
         self.pelvis_pos = self.links_pos[:, self.pelvis_id_local, :]
         self.original_links_mass = []
-        for link in self.robot.links:
-            mass = link.get_mass()
-            self.original_links_mass.append(mass)
+        self.counter = 0
 
         termination_contact_names = self.env_cfg["terminate_after_contacts_on"]
         self.termination_contact_indices = []
@@ -173,9 +167,8 @@ class G1Env:
         self.base_pos[:] = self.robot.get_pos()
         # For unknown reasons, it gets NaN values in self.robot.get_*() sometimes
         if torch.isnan(self.base_pos).any():
-            print("NaN detected in base_pos")
-            self.reset()
-            return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
+            nan_envs = torch.isnan(self.base_pos).any(dim=1).nonzero(as_tuple=False).flatten()
+            self.reset_idx(nan_envs)
         self.base_quat[:] = self.robot.get_quat()
         self.base_euler = quat_to_xyz(
             transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat)
@@ -210,8 +203,8 @@ class G1Env:
         if(self.domain_rand_cfg['randomize_friction']):
             self.randomize_friction()
         
-        if(self.domain_rand_cfg['randomize_base_mass']):
-            self.randomize_base_mass()
+        if(self.domain_rand_cfg['randomize_mass']):
+            self.randomize_mass()
 
         if(self.domain_rand_cfg['push_robots']):
             self.push_robots()
@@ -265,28 +258,30 @@ class G1Env:
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
 
+        self.counter += 1
+
         return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
     
     def randomize_friction(self):
-        friction_range = self.domain_rand_cfg['friction_range']
-        self.robot.set_friction_ratio(
-            friction_ratio = friction_range[0] +\
-                torch.rand(self.num_envs, self.robot.n_links) *\
-                (friction_range[1] - friction_range[0]),
-            link_indices=np.arange(0, self.robot.n_links))
-        self.plane.set_friction_ratio(
-            friction_ratio = friction_range[0] +\
-                torch.rand(self.num_envs, self.plane.n_links) *\
-                (friction_range[1] - friction_range[0]),
-            link_indices=np.arange(0, self.plane.n_links))
+        if(self.counter % int(self.domain_rand_cfg['push_interval_s']/self.dt) == 0):
+            friction_range = self.domain_rand_cfg['friction_range']
+            self.robot.set_friction_ratio(
+                friction_ratio = friction_range[0] +\
+                    torch.rand(self.num_envs, self.robot.n_links) *\
+                    (friction_range[1] - friction_range[0]),
+                link_indices=np.arange(0, self.robot.n_links))
+            self.plane.set_friction_ratio(
+                friction_ratio = friction_range[0] +\
+                    torch.rand(self.num_envs, self.plane.n_links) *\
+                    (friction_range[1] - friction_range[0]),
+                link_indices=np.arange(0, self.plane.n_links))
     
-    def randomize_base_mass(self):
-        added_mass_range = self.domain_rand_cfg['added_mass_range']
-        for idx, link in enumerate(self.robot.links):
+    def randomize_mass(self):
+        if(self.counter % int(self.domain_rand_cfg['push_interval_s']/self.dt) == 0):
+            added_mass_range = self.domain_rand_cfg['added_mass_range']
             added_mass = float(torch.rand(1).item() * (added_mass_range[1] - added_mass_range[0]) + added_mass_range[0])
-            original_mass = self.original_links_mass[idx]
-            new_mass = max(original_mass + added_mass, 0.1)
-            self.robot.links[idx].set_mass(new_mass)
+            new_mass = max(self.pelvis_mass + added_mass, 0.1)
+            self.pelvis_link.set_mass(new_mass)
 
     def push_robots(self):
         env_ids = torch.arange(self.num_envs, device=self.device)
@@ -391,12 +386,12 @@ class G1Env:
 
     def _reward_alive(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # which is originally under BSD-3 License
         return 1.0
 
     def _reward_gait_contact(self):
         # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # which is originally under BSD-3 License
         res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         for i in range(self.feet_num):
             is_stance = self.leg_phase[:, i] < 0.55
@@ -413,8 +408,8 @@ class G1Env:
         return res
 
     def _reward_contact_no_vel(self):
-        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+        # which is originally under BSD-3 License
         contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
                              dim=2) > 1.
         contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
@@ -422,8 +417,8 @@ class G1Env:
         return torch.sum(penalize, dim=(1, 2))
 
     def _reward_feet_swing_height(self):
-        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+        # which is originally under BSD-3 License
         contact = torch.norm(self.contact_forces[:, self.feet_indices, :3],
                              dim=2) > 1.0
         pos_error = torch.square(self.feet_pos[:, :, 2] - self.reward_cfg[
@@ -431,21 +426,21 @@ class G1Env:
         return torch.sum(pos_error, dim=(1))
 
     def _reward_orientation(self):
-        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+        # which is originally under BSD-3 License
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
     
     def _reward_hip_pos(self):
-        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+        # which is originally under BSD-3 License
         return torch.sum(torch.square(self.dof_pos[:,[1,2,7,8]]), dim=1)
     
     def _reward_ang_vel_xy(self):
-        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+        # which is originally under BSD-3 License
         return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
     
     def _reward_dof_vel(self):
-        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym
-        # Under BSD-3 License
+        # Function borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+        # which is originally under BSD-3 License
         return torch.sum(torch.square(self.dof_vel), dim=1)

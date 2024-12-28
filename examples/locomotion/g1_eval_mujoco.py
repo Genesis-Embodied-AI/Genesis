@@ -1,3 +1,8 @@
+"""
+Code is partly borrowed from https://github.com/unitreerobotics/unitree_rl_gym,
+which is originally under BSD-3 License
+"""
+
 import time
 import mujoco.viewer
 import mujoco
@@ -27,7 +32,7 @@ def pd_control(target_q, q, kp, target_dq, dq, kd):
     """Calculates torques from position commands"""
     return (target_q - q) * kp + (target_dq - dq) * kd
 
-class dummy_env:
+class G1EnvMuJoCo:
     def __init__(self, num_envs, env_cfg, obs_cfg, mjc_cfg, device='cuda'):
         self.device = torch.device(device)
         self.num_envs = num_envs
@@ -119,7 +124,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="g1-walking")
-    parser.add_argument("--ckpt", type=int, default=500)
+    parser.add_argument("--ckpt", type=int, default=1000)
     args = parser.parse_args()
     log_dir = f"logs/{args.exp_name}"
 
@@ -129,10 +134,10 @@ if __name__ == "__main__":
         'simulation_duration': 20.0,
         'simulation_dt': 0.002,
         'control_decimation': 10,
-        'kps': [100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40],
-        'kds': [2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 2],
-        'default_angles': [-0.1,  0.0,  0.0,  0.3, -0.2, 0.0, 
-                           -0.1,  0.0,  0.0,  0.3, -0.2, 0.0],
+        'kps': [100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
+        'kds': [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+        'default_angles': [0.0,  0.0,  -0.1,  0.3, -0.2, 0.0, 
+                           0.0,  0.0,  -0.1,  0.3, -0.2, 0.0],
         'ang_vel_scale': 0.25,
         'dof_pos_scale': 1.0,
         'dof_vel_scale': 0.05,
@@ -145,7 +150,7 @@ if __name__ == "__main__":
 
     # load policy
     env_cfg, obs_cfg, _, _, train_cfg, _ = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
-    env = dummy_env(1, env_cfg, obs_cfg, mjc_cfg)
+    env = G1EnvMuJoCo(1, env_cfg, obs_cfg, mjc_cfg)
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
     resume_path = mjc_cfg["policy_path"]
     runner.load(resume_path)

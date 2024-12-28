@@ -25,6 +25,12 @@
         <color rgba="0.2 0.2 0.2 1"/>
       </material>
     </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/pelvis.STL"/>
+      </geometry>
+    </collision>
   </link>
   <link name="pelvis_contour_link">
     <inertial>

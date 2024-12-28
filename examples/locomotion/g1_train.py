@@ -46,7 +46,7 @@ def get_train_cfg(exp_name, max_iterations):
             "resume_path": None,
             "run_name": "",
             "runner_class_name": "runner_class_name",
-            "save_interval": 500,
+            "save_interval": 1000,
         },
         "runner_class_name": "OnPolicyRunner",
         "seed": 1,
@@ -142,12 +142,12 @@ def get_cfgs():
     domain_rand_cfg = {
         'randomize_friction': True,
         'friction_range': [0.001, 1.25],
-        'randomize_base_mass': True,
+        'randomize_mass': True,
         'added_mass_range': [-1.0, 1.0],
         'push_robots': True,
         'push_interval_s': 3.5, # seconds
         'max_push_vel_xy': 1.5, # meters/seconds
-        'max_push_vel_rp': 800.0, # degrees/seconds
+        'max_push_vel_rp': 900.0, # degrees/seconds
     }
 
     return env_cfg, obs_cfg, reward_cfg, command_cfg, domain_rand_cfg
@@ -157,7 +157,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="g1-walking")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("--max_iterations", type=int, default=1000)
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
