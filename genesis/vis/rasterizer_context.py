@@ -40,7 +40,7 @@ class RasterizerContext:
         self.world_frame_shown = False
         self.link_frame_shown = False
         self.camera_frustum_shown = False
-        self.pause_rendering_shown = False
+
         self.world_frame_mesh = mu.create_frame(
             origin_radius=0.012,
             axis_radius=0.005,
