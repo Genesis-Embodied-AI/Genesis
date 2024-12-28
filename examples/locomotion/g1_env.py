@@ -2,7 +2,7 @@ import torch
 import math
 import numpy as np
 import genesis as gs
-from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
+from genesis.utils.geom import quat_to_xyz, xyz_to_quat, transform_by_quat, inv_quat, transform_quat_by_quat
 import random
 
 def gs_rand_float(lower, upper, shape, device):
@@ -24,8 +24,8 @@ class G1Env:
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
 
-        self.simulate_action_latency = True  # there is a 1 step latency on real robot
-        self.dt = 0.02  # control frequence on real robot is 50hz
+        self.simulate_action_latency = False  # there is a 1 step latency on real robot, but I'm doing Sim2Sim
+        self.dt = 0.02 # Control Frequency is 50Hz on Real Robot
         self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
 
         self.env_cfg = env_cfg
@@ -141,6 +141,13 @@ class G1Env:
         self.leg_phase = torch.cat([self.phase_left.unsqueeze(1), self.phase_right.unsqueeze(1)], dim=-1)
         self.sin_phase = torch.sin(2 * np.pi * self.phase ).unsqueeze(1)
         self.cos_phase = torch.cos(2 * np.pi * self.phase ).unsqueeze(1)
+        self.pelvis_link = self.robot.get_link(name='pelvis')
+        self.pelvis_id_local = self.pelvis_link.idx_local
+        self.pelvis_pos = self.links_pos[:, self.pelvis_id_local, :]
+        self.original_links_mass = []
+        for link in self.robot.links:
+            mass = link.get_mass()
+            self.original_links_mass.append(mass)
 
         termination_contact_names = self.env_cfg["terminate_after_contacts_on"]
         self.termination_contact_indices = []
@@ -155,21 +162,20 @@ class G1Env:
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["ang_vel_range"], (len(envs_idx),), self.device)
 
     def step(self, actions):
-        # Clip actions within range [-max, -eps] and [eps, max] to avoid numerical instability
-        self.actions = torch.where(
-            (self.actions > -self.env_cfg["clip_epsilon"]) & (self.actions < self.env_cfg["clip_epsilon"]),
-            self.env_cfg["clip_epsilon"],
-            self.actions
-        )
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
-        target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
+        target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos        
         self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
         self.scene.step()
 
         # update buffers
         self.episode_length_buf += 1
         self.base_pos[:] = self.robot.get_pos()
+        # For unknown reasons, it gets NaN values in self.robot.get_*() sometimes
+        if torch.isnan(self.base_pos).any():
+            print("NaN detected in base_pos")
+            self.reset()
+            return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
         self.base_quat[:] = self.robot.get_quat()
         self.base_euler = quat_to_xyz(
             transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat)
@@ -190,10 +196,8 @@ class G1Env:
         self._resample_commands(envs_idx)
 
         # check termination and reset
-        self.reset_buf = self.episode_length_buf > self.max_episode_length
-        self.pelvis_link = self.robot.get_link(name='pelvis')
-        self.pelvis_id_local = self.pelvis_link.idx_local
         self.pelvis_pos = self.links_pos[:, self.pelvis_id_local, :]
+        self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= torch.abs(self.pelvis_pos[:, 2]) < self.env_cfg["termination_if_pelvis_z_less_than"]
 
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
@@ -206,8 +210,8 @@ class G1Env:
         if(self.domain_rand_cfg['randomize_friction']):
             self.randomize_friction()
         
-        # if(self.domain_rand_cfg['randomize_base_mass']):
-        #     self.randomize_base_mass()
+        if(self.domain_rand_cfg['randomize_base_mass']):
+            self.randomize_base_mass()
 
         if(self.domain_rand_cfg['push_robots']):
             self.push_robots()
@@ -256,12 +260,6 @@ class G1Env:
             ],
             axis=-1,
         )
-        # Clip observations within range [-max, -eps] and [eps, max] to avoid numerical instability
-        self.obs_buf = torch.where(
-            (self.obs_buf > -self.env_cfg["clip_epsilon"]) & (self.obs_buf < self.env_cfg["clip_epsilon"]),
-            self.env_cfg["clip_epsilon"],
-            self.obs_buf
-        )
         self.obs_buf = torch.clip(self.obs_buf, -self.env_cfg["clip_observations"], self.env_cfg["clip_observations"])
 
         self.last_actions[:] = self.actions[:]
@@ -282,29 +280,37 @@ class G1Env:
                 (friction_range[1] - friction_range[0]),
             link_indices=np.arange(0, self.plane.n_links))
     
-    # def randomize_base_mass(self):
-    #     added_mass_range = self.domain_rand_cfg['added_mass_range']        
-
-    #     self.robot.set_mass_shift(
-    #         mass_shift = added_mass_range[0] +\
-    #             torch.rand(self.num_envs, self.robot.n_links) *\
-    #             (added_mass_range[1] - added_mass_range[0]),
-    #         link_indices=np.arange(0, self.robot.n_links))
+    def randomize_base_mass(self):
+        added_mass_range = self.domain_rand_cfg['added_mass_range']
+        for idx, link in enumerate(self.robot.links):
+            added_mass = float(torch.rand(1).item() * (added_mass_range[1] - added_mass_range[0]) + added_mass_range[0])
+            original_mass = self.original_links_mass[idx]
+            new_mass = max(original_mass + added_mass, 0.1)
+            self.robot.links[idx].set_mass(new_mass)
 
     def push_robots(self):
-        max_vel = self.domain_rand_cfg['max_push_vel_xy']
-        new_base_lin_vel = gs_rand_float(-max_vel, max_vel, (self.num_envs, 3), device=self.device)
-        d_vel = new_base_lin_vel - self.base_lin_vel[:, :3]
-        d_pos = d_vel * self.dt
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        push_env_ids = env_ids[self.episode_length_buf[env_ids] % int(self.domain_rand_cfg['push_interval_s']/self.dt) == 0]
+        if len(push_env_ids) == 0:
+            return  # No environments to push in this step
+        max_vel_xy = self.domain_rand_cfg['max_push_vel_xy']
+        max_vel_rp = self.domain_rand_cfg['max_push_vel_rp']
+        new_base_lin_vel = torch.zeros_like(self.base_lin_vel)
+        new_base_abg_vel = torch.zeros_like(self.base_ang_vel)
+        new_base_lin_vel[push_env_ids] = gs_rand_float(-max_vel_xy, max_vel_xy, (len(push_env_ids), 3), device=self.device)
+        new_base_abg_vel[push_env_ids] = gs_rand_float(-max_vel_rp, max_vel_rp, (len(push_env_ids), 3), device=self.device)
+        d_vel_xy = new_base_lin_vel - self.base_lin_vel[:, :3]
+        d_vel_rp = new_base_abg_vel - self.base_ang_vel[:, :3]
+        d_pos = d_vel_xy * self.dt
         d_pos[:, [2]] = 0
         current_pos = self.robot.get_pos()
-        new_pos = current_pos + d_pos
-        self.robot.set_pos(new_pos, zero_velocity=False)
-        # d_pos = d_pos.unsqueeze(1).expand(-1, self.robot.n_links, -1)
-
-        # self.robot.set_COM_shift(
-        #     com_shift = d_pos,
-        #     link_indices=np.arange(0, self.robot.n_links))
+        new_pos = current_pos[push_env_ids] + d_pos[push_env_ids]
+        self.robot.set_pos(new_pos, zero_velocity=False, envs_idx=push_env_ids)
+        d_euler = d_vel_rp * self.dt
+        current_euler = self.base_euler
+        new_euler = current_euler[push_env_ids] + d_euler[push_env_ids]
+        new_quat = xyz_to_quat(new_euler)
+        self.robot.set_quat(new_quat, zero_velocity=False, envs_idx=push_env_ids)
 
     def get_observations(self):
         return self.obs_buf
@@ -329,6 +335,9 @@ class G1Env:
         # reset base
         self.base_pos[envs_idx] = self.base_init_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
+        self.base_euler = quat_to_xyz(
+            transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat)
+        )
         self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.base_lin_vel[envs_idx] = 0

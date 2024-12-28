@@ -12,7 +12,7 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="g1-walking")
-    parser.add_argument("--ckpt", type=int, default=300)
+    parser.add_argument("--ckpt", type=int, default=500)
     args = parser.parse_args()
 
     gs.init()
@@ -20,9 +20,10 @@ def main():
     log_dir = f"logs/{args.exp_name}"
     env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg, domain_rand_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
     reward_cfg["reward_scales"] = {}
-    domain_rand_cfg['randomize_friction'] = False
-    domain_rand_cfg['randomize_base_mass'] = False
-    domain_rand_cfg['push_robots'] = False
+    domain_rand_cfg['randomize_friction'] = True
+    domain_rand_cfg['randomize_base_mass'] = True
+    domain_rand_cfg['added_mass_range'] = [-1.0, 1.0]
+    domain_rand_cfg['push_robots'] = True
 
     env = G1Env(
         num_envs=1,
@@ -51,5 +52,5 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/locomotion/g1_eval.py -e g1-walking --ckpt 300
+python examples/locomotion/g1_eval.py -e g1-walking --ckpt 500
 """
