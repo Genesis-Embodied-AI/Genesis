@@ -64,6 +64,8 @@ class HoverEnv:
                                     ),
                                 ),
                             )
+        else:
+            self.target = None
 
         # add camera
         if self.env_cfg["visualize_camera"]:
