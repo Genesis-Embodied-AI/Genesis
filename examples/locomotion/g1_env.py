@@ -8,6 +8,11 @@ import random
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
+def check_nans(tensor):
+    if torch.isnan(tensor).any():
+        print("The tensor contains NaN values.")
+    else:
+        print("The tensor does not contain NaN values.")
 
 class G1Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, domain_rand_cfg, show_viewer=False, device="cuda"):
@@ -150,6 +155,12 @@ class G1Env:
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["ang_vel_range"], (len(envs_idx),), self.device)
 
     def step(self, actions):
+        # Clip actions within range [-max, -eps] and [eps, max] to avoid numerical instability
+        self.actions = torch.where(
+            (self.actions > -self.env_cfg["clip_epsilon"]) & (self.actions < self.env_cfg["clip_epsilon"]),
+            self.env_cfg["clip_epsilon"],
+            self.actions
+        )
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
         target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
@@ -191,6 +202,16 @@ class G1Env:
 
         self.reset_idx(self.reset_buf.nonzero(as_tuple=False).flatten())
 
+        # Domain Randomization
+        if(self.domain_rand_cfg['randomize_friction']):
+            self.randomize_friction()
+        
+        # if(self.domain_rand_cfg['randomize_base_mass']):
+        #     self.randomize_base_mass()
+
+        if(self.domain_rand_cfg['push_robots']):
+            self.push_robots()
+
         # Modified Physics
         self.contact_forces = self.robot.get_links_net_contact_force()
         self.left_foot_link = self.robot.get_link(name='left_ankle_roll_link')
@@ -214,16 +235,6 @@ class G1Env:
         self.sin_phase = torch.sin(2 * np.pi * self.phase ).unsqueeze(1)
         self.cos_phase = torch.cos(2 * np.pi * self.phase ).unsqueeze(1)
 
-        # Domain Randomization
-        if(self.domain_rand_cfg['randomize_friction']):
-            self.randomize_friction()
-        
-        if(self.domain_rand_cfg['randomize_base_mass']):
-            self.randomize_base_mass()
-
-        if(self.domain_rand_cfg['push_robots']):
-            self.push_robots()
-
         # compute reward
         self.rew_buf[:] = 0.0
         for name, reward_func in self.reward_functions.items():
@@ -245,6 +256,13 @@ class G1Env:
             ],
             axis=-1,
         )
+        # Clip observations within range [-max, -eps] and [eps, max] to avoid numerical instability
+        self.obs_buf = torch.where(
+            (self.obs_buf > -self.env_cfg["clip_epsilon"]) & (self.obs_buf < self.env_cfg["clip_epsilon"]),
+            self.env_cfg["clip_epsilon"],
+            self.obs_buf
+        )
+        self.obs_buf = torch.clip(self.obs_buf, -self.env_cfg["clip_observations"], self.env_cfg["clip_observations"])
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -264,25 +282,29 @@ class G1Env:
                 (friction_range[1] - friction_range[0]),
             link_indices=np.arange(0, self.plane.n_links))
     
-    def randomize_base_mass(self):
-        added_mass_range = self.domain_rand_cfg['added_mass_range']        
+    # def randomize_base_mass(self):
+    #     added_mass_range = self.domain_rand_cfg['added_mass_range']        
 
-        self.robot.set_mass_shift(
-            mass_shift = added_mass_range[0] +\
-                torch.rand(self.num_envs, self.robot.n_links) *\
-                (added_mass_range[1] - added_mass_range[0]),
-            link_indices=np.arange(0, self.robot.n_links))
+    #     self.robot.set_mass_shift(
+    #         mass_shift = added_mass_range[0] +\
+    #             torch.rand(self.num_envs, self.robot.n_links) *\
+    #             (added_mass_range[1] - added_mass_range[0]),
+    #         link_indices=np.arange(0, self.robot.n_links))
 
     def push_robots(self):
         max_vel = self.domain_rand_cfg['max_push_vel_xy']
         new_base_lin_vel = gs_rand_float(-max_vel, max_vel, (self.num_envs, 3), device=self.device)
         d_vel = new_base_lin_vel - self.base_lin_vel[:, :3]
         d_pos = d_vel * self.dt
-        d_pos = d_pos.unsqueeze(1).expand(-1, self.robot.n_links, -1)
+        d_pos[:, [2]] = 0
+        current_pos = self.robot.get_pos()
+        new_pos = current_pos + d_pos
+        self.robot.set_pos(new_pos, zero_velocity=False)
+        # d_pos = d_pos.unsqueeze(1).expand(-1, self.robot.n_links, -1)
 
-        self.robot.set_COM_shift(
-            com_shift = d_pos,
-            link_indices=np.arange(0, self.robot.n_links))
+        # self.robot.set_COM_shift(
+        #     com_shift = d_pos,
+        #     link_indices=np.arange(0, self.robot.n_links))
 
     def get_observations(self):
         return self.obs_buf

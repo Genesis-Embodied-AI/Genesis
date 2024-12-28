@@ -12,7 +12,7 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="g1-walking")
-    parser.add_argument("--ckpt", type=int, default=100)
+    parser.add_argument("--ckpt", type=int, default=300)
     args = parser.parse_args()
 
     gs.init()
@@ -51,5 +51,5 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/locomotion/g1_eval.py -e g1-walking --ckpt 100
+python examples/locomotion/g1_eval.py -e g1-walking --ckpt 300
 """
