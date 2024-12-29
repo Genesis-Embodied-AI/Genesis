@@ -3,6 +3,7 @@ import math
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
 
+
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
@@ -53,18 +54,19 @@ class HoverEnv:
 
         # add target
         if self.env_cfg["visualize_target"]:
-            self.target = self.scene.add_entity(morph=gs.morphs.Mesh(
-                                    file="meshes/sphere.obj",
-                                    scale=0.05, 
-                                    fixed=True, 
-                                    collision=False,
-                                ),
-                                surface=gs.surfaces.Rough(
-                                    diffuse_texture=gs.textures.ColorTexture(
-                                        color=(1.0, 0.5, 0.5),
-                                    ),
-                                ),
-                            )
+            self.target = self.scene.add_entity(
+                morph=gs.morphs.Mesh(
+                    file="meshes/sphere.obj",
+                    scale=0.05,
+                    fixed=True,
+                    collision=False,
+                ),
+                surface=gs.surfaces.Rough(
+                    diffuse_texture=gs.textures.ColorTexture(
+                        color=(1.0, 0.5, 0.5),
+                    ),
+                ),
+            )
         else:
             self.target = None
 
@@ -121,9 +123,7 @@ class HoverEnv:
 
     def _at_target(self):
         at_target = (
-            (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"])
-            .nonzero(as_tuple=False)
-            .flatten()
+            (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"]).nonzero(as_tuple=False).flatten()
         )
         return at_target
 
@@ -135,7 +135,7 @@ class HoverEnv:
         # self.drone.control_dofs_position(target_dof_pos)
 
         # 14468 is hover rpm
-        self.drone.set_propellels_rpm((1 + exec_actions*0.8) * 14468.429183500699)
+        self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)
         self.scene.step()
 
         # update buffers
@@ -158,12 +158,12 @@ class HoverEnv:
 
         # check termination and reset
         self.crash_condition = (
-            (torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]) |
-            (torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]) |
-            (torch.abs(self.rel_pos[:, 0]) > self.env_cfg["termination_if_x_greater_than"]) |
-            (torch.abs(self.rel_pos[:, 1]) > self.env_cfg["termination_if_y_greater_than"]) |
-            (torch.abs(self.rel_pos[:, 2]) > self.env_cfg["termination_if_z_greater_than"]) |
-            (self.base_pos[:, 2] < self.env_cfg["termination_if_close_to_ground"])
+            (torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"])
+            | (torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"])
+            | (torch.abs(self.rel_pos[:, 0]) > self.env_cfg["termination_if_x_greater_than"])
+            | (torch.abs(self.rel_pos[:, 1]) > self.env_cfg["termination_if_y_greater_than"])
+            | (torch.abs(self.rel_pos[:, 2]) > self.env_cfg["termination_if_z_greater_than"])
+            | (self.base_pos[:, 2] < self.env_cfg["termination_if_close_to_ground"])
         )
         self.reset_buf = (self.episode_length_buf > self.max_episode_length) | self.crash_condition
 
@@ -249,12 +249,12 @@ class HoverEnv:
 
     def _reward_yaw(self):
         yaw = self.base_euler[:, 2]
-        yaw = torch.where(yaw > 180, yaw - 360, yaw)/180*3.14159    # use rad for yaw_reward
+        yaw = torch.where(yaw > 180, yaw - 360, yaw) / 180 * 3.14159  # use rad for yaw_reward
         yaw_rew = torch.exp(self.reward_cfg["yaw_lambda"] * torch.abs(yaw))
         return yaw_rew
-    
+
     def _reward_angular(self):
-        angular_rew = torch.norm(self.base_ang_vel/3.14159, dim=1)
+        angular_rew = torch.norm(self.base_ang_vel / 3.14159, dim=1)
         return angular_rew
 
     def _reward_crash(self):
