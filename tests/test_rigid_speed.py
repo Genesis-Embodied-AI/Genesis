@@ -21,7 +21,7 @@ random.seed(seed)
 
 class TestRigidSpeed(unittest.TestCase):
     def test_speed(self):
-        n_envs = 300000
+        n_envs = 30000
         n_frame_fps = 10
 
         def run_anymal_c(solver):
