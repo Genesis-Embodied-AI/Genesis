@@ -9,9 +9,7 @@ from rsl_rl.runners import OnPolicyRunner
 import genesis as gs
 
 
-
 def get_train_cfg(exp_name, max_iterations):
-
     train_cfg_dict = {
         "algorithm": {
             "clip_param": 0.2,
@@ -96,7 +94,7 @@ def get_cfgs():
             "yaw": 0.01,
             "angular": -2e-4,
             "crash": -10.0,
-        }
+        },
     }
     command_cfg = {
         "num_commands": 3,
