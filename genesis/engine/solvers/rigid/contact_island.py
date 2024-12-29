@@ -25,7 +25,9 @@ class ContactIsland:
             dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs))
         )
 
-        self.constraint_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.solver.n_entities)))
+        self.constraint_id = ti.field(
+            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs * 2))
+        )
 
         self.entity_edge = struct_agg_list.field(
             shape=self.solver._batch_shape(self.solver.n_entities), needs_grad=False, layout=ti.Layout.SOA
