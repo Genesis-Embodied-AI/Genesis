@@ -64,9 +64,9 @@ Project Page: <https://genesis-embodied-ai.github.io/>
 
 ## Quick Installation
 
-Install **PyTorch** first following the [official instructions](https://pytorch.org/get-started/locally/
+Install **PyTorch** first following the [official instructions](https://pytorch.org/get-started/locally/).
 
-Then install Genesis via PyPI:
+Then, install Genesis via PyPI:
 ```bash
 pip install genesis-world  # Requires Python >=3.9;
 ```
