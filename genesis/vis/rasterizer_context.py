@@ -6,7 +6,12 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 
 try:
-    from genesis.ext import pyrender, trimesh
+    from genesis.ext import trimesh
+except Exception as e:
+    print(f"import trimesh [Error]: {e}\n")
+
+try:
+    from genesis.ext import pyrender
     from genesis.ext.pyrender.jit_render import JITRenderer
 except Exception as e:
     print(f"[Error]: {e}\n")
