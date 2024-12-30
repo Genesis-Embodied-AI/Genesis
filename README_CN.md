@@ -1,5 +1,3 @@
-<div align="center">
-
 ![Genesis](imgs/big_text.png)
 
 ![Teaser](imgs/teaser.png)
@@ -10,9 +8,10 @@
 [![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/discussions)
 
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
+[![README en Français](https://img.shields.io/badge/Francais-d9d9d9)](./README_FR.md)
+[![한국어 README](https://img.shields.io/badge/한국어-d9d9d9)](./README_KR.md)
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
-
-</div>
+[![日本語版 README](https://img.shields.io/badge/日本語-d9d9d9)](./README_JA.md)
 
 # Genesis 通用物理引擎
 
@@ -59,14 +58,12 @@ Genesis 是专为 *机器人/嵌入式 AI/物理 AI* 应用设计的通用物理
 ## 快速入门
 
 ### 安装
+首先按照[官方指南](https://pytorch.org/get-started/locally/)安装 PyTorch。
 
-Genesis 可通过 PyPI 获取：
-
+然后可通过 PyPI 安装Genesis：
 ```bash
 pip install genesis-world  # 需要 Python >=3.9
 ```
-
-同时需要按照[官方指南](https://pytorch.org/get-started/locally/)安装 PyTorch。
 
 ### Docker 支持
 

@@ -93,6 +93,7 @@ class MPMSolver(Solver):
             mat_idx=gs.ti_int,
             mass=gs.ti_float,
             default_Jp=gs.ti_float,
+            free=gs.ti_int,
             # for muscle
             muscle_group=gs.ti_int,
             muscle_direction=gs.ti_vec3,
@@ -384,6 +385,9 @@ class MPMSolver(Solver):
                         )
                         self.grid[f, base - self._grid_offset + offset].mass += weight * self.particles_info[i].mass
 
+                    if self.particles_info[i].free == 0:  # non-free particles behave as boundary conditions
+                        self.grid[f, base - self._grid_offset + offset].vel_in = ti.Vector.zero(gs.ti_float, 3)
+
     @ti.kernel
     def g2p(self, f: ti.i32):
         for i in range(self._n_particles):
@@ -658,6 +662,7 @@ class MPMSolver(Solver):
             self.particles_info[i_global].mat_idx = mat_idx
             self.particles_info[i_global].default_Jp = mat_default_Jp
             self.particles_info[i_global].mass = self._p_vol * mat_rho
+            self.particles_info[i_global].free = 1
             self.particles_info[i_global].muscle_group = 0
             self.particles_info[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
@@ -815,6 +820,28 @@ class MPMSolver(Solver):
             i_global = i + particle_start
             for j in ti.static(range(3)):
                 self.particles_info[i_global].muscle_direction[j] = muscle_direction[i, j]
+
+    @ti.kernel
+    def _kernel_set_free(
+        self,
+        particle_start: ti.i32,
+        n_particles: ti.i32,
+        free: ti.types.ndarray(),
+    ):
+        for i in range(n_particles):
+            i_global = i + particle_start
+            self.particles_info[i_global].free = free[i]
+
+    @ti.kernel
+    def _kernel_get_free(
+        self,
+        particle_start: ti.i32,
+        n_particles: ti.i32,
+        free: ti.types.ndarray(),
+    ):
+        for i in range(n_particles):
+            i_global = i + particle_start
+            free[i] = self.particles_info[i_global].free
 
     @ti.kernel
     def _kernel_get_state(

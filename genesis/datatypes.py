@@ -73,8 +73,7 @@ class List(list, RBC):
         return repr_str
 
     def __repr__(self):
-        if not __debug__:
-            self.__colorized__repr__()
+        return RBC.__repr__(self)
 
     def __colorized__repr__(self):
         repr_str = f"{colors.BLUE}{self._repr_type()}(len={colors.MINT}{formats.UNDERLINE}{len(self)}{formats.RESET}{colors.BLUE}, ["
