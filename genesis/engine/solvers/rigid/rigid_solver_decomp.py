@@ -29,6 +29,7 @@ class RigidSolver(Solver):
         self._enable_self_collision = options.enable_self_collision
         self._max_collision_pairs = options.max_collision_pairs
         self._integrator = options.integrator
+        self._box_box_detection = options.box_box_detection
 
         self._use_contact_island = options.use_contact_island
         self._use_hibernation = options.use_hibernation and options.use_contact_island
