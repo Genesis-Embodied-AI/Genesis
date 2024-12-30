@@ -14,5 +14,5 @@ args:
   # - pull 
   # - deps
   - git 
-  # - pixi
+  - pixi
   - cwd

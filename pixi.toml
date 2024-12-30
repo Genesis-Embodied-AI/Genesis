@@ -1,0 +1,15 @@
+[project]
+authors = ["Austin Gregg-Smith <blooop@gmail.com>"]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "genesis"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = "==3.12.8.*"
+
+#how to install with pixi
+# https://github.com/Genesis-Embodied-AI/Genesis/issues/66
