@@ -7,9 +7,10 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
-
+setup = "pip install -e ."
+hello = "python /workspaces/genesis/examples/tutorials/hello_genesis.py"
 [dependencies]
-python = "==3.12.8.*"
+python = "3.12.8.*"
 
 #how to install with pixi
 # https://github.com/Genesis-Embodied-AI/Genesis/issues/66
