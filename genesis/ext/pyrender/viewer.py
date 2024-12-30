@@ -15,6 +15,7 @@ import OpenGL
 import genesis as gs
 
 import sys
+
 if sys.platform.startswith("darwin"):
     # Mac OS
     from tkinter import Tk
@@ -29,7 +30,6 @@ else:
             from tkinter import filedialog as filedialog
         except Exception:
             pass
-
 
 
 try:
