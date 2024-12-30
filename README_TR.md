@@ -12,6 +12,7 @@
 [![한국어 README](https://img.shields.io/badge/한국어-d9d9d9)](./README_KR.md)
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 [![日本語版 README](https://img.shields.io/badge/日本語-d9d9d9)](./README_JA.md)
+[![Türkçe README](https://img.shields.io/badge/Turkish-d9d9d9)](./README_TR.md)
 
 # Genesis
 
@@ -27,7 +28,7 @@
 3. [Hızlı Kurulum](#hızlı-kurulum)
 4. [Docker](#docker)
 5. [Dokümentasyon](#dokümantasyon)
-6. [Genesis'e Katkıda Bulunmak](#genesise-katkıda-bulunmak)
+6. [Genesis'e Katkıda Bulunun](#genesise-katkıda-bulunun)
 7. [Destek](#destek)
 8. [Lisans ve Teşekkür](#lisans-ve-teşekkür)
 9. [Alakalı Makaleler](#alakalı-makaleler)
@@ -107,7 +108,7 @@ Genesis
 
 Ayrıntılı kurulum adımları, öğreticiler ve API referanslarını içeren kapsamlı dokümantasyon [İngilizce](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) ve [Çince](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html) dillerinde mevcuttur.
 
-## Genesis'e Katkıda Bulunmak
+## Genesis'e Katkıda Bulunun
 
 Genesis projesi açık ve işbirliğine dayalı bir çalışmadır. Topluluktan gelen her türlü katkıyı memnuniyetle karşılıyoruz:
 
