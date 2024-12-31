@@ -102,7 +102,7 @@ genesis
 
 ## ドキュメント
 
-包括的なドキュメントは現時点では[英語](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)および[中国語](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)で提供されています。詳細なインストール手順、チュートリアル、APIリファレンスが含まれています。
+包括的なドキュメントは現時点では[英語](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)、[中国語](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)、および[日本語](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html)で提供されています。詳細なインストール手順、チュートリアル、APIリファレンスが含まれています。
 
 ## Genesisへの貢献
 
