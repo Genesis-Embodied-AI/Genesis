@@ -89,6 +89,7 @@ genesis
 
 - [英文文档](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)
 - [中文文档](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)
+- [日文文档](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html)
 
 ## 参与贡献
 

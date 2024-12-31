@@ -105,7 +105,7 @@ genesis
 
 ## Documentation
 
-Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) and [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
+Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html), [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html), and [Japanese](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
 
 ## Contributing to Genesis
 
