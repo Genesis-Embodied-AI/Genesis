@@ -9,17 +9,18 @@
 
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
 [![README en Français](https://img.shields.io/badge/Francais-d9d9d9)](./README_FR.md)
+[![한국어 README](https://img.shields.io/badge/한국어-d9d9d9)](./README_KR.md)
 [![简体中文版自述文件](https://img.shields.io/badge/简体中文-d9d9d9)](./README_CN.md)
 [![日本語版 README](https://img.shields.io/badge/日本語-d9d9d9)](./README_JA.md)
 
-
 # Genesis
+
 ## 🔥 Nouveautés
+
 - [2024-12-25] Ajout d’un [docker](#docker) incluant la prise en charge du moteur de rendu par ray-tracing.
 - [2024-12-24] Ajout de directives pour [contribuer à Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md).
 
 ## Table des Matières
-
 
 1. [Qu'est-ce que Genesis ?](#quest-ce-que-genesis-)
 2. [Caractéristiques clés](#principales-caract%C3%A9ristiques)
@@ -31,7 +32,6 @@
 8. [License et Remerciements](#licence-et-remerciements)
 9. [Articles Associés](#publications-associ%C3%A9es)
 10. [Citation](#citation)
-
 
 ## Qu'est-ce que Genesis ?
 
@@ -49,7 +49,6 @@ Genesis vise à :
 - **Automatiser la génération de données**, réduisant l'effort humain et permettant à l'écosystème de données de fonctionner de manière autonome.
 
 Page du projet : <https://genesis-embodied-ai.github.io/>
-
 
 ## Principales Caractéristiques
 
@@ -106,7 +105,6 @@ genesis
 
 Une documentation complète est disponible en [Anglais](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html) et en [Chinois](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html). Cela inclut des étapes d'installation détaillées, des tutoriels et des références API.
 
-
 ## Contribution à Genesis
 
 Le projet Genesis est un effort ouvert et collaboratif. Nous accueillons toutes les formes de contributions de la communauté, notamment :
@@ -122,7 +120,6 @@ Consultez notre [guide de contribution](https://github.com/Genesis-Embodied-AI/G
 - Signalez des bugs ou demandez des fonctionnalités via GitHub [Issues](https://github.com/Genesis-Embodied-AI/Genesis/issues).
 - Participez aux discussions ou posez des questions sur GitHub [Discussions](https://github.com/Genesis-Embodied-AI/Genesis/discussions).
 
-
 ## Licence et Remerciements
 
 Le code source de Genesis est sous licence Apache 2.0.
@@ -137,7 +134,6 @@ Le développement de Genesis a été rendu possible grâce à ces projets open-s
 - [libccd](https://github.com/danfis/libccd) : Référence pour la détection des collisions.
 - [PyRender](https://github.com/mmatl/pyrender) : Rendu basé sur la rasterisation.
 - [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) et [LuisaRender](https://github.com/LuisaGroup/LuisaRender) : DSL de ray-tracing.
-
 
 ## Publications Associées
 
@@ -164,7 +160,6 @@ Genesis est un projet à grande échelle qui intègre des technologies de pointe
 - Dou, Zhiyang, et al. "C· ase: Learning conditional adversarial skill embeddings for physics-based characters." SIGGRAPH Asia 2023 Conference Papers. 2023.
 
 ... et bien d'autres travaux en cours.
-
 
 ## Citation
 
