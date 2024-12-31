@@ -7,6 +7,24 @@ import genesis.utils.geom as gu
 from .mpr_decomp import MPR
 
 
+@ti.func
+def rotaxis(vecin, i0, i1, i2, f0, f1, f2):
+    vecres = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+    vecres[0] = vecin[i0] * f0
+    vecres[1] = vecin[i1] * f1
+    vecres[2] = vecin[i2] * f2
+    return vecres
+
+
+@ti.func
+def rotmatx(matin, i0, i1, i2, f0, f1, f2):
+    matres = ti.Matrix.zero(gs.ti_float, 3, 3)
+    matres[0, :] = matin[i0, :] * f0
+    matres[1, :] = matin[i1, :] * f1
+    matres[2, :] = matin[i2, :] * f2
+    return matres
+
+
 @ti.data_oriented
 class Collider:
     def __init__(self, rigid_solver):
@@ -51,6 +69,10 @@ class Collider:
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
+        if self._solver._options.batch_links_info:
+            links_root_idx = links_root_idx[:, 0]
+            links_parent_idx = links_parent_idx[:, 0]
+            links_is_fixed = links_is_fixed[:, 0]
         n_possible_pairs = 0
         for i in range(self._solver.n_geoms):
             for j in range(i + 1, self._solver.n_geoms):
@@ -143,6 +165,20 @@ class Collider:
             self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(6))
             self.prism = ti.field(dtype=gs.ti_vec3, shape=self._solver._batch_shape(6))
 
+        ##---------------- box box
+        if self._solver._box_box_detection:
+            self.box_MAXCONPAIR = 32
+            self.box_depth = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
+            self.box_points = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
+            self.box_pts = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(6))
+            self.box_lines = ti.field(gs.ti_vec6, shape=self._solver._batch_shape(4))
+            self.box_linesu = ti.field(gs.ti_vec6, shape=self._solver._batch_shape(4))
+            self.box_axi = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(3))
+            self.box_ppts2 = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape((4, 2)))
+            self.box_pu = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(4))
+            self.box_valid = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
+        ##---------------- box box
+
         self.reset()
 
     def reset(self):
@@ -164,10 +200,13 @@ class Collider:
                     i_la = self.contact_data[i_c, i_b].link_a
                     i_lb = self.contact_data[i_c, i_b].link_b
 
+                    I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+                    I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+
                     # pair of hibernated-fixed links -> hibernated contact
                     # TODO: we should also include hibernated-hibernated links and wake up the whole contact island once a new collision is detected
-                    if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[i_lb].is_fixed) or (
-                        self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[i_la].is_fixed
+                    if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
+                        self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
                     ):
                         i_c_hibernated = self.n_contacts_hibernated[i_b]
                         if i_c != i_c_hibernated:
@@ -549,6 +588,8 @@ class Collider:
     def _func_check_collision_valid(self, i_ga, i_gb, i_b):
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
+        I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+        I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
         is_valid = True
 
         # geoms in the same link
@@ -558,22 +599,22 @@ class Collider:
         # self collision
         if (
             ti.static(not self._solver._enable_self_collision)
-            and self._solver.links_info[i_la].root_idx == self._solver.links_info[i_lb].root_idx
+            and self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx
         ):
             is_valid = False
 
         # adjacent links
-        if self._solver.links_info[i_la].parent_idx == i_lb or self._solver.links_info[i_lb].parent_idx == i_la:
+        if self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la:
             is_valid = False
 
         # pair of fixed links
-        if self._solver.links_info[i_la].is_fixed and self._solver.links_info[i_lb].is_fixed:
+        if self._solver.links_info[I_la].is_fixed and self._solver.links_info[I_lb].is_fixed:
             is_valid = False
 
         # hibernated <-> fixed links
         if ti.static(self._solver._use_hibernation):
-            if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[i_lb].is_fixed) or (
-                self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[i_la].is_fixed
+            if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
+                self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
             ):
                 is_valid = False
 
@@ -790,7 +831,16 @@ class Collider:
                 ):
                     pass
                 elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
-                    self._func_mpr(i_ga, i_gb, i_b)
+                    if ti.static(self._solver._box_box_detection):
+                        if (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                            and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                        ):
+                            self._func_box_box_contact(i_ga, i_gb, i_b)
+                        else:
+                            self._func_mpr(i_ga, i_gb, i_b)
+                    else:
+                        self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_nonconvex_nonterrain(self):
@@ -994,7 +1044,9 @@ class Collider:
 
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
-        is_self_pair = self._solver.links_info.root_idx[i_la] == self._solver.links_info.root_idx[i_lb]
+        I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+        I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+        is_self_pair = self._solver.links_info.root_idx[I_la] == self._solver.links_info.root_idx[I_lb]
         multi_contact = (
             self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
@@ -1078,3 +1130,629 @@ class Collider:
         vec = gu.ti_transform_by_quat(rel, qrot)
         vec = vec - rel
         self._solver.geoms_state[i_g, i_b].pos = self._solver.geoms_state[i_g, i_b].pos - vec
+
+    @ti.func
+    def _func_box_box_contact(self, i_ga: ti.i32, i_gb: ti.i32, i_b: ti.i32):
+        """
+        Use Mujoco's box-box contact detection algorithm for more stable collision detction.
+
+        The compilation and running time of this function is longer than the MPR-based contact detection.
+
+        Algorithm is from
+
+        https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c
+        """
+        mjMINVAL = gs.ti_float(1e-12)
+        n = 0
+        code = -1
+        margin = gs.ti_float(0.0)
+        is_return = False
+        cle1, cle2 = 0, 0
+        in_ = 0
+        tmp2 = ti.Vector.zero(gs.ti_float, 3)
+        margin2 = margin * margin
+        rotmore = ti.Matrix.zero(gs.ti_float, 3, 3)
+
+        ga_info = self._solver.geoms_info[i_ga]
+        gb_info = self._solver.geoms_info[i_gb]
+        ga_state = self._solver.geoms_state[i_ga, i_b]
+        gb_state = self._solver.geoms_state[i_gb, i_b]
+
+        size1 = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float) / 2
+        size2 = ti.Vector([gb_info.data[0], gb_info.data[1], gb_info.data[2]], dt=gs.ti_float) / 2
+
+        pos1, pos2 = ga_state.pos, gb_state.pos
+        mat1, mat2 = gu.ti_quat_to_R(ga_state.quat), gu.ti_quat_to_R(gb_state.quat)
+
+        tmp1 = pos2 - pos1
+        pos21 = mat1.transpose() @ tmp1
+
+        tmp1 = pos1 - pos2
+        pos12 = mat2.transpose() @ tmp1
+
+        rot = mat1.transpose() @ mat2
+        rott = rot.transpose()
+
+        rotabs = ti.abs(rot)
+        rottabs = ti.abs(rott)
+
+        plen2 = rotabs @ size2
+        plen1 = rottabs.transpose() @ size1
+        penetration = margin
+        for i in range(3):
+            penetration = penetration + size1[i] * 3 + size2[i] * 3
+        for i in ti.static(range(3)):
+            c1 = -ti.abs(pos21[i]) + size1[i] + plen2[i]
+            c2 = -ti.abs(pos12[i]) + size2[i] + plen1[i]
+
+            if (c1 < -margin) or (c2 < -margin):
+                is_return = True
+
+            if c1 < penetration:
+                penetration = c1
+                code = i + 3 * (pos21[i] < 0) + 0
+
+            if c2 < penetration:
+                penetration = c2
+                code = i + 3 * (pos12[i] < 0) + 6
+        clnorm = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+        for i in range(3):
+            for j in range(3):
+
+                rj0 = rott[j, 0]
+                rj1 = rott[j, 1]
+                rj2 = rott[j, 2]
+                if i == 0:
+                    tmp2 = ti.Vector([0.0, -rj2, +rj1], dt=gs.ti_float)
+                elif i == 1:
+                    tmp2 = ti.Vector([+rj2, 0.0, -rj0], dt=gs.ti_float)
+                else:
+                    tmp2 = ti.Vector([-rj1, +rj0, 0.0], dt=gs.ti_float)
+
+                c1 = tmp2.norm()
+                tmp2 = tmp2 / c1
+                if c1 >= mjMINVAL:
+
+                    c2 = pos21.dot(tmp2)
+
+                    c3 = gs.ti_float(0.0)
+
+                    for k in range(3):
+                        if k != i:
+                            c3 = c3 + size1[k] * ti.abs(tmp2[k])
+
+                    for k in range(3):
+                        if k != j:
+                            c3 = c3 + size2[k] * rotabs[i, 3 - k - j] / c1
+
+                    c3 = c3 - ti.abs(c2)
+
+                    if c3 < -margin:
+                        is_return = True
+
+                    if c3 < penetration * (1.0 - 1e-12):
+                        penetration = c3
+                        cle1 = 0
+                        for k in range(3):
+                            if k != i:
+                                if (tmp2[k] > 0) != (c2 < 0):
+                                    cle1 = cle1 + 1 << k
+
+                        cle2 = 0
+                        for k in range(3):
+                            if k != j:
+                                val = rot[i, 3 - k - j]
+                                cond1 = val > 0
+                                cond2 = c2 < 0
+                                cond3 = ((k - j + 3) % 3) == 1
+                                xor_all = (cond1 != cond2) != cond3
+                                if xor_all:
+                                    cle2 = cle2 + 1 << k
+
+                        code = 12 + i * 3 + j
+                        clnorm = tmp2
+                        in_ = c2 < 0
+        if code == -1:
+            is_return = True
+
+        if not is_return:
+            if code < 12:
+                q1 = code % 6
+                q2 = code // 6
+
+                if q1 == 0:
+                    rotmore[0, 2] = -1
+                    rotmore[1, 1] = +1
+                    rotmore[2, 0] = +1
+                elif q1 == 1:
+                    rotmore[0, 0] = +1
+                    rotmore[1, 2] = -1
+                    rotmore[2, 1] = +1
+                elif q1 == 2:
+                    rotmore[0, 0] = +1
+                    rotmore[1, 1] = +1
+                    rotmore[2, 2] = +1
+                elif q1 == 3:
+                    rotmore[0, 2] = +1
+                    rotmore[1, 1] = +1
+                    rotmore[2, 0] = -1
+                elif q1 == 4:
+                    rotmore[0, 0] = +1
+                    rotmore[1, 2] = +1
+                    rotmore[2, 1] = -1
+                elif q1 == 5:
+                    rotmore[0, 0] = -1
+                    rotmore[1, 1] = +1
+                    rotmore[2, 2] = -1
+
+                i0 = 0
+                i1 = 1
+                i2 = 2
+                f0 = f1 = f2 = 1
+                if q1 == 0:
+                    i0 = 2
+                    f0 = -1
+                    i2 = 0
+                elif q1 == 1:
+                    i1 = 2
+                    f1 = -1
+                    i2 = 1
+                elif q1 == 3:
+                    i0 = 2
+                    i2 = 0
+                    f2 = -1
+                elif q1 == 4:
+                    i1 = 2
+                    i2 = 1
+                    f2 = -1
+                elif q1 == 5:
+                    f0 = -1
+                    f2 = -1
+
+                r = ti.Matrix.zero(gs.ti_float, 3, 3)
+                p = ti.Vector.zero(gs.ti_float, 3)
+                s = ti.Vector.zero(gs.ti_float, 3)
+                if q2:
+                    r = rotmore @ rot.transpose()
+                    p = rotaxis(pos12, i0, i1, i2, f0, f1, f2)
+                    tmp1 = rotaxis(size2, i0, i1, i2, f0, f1, f2)
+                    s = size1
+                else:
+                    r = rotmatx(rot, i0, i1, i2, f0, f1, f2)
+                    p = rotaxis(pos21, i0, i1, i2, f0, f1, f2)
+                    tmp1 = rotaxis(size1, i0, i1, i2, f0, f1, f2)
+                    s = size2
+
+                rt = r.transpose()
+                ss = ti.abs(tmp1)
+                lx = ss[0]
+                ly = ss[1]
+                hz = ss[2]
+                p[2] = p[2] - hz
+                lp = p
+
+                clcorner = 0
+
+                for i in range(3):
+                    if r[2, i] < 0:
+                        clcorner = clcorner + (1 << i)
+
+                for i in range(3):
+                    lp = lp + rt[i, :] * s[i] * (1 if (clcorner & (1 << i)) else -1)
+
+                m, k = 0, 0
+                self.box_pts[m, i_b] = lp
+                m = m + 1
+
+                for i in range(3):
+                    if ti.abs(r[2, i]) < 0.5:
+                        self.box_pts[m, i_b] = rt[i, :] * s[i] * (-2 if (clcorner & (1 << i)) else 2)
+                        m = m + 1
+
+                self.box_pts[3, i_b] = self.box_pts[0, i_b] + self.box_pts[1, i_b]
+                self.box_pts[4, i_b] = self.box_pts[0, i_b] + self.box_pts[2, i_b]
+                self.box_pts[5, i_b] = self.box_pts[3, i_b] + self.box_pts[2, i_b]
+
+                if m > 1:
+                    self.box_lines[k, i_b][0:3] = self.box_pts[0, i_b]
+                    self.box_lines[k, i_b][3:6] = self.box_pts[1, i_b]
+                    k = k + 1
+
+                if m > 2:
+                    self.box_lines[k, i_b][0:3] = self.box_pts[0, i_b]
+                    self.box_lines[k, i_b][3:6] = self.box_pts[2, i_b]
+                    k = k + 1
+
+                    self.box_lines[k, i_b][0:3] = self.box_pts[3, i_b]
+                    self.box_lines[k, i_b][3:6] = self.box_pts[2, i_b]
+                    k = k + 1
+
+                    self.box_lines[k, i_b][0:3] = self.box_pts[4, i_b]
+                    self.box_lines[k, i_b][3:6] = self.box_pts[1, i_b]
+                    k = k + 1
+
+                for i in range(k):
+                    for q in range(2):
+                        a = self.box_lines[i, i_b][0 + q]
+                        b = self.box_lines[i, i_b][3 + q]
+                        c = self.box_lines[i, i_b][1 - q]
+                        d = self.box_lines[i, i_b][4 - q]
+                        if ti.abs(b) > mjMINVAL:
+                            for _j in range(2):
+                                j = 2 * _j - 1
+                                l = ss[q] * j
+                                c1 = (l - a) / b
+                                if 0 <= c1 and c1 <= 1:
+                                    c2 = c + d * c1
+                                    if ti.abs(c2) <= ss[1 - q]:
+                                        self.box_points[n, i_b] = (
+                                            self.box_lines[i, i_b][0:3] + self.box_lines[i, i_b][3:6] * c1
+                                        )
+                                        n = n + 1
+                a = self.box_pts[1, i_b][0]
+                b = self.box_pts[2, i_b][0]
+                c = self.box_pts[1, i_b][1]
+                d = self.box_pts[2, i_b][1]
+                c1 = a * d - b * c
+
+                if m > 2:
+                    for i in range(4):
+                        llx = lx if (i // 2) else -lx
+                        lly = ly if (i % 2) else -ly
+
+                        x = llx - self.box_pts[0, i_b][0]
+                        y = lly - self.box_pts[0, i_b][1]
+
+                        u = (x * d - y * b) / c1
+                        v = (y * a - x * c) / c1
+
+                        if 0 < u and u < 1 and 0 < v and v < 1:
+                            self.box_points[n, i_b] = ti.Vector(
+                                [
+                                    llx,
+                                    lly,
+                                    self.box_pts[0, i_b][2] + u * self.box_pts[1, i_b][2] + v * self.box_pts[2, i_b][2],
+                                ]
+                            )
+                            n = n + 1
+
+                for i in range(1 << (m - 1)):
+                    tmp1 = self.box_pts[0 if i == 0 else i + 2, i_b]
+                    if not (i and (tmp1[0] <= -lx or tmp1[0] >= lx or tmp1[1] <= -ly or tmp1[1] >= ly)):
+                        self.box_points[n, i_b] = tmp1
+                        n = n + 1
+                m = n
+                n = 0
+
+                for i in range(m):
+                    if self.box_points[i, i_b][2] <= margin:
+                        self.box_points[n, i_b] = self.box_points[i, i_b]
+                        self.box_depth[n, i_b] = self.box_points[n, i_b][2]
+                        self.box_points[n, i_b][2] = self.box_points[n, i_b][2] * 0.5
+                        n = n + 1
+                r = (mat2 if q2 else mat1) @ rotmore.transpose()
+                p = pos2 if q2 else pos1
+                tmp2 = ti.Vector(
+                    [(-1 if q2 else 1) * r[0, 2], (-1 if q2 else 1) * r[1, 2], (-1 if q2 else 1) * r[2, 2]],
+                    dt=gs.ti_float,
+                )
+                normal_0 = tmp2
+                for i in range(n):
+                    dist = self.box_points[i, i_b][2]
+                    self.box_points[i, i_b][2] = self.box_points[i, i_b][2] + hz
+                    tmp2 = r @ self.box_points[i, i_b]
+                    contact_pos = tmp2 + p
+                    self._func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b)
+
+            else:
+                code = code - 12
+
+                q1 = code // 3
+                q2 = code % 3
+
+                ax1, ax2 = 0, 0
+                pax1, pax2 = 0, 0
+
+                if q2 == 0:
+                    ax1, ax2 = 1, 2
+                elif q2 == 1:
+                    ax1, ax2 = 0, 2
+                elif q2 == 2:
+                    ax1, ax2 = 1, 0
+
+                if q1 == 0:
+                    pax1, pax2 = 1, 2
+                elif q1 == 1:
+                    pax1, pax2 = 0, 2
+                elif q1 == 2:
+                    pax1, pax2 = 1, 0
+                if rotabs[q1, ax1] < rotabs[q1, ax2]:
+                    ax1 = ax2
+                    ax2 = 3 - q2 - ax1
+
+                if rottabs[q2, pax1] < rottabs[q2, pax2]:
+                    pax1 = pax2
+                    pax2 = 3 - q1 - pax1
+
+                clface = 0
+                if cle1 & (1 << pax2):
+                    clface = pax2
+                else:
+                    clface = pax2 + 3
+
+                rotmore.fill(0.0)
+                if clface == 0:
+                    rotmore[0, 2], rotmore[1, 1], rotmore[2, 0] = -1, +1, +1
+                elif clface == 1:
+                    rotmore[0, 0], rotmore[1, 2], rotmore[2, 1] = +1, -1, +1
+                elif clface == 2:
+                    rotmore[0, 0], rotmore[1, 1], rotmore[2, 2] = +1, +1, +1
+                elif clface == 3:
+                    rotmore[0, 2], rotmore[1, 1], rotmore[2, 0] = +1, +1, -1
+                elif clface == 4:
+                    rotmore[0, 0], rotmore[1, 2], rotmore[2, 1] = +1, +1, -1
+                elif clface == 5:
+                    rotmore[0, 0], rotmore[1, 1], rotmore[2, 2] = -1, +1, -1
+
+                i0, i1, i2 = 0, 1, 2
+                f0, f1, f2 = 1, 1, 1
+
+                if clface == 0:
+                    i0, i2, f0 = 2, 0, -1
+                elif clface == 1:
+                    i1, i2, f1 = 2, 1, -1
+                elif clface == 3:
+                    i0, i2, f2 = 2, 0, -1
+                elif clface == 4:
+                    i1, i2, f2 = 2, 1, -1
+                elif clface == 5:
+                    f0, f2 = -1, -1
+
+                p = rotaxis(pos21, i0, i1, i2, f0, f1, f2)
+                rnorm = rotaxis(clnorm, i0, i1, i2, f0, f1, f2)
+                r = rotmatx(rot, i0, i1, i2, f0, f1, f2)
+
+                # TODO
+                tmp1 = rotmore.transpose() @ size1
+
+                s = ti.abs(tmp1)
+                rt = r.transpose()
+
+                lx, ly, hz = s[0], s[1], s[2]
+                p[2] = p[2] - hz
+
+                n = 0
+                self.box_points[n, i_b] = p
+
+                self.box_points[n, i_b] = self.box_points[n, i_b] + rt[ax1, :] * size2[ax1] * (
+                    1 if (cle2 & (1 << ax1)) else -1
+                )
+                self.box_points[n, i_b] = self.box_points[n, i_b] + rt[ax2, :] * size2[ax2] * (
+                    1 if (cle2 & (1 << ax2)) else -1
+                )
+
+                self.box_points[n + 1, i_b] = self.box_points[n, i_b]
+                self.box_points[n, i_b] = self.box_points[n, i_b] + rt[q2, :] * size2[q2]
+
+                n = 1
+                self.box_points[n, i_b] = self.box_points[n, i_b] - rt[q2, :] * size2[q2]
+
+                n = 2
+                self.box_points[n, i_b] = p
+                self.box_points[n, i_b] = self.box_points[n, i_b] + rt[ax1, :] * size2[ax1] * (
+                    -1 if (cle2 & (1 << ax1)) else 1
+                )
+                self.box_points[n, i_b] = self.box_points[n, i_b] + rt[ax2, :] * size2[ax2] * (
+                    1 if (cle2 & (1 << ax2)) else -1
+                )
+
+                self.box_points[n + 1, i_b] = self.box_points[n, i_b]
+                self.box_points[n, i_b] = self.box_points[n, i_b] + rt[q2, :] * size2[q2]
+
+                n = 3
+                self.box_points[n, i_b] = self.box_points[n, i_b] - rt[q2, :] * size2[q2]
+
+                n = 4
+                self.box_axi[0, i_b] = self.box_points[0, i_b]
+                self.box_axi[1, i_b] = self.box_points[1, i_b] - self.box_points[0, i_b]
+                self.box_axi[2, i_b] = self.box_points[2, i_b] - self.box_points[0, i_b]
+
+                if ti.abs(rnorm[2]) < mjMINVAL:
+                    is_return = True
+                if not is_return:
+                    innorm = (1 / rnorm[2]) * (-1 if in_ else 1)
+
+                    for i in range(4):
+                        c1 = -self.box_points[i, i_b][2] / rnorm[2]
+                        self.box_pu[i, i_b] = self.box_points[i, i_b]
+                        self.box_points[i, i_b] = self.box_points[i, i_b] + c1 * rnorm
+
+                        self.box_ppts2[i, 0, i_b] = self.box_points[i, i_b][0]
+                        self.box_ppts2[i, 1, i_b] = self.box_points[i, i_b][1]
+                    self.box_pts[0, i_b] = self.box_points[0, i_b]
+                    self.box_pts[1, i_b] = self.box_points[1, i_b] - self.box_points[0, i_b]
+                    self.box_pts[2, i_b] = self.box_points[2, i_b] - self.box_points[0, i_b]
+
+                    m = 3
+                    k = 0
+                    n = 0
+
+                    if m > 1:
+                        self.box_lines[k, i_b][0:3] = self.box_pts[0, i_b]
+                        self.box_lines[k, i_b][3:6] = self.box_pts[1, i_b]
+                        self.box_linesu[k, i_b][0:3] = self.box_axi[0, i_b]
+                        self.box_linesu[k, i_b][3:6] = self.box_axi[1, i_b]
+                        k = k + 1
+
+                    if m > 2:
+                        self.box_lines[k, i_b][0:3] = self.box_pts[0, i_b]
+                        self.box_lines[k, i_b][3:6] = self.box_pts[2, i_b]
+                        self.box_linesu[k, i_b][0:3] = self.box_axi[0, i_b]
+                        self.box_linesu[k, i_b][3:6] = self.box_axi[2, i_b]
+                        k = k + 1
+
+                        self.box_lines[k, i_b][0:3] = self.box_pts[0, i_b] + self.box_pts[1, i_b]
+                        self.box_lines[k, i_b][3:6] = self.box_pts[2, i_b]
+                        self.box_linesu[k, i_b][0:3] = self.box_axi[0, i_b] + self.box_axi[1, i_b]
+                        self.box_linesu[k, i_b][3:6] = self.box_axi[2, i_b]
+                        k = k + 1
+
+                        self.box_lines[k, i_b][0:3] = self.box_pts[0, i_b] + self.box_pts[2, i_b]
+                        self.box_lines[k, i_b][3:6] = self.box_pts[1, i_b]
+                        self.box_linesu[k, i_b][0:3] = self.box_axi[0, i_b] + self.box_axi[2, i_b]
+                        self.box_linesu[k, i_b][3:6] = self.box_axi[1, i_b]
+                        k = k + 1
+
+                    for i in range(k):
+                        for q in range(2):
+                            a = self.box_lines[i, i_b][q]
+                            b = self.box_lines[i, i_b][q + 3]
+                            c = self.box_lines[i, i_b][1 - q]
+                            d = self.box_lines[i, i_b][4 - q]
+
+                            if ti.abs(b) > mjMINVAL:
+                                for _j in range(2):
+                                    j = 2 * _j - 1
+                                    if n < self.box_MAXCONPAIR:
+                                        l = s[q] * j
+                                        c1 = (l - a) / b
+                                        if 0 <= c1 and c1 <= 1:
+                                            c2 = c + d * c1
+                                            if (ti.abs(c2) <= s[1 - q]) and (
+                                                (self.box_linesu[i, i_b][2] + self.box_linesu[i, i_b][5] * c1) * innorm
+                                                <= margin
+                                            ):
+
+                                                self.box_points[n, i_b] = (
+                                                    self.box_linesu[i, i_b][0:3] * 0.5
+                                                    + c1 * 0.5 * self.box_linesu[i, i_b][3:6]
+                                                )
+                                                self.box_points[n, i_b][q] = self.box_points[n, i_b][q] + 0.5 * l
+                                                self.box_points[n, i_b][1 - q] = (
+                                                    self.box_points[n, i_b][1 - q] + 0.5 * c2
+                                                )
+                                                self.box_depth[n, i_b] = self.box_points[n, i_b][2] * innorm * 2
+                                                n = n + 1
+
+                    nl = n
+                    a = self.box_pts[1, i_b][0]
+                    b = self.box_pts[2, i_b][0]
+                    c = self.box_pts[1, i_b][1]
+                    d = self.box_pts[2, i_b][1]
+                    c1 = a * d - b * c
+
+                    for i in range(4):
+                        if n < self.box_MAXCONPAIR:
+                            llx = lx if (i // 2) else -lx
+                            lly = ly if (i % 2) else -ly
+
+                            x = llx - self.box_pts[0, i_b][0]
+                            y = lly - self.box_pts[0, i_b][1]
+
+                            u = (x * d - y * b) / c1
+                            v = (y * a - x * c) / c1
+
+                            if nl == 0:
+                                if (u < 0 or u > 1) and (v < 0 or v > 1):
+                                    continue
+                            else:
+                                if u < 0 or u > 1 or v < 0 or v > 1:
+                                    continue
+
+                            u = ti.math.clamp(u, 0, 1)
+                            v = ti.math.clamp(v, 0, 1)
+                            tmp1 = self.box_pu[0, i_b] * (1 - u - v) + self.box_pu[1, i_b] * u + self.box_pu[2, i_b] * v
+                            self.box_points[n, i_b][0] = llx
+                            self.box_points[n, i_b][1] = lly
+                            self.box_points[n, i_b][2] = 0
+
+                            tmp2 = self.box_points[n, i_b] - tmp1
+
+                            c1 = tmp2.dot(tmp2)
+                            if not (tmp1[2] > 0 and c1 > margin2):
+
+                                self.box_points[n, i_b] = self.box_points[n, i_b] + tmp1
+                                self.box_points[n, i_b] = self.box_points[n, i_b] * 0.5
+
+                                self.box_depth[n, i_b] = ti.sqrt(c1) * (-1 if tmp1[2] < 0 else 1)
+                                n = n + 1
+
+                    nf = n
+
+                    for i in range(4):
+                        if n < self.box_MAXCONPAIR:
+                            x, y = self.box_ppts2[i, 0, i_b], self.box_ppts2[i, 1, i_b]
+
+                            if nl == 0:
+                                if (not (nf == 0)) and (x < -lx or x > lx) and (y < -ly or y > ly):
+                                    continue
+                            else:
+                                if x < -lx or x > lx or y < -ly or y > ly:
+                                    continue
+
+                            c1 = 0
+                            for j in range(2):
+                                if self.box_ppts2[i, j, i_b] < -s[j]:
+                                    c1 = c1 + (self.box_ppts2[i, j, i_b] + s[j]) ** 2
+                                elif self.box_ppts2[i, j, i_b] > s[j]:
+                                    c1 = c1 + (self.box_ppts2[i, j, i_b] - s[j]) ** 2
+
+                            c1 = c1 + self.box_pu[i, i_b][2] * self.box_pu[i, i_b][2] * innorm * innorm
+
+                            if self.box_pu[i, i_b][2] > 0 and c1 > margin2:
+                                continue
+
+                            tmp1 = ti.Vector(
+                                [self.box_ppts2[i, 0, i_b] * 0.5, self.box_ppts2[i, 1, i_b] * 0.5, 0], dt=gs.ti_float
+                            )
+
+                            for j in range(2):
+                                if self.box_ppts2[i, j, i_b] < -s[j]:
+                                    tmp1[j] = -s[j] * 0.5
+                                elif self.box_ppts2[i, j, i_b] > s[j]:
+                                    tmp1[j] = s[j] * 0.5
+
+                            tmp1 = tmp1 + self.box_pu[i, i_b] * 0.5
+                            self.box_points[n, i_b] = tmp1
+
+                            self.box_depth[n, i_b] = ti.sqrt(c1) * (-1 if self.box_pu[i, i_b][2] < 0 else 1)
+                            n = n + 1
+
+                    r = mat1 @ rotmore.transpose()
+
+                    tmp1 = r @ rnorm
+                    normal_0 = tmp1 * (-1 if in_ else 1)
+
+                    for i in range(n):
+                        dist = self.box_depth[i, i_b]
+                        self.box_points[i, i_b][2] = self.box_points[i, i_b][2] + hz
+                        tmp2 = r @ self.box_points[i, i_b]
+                        contact_pos = tmp2 + pos1
+                        self._func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b)
+
+            for i in range(n):
+                self.box_valid[i, i_b] = True
+
+            for i in range(n - 1):
+                for j in range(i + 1, n):
+                    col_i = self.n_contacts[i_b] - n + i
+                    col_j = self.n_contacts[i_b] - n + j
+                    pos_i = self.contact_data[col_i, i_b].pos
+                    pos_j = self.contact_data[col_j, i_b].pos
+                    if pos_i[0] == pos_j[0] and pos_i[1] == pos_j[1] and pos_i[2] == pos_j[2]:
+                        self.box_valid[i, i_b] = False
+                        break
+            i = 0
+
+            for j in range(n):
+                if self.box_valid[j, i_b]:
+                    if i < j:
+                        col_i = self.n_contacts[i_b] - n + i
+                        col_j = self.n_contacts[i_b] - n + j
+
+                        self.contact_data[col_i, i_b].pos = self.contact_data[col_j, i_b].pos
+                        self.contact_data[col_i, i_b].penetration = self.contact_data[col_j, i_b].penetration
+                    if i_ga == 20:
+                        col_i = self.n_contacts[i_b] - n + i
+                    i = i + 1
+            self.n_contacts[i_b] = self.n_contacts[i_b] - n + i

@@ -209,8 +209,7 @@ class MPR:
         g_state = self._solver.geoms_state[i_g, i_b]
         d_box = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_state.quat))
 
-        vid = (d_box[2] > 0) * 4 + (d_box[1] > 0) * 2
-        vid += 1 - gs.ti_int(ti.math.sign(d_box[1]) * ti.math.sign(d_box[0]))
+        vid = (d_box[0] > 0) * 4 + (d_box[1] > 0) * 2 + (d_box[2] > 0) * 1
         v_ = ti.Vector(
             [
                 ti.math.sign(d_box[0]) * self._solver.geoms_info[i_g].data[0] * 0.5,
@@ -219,8 +218,8 @@ class MPR:
             ],
             dt=gs.ti_float,
         )
+        vid += self._solver.geoms_info[i_g].vert_start
         v = gu.ti_transform_by_trans_quat(v_, g_state.pos, g_state.quat)
-
         return v, vid
 
     @ti.func
@@ -268,7 +267,7 @@ class MPR:
                 vid = i_v
         v_ = gu.ti_transform_by_trans_quat(v, g_state.pos, g_state.quat)
 
-        return v_, i_v
+        return v_, vid
 
     @ti.func
     def mpr_refine_portal(self, i_ga, i_gb, i_b):
