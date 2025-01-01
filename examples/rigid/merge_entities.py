@@ -44,9 +44,7 @@ def main():
     if args.comb == "urdf2urdf" or args.comb == "urdf2mjcf":
         gs.logger.info("loading URDF panda arm")
         franka = scene.add_entity(
-            gs.morphs.URDF(
-                file="genesis/assets/urdf/panda_bullet/panda_nohand.urdf", merge_fixed_links=False, fixed=True
-            ),
+            gs.morphs.URDF(file="urdf/panda_bullet/panda_nohand.urdf", merge_fixed_links=False, fixed=True),
         )
     else:
         gs.logger.info("loading MJCF panda arm")
@@ -58,7 +56,7 @@ def main():
         gs.logger.info("loading URDF panda hand")
         # NOTE: you need to fix the base link of the attaching entity
         hand = scene.add_entity(
-            gs.morphs.URDF(file="genesis/assets/urdf/panda_bullet/hand.urdf", merge_fixed_links=False, fixed=True),
+            gs.morphs.URDF(file="urdf/panda_bullet/hand.urdf", merge_fixed_links=False, fixed=True),
         )
     else:
         gs.logger.info("loading MJCF panda hand")

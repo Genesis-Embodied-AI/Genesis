@@ -387,8 +387,19 @@ class Scene(RBC):
         if not isinstance(child_entity, gs.engine.entities.RigidEntity):
             gs.raise_exception("Currently only rigid entities are supported for merging.")
 
-        child_link = child_entity.get_link(child_link_name)
+        if not child_link_name:
+            for link in child_entity._links:
+                if link.parent_idx == -1:
+                    child_link = link
+                    break
+        else:
+            child_link = child_entity.get_link(child_link_name)
         parent_link = parent_entity.get_link(parent_link_name)
+
+        if child_link._parent_idx != -1:
+            gs.logger.warning(
+                "Child entity already has a parent link. This may cause the entity to brake into parts. Make sure this operation is intended."
+            )
         child_link._parent_idx = parent_link.idx
         parent_link._child_idxs.append(child_link.idx)
 
