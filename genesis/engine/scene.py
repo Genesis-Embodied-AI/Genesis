@@ -398,7 +398,7 @@ class Scene(RBC):
 
         if child_link._parent_idx != -1:
             gs.logger.warning(
-                "Child entity already has a parent link. This may cause the entity to brake into parts. Make sure this operation is intended."
+                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure this operation is intended."
             )
         child_link._parent_idx = parent_link.idx
         parent_link._child_idxs.append(child_link.idx)
