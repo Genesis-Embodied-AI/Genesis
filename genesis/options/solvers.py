@@ -198,7 +198,9 @@ class RigidOptions(Options):
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
     use_contact_island: bool = False
-    box_box_detection: bool = False  # collision detection branch for box-box pair, slower but more stable. (Follows mujoco's implementation: https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c)
+    box_box_detection: bool = (
+        False  # collision detection branch for box-box pair, slower but more stable. (Follows mujoco's implementation: https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c)
+    )
 
     # hibernation threshold
     use_hibernation: bool = False
