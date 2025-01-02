@@ -1,0 +1,18 @@
+apt_gfx:
+  - libvulkan1
+  - libglib2.0-0  
+  - libxrender1
+
+apt_sources:
+  - git
+  - git-lfs
+  - python3-pip
+
+pip_torch:
+  - torch
+
+pip_genesis:
+  - genesis-world 
+  - trimesh 
+  - pyrender
+  - PyOpenGL
