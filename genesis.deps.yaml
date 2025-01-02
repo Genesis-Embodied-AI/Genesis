@@ -3,7 +3,7 @@ apt_gfx:
   - libglib2.0-0  
   - libxrender1
 
-apt_souces:
+apt_sources:
   - git
   - git-lfs
   - python3-pip
