@@ -171,7 +171,7 @@ If you use Genesis in your research, please consider citing:
 @software{Genesis,
   author = {Genesis Authors},
   title = {Genesis: A Universal and Generative Physics Engine for Robotics and Beyond},
-  month = {December},
-  year = {2024},
+  month = {January},
+  year = {2025},
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
 }
