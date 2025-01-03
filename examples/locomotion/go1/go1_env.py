@@ -189,34 +189,34 @@ class Go1Env:
 
         for i in range(rows):
             for j in range(cols):
+                # Randomly pick a terrain type based on the given weights
+                terrain_choice = random.choices(terrain_types, weights=weights, k=1)[0]
+                grid[i][j] = terrain_choice
+                # while True:
 
-                while True:
-                    # Randomly pick a terrain type based on the given weights
-                    terrain_choice = random.choices(terrain_types, weights=weights, k=1)[0]
-                    grid[i][j] = terrain_choice
-                    # # If it's NOT pyramid_sloped_terrain, we're good to go
-                    # if terrain_choice != "pyramid_sloped_terrain":
-                    #     grid[i][j] = terrain_choice
-                    #     break
-                    # else:
-                    #     # Check neighbors (up, down, left, right) for pyramid_sloped_terrain
-                    #     neighbors = [(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)]
-                    #     conflict = False
-                    #     for nx, ny in neighbors:
-                    #         # Make sure we are within grid bounds before checking
-                    #         if 0 <= nx < rows and 0 <= ny < cols:
-                    #             if grid[nx][ny] == "pyramid_sloped_terrain":
-                    #                 conflict = True
-                    #                 break
+                #     # # If it's NOT pyramid_sloped_terrain, we're good to go
+                #     # if terrain_choice != "pyramid_sloped_terrain":
+                #     #     grid[i][j] = terrain_choice
+                #     #     break
+                #     # else:
+                #     #     # Check neighbors (up, down, left, right) for pyramid_sloped_terrain
+                #     #     neighbors = [(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)]
+                #     #     conflict = False
+                #     #     for nx, ny in neighbors:
+                #     #         # Make sure we are within grid bounds before checking
+                #     #         if 0 <= nx < rows and 0 <= ny < cols:
+                #     #             if grid[nx][ny] == "pyramid_sloped_terrain":
+                #     #                 conflict = True
+                #     #                 break
 
-                    #     if conflict:
-                    #         # If any neighbor is 'pyramid_sloped_terrain',
-                    #         # try picking another terrain type
-                    #         continue
-                    #     else:
-                    #         # No neighbors conflict => OK to place it
-                    #         grid[i][j] = terrain_choice
-                    #         break
+                #     #     if conflict:
+                #     #         # If any neighbor is 'pyramid_sloped_terrain',
+                #     #         # try picking another terrain type
+                #     #         continue
+                #     #     else:
+                #     #         # No neighbors conflict => OK to place it
+                #     #         grid[i][j] = terrain_choice
+                #     #         break
         return grid
 
     def init_foot(self):
