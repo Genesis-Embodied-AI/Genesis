@@ -449,8 +449,8 @@ class Go1Env:
         go2_size_xy = 0.775
         valid_row = self.rows -2
         valid_col = self.cols -2
-        row = np.random.randint(int((valid_row*self.terrain.subterrain_size[0]/2-go2_size_xy)/self.terrain.horizontal_scale))
-        col = np.random.randint(int((valid_col*self.terrain.subterrain_size[1]/2-go2_size_xy)/self.terrain.horizontal_scale))
+        row = np.random.randint(int((valid_row*self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
+        col = np.random.randint(int((valid_col*self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
         # 2. Convert (row, col) -> (x, y) in world coords
         # Each cell is horizontal_scale in size
         x = row*self.terrain.horizontal_scale + go2_size_xy/2
