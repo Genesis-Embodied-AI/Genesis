@@ -2,7 +2,7 @@
 <robot name="plane">
   <link name="planeLink">
   <contact>
-      <lateral_friction value="1"/>
+      <lateral_friction value="0.01"/>
   </contact>
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -12,7 +12,7 @@
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-				<mesh filename="plane100.obj" scale="1 1 1"/>
+				<mesh filename="plane100_light.obj" scale="1 1 1"/>
       </geometry>
        <material name="white">
         <color rgba="1 1 1 1"/>

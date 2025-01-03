@@ -1,0 +1,24 @@
+# Blender MTL File: 'SnowTerrain.blend'
+# Material Count: 2
+
+newmtl Material.001
+Ns 29.411765
+Ka 0.000000 0.000000 0.000000
+Kd 0.640000 0.640000 0.640000
+Ks 0.111765 0.111765 0.111765
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd 686.jpg
+map_Disp 686.jpg
+
+newmtl Material.005
+Ns 96.078431
+Ka 0.000000 0.000000 0.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ni 1.000000
+d 1.000000
+illum 0
+map_Kd SkyDome-Cloud-Overcast-MidMorning.png
+map_Disp SkyDome-Cloud-Overcast-MidMorning.png

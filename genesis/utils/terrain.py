@@ -4,7 +4,7 @@ import genesis as gs
 from genesis.ext import trimesh
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
-
+import random
 
 def parse_terrain(morph: Terrain, surface):
     """
@@ -72,9 +72,12 @@ def parse_terrain(morph: Terrain, surface):
                     ).height_field_raw
 
                 elif subterrain_type == "pyramid_sloped_terrain":
+                    slope = random.uniform(0.1, 0.3)
+                    if random.choice([True, False]):
+                        slope *=-1
                     subterrain_height_field = isaacgym_terrain_utils.pyramid_sloped_terrain(
                         new_subterrain,
-                        slope=-0.1,
+                        slope=slope,
                     ).height_field_raw
 
                 elif subterrain_type == "discrete_obstacles_terrain":
@@ -101,10 +104,13 @@ def parse_terrain(morph: Terrain, surface):
                     ).height_field_raw
 
                 elif subterrain_type == "pyramid_stairs_terrain":
+                    step_height = random.uniform(0.1, 0.2)
+                    if random.choice([True, False]):
+                        step_height *=-1
                     subterrain_height_field = isaacgym_terrain_utils.pyramid_stairs_terrain(
                         new_subterrain,
-                        step_width=0.75,
-                        step_height=-0.1,
+                        step_width= random.uniform(0.5, 0.75),
+                        step_height= step_height,
                     ).height_field_raw
 
                 elif subterrain_type == "stepping_stones_terrain":
