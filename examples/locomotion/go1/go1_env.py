@@ -58,10 +58,10 @@ class Go1Env:
         ########################## entities ##########################
         self.cols = 5
         self.rows = 5
-        n_subterrains=(self.cols+1, self.rows+1)
+        self.margin = 4
+        n_subterrains=(self.cols+self.margin, self.rows+self.margin)
         supported_subterrain_types = [
             "flat_terrain",
-            "fractal_terrain",
             "random_uniform_terrain",
             "pyramid_sloped_terrain",
             "discrete_obstacles_terrain",
@@ -72,7 +72,6 @@ class Go1Env:
         ]
         probs = [
             0.3,
-            0.5,
             0.5,
             0.8,
             0.5,
@@ -90,7 +89,7 @@ class Go1Env:
         # ]
         total = sum(probs)
         normalized_probs = [p / total for p in probs]
-        subterrain_grid = self.generate_subterrain_grid(self.rows+1, self.cols+1, supported_subterrain_types, normalized_probs)
+        subterrain_grid = self.generate_subterrain_grid(self.rows+self.margin, self.cols+self.margin, supported_subterrain_types, normalized_probs)
 
 
 
@@ -207,7 +206,7 @@ class Go1Env:
 
         for i in range(rows):
             for j in range(cols):
-                if i == 0 or i == (rows-1) or j == 0 or j == (cols-1):
+                if i == 0 or i == 1 or i == (rows-1) or i == (rows-2) or j == 0 or j == 1 or j == (cols-1) or j == (cols-2):
                     grid[i][j] = "flat_terrain"
                     continue
                 # Randomly pick a terrain type based on the given weights
@@ -447,12 +446,10 @@ class Go1Env:
         # 1. Sample random row, col(a subterrain)
         # 0.775 ~ l2_norm(0.7, 0.31)
         go2_size_xy = 0.775
-        row = np.random.randint(int((self.terrain.n_subterrains[0]*self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
-        col = np.random.randint(int((self.terrain.n_subterrains[1]*self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
-        if row >= (self.rows-1):
-            row -= (row - self.rows + 1)
-        if col >= (self.cols-1):
-            col -= (col - self.cols + 1)
+        valid_row = self.rows -2
+        valid_col = self.cols -2
+        row = np.random.randint(int((valid_row*self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
+        col = np.random.randint(int((valid_col*self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
         # 2. Convert (row, col) -> (x, y) in world coords
         # Each cell is horizontal_scale in size
         x = row*self.terrain.horizontal_scale + go2_size_xy/2
