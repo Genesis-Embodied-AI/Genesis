@@ -12,8 +12,24 @@ from numba.extending import (
 )
 from numba.core import cgutils
 from contextlib import ExitStack
+
+import platform
+if platform.platform().lower().startswith("windows"):
+    import glfw
+    glfw.init()
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 0)
+    glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+    window = glfw.create_window(1, 1, "OpenGL Window", None, None)
+    if not window:
+        glfw.terminate()
+        raise Exception("Failed to create GLFW window")
+
+    glfw.make_context_current(window)  # This is necessary for Windows OpenGL to work
+
 import OpenGL.GL as GL
 from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
+from OpenGL.raw.GL.VERSION.GL_2_0 import _EXTENSION_NAME
 
 
 class GLWrapper:
@@ -49,11 +65,27 @@ class GLWrapper:
 
     def load_func(self, func_name, *signature):
         dll = GL.platform.PLATFORM.GL
-        func_ptr = GL.platform.ctypesloader.buildFunction(
-            GL.platform.PLATFORM.functionTypeFor(dll)(*signature),
-            func_name,
-            dll,
-        )
+        func_type = GL.platform.PLATFORM.functionTypeFor(dll)(*signature)
+        try:
+            func_ptr = GL.platform.ctypesloader.buildFunction(
+                func_type,
+                func_name,
+                dll,
+            )
+        except:
+            func_type = func_type()
+            func_ptr = GL.platform.createExtensionFunction(
+                func_name,
+                dll,
+                resultType=func_type.restype,
+                argTypes=func_type.argtypes,
+                doc='',
+                argNames=tuple(map(lambda x: str(x), func_type.argtypes)),
+                extension=_EXTENSION_NAME,
+            )
+            func_ptr.argtypes = func_type.argtypes
+            func_ptr.restype = func_type.restype
+            
         self.gl_funcs[func_name] = func_ptr
 
     def build_wrapper(self):
