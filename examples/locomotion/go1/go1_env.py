@@ -70,22 +70,22 @@ class Go1Env:
             # "sloped_terrain",
             # "stepping_stones_terrain",
         ]
-        probs = [
-            0.3,
-            0.5,
-            0.8,
-            0.5,
-            0.5,
-            0.8,
-        ]
         # probs = [
-        #     0.4,
+        #     0.3,
         #     0.5,
-        #     0.001,
-        #     0.2,
-        #     0.1,
-        #     0.001,
+        #     0.8,
+        #     0.5,
+        #     0.5,
+        #     0.8,
         # ]
+        probs = [
+            0.4,
+            0.5,
+            0.001,
+            0.2,
+            0.1,
+            0.001,
+        ]
         total = sum(probs)
         normalized_probs = [p / total for p in probs]
         subterrain_grid = self.generate_subterrain_grid(self.rows+self.margin, self.cols+self.margin, supported_subterrain_types, normalized_probs)
@@ -410,14 +410,14 @@ class Go1Env:
             x, y, z, q = self._random_robot_position()
             self.envs_origins[index, 0] = x
             self.envs_origins[index, 1] = y
-            self.envs_origins[index, 2] = z + self.base_pos[envs_idx, 2]
+            self.envs_origins[index, 2] = z 
             self.base_quat[index] = transform_quat_by_quat(q, self.base_quat[index])
         # print(envs_idx)
         # if 0 in envs_idx.tolist():
         # self.scene.viewer_options.camera_pos=(self.envs_origins[0, 0]+2.0, self.envs_origins[0, 1], self.envs_origins[0, 2] )
         # self.scene.viewer_options.camera_lookat=(self.envs_origins[0, 0], self.envs_origins[0, 1], self.envs_origins[0, 2] +0.5)
  
-        # self.robot.set_pos(self.base_pos[envs_idx]+self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
+        self.robot.set_pos(self.base_pos[envs_idx]+self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_pos(self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
         # self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
