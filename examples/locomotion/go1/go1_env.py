@@ -56,9 +56,9 @@ class Go1Env:
         horizontal_scale = 0.25
         vertical_scale = 0.005
         ########################## entities ##########################
-        cols = 5
-        rows = 5
-        n_subterrains=(cols, rows)
+        self.cols = 5
+        self.rows = 5
+        n_subterrains=(self.cols+1, self.rows+1)
         supported_subterrain_types = [
             "flat_terrain",
             "fractal_terrain",
@@ -70,27 +70,27 @@ class Go1Env:
             # "sloped_terrain",
             # "stepping_stones_terrain",
         ]
-        # probs = [
-        #     0.3,
-        #     0.5,
-        #     0.5,
-        #     0.8,
-        #     0.5,
-        #     0.5,
-        #     0.8,
-        # ]
         probs = [
-            0.4,
-            0.1,
+            0.3,
             0.5,
-            0.001,
-            0.2,
-            0.1,
-            0.001,
+            0.5,
+            0.8,
+            0.5,
+            0.5,
+            0.8,
         ]
+        # probs = [
+        #     0.4,
+        #     0.1,
+        #     0.5,
+        #     0.001,
+        #     0.2,
+        #     0.1,
+        #     0.001,
+        # ]
         total = sum(probs)
         normalized_probs = [p / total for p in probs]
-        subterrain_grid = self.generate_subterrain_grid(rows, cols, supported_subterrain_types, normalized_probs)
+        subterrain_grid = self.generate_subterrain_grid(self.rows+1, self.cols+1, supported_subterrain_types, normalized_probs)
 
 
 
@@ -207,6 +207,9 @@ class Go1Env:
 
         for i in range(rows):
             for j in range(cols):
+                if i == 0 or i == (rows-1) or j == 0 or j == (cols-1):
+                    grid[i][j] = "flat_terrain"
+                    continue
                 # Randomly pick a terrain type based on the given weights
                 terrain_choice = random.choices(terrain_types, weights=weights, k=1)[0]
                 grid[i][j] = terrain_choice
@@ -415,7 +418,7 @@ class Go1Env:
         # if 0 in envs_idx.tolist():
         # self.scene.viewer_options.camera_pos=(self.envs_origins[0, 0]+2.0, self.envs_origins[0, 1], self.envs_origins[0, 2] )
         # self.scene.viewer_options.camera_lookat=(self.envs_origins[0, 0], self.envs_origins[0, 1], self.envs_origins[0, 2] +0.5)
-
+ 
         self.robot.set_pos(self.base_pos[envs_idx]+self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
         # self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
@@ -446,13 +449,17 @@ class Go1Env:
         go2_size_xy = 0.775
         row = np.random.randint(int((self.terrain.n_subterrains[0]*self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
         col = np.random.randint(int((self.terrain.n_subterrains[1]*self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
+        if row >= (self.rows-1):
+            row -= (row - self.rows + 1)
+        if col >= (self.cols-1):
+            col -= (col - self.cols + 1)
         # 2. Convert (row, col) -> (x, y) in world coords
         # Each cell is horizontal_scale in size
         x = row*self.terrain.horizontal_scale + go2_size_xy/2
         y = col*self.terrain.horizontal_scale + go2_size_xy/2
         # 3. Get terrain height in meters
         z = self.terrain.height_field[row, col]*self.terrain.vertical_scale
-        # z = 0.5
+        # z = 0.5terrain_choice
 
         # 4. Add a small offset so the robot spawns above the ground
         # z += 0.1  # for example
