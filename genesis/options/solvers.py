@@ -185,6 +185,10 @@ class RigidOptions(Options):
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
 
+    # batching info
+    batch_links_info: Optional[bool] = False
+    batch_dofs_info: Optional[bool] = False
+
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.CG
     iterations: int = 100
@@ -194,6 +198,9 @@ class RigidOptions(Options):
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
     use_contact_island: bool = False
+    box_box_detection: bool = (
+        False  # collision detection branch for box-box pair, slower but more stable. (Follows mujoco's implementation: https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c)
+    )
 
     # hibernation threshold
     use_hibernation: bool = False

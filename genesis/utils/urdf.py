@@ -281,12 +281,6 @@ def parse_urdf(morph, surface):
             if joint.safety_controller.k_velocity is not None:
                 j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
 
-        if joint.safety_controller is not None:
-            if joint.safety_controller.k_position is not None:
-                j_info["dofs_kp"] = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
-            if joint.safety_controller.k_velocity is not None:
-                j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
-
         if joint.limit is not None:
             if joint.limit.effort is not None:
                 j_info["dofs_force_range"] = (
