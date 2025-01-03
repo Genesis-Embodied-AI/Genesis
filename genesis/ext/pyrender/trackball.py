@@ -46,6 +46,8 @@ class Trackball(object):
 
         self._state = Trackball.STATE_ROTATE
 
+        self._pdown = None  # Initialize _pdown attribute to None
+
     @property
     def pose(self):
         """autolab_core.RigidTransform : The current camera-to-world pose."""
@@ -96,7 +98,9 @@ class Trackball(object):
             motion between this point and the one marked by down().
         """
         point = np.array(point, dtype=np.float32)
-        dx, dy = point - self._pdown
+        # get the "down" point defaulting to current point making
+        # this a no-op if the "down" event didn't trigger for some reason
+        dx, dy = point - getattr(self, "_pdown", point)
         mindim = 0.3 * np.min(self._size)
 
         target = self._target
@@ -105,23 +109,34 @@ class Trackball(object):
         z_axis = self._pose[:3, 2].flatten()
         eye = self._pose[:3, 3].flatten()
 
-        # Interpret drag as a rotation (cam up axis is fixed)
+        # Interpret drag as a rotation
         if self._state == Trackball.STATE_ROTATE:
             x_angle = -dx / mindim
-            x_rot_mat = transformations.rotation_matrix(x_angle, np.array([0, 0, 1]), target)
-            n_pose = x_rot_mat.dot(self._pose)
-            n_x_axis = n_pose[:3, 0].flatten()
+            x_rot_mat = transformations.rotation_matrix(x_angle, y_axis, target)
 
             y_angle = dy / mindim
-            y_rot_mat = transformations.rotation_matrix(y_angle, n_x_axis, target)
+            y_rot_mat = transformations.rotation_matrix(y_angle, x_axis, target)
 
-            self._n_pose = y_rot_mat.dot(n_pose)
+            self._n_pose = y_rot_mat.dot(x_rot_mat.dot(self._pose))
+
+        # Interpret drag as a roll about the camera axis
+        elif self._state == Trackball.STATE_ROLL:
+            center = self._size / 2.0
+            v_init = self._pdown - center
+            v_curr = point - center
+            v_init = v_init / np.linalg.norm(v_init)
+            v_curr = v_curr / np.linalg.norm(v_curr)
+
+            theta = -np.arctan2(v_curr[1], v_curr[0]) + np.arctan2(v_init[1], v_init[0])
+
+            rot_mat = transformations.rotation_matrix(theta, z_axis, target)
+
+            self._n_pose = rot_mat.dot(self._pose)
 
         # Interpret drag as a camera pan in view plane
         elif self._state == Trackball.STATE_PAN:
-            # Temp solution: scale movement using camera height. Below 5m is the default speed.
-            dx = -dx / (5.0 * mindim) * self._scale * max(1.0, eye[2] / 5.0)
-            dy = -dy / (5.0 * mindim) * self._scale * max(1.0, eye[2] / 5.0)
+            dx = -dx / (5.0 * mindim) * self._scale
+            dy = -dy / (5.0 * mindim) * self._scale
 
             translation = dx * x_axis + dy * y_axis
             self._n_target = self._target + translation
