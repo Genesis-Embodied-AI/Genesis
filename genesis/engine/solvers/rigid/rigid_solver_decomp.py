@@ -3872,6 +3872,44 @@ class RigidSolver(Solver):
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].ang[i]
 
+    def get_links_acc(self, links_idx, envs_idx=None):
+        tensor, links_idx, envs_idx = self._validate_2D_io_variables(None, links_idx, 3, envs_idx, idx_name="links_idx")
+
+        self._kernel_get_links_acc(tensor, links_idx, envs_idx)
+
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
+
+    @ti.kernel
+    def _kernel_get_links_acc(
+        self,
+        tensor: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            i_l = links_idx[i_l_]
+            i_b = envs_idx[i_b_]
+
+            quat = gu.ti_inv_quat(self.links_state[i_l, i_b].j_quat)
+            dpos = self.links_state[i_l, i_b].pos - self.links_state[i_l, i_b].COM
+            acc = gu.ti_transform_by_quat(  # gravitational component is included in cdd_vel already
+                self.links_state[i_l, i_b].cdd_vel - dpos.cross(self.links_state[i_l, i_b].cdd_ang),
+                quat,
+            )
+            ang = gu.ti_transform_by_quat(self.links_state[i_l, i_b].cd_ang, quat)
+            lin = gu.ti_transform_by_quat(
+                self.links_state[i_l, i_b].cd_vel - dpos.cross(self.links_state[i_l, i_b].cd_ang),
+                quat,
+            )
+            correction = ang.cross(lin)  # centrifugal
+            final_acc = acc + correction
+
+            for i in ti.static(range(3)):
+                tensor[i_b_, i_l_, i] = final_acc[i]
+
     def get_links_COM(self, links_idx, envs_idx=None):
         tensor, links_idx, envs_idx = self._validate_2D_io_variables(None, links_idx, 3, envs_idx, idx_name="links_idx")
 
