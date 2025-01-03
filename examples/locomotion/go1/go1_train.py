@@ -148,18 +148,37 @@ def get_cfgs():
         "feet_height_target": 0.1,
         "reward_scales": {
             "tracking_lin_vel": 1.5,
-            "tracking_ang_vel": 0.75,
-            "lin_vel_z": -5.0,
+            "tracking_ang_vel": 1.0,
+            "lin_vel_z": -0.1,
             "orientation": -1.0,
-            "base_height": -20.0,
+            # "ang_vel_xy": -0.05
+            # "base_height": -10.0,
+            # "feet_air_time": 0.0
+            "hip_vel": -1.0,
+            "hip_pos": -1.0,
+            "collision": -6.0,
             "action_rate": -0.01,
-            "collision": -3.0,
-            "contact": 0.18,
-            "contact_no_vel": -0.2,
-            # "hip_pos": -0.05,
-            # "hip_vel": -1.0,
-            "feet_swing_height": -30.0
+            # "torques": -0.0002
+            # "dof_pos_limits": -5.0
+            "contact_no_vel": -0.6,
+            # "dof_vel": -0.0001
+            # "dof_acc": -2.5e-6
+            "contact": 0.25
         },
+        # "reward_scales": {
+        #     "tracking_lin_vel": 1.5,
+        #     "tracking_ang_vel": 0.75,
+        #     "lin_vel_z": -5.0,
+        #     "orientation": -1.0,
+        #     "base_height": -20.0,
+        #     "action_rate": -0.01,
+        #     "collision": -3.0,
+        #     "contact": 0.18,
+        #     "contact_no_vel": -0.2,
+        #     # "hip_pos": -0.05,
+        #     # "hip_vel": -1.0,
+        #     "feet_swing_height": -30.0
+        # },
     }
     command_cfg = {
         "num_commands": 3,

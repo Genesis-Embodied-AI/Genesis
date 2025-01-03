@@ -56,8 +56,8 @@ class Go1Env:
         horizontal_scale = 0.25
         vertical_scale = 0.005
         ########################## entities ##########################
-        cols = 10
-        rows = 10
+        cols = 5
+        rows = 5
         n_subterrains=(cols, rows)
         supported_subterrain_types = [
             "flat_terrain",
@@ -70,16 +70,23 @@ class Go1Env:
             # "sloped_terrain",
             # "stepping_stones_terrain",
         ]
+        # probs = [
+        #     0.3,
+        #     0.5,
+        #     0.5,
+        #     0.8,
+        #     0.5,
+        #     0.5,
+        #     0.8,
+        # ]
         probs = [
-            0.3,
+            0.4,
+            0.1,
             0.5,
-            0.5,
-            0.8,
-            0.5,
-            0.5,
-            0.8,
-            # 0.6,
-            # 0.6,
+            0.001,
+            0.2,
+            0.1,
+            0.001,
         ]
         total = sum(probs)
         normalized_probs = [p / total for p in probs]
@@ -92,9 +99,7 @@ class Go1Env:
                     horizontal_scale=horizontal_scale,
                     vertical_scale=vertical_scale,
                     subterrain_types=subterrain_grid
-                )
-        # add robot
-        
+                )        
         _, _, self.terrain.height_field = parse_terrain(morph=self.terrain, surface=gs.surfaces.Default())
         self.scene.add_entity(self.terrain)
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
@@ -115,6 +120,7 @@ class Go1Env:
 
         # names to indices
         self.motor_dofs = [self.robot.get_joint(name).dof_idx_local for name in self.env_cfg["dof_names"]]
+        self.hip_dofs = [self.robot.get_joint(str(name +"_joint")).dof_idx_local for name in self.env_cfg["hip_names"]]
 
         # PD control parameters
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motor_dofs)
@@ -128,7 +134,6 @@ class Go1Env:
         self.termination_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["termination_contact_names"]]
         self.penalised_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["penalised_contact_names"]]
         self.feet_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["feet_names"]]
-        self.hip_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["hip_names"]]
         for link in self.robot._links:
             print(link.name)
         self.init_foot()
@@ -160,9 +165,12 @@ class Go1Env:
             dtype=gs.tc_float,
         )
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=gs.tc_float)
+        self.hip_actions = torch.zeros((self.num_envs, len(self.hip_dofs)), device=self.device, dtype=gs.tc_float)
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.zeros_like(self.actions)
         self.dof_vel = torch.zeros_like(self.actions)
+        self.hip_pos = torch.zeros_like(self.hip_actions)
+        self.hip_vel = torch.zeros_like(self.hip_actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
         self.base_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         self.base_quat = torch.zeros((self.num_envs, 4), device=self.device, dtype=gs.tc_float)
@@ -171,7 +179,17 @@ class Go1Env:
             device=self.device,
             dtype=gs.tc_float,
         )
+        self.default_hip_pos = torch.tensor(
+            [
+                self.env_cfg["default_joint_angles"][name]
+                for name in self.env_cfg["dof_names"]
+                if "hip" in name
+            ],
+            device=self.device,
+            dtype=gs.tc_float,
+        )
         print(f"Default dof pos {self.default_dof_pos}")
+        print(f"Default hip pos {self.default_hip_pos}")
         self.extras = dict()  # extra information for logging
 
     def _resample_commands(self, envs_idx):
@@ -192,31 +210,6 @@ class Go1Env:
                 # Randomly pick a terrain type based on the given weights
                 terrain_choice = random.choices(terrain_types, weights=weights, k=1)[0]
                 grid[i][j] = terrain_choice
-                # while True:
-
-                #     # # If it's NOT pyramid_sloped_terrain, we're good to go
-                #     # if terrain_choice != "pyramid_sloped_terrain":
-                #     #     grid[i][j] = terrain_choice
-                #     #     break
-                #     # else:
-                #     #     # Check neighbors (up, down, left, right) for pyramid_sloped_terrain
-                #     #     neighbors = [(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)]
-                #     #     conflict = False
-                #     #     for nx, ny in neighbors:
-                #     #         # Make sure we are within grid bounds before checking
-                #     #         if 0 <= nx < rows and 0 <= ny < cols:
-                #     #             if grid[nx][ny] == "pyramid_sloped_terrain":
-                #     #                 conflict = True
-                #     #                 break
-
-                #     #     if conflict:
-                #     #         # If any neighbor is 'pyramid_sloped_terrain',
-                #     #         # try picking another terrain type
-                #     #         continue
-                #     #     else:
-                #     #         # No neighbors conflict => OK to place it
-                #     #         grid[i][j] = terrain_choice
-                #     #         break
         return grid
 
     def init_foot(self):
@@ -232,12 +225,6 @@ class Go1Env:
 
         self.feet_pos = all_links_pos[:, self.feet_indices, :]
         self.feet_vel = all_links_vel[:, self.feet_indices, :]
-        self.hip_pos = all_links_pos[:, self.hip_indices, :]
-        self.hip_vel = all_links_vel[:, self.hip_indices, :]
-        # print(f"Feet pos shape: {self.feet_pos.shape}")
-        # print(f"Feet vel shape: {self.feet_vel.shape}")
-        # print(f"Hip pos shape: {self.hip_pos.shape}")
-        # print(f"Hip vel shape: {self.hip_vel.shape}")
 
     def update_feet_state(self):
         # Get positions for all links and slice using indices
@@ -246,8 +233,6 @@ class Go1Env:
 
         self.feet_pos = all_links_pos[:, self.feet_indices, :]
         self.feet_vel = all_links_vel[:, self.feet_indices, :]
-        self.hip_pos = all_links_pos[:, self.hip_indices, :]
-        self.hip_vel = all_links_vel[:, self.hip_indices, :]
 
     def post_physics_step_callback(self):
         self.update_feet_state()
@@ -307,7 +292,8 @@ class Go1Env:
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
         self.dof_pos[:] = self.robot.get_dofs_position(self.motor_dofs)
         self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
-
+        self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
+        self.hip_vel[:] = self.robot.get_dofs_position(self.hip_dofs)
         # resample commands
         envs_idx = (
             (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
@@ -408,13 +394,14 @@ class Go1Env:
         # reset dofs
         self.dof_pos[envs_idx] = self.default_dof_pos
         self.dof_vel[envs_idx] = 0.0
+        self.hip_pos[envs_idx] = self.default_hip_pos
+        self.hip_vel[envs_idx] = 0.0
         self.robot.set_dofs_position(
             position=self.dof_pos[envs_idx],
             dofs_idx_local=self.motor_dofs,
             zero_velocity=True,
             envs_idx=envs_idx,
         )
-
         # reset base
         self.base_pos[envs_idx] = self.base_init_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
@@ -424,7 +411,10 @@ class Go1Env:
             self.envs_origins[index, 1] = y
             self.envs_origins[index, 2] = z
             self.base_quat[index] = transform_quat_by_quat(q, self.base_quat[index])
-
+        # print(envs_idx)
+        # if 0 in envs_idx.tolist():
+        # self.scene.viewer_options.camera_pos=(self.envs_origins[0, 0]+2.0, self.envs_origins[0, 1], self.envs_origins[0, 2] )
+        # self.scene.viewer_options.camera_lookat=(self.envs_origins[0, 0], self.envs_origins[0, 1], self.envs_origins[0, 2] +0.5)
 
         self.robot.set_pos(self.base_pos[envs_idx]+self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
         # self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
@@ -570,10 +560,10 @@ class Go1Env:
         return res
 
     def _reward_hip_vel(self):
-        return torch.sum(torch.square(self.hip_vel), dim=(1, 2))
+        return torch.sum(torch.square(self.hip_vel), dim=(1))
 
     def _reward_hip_pos(self):
-        return torch.sum(torch.square(self.hip_pos), dim=(1, 2))
+        return torch.sum(torch.abs(self.hip_pos- self.default_hip_pos), dim=(1))
 
 
     def _reward_feet_swing_height(self):
