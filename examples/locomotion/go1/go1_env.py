@@ -70,23 +70,22 @@ class Go1Env:
             # "sloped_terrain",
             # "stepping_stones_terrain",
         ]
-        probs = [
-            0.3,
-            0.5,
-            0.8,
-            0.5,
-            0.5,
-            0.8,
-        ]
         # probs = [
-        #     0.4,
-        #     0.1,
+        #     0.3,
         #     0.5,
-        #     0.001,
-        #     0.2,
-        #     0.1,
-        #     0.001,
+        #     0.8,
+        #     0.5,
+        #     0.5,
+        #     0.8,
         # ]
+        probs = [
+            0.4,
+            0.5,
+            0.001,
+            0.2,
+            0.1,
+            0.001,
+        ]
         total = sum(probs)
         normalized_probs = [p / total for p in probs]
         subterrain_grid = self.generate_subterrain_grid(self.rows+self.margin, self.cols+self.margin, supported_subterrain_types, normalized_probs)
