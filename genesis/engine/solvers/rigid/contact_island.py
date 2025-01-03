@@ -25,7 +25,9 @@ class ContactIsland:
             dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs))
         )
 
-        self.constraint_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.solver.n_entities)))
+        self.constraint_id = ti.field(
+            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs * 2))
+        )
 
         self.entity_edge = struct_agg_list.field(
             shape=self.solver._batch_shape(self.solver.n_entities), needs_grad=False, layout=ti.Layout.SOA
@@ -66,8 +68,11 @@ class ContactIsland:
 
     @ti.func
     def add_edge(self, link_a, link_b, i_b):
-        ea = self.solver.links_info[link_a].entity_idx
-        eb = self.solver.links_info[link_b].entity_idx
+        link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
+        link_b_maybe_batch = [link_b, i_b] if ti.static(self.solver._options.batch_links_info) else link_b
+
+        ea = self.solver.links_info[link_a_maybe_batch].entity_idx
+        eb = self.solver.links_info[link_b_maybe_batch].entity_idx
 
         self.entity_edge[ea, i_b].n = self.entity_edge[ea, i_b].n + 1
         self.entity_edge[eb, i_b].n = self.entity_edge[eb, i_b].n + 1
@@ -100,9 +105,11 @@ class ContactIsland:
                 impact = self.collider.contact_data[i_col, i_b]
                 link_a = impact.link_a
                 link_b = impact.link_b
+                link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
+                link_b_maybe_batch = [link_b, i_b] if ti.static(self.solver._options.batch_links_info) else link_b
 
-                ea = self.solver.links_info[link_a].entity_idx
-                eb = self.solver.links_info[link_b].entity_idx
+                ea = self.solver.links_info[link_a_maybe_batch].entity_idx
+                eb = self.solver.links_info[link_b_maybe_batch].entity_idx
 
                 island_a = self.entity_island[ea, i_b]
                 island_b = self.entity_island[eb, i_b]

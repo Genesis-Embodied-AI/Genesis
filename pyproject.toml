@@ -6,14 +6,14 @@ build-backend = "setuptools.build_meta"
 # name = "genesis-world-nightly"
 # version = "0.0.3"
 name = "genesis-world"
-version = "0.2.0"
+version = "0.2.1"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "psutil",
     "scikit-image",
-    "taichi == 1.7.2",
+    "taichi == 1.7.3",
     "pydantic == 2.7.1",
     "numpy == 1.26.4",
     "six",

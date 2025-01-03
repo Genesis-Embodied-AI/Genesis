@@ -666,7 +666,8 @@ class RigidEntity(Entity):
         tgt_link_pos = self._solver.links_state[tgt_link_idx, i_b].pos
         i_l = tgt_link_idx
         while i_l > -1:
-            l_info = self._solver.links_info[i_l]
+            I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
+            l_info = self._solver.links_info[I_l]
             l_state = self._solver.links_state[i_l, i_b]
 
             if l_info.joint_type == gs.JOINT_TYPE.FIXED:
@@ -674,8 +675,9 @@ class RigidEntity(Entity):
 
             elif l_info.joint_type == gs.JOINT_TYPE.REVOLUTE:
                 i_d = l_info.dof_start
+                I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                 i_d_jac = i_d - self._dof_start
-                rotation = gu.ti_transform_by_quat(self._solver.dofs_info[i_d].motion_ang, l_state.quat)
+                rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
                 translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                 self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -687,8 +689,9 @@ class RigidEntity(Entity):
 
             elif l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
                 i_d = l_info.dof_start
+                I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                 i_d_jac = i_d - self._dof_start
-                translation = gu.ti_transform_by_quat(self._solver.dofs_info[i_d].motion_vel, l_state.quat)
+                translation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_vel, l_state.quat)
 
                 self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                 self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -706,7 +709,8 @@ class RigidEntity(Entity):
                 for i_d_ in range(3):
                     i_d = l_info.dof_start + i_d_ + 3
                     i_d_jac = i_d - self._dof_start
-                    rotation = self._solver.dofs_info[i_d].motion_ang
+                    I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                    rotation = self._solver.dofs_info[I_d].motion_ang
                     translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -734,6 +738,7 @@ class RigidEntity(Entity):
         pos_mask=[True, True, True],
         rot_mask=[True, True, True],
         max_step_size=0.5,
+        dofs_idx_local=None,
         return_error=False,
     ):
         """
@@ -767,6 +772,8 @@ class RigidEntity(Entity):
             Mask for rotation axis alignment. Defaults to [True, True, True]. E.g.: If you only want the link's Z-axis to be aligned with the Z-axis in the given quat, you can set it to [False, False, True].
         max_step_size : float, optional
             Maximum step size in q space for each IK solver step. Defaults to 0.5.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
 
@@ -799,6 +806,7 @@ class RigidEntity(Entity):
             pos_mask=pos_mask,
             rot_mask=rot_mask,
             max_step_size=max_step_size,
+            dofs_idx_local=dofs_idx_local,
             return_error=return_error,
         )
 
@@ -826,6 +834,7 @@ class RigidEntity(Entity):
         pos_mask=[True, True, True],
         rot_mask=[True, True, True],
         max_step_size=0.5,
+        dofs_idx_local=None,
         return_error=False,
     ):
         """
@@ -859,6 +868,8 @@ class RigidEntity(Entity):
             Mask for rotation axis alignment. Defaults to [True, True, True]. E.g.: If you only want the link's Z-axis to be aligned with the Z-axis in the given quat, you can set it to [False, False, True].
         max_step_size : float, optional
             Maximum step size in q space for each IK solver step. Defaults to 0.5.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
 
@@ -945,11 +956,33 @@ class RigidEntity(Entity):
             [self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device)) for quat in quats]
         )
 
+        dofs_idx = self._get_dofs_idx_local(dofs_idx_local)
+        n_dofs = len(dofs_idx)
+        if n_dofs == 0:
+            gs.raise_exception("Target dofs not provided.")
+        links_idx_by_dofs = []
+        for v in self.links:
+            links_idx_by_dof_at_v = v.joint.dof_idx_local
+            if links_idx_by_dof_at_v is None:
+                link_relevant = False
+            elif isinstance(links_idx_by_dof_at_v, list):
+                link_relevant = any([vv in dofs_idx for vv in links_idx_by_dof_at_v])
+            else:
+                link_relevant = links_idx_by_dof_at_v in dofs_idx
+            if link_relevant:
+                links_idx_by_dofs.append(v.idx_local)  # converted to global later
+        links_idx_by_dofs = self._get_ls_idx(links_idx_by_dofs)
+        n_links_by_dofs = len(links_idx_by_dofs)
+
         self._kernel_inverse_kinematics(
             links_idx,
             poss,
             quats,
             n_links,
+            dofs_idx,
+            n_dofs,
+            links_idx_by_dofs,
+            n_links_by_dofs,
             custom_init_qpos,
             init_qpos,
             max_samples,
@@ -986,6 +1019,10 @@ class RigidEntity(Entity):
         poss: ti.types.ndarray(),
         quats: ti.types.ndarray(),
         n_links: ti.i32,
+        dofs_idx: ti.types.ndarray(),
+        n_dofs: ti.i32,
+        links_idx_by_dofs: ti.types.ndarray(),
+        n_links_by_dofs: ti.i32,
         custom_init_qpos: ti.i32,
         init_qpos: ti.types.ndarray(),
         max_samples: ti.i32,
@@ -1059,30 +1096,40 @@ class RigidEntity(Entity):
                     for i_ee in range(n_links):
                         # update jacobian for ee link
                         i_l_ee = links_idx[i_ee]
-                        self._func_get_jacobian(i_l_ee, i_b, pos_mask, rot_mask)
+                        self._func_get_jacobian(
+                            i_l_ee, i_b, pos_mask, rot_mask
+                        )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
-                        # copy to multi-link jacobian
-                        for i_error, i_dof in ti.ndrange(6, self.n_dofs):
+                        # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
+                        for i_error, i_dof in ti.ndrange(6, n_dofs):
                             i_row = i_ee * 6 + i_error
-                            self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof, i_b]
+                            i_dof_ = dofs_idx[i_dof]
+                            self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
 
-                    # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error
-                    lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, self.n_dofs, i_b)
+                    # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
+                    lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, n_dofs, i_b)
                     lu.mat_mul(
                         self._IK_jacobian,
                         self._IK_jacobian_T,
                         self._IK_mat,
                         n_error_dims,
-                        self.n_dofs,
+                        n_dofs,
                         n_error_dims,
                         i_b,
                     )
                     lu.mat_add_eye(self._IK_mat, damping**2, n_error_dims, i_b)
                     lu.mat_inverse(self._IK_mat, self._IK_L, self._IK_U, self._IK_y, self._IK_inv, n_error_dims, i_b)
                     lu.mat_mul_vec(self._IK_inv, self._IK_err_pose, self._IK_vec, n_error_dims, n_error_dims, i_b)
-                    lu.mat_mul_vec(
-                        self._IK_jacobian_T, self._IK_vec, self._IK_delta_qpos, self.n_dofs, n_error_dims, i_b
-                    )
+
+                    for i in range(self.n_dofs):  # IK_delta_qpos = IK_jacobian_T @ IK_vec
+                        self._IK_delta_qpos[i, i_b] = 0
+                    for i in range(n_dofs):
+                        for j in range(n_error_dims):
+                            i_ = dofs_idx[
+                                i
+                            ]  # NOTE: IK_delta_qpos uses the original indexing instead of the effective n_dofs
+                            self._IK_delta_qpos[i_, i_b] += self._IK_jacobian_T[i, j, i_b] * self._IK_vec[j, i_b]
+
                     for i in range(self.n_dofs):
                         self._IK_delta_qpos[i, i_b] = ti.math.clamp(
                             self._IK_delta_qpos[i, i_b], -max_step_size, max_step_size
@@ -1155,9 +1202,16 @@ class RigidEntity(Entity):
 
                     # Resample init q
                     if respect_joint_limit and i_sample < max_samples - 1:
-                        for i_l in range(self.link_start, self.link_end):
-                            l_info = self._solver.links_info[i_l]
-                            dof_info = self._solver.dofs_info[l_info.dof_start]
+                        for _i_l in range(n_links_by_dofs):
+                            i_l = links_idx_by_dofs[_i_l]
+                            I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
+                            l_info = self._solver.links_info[I_l]
+                            I_dof_start = (
+                                [l_info.dof_start, i_b]
+                                if ti.static(self.solver._options.batch_dofs_info)
+                                else l_info.dof_start
+                            )
+                            dof_info = self._solver.dofs_info[I_dof_start]
                             q_start = l_info.q_start
 
                             if l_info.joint_type == gs.JOINT_TYPE.FREE:
@@ -1562,6 +1616,14 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang(np.arange(self.link_start, self.link_end), envs_idx)
 
     @gs.assert_built
+    def get_links_inertial_mass(self, ls_idx_local=None, envs_idx=None):
+        return self._solver.get_links_inertial_mass(self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_links_invweight(self, ls_idx_local=None, envs_idx=None):
+        return self._solver.get_links_invweight(self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
     def set_pos(self, pos, zero_velocity=True, envs_idx=None):
         """
         Set position of the entity's base link.
@@ -1694,6 +1756,18 @@ class RigidEntity(Entity):
     def _get_dofs_idx(self, dofs_idx_local=None):
         return self._get_dofs_idx_local(dofs_idx_local) + self._dof_start
 
+    def _get_ls_idx_local(self, ls_idx_local=None):
+        if ls_idx_local is None:
+            ls_idx_local = torch.arange(self.n_links, dtype=torch.int32, device=gs.device)
+        else:
+            ls_idx_local = torch.as_tensor(ls_idx_local, dtype=gs.tc_int)
+            if (ls_idx_local < 0).any() or (ls_idx_local >= self.n_links).any():
+                gs.raise_exception("`ls_idx_local` exceeds valid range.")
+        return ls_idx_local
+
+    def _get_ls_idx(self, ls_idx_local=None):
+        return self._get_ls_idx_local(ls_idx_local) + self._link_start
+
     @gs.assert_built
     def set_qpos(self, qpos, qs_idx_local=None, zero_velocity=True, envs_idx=None):
         """
@@ -1716,7 +1790,7 @@ class RigidEntity(Entity):
             self.zero_all_dofs_velocity(envs_idx)
 
     @gs.assert_built
-    def set_dofs_kp(self, kp, dofs_idx_local=None):
+    def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' positional gains for the PD controller.
 
@@ -1726,12 +1800,14 @@ class RigidEntity(Entity):
             The positional gains to set.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
 
-        self._solver.set_dofs_kp(kp, self._get_dofs_idx(dofs_idx_local))
+        self._solver.set_dofs_kp(kp, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def set_dofs_kv(self, kv, dofs_idx_local=None):
+    def set_dofs_kv(self, kv, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' velocity gains for the PD controller.
 
@@ -1741,11 +1817,13 @@ class RigidEntity(Entity):
             The velocity gains to set.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        self._solver.set_dofs_kv(kv, self._get_dofs_idx(dofs_idx_local))
+        self._solver.set_dofs_kv(kv, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def set_dofs_force_range(self, lower, upper, dofs_idx_local=None):
+    def set_dofs_force_range(self, lower, upper, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' force range.
 
@@ -1757,9 +1835,27 @@ class RigidEntity(Entity):
             The upper bounds of the force range.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
 
-        self._solver.set_dofs_force_range(lower, upper, self._get_dofs_idx(dofs_idx_local))
+        self._solver.set_dofs_force_range(lower, upper, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_stiffness(self, stiffness, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_stiffness(stiffness, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_invweight(self, invweight, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_invweight(invweight, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_armature(self, armature, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_armature(armature, self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_dofs_damping(self, damping, dofs_idx_local=None, envs_idx=None):
+        self._solver.set_dofs_damping(damping, self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
     def set_dofs_velocity(self, velocity, dofs_idx_local=None, envs_idx=None):
@@ -1948,7 +2044,7 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_position(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_kp(self, dofs_idx_local=None):
+    def get_dofs_kp(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the positional gain (kp) for the entity's dofs used by the PD controller.
 
@@ -1956,16 +2052,18 @@ class RigidEntity(Entity):
         ----------
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        kp : torch.Tensor, shape (n_dofs,)
+        kp : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The positional gain (kp) for the entity's dofs.
         """
-        return self._solver.get_dofs_kp(self._get_dofs_idx(dofs_idx_local))
+        return self._solver.get_dofs_kp(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_kv(self, dofs_idx_local=None):
+    def get_dofs_kv(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the velocity gain (kv) for the entity's dofs used by the PD controller.
 
@@ -1973,16 +2071,18 @@ class RigidEntity(Entity):
         ----------
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        kv : torch.Tensor, shape (n_dofs,)
+        kv : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The velocity gain (kv) for the entity's dofs.
         """
-        return self._solver.get_dofs_kv(self._get_dofs_idx(dofs_idx_local))
+        return self._solver.get_dofs_kv(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_force_range(self, dofs_idx_local=None):
+    def get_dofs_force_range(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the force range (min and max limits) for the entity's dofs.
 
@@ -1990,18 +2090,20 @@ class RigidEntity(Entity):
         ----------
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        lower_limit : torch.Tensor, shape (n_dofs,)
+        lower_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The lower limit of the force range for the entity's dofs.
-        upper_limit : torch.Tensor, shape (n_dofs,)
+        upper_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The upper limit of the force range for the entity's dofs.
         """
-        return self._solver.get_dofs_force_range(self._get_dofs_idx(dofs_idx_local))
+        return self._solver.get_dofs_force_range(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_limit(self, dofs_idx=None):
+    def get_dofs_limit(self, dofs_idx=None, envs_idx=None):
         """
         Get the positional limits (min and max) for the entity's dofs.
 
@@ -2009,15 +2111,33 @@ class RigidEntity(Entity):
         ----------
         dofs_idx : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        lower_limit : torch.Tensor, shape (n_dofs,)
+        lower_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The lower limit of the positional limits for the entity's dofs.
-        upper_limit : torch.Tensor, shape (n_dofs,)
+        upper_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The upper limit of the positional limits for the entity's dofs.
         """
-        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx))
+        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_stiffness(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_stiffness(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_invweight(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_invweight(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_armature(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_armature(self._get_dofs_idx(dofs_idx_local), envs_idx)
+
+    @gs.assert_built
+    def get_dofs_damping(self, dofs_idx_local=None, envs_idx=None):
+        return self._solver.get_dofs_damping(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
     def zero_all_dofs_velocity(self, envs_idx=None):
@@ -2250,6 +2370,14 @@ class RigidEntity(Entity):
         for i in range(len(link_indices)):
             link_indices[i] += self._link_start
         self._solver.set_links_COM_shift(com_shift, link_indices, envs_idx)
+
+    @gs.assert_built
+    def set_links_inertial_mass(self, inertial_mass, ls_idx_local=None, envs_idx=None):
+        self._solver.set_links_inertial_mass(inertial_mass, self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_links_invweight(self, invweight, ls_idx_local=None, envs_idx=None):
+        self._solver.set_links_invweight(invweight, self._get_ls_idx(ls_idx_local), envs_idx)
 
     @gs.assert_built
     def get_mass(self):
