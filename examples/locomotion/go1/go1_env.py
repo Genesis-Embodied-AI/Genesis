@@ -496,70 +496,70 @@ class Go1Env:
 
 
 
-    def _random_robot_position(self):
-        """
-        Place the robot at the center of each subterrain in the grid.
-        """
-        for _ in range(10):  # Try up to 10 times to find a valid spawn point
-            # Randomly pick a subterrain index
-            row = np.random.randint(0, self.rows)
-            col = np.random.randint(0, self.cols)
-
-            # Calculate the center position of the subterrain in world coordinates
-            x = (col + 0.5) * self.terrain.subterrain_size[0]
-            y = (row + 0.5) * self.terrain.subterrain_size[1]
-
-            # Get the height value at the center of the subterrain
-            center_row = int((row + 0.5) * self.terrain.subterrain_size[0] / self.terrain.horizontal_scale)
-            center_col = int((col + 0.5) * self.terrain.subterrain_size[1] / self.terrain.horizontal_scale)
-            z = self.terrain.height_field[center_row, center_col] * self.terrain.vertical_scale
-
-            # Check for invalid height values
-            if np.isnan(z) or np.isinf(z) or z <= 0:
-                print(f"[DEBUG] Skipping invalid subterrain at row={row}, col={col} (z={z})")
-                continue
-
-            # Add a small offset to ensure the robot spawns above the ground
-            # z += 0.2
-
-            # Set a random rotation angle for the robot
-            angle = np.random.uniform(2 * np.pi)
-            q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
-
-            print(f"[DEBUG] Robot placed at subterrain center: row={row}, col={col}, x={x}, y={y}, z={z}")
-            return x, y, z
-
-        raise RuntimeError("Failed to find a valid spawn location after 10 tries.")
-
     # def _random_robot_position(self):
-    #     # 1. Sample random row, col(a subterrain)
-    #     # 0.775 ~ l2_norm(0.7, 0.31)
-    #     # go2_size_xy = 0.775
-    #     # row = np.random.randint(int((self.rows * self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
-    #     # col = np.random.randint(int((self.cols * self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
-    #     while True:
-    #         row = np.random.randint(1, self.max_row)
-    #         col = np.random.randint(1, self.max_col)
-    #         # # 2. Convert (row, col) -> (x, y) in world coords
-    #         # # Each cell is horizontal_scale in size
-    #         x = row*self.terrain.horizontal_scale
-    #         y = col*self.terrain.horizontal_scale
-    #         # 3. Get terrain height in meters
-    #         z = self.terrain.height_field[row, col]*self.terrain.vertical_scale
-    #         if np.isnan(z) or np.isinf(z) or z<= 0:
+    #     """
+    #     Place the robot at the center of each subterrain in the grid.
+    #     """
+    #     for _ in range(100):  # Try up to 10 times to find a valid spawn point
+    #         # Randomly pick a subterrain index
+    #         row = np.random.randint(0, self.rows)
+    #         col = np.random.randint(0, self.cols)
+
+    #         # Calculate the center position of the subterrain in world coordinates
+    #         x = (col + 0.5) * self.terrain.subterrain_size[0]
+    #         y = (row + 0.5) * self.terrain.subterrain_size[1]
+
+    #         # Get the height value at the center of the subterrain
+    #         center_row = int((row + 0.5) * self.terrain.subterrain_size[0] / self.terrain.horizontal_scale)
+    #         center_col = int((col + 0.5) * self.terrain.subterrain_size[1] / self.terrain.horizontal_scale)
+    #         z = self.terrain.height_field[center_row, center_col] * self.terrain.vertical_scale
+
+    #         # Check for invalid height values
+    #         if np.isnan(z) or np.isinf(z) or z <= -0.01:
+    #             print(f"[DEBUG] Skipping invalid subterrain at row={row}, col={col} (z={z})")
     #             continue
-    #         else:
-    #             break
-    #     z = +0.5 #terrain_choice
 
-    #     # 4. Add a small offset so the robot spawns above the ground
-    #     # z += 0  # for example
+    #         # Add a small offset to ensure the robot spawns above the ground
+    #         # z += 0.2
 
-    #     # 5. rotation quaternion
-    #     # angle = np.random.uniform(2*np.pi)
-    #     # q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
+    #         # Set a random rotation angle for the robot
+    #         angle = np.random.uniform(2 * np.pi)
+    #         q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
+
+    #         # print(f"[DEBUG] Robot placed at subterrain center: row={row}, col={col}, x={x}, y={y}, z={z}")
+    #         return x, y, z
+
+    #     raise RuntimeError("Failed to find a valid spawn location after 10 tries.")
+
+    def _random_robot_position(self):
+        # 1. Sample random row, col(a subterrain)
+        # 0.775 ~ l2_norm(0.7, 0.31)
+        # go2_size_xy = 0.775
+        # row = np.random.randint(int((self.rows * self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
+        # col = np.random.randint(int((self.cols * self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
+        while True:
+            row = np.random.randint(1, self.max_row)
+            col = np.random.randint(1, self.max_col)
+            # # 2. Convert (row, col) -> (x, y) in world coords
+            # # Each cell is horizontal_scale in size
+            x = row*self.terrain.horizontal_scale
+            y = col*self.terrain.horizontal_scale
+            # 3. Get terrain height in meters
+            z = self.terrain.height_field[row, col]*self.terrain.vertical_scale
+            if np.isnan(z) or np.isinf(z) or z<= -0.01:
+                continue
+            else:
+                break
+        z += 0.5 #terrain_choice
+
+        # 4. Add a small offset so the robot spawns above the ground
+        # z += 0  # for example
+
+        # 5. rotation quaternion
+        # angle = np.random.uniform(2*np.pi)
+        # q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
         
-    #     return x, y, z
+        return x, y, z
 
     def reset(self):
         self.reset_buf[:] = True
