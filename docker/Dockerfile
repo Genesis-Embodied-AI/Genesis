@@ -49,7 +49,7 @@ RUN git clone https://github.com/Genesis-Embodied-AI/Genesis.git && \
     cd Genesis && \
     git submodule update --init --recursive
 COPY build_luisa.sh /workspace/build_luisa.sh
-RUN chmod +x ./build_luisa.sh && ./build_luisa.sh ${PYTHON_VERSION}
+RUN chmod +x ./build_luisa.sh && /bin/bash /workspace/build_luisa.sh ${PYTHON_VERSION}
 
 # ===============================================================
 # Stage 2: Runtime Environment
