@@ -65,8 +65,8 @@ class Go1Env:
             "random_uniform_terrain",
             "pyramid_sloped_terrain",
             "discrete_obstacles_terrain",
-            "wave_terrain",
             "pyramid_stairs_terrain",
+            "wave_terrain",
             # "sloped_terrain",
             # "stepping_stones_terrain",
         ]
@@ -75,8 +75,8 @@ class Go1Env:
             0.5,
             0.8,
             0.5,
-            0.5,
             0.8,
+            0.3
         ]
         # probs = [
         #     0.4,
@@ -108,6 +108,11 @@ class Go1Env:
                     subterrain_types=subterrain_grid
                 )        
         _, _, self.terrain.height_field = parse_terrain(morph=self.terrain, surface=gs.surfaces.Default())
+        print("height_field shape =", self.terrain.height_field.shape)
+        self.max_row = int((self.rows * self.terrain.subterrain_size[0]) / self.terrain.horizontal_scale)
+        self.max_col = int((self.cols * self.terrain.subterrain_size[1]) / self.terrain.horizontal_scale)
+
+        print(f"Computed max_row={self.max_row}, max_col={self.max_col}")
         self.scene.add_entity(self.terrain)
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
@@ -363,11 +368,43 @@ class Go1Env:
             ],
             axis=-1,
         )
-
+        self.check_and_sanitize_observations()
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
 
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+
+
+    def check_and_sanitize_observations(self):
+        """
+        Detect NaN/Inf in self.obs_buf / self.privileged_obs_buf. 
+        Reset those environments and clamp their invalid observations.
+        """
+        # 1) Find which envs have NaN or Inf in either buffer.
+        bad_envs = torch.any(~torch.isfinite(self.obs_buf), dim=1)
+        bad_envs |= torch.any(~torch.isfinite(self.privileged_obs_buf), dim=1)
+
+        if bad_envs.any():
+
+            num_bad = bad_envs.sum().item()
+            print(f"WARNING: {num_bad} envs have invalid observations -> resetting them.")
+            self.reset_idx(bad_envs.nonzero(as_tuple=False).flatten())
+            # 2) Clamp invalid observations in *all* envs (including those just reset).
+            #    This ensures that if PPO sees them in the rollout buffer, they're finite.
+            #    You could also clamp only for bad_envs if you prefer.
+            # if not torch.isfinite(self.obs_buf).all():
+            #     print("WARNING: Clamping obs_buf to remove NaNs/Infs.")
+            #     self.obs_buf = torch.nan_to_num(
+            #         self.obs_buf, nan=0.0, posinf=0.0, neginf=-0.0
+            #     )
+
+            # if not torch.isfinite(self.privileged_obs_buf).all():
+            #     print("WARNING: Clamping privileged_obs_buf to remove NaNs/Infs.")
+            #     self.privileged_obs_buf = torch.nan_to_num(
+            #         self.privileged_obs_buf, nan=0.0, posinf=0.0, neginf=-0.0
+            #     )
+
+
 
     def get_observations(self):
         return self.obs_buf
@@ -416,11 +453,11 @@ class Go1Env:
         self.base_pos[envs_idx] = self.base_init_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
         for index in envs_idx:
-            x, y, z, q = self._random_robot_position()
+            x, y, z= self._random_robot_position()
             self.envs_origins[index, 0] = x
             self.envs_origins[index, 1] = y
             self.envs_origins[index, 2] = z 
-            self.base_quat[index] = transform_quat_by_quat(q, self.base_quat[index])
+            # self.base_quat[index] = transform_quat_by_quat(q, self.base_quat[index])
         # print(envs_idx)
         # if 0 in envs_idx.tolist():
         # self.scene.viewer_options.camera_pos=(self.envs_origins[0, 0]+2.0, self.envs_origins[0, 1], self.envs_origins[0, 2] )
@@ -454,25 +491,33 @@ class Go1Env:
     def _random_robot_position(self):
         # 1. Sample random row, col(a subterrain)
         # 0.775 ~ l2_norm(0.7, 0.31)
-        go2_size_xy = 0.775
-        row = np.random.randint(int((self.rows * self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
-        col = np.random.randint(int((self.cols * self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
-        # 2. Convert (row, col) -> (x, y) in world coords
-        # Each cell is horizontal_scale in size
-        x = row*self.terrain.horizontal_scale + go2_size_xy/2
-        y = col*self.terrain.horizontal_scale + go2_size_xy/2
-        # 3. Get terrain height in meters
-        z = self.terrain.height_field[row, col]*self.terrain.vertical_scale
-        # z = 0.5terrain_choice
+        # go2_size_xy = 0.775
+        # row = np.random.randint(int((self.rows * self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
+        # col = np.random.randint(int((self.cols * self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
+        while True:
+            row = np.random.randint(1, self.max_row)
+            col = np.random.randint(1, self.max_col)
+            # # 2. Convert (row, col) -> (x, y) in world coords
+            # # Each cell is horizontal_scale in size
+            x = row*self.terrain.horizontal_scale
+            y = col*self.terrain.horizontal_scale
+            # 3. Get terrain height in meters
+            z = self.terrain.height_field[row, col]*self.terrain.vertical_scale
+            if np.isnan(z) or np.isinf(z) or z<= 0:
+                print(f"z value is {z}")
+                continue
+            else:
+                break
+        z = +0.5 #terrain_choice
 
         # 4. Add a small offset so the robot spawns above the ground
-        # z += 0.1  # for example
+        # z += 0  # for example
 
         # 5. rotation quaternion
-        angle = np.random.uniform(2*np.pi)
-        q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
+        # angle = np.random.uniform(2*np.pi)
+        # q = torch.tensor([np.cos(angle), 0, 0, np.sin(angle)], device=self.device)
         
-        return x, y, z, q
+        return x, y, z
 
     def reset(self):
         self.reset_buf[:] = True
@@ -480,25 +525,6 @@ class Go1Env:
         return self.obs_buf, self.privileged_obs_buf
 
     # ------------ reward functions----------------
-
-
-    def _reward_collision(self):
-        """
-        Penalize collisions on selected bodies.
-        Returns the per-env penalty value as a 1D tensor of shape (n_envs,).
-        """
-        # (n_envs, n_links, 3) net contact forces
-        contact_forces = self.robot.get_links_net_contact_force()
-
-        # Extract forces for the undesired-contact links
-        # => shape (n_envs, len(self.penalised_contact_indices), 3)
-        undesired_forces = torch.norm(contact_forces[:, self.penalised_contact_indices, :], dim=-1)
-        
-        # Boolean of whether each penalized link has force > threshold (e.g. > 0.1)
-        collisions = (undesired_forces > 0.1).float()  # shape (n_envs, len(...))
-        
-        # Sum over those links to get # of collisions per environment
-        return collisions.sum(dim=1)
 
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)

@@ -154,7 +154,7 @@ def get_cfgs():
             "action_rate": -0.01,
             "contact_no_vel": -0.2,
             "hip_pos": -1.0,
-            "hip_vel": -1.0,
+            "hip_vel": -0.05,
             "contact": 0.18
         },
         # "reward_scales": {
