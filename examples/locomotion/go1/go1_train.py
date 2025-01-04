@@ -138,6 +138,7 @@ def get_cfgs():
             "dof_pos": 1.0,
             "dof_vel": 0.05,
         },
+        "clip_observations":100,
     }
 
     reward_cfg = {
