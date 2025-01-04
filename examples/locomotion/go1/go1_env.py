@@ -303,7 +303,7 @@ class Go1Env:
         self.dof_pos[:] = self.robot.get_dofs_position(self.motor_dofs)
         self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
         self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
-        self.hip_vel[:] = self.robot.get_dofs_position(self.hip_dofs)
+        self.hip_vel[:] = self.robot.get_dofs_velocity(self.hip_dofs)
         # resample commands
         envs_idx = (
             (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
