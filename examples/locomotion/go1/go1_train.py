@@ -150,19 +150,9 @@ def get_cfgs():
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 1.0,
             "lin_vel_z": -0.1,
-            # "orientation": -1.0,
-            # "ang_vel_xy": -0.05
-            # "base_height": -10.0,
-            # "feet_air_time": 0.0
-            "hip_vel": -1.0,
-            "hip_pos": -1.0,
-            "collision": -6.0,
+            "collision": -3.0,
             "action_rate": -0.01,
-            # "torques": -0.0002
-            # "dof_pos_limits": -5.0
             "contact_no_vel": -0.6,
-            # "dof_vel": -0.0001
-            # "dof_acc": -2.5e-6
             "hip_pos": -1.0,
             "hip_vel": -1.0,
             "contact": 0.25
