@@ -19,7 +19,8 @@ class MPMEntity(ParticleEntity):
         self, scene, solver, material, morph, surface, particle_size, idx, particle_start, vvert_start, vface_start
     ):
         if isinstance(material, (gs.materials.MPM.Liquid, gs.materials.MPM.Sand, gs.materials.MPM.Snow)):
-            need_skinning = False
+            # need_skinning = False
+            need_skinning = True
         else:
             need_skinning = True
 
