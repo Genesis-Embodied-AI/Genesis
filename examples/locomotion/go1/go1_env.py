@@ -52,14 +52,14 @@ class Go1Env:
         )
 
         # add plain
-        # self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        subterrain_size = 12.0
         horizontal_scale = 0.25
         vertical_scale = 0.005
         ########################## entities ##########################
-        self.cols = 5
-        self.rows = 5
-        self.margin = 4
-        n_subterrains=(self.cols+self.margin, self.rows+self.margin)
+        self.cols = 8
+        self.rows = 8
+        n_subterrains=(self.cols, self.rows)
         supported_subterrain_types = [
             "flat_terrain",
             "random_uniform_terrain",
@@ -70,29 +70,38 @@ class Go1Env:
             # "sloped_terrain",
             # "stepping_stones_terrain",
         ]
-        # probs = [
-        #     0.3,
-        #     0.5,
-        #     0.8,
-        #     0.5,
-        #     0.5,
-        #     0.8,
-        # ]
         probs = [
-            0.4,
+            0.3,
             0.5,
-            0.001,
-            0.2,
-            0.1,
-            0.001,
+            0.8,
+            0.5,
+            0.5,
+            0.8,
         ]
+        # probs = [
+        #     0.4,
+        #     0.5,
+        #     0.001,
+        #     0.2,
+        #     0.1,
+        #     0.001,
+        # ]
         total = sum(probs)
         normalized_probs = [p / total for p in probs]
-        subterrain_grid = self.generate_subterrain_grid(self.rows+self.margin, self.cols+self.margin, supported_subterrain_types, normalized_probs)
+        subterrain_grid = self.generate_subterrain_grid(self.rows, self.cols, supported_subterrain_types, normalized_probs)
 
 
+        # Calculate the total width and height of the terrain
+        total_width = (self.cols)* subterrain_size
+        total_height =(self.rows)* subterrain_size
+
+        # Calculate the center coordinates
+        center_x = total_width / 2
+        center_y = total_height / 2
 
         self.terrain  = gs.morphs.Terrain(
+                    pos=(-center_x,-center_y,0),
+                    subterrain_size=(subterrain_size, subterrain_size),
                     n_subterrains=n_subterrains,
                     horizontal_scale=horizontal_scale,
                     vertical_scale=vertical_scale,
@@ -205,9 +214,9 @@ class Go1Env:
 
         for i in range(rows):
             for j in range(cols):
-                if i == 0 or i == 1 or i == (rows-1) or i == (rows-2) or j == 0 or j == 1 or j == (cols-1) or j == (cols-2):
-                    grid[i][j] = "flat_terrain"
-                    continue
+                # if i == 0 or i == 1 or i == (rows-1) or i == (rows-2) or j == 0 or j == 1 or j == (cols-1) or j == (cols-2):
+                #     grid[i][j] = "flat_terrain"
+                #     continue
                 # Randomly pick a terrain type based on the given weights
                 terrain_choice = random.choices(terrain_types, weights=weights, k=1)[0]
                 grid[i][j] = terrain_choice
@@ -446,10 +455,8 @@ class Go1Env:
         # 1. Sample random row, col(a subterrain)
         # 0.775 ~ l2_norm(0.7, 0.31)
         go2_size_xy = 0.775
-        valid_row = self.rows -2
-        valid_col = self.cols -2
-        row = np.random.randint(int((valid_row*self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
-        col = np.random.randint(int((valid_col*self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
+        row = np.random.randint(int((self.rows * self.terrain.subterrain_size[0]-go2_size_xy)/self.terrain.horizontal_scale))
+        col = np.random.randint(int((self.cols * self.terrain.subterrain_size[1]-go2_size_xy)/self.terrain.horizontal_scale))
         # 2. Convert (row, col) -> (x, y) in world coords
         # Each cell is horizontal_scale in size
         x = row*self.terrain.horizontal_scale + go2_size_xy/2

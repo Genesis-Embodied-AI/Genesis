@@ -73,8 +73,8 @@ def parse_terrain(morph: Terrain, surface):
 
                 elif subterrain_type == "pyramid_sloped_terrain":
                     slope = random.uniform(0.1, 0.3)
-                    if random.choice([True, False]):
-                        slope *=-1
+                    # if random.choice([True, False]):
+                    #     slope *=-1
                     subterrain_height_field = isaacgym_terrain_utils.pyramid_sloped_terrain(
                         new_subterrain,
                         slope=slope,
@@ -105,8 +105,8 @@ def parse_terrain(morph: Terrain, surface):
 
                 elif subterrain_type == "pyramid_stairs_terrain":
                     step_height = random.uniform(0.1, 0.2)
-                    if random.choice([True, False]):
-                        step_height *=-1
+                    # if random.choice([True, False]):
+                    #     step_height *=-1
                     subterrain_height_field = isaacgym_terrain_utils.pyramid_stairs_terrain(
                         new_subterrain,
                         step_width= random.uniform(0.5, 0.75),

@@ -121,7 +121,7 @@ def get_cfgs():
         "termination_if_roll_greater_than": 90,  # degree
         "termination_if_pitch_greater_than": 90,
         # base pose
-        "base_init_pos": [0.0, 0.0, 0.42],
+        "base_init_pos": [0.0, 0.0, 0.5],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
@@ -150,12 +150,12 @@ def get_cfgs():
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 1.0,
             "lin_vel_z": -0.1,
-            "collision": -3.0,
+            "collision": -2.0,
             "action_rate": -0.01,
-            "contact_no_vel": -0.6,
+            "contact_no_vel": -0.2,
             "hip_pos": -1.0,
             "hip_vel": -1.0,
-            "contact": 0.25
+            "contact": 0.18
         },
         # "reward_scales": {
         #     "tracking_lin_vel": 1.5,
