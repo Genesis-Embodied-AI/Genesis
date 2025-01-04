@@ -117,6 +117,7 @@ class Go1Env:
         self.scene.add_entity(self.terrain)
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
+        self.random_pos = self.generate_random_positions()
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.robot = self.scene.add_entity(
             gs.morphs.URDF(
@@ -455,21 +456,16 @@ class Go1Env:
             envs_idx=envs_idx,
         )
         # reset base
-        self.base_pos[envs_idx] = self.base_init_pos
+        self.base_pos[envs_idx] = self.random_pos[envs_idx] + self.base_init_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
-        for index in envs_idx:
-            x, y, z= self._random_robot_position()
-            self.envs_origins[index, 0] = x
-            self.envs_origins[index, 1] = y
-            self.envs_origins[index, 2] = z 
             # self.base_quat[index] = transform_quat_by_quat(q, self.base_quat[index])
         # print(envs_idx)
         # if 0 in envs_idx.tolist():
         # self.scene.viewer_options.camera_pos=(self.envs_origins[0, 0]+2.0, self.envs_origins[0, 1], self.envs_origins[0, 2] )
         # self.scene.viewer_options.camera_lookat=(self.envs_origins[0, 0], self.envs_origins[0, 1], self.envs_origins[0, 2] +0.5)
  
-        self.robot.set_pos(self.base_pos[envs_idx]+self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
-        self.robot.set_pos(self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
+        self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
+        # self.robot.set_pos(self.envs_origins[envs_idx, :3], zero_velocity=False, envs_idx=envs_idx)
         # self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.base_lin_vel[envs_idx] = 0
@@ -530,6 +526,18 @@ class Go1Env:
     #         return x, y, z
 
     #     raise RuntimeError("Failed to find a valid spawn location after 10 tries.")
+
+    def generate_random_positions(self):
+        """
+        Use the _random_robot_position() method to generate unique random positions
+        for each environment.
+        """
+        positions = torch.zeros((self.num_envs, 3), device=self.device)
+        for i in range(self.num_envs):
+            x, y, z = self._random_robot_position()
+            positions[i] = torch.tensor([x, y, z], device=self.device)
+            # print(f"[INFO] Random position for env {i}: x={x:.2f}, y={y:.2f}, z={z:.2f}")
+        return positions
 
     def _random_robot_position(self):
         # 1. Sample random row, col(a subterrain)
