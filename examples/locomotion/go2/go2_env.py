@@ -3,7 +3,7 @@ import math
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
 import numpy as np
-
+from genesis.utils import urdf as uu
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
@@ -16,6 +16,7 @@ class Go2Env:
         self.num_obs = obs_cfg["num_obs"]
         self.num_privileged_obs = obs_cfg["num_privileged_obs"]
         self.num_actions = env_cfg["num_actions"]
+        self.joint_limits = env_cfg["joint_limits"]
         self.num_commands = command_cfg["num_commands"]
 
         self.simulate_action_latency = True  # there is a 1 step latency on real robot
@@ -56,15 +57,25 @@ class Go2Env:
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
-        self.robot = self.scene.add_entity(
-            gs.morphs.URDF(
-                file="urdf/go2/urdf/go2.urdf",
-                pos=self.base_init_pos.cpu().numpy(),
-                quat=self.base_init_quat.cpu().numpy(),
-                links_to_keep = self.env_cfg["feet_names"]
-            ),
-        )
 
+        self.urdf_model = gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            pos=self.base_init_pos.cpu().numpy(),
+            quat=self.base_init_quat.cpu().numpy(),
+            links_to_keep=self.env_cfg["feet_names"]
+        )
+        self.robot = self.scene.add_entity(self.urdf_model)
+
+        # print(dir(self.urdf_model))
+        print(self.urdf_model.limit)
+        for joint_name, joint in self.urdf_model.joint_map.items():
+            if joint.limit is not None:
+                effort_limit = joint.limit.effort
+                velocity_limit = joint.limit.velocity
+
+                print(f"Joint: {joint_name}")
+                print(f"  - Effort Limit: {effort_limit} Nm/N")
+                print(f"  - Velocity Limit: {velocity_limit} rad/s or m/s")
         # build
         self.scene.build(n_envs=num_envs)
 

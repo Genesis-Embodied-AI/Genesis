@@ -649,8 +649,8 @@ class Terrain(Morph):
     vertical_scale: float = 0.005  # meter height of each step in the subterrain
     subterrain_types: Any = [
         ["flat_terrain", "random_uniform_terrain", "stepping_stones_terrain"],
-        ["pyramid_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain"],
-        ["random_uniform_terrain", "pyramid_stairs_terrain", "sloped_terrain"],
+        ["pyramid_sloped_terrain","pyramid_down_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain"],
+        ["random_uniform_terrain", "pyramid_stairs_terrain", "pyramid_down_stairs_terrain", "sloped_terrain"],
     ]
     height_field: Any = None
 
@@ -663,10 +663,12 @@ class Terrain(Morph):
             "random_uniform_terrain",
             "sloped_terrain",
             "pyramid_sloped_terrain",
+            "pyramid_down_sloped_terrain",
             "discrete_obstacles_terrain",
             "wave_terrain",
             "stairs_terrain",
             "pyramid_stairs_terrain",
+            "pyramid_down_stairs_terrain",
             "stepping_stones_terrain",
         ]
 

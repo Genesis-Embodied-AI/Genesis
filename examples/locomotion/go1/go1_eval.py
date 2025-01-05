@@ -9,6 +9,8 @@ from rsl_rl.runners import OnPolicyRunner
 import genesis as gs
 import copy
 import re
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="go1-walking")
@@ -24,13 +26,14 @@ def main():
     # Sort subdirectories by their names (assuming they are timestamped in lexicographical order)
     most_recent_subdir = sorted(subdirs)[-1] if subdirs else None
     log_dir = os.path.join(log_dir, most_recent_subdir)
-    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
+    env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
     reward_cfg["reward_scales"] = {}
 
     env = Go1Env(
-        num_envs=1,
+        num_envs=42,
         env_cfg=env_cfg,
         obs_cfg=obs_cfg,
+        noise_cfg=noise_cfg,
         reward_cfg=reward_cfg,
         command_cfg=command_cfg,
         show_viewer=True,

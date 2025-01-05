@@ -88,9 +88,26 @@ def get_cfgs():
             "RR_thigh_joint",
             "RR_calf_joint",
         ],
+        "joint_limits": {
+            "FL_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
+            "FL_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
+            "FL_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
+            "FR_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
+            "FR_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
+            "FR_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
+            "RL_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
+            "RL_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
+            "RL_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
+            "RR_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
+            "RR_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
+            "RR_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
+        },
         # PD
         "kp": 20.0,
         "kd": 0.5,
+        "soft_dof_pos_limit": 0.9,
+        "soft_dof_vel_limit": 1.0,
+        "soft_torque_limit": 1.0,
         # termination
         "termination_contact_names": [
             "base"
@@ -150,28 +167,18 @@ def get_cfgs():
         "reward_scales": {
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 1.0,
-            "lin_vel_z": -0.1,
+            "lin_vel_z": -0.01,
+            "ang_vel_xy": -0.05,
             "collision": -2.0,
             "action_rate": -0.01,
             "contact_no_vel": -0.2,
-            "hip_pos": -1.0,
-            "hip_vel": -0.05,
-            "contact": 0.18
+            "dof_acc": -2.5e-7,
+            "hip_pos": -0.5,
+            "contact": 0.25,
+            "dof_pos_limits": -10.0,
+            "dof_vel_limits": 0.0,
+            "torques": -0.00001
         },
-        # "reward_scales": {
-        #     "tracking_lin_vel": 1.5,
-        #     "tracking_ang_vel": 0.75,
-        #     "lin_vel_z": -5.0,
-        #     "orientation": -1.0,
-        #     "base_height": -20.0,
-        #     "action_rate": -0.01,
-        #     "collision": -3.0,
-        #     "contact": 0.18,
-        #     "contact_no_vel": -0.2,
-        #     # "hip_pos": -0.05,
-        #     # "hip_vel": -1.0,
-        #     "feet_swing_height": -30.0
-        # },
     }
     command_cfg = {
         "num_commands": 3,
@@ -179,8 +186,21 @@ def get_cfgs():
         "lin_vel_y_range": [-1.0, 1.0],
         "ang_vel_range": [-1.0, 1.0],
     }
+    noise_cfg = {
+        "add_noise": True,
+        "noise_level": 1.0,
+        "noise_scales":{
+            "dof_pos": 0.01,
+            "dof_vel": 1.5,
+            "lin_vel": 0.1,
+            "ang_vel": 0.2,
+            "gravity": 0.05,
+        }
 
-    return env_cfg, obs_cfg ,reward_cfg, command_cfg
+    }
+    
+
+    return env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg
 
 
 def main():
@@ -198,7 +218,7 @@ def main():
     log_dir_ = f"logs/{args.exp_name}"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(log_dir_, timestamp)
-    env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
+    env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg = get_cfgs()
     train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     
@@ -206,6 +226,7 @@ def main():
         num_envs=args.num_envs, 
         env_cfg=env_cfg, 
         obs_cfg=obs_cfg, 
+        noise_cfg=noise_cfg, 
         reward_cfg=reward_cfg, 
         command_cfg=command_cfg,        
         show_viewer=args.view,
@@ -238,7 +259,7 @@ def main():
         runner.load(resume_path)
 
     pickle.dump(
-        [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
+        [env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg],
         open(f"{log_dir}/cfgs.pkl", "wb"),
     )
 
