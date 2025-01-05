@@ -1447,16 +1447,16 @@ class RigidEntity(Entity):
         else:
             gs.raise_exception("Neither `name` nor `id` is provided.")
 
-    def get_link(self, name=None, id=None):
+    def get_link(self, name=None, uid=None):
         """
-        Get a RigidLink object by name or id.
+        Get a RigidLink object by name or uid.
 
         Parameters
         ----------
         name : str, optional
             The name of the link. Defaults to None.
-        id : str, optional
-            The id of the link. This can be a substring of the link's id. Defaults to None.
+        uid : str, optional
+            The uid of the link. This can be a substring of the link's uid. Defaults to None.
 
         Returns
         -------
@@ -1470,14 +1470,14 @@ class RigidEntity(Entity):
                     return link
             gs.raise_exception(f"Link not found for name: {name}.")
 
-        elif id is not None:
+        elif uid is not None:
             for link in self._links:
-                if id in str(link.id):
+                if uid in str(link.uid):
                     return link
-            gs.raise_exception(f"Link not found for id: {id}.")
+            gs.raise_exception(f"Link not found for uid: {uid}.")
 
         else:
-            gs.raise_exception("Neither `name` nor `id` is provided.")
+            gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @gs.assert_built
     def get_pos(self, envs_idx=None):
