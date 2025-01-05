@@ -872,12 +872,13 @@ class PBDSolver(Solver):
         self.particles[particle_idx].free = 0
     
     @gs.assert_built
-    def fix_all_particle(self):
-        self._kernel_fix_all_particle()
+    def fix_all_particle(self, start_idx, end_idx):
+        self._kernel_fix_all_particle(start_idx, end_idx)
 
     @ti.kernel
-    def _kernel_fix_all_particle(self):
-        for i in range(self._n_particles):
+    def _kernel_fix_all_particle(self, start_idx: ti.i32, end_idx: ti.i32):
+        assert end_idx <= self._n_particles
+        for i in range(start_idx, end_idx):
             self.particles[i].free = 0
             self.particles_info[i].mat_type = self.MATS.CLOTH
 
