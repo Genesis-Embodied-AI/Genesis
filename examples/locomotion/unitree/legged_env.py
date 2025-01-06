@@ -333,7 +333,7 @@ class LeggedEnv:
                 elif terrain_choice == "pyramid_stairs_terrain":
                     # Define terrain options and their corresponding probabilities
                     terrain_options = ["pyramid_stairs_terrain", "pyramid_down_stairs_terrain"]
-                    terrain_weights = [0.1, 0.9]  # climb up priority
+                    terrain_weights = [0.0, 1.0]  # climb up priority
                     # Choose terrain based on the weights
                     terrain_choice = random.choices(terrain_options, weights=terrain_weights, k=1)[0]
 
@@ -463,6 +463,21 @@ class LeggedEnv:
         self.torques = self._compute_torques(exec_actions)
         self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
         self.scene.step()
+        # 2a. Check for NaNs in base state
+        if torch.isnan(self.robot.get_pos()).any() or torch.isnan(self.robot.get_quat()).any():
+            print("NaN detected right after scene.step() in base pos/quat!")
+            print("Base pos:", self.robot.get_pos())
+            print("Base quat:", self.robot.get_quat())
+            raise ValueError("NaNs in base pose after scene step.")
+        # 2b. Check for NaNs in DOF states
+        dof_pos_check = self.robot.get_dofs_position(self.motor_dofs)
+        dof_vel_check = self.robot.get_dofs_velocity(self.motor_dofs)
+        if torch.isnan(dof_pos_check).any() or torch.isnan(dof_vel_check).any():
+            print("NaN detected right after scene.step() in DOF pos/vel!")
+            print("DOF pos:", dof_pos_check)
+            print("DOF vel:", dof_vel_check)
+            raise ValueError("NaNs in DOF states after scene step.")
+
         if self.show_vis:
             x, y, z = self.base_pos[self.selected_robot].cpu().numpy()  # Convert the tensor to NumPy
             self.cam_0.set_pose(pos=(x+5.0, y, z+5.5), lookat=(x, y, z+0.5))
@@ -530,6 +545,19 @@ class LeggedEnv:
         sin_phase = torch.sin(2 * np.pi * self.leg_phase)  # Shape: (batch_size, 4)
         cos_phase = torch.cos(2 * np.pi * self.leg_phase)  # Shape: (batch_size, 4)
 
+
+        # Right before building self.obs_buf
+        if torch.isnan(self.base_lin_vel).any() or torch.isnan(self.base_ang_vel).any():
+            print("NaN in base_lin_vel or base_ang_vel before obs!")
+            print("base_lin_vel:", self.base_lin_vel)
+            print("base_ang_vel:", self.base_ang_vel)
+            raise ValueError("NaNs in velocity terms before building obs.")
+
+        # If you're computing sin/cos phases, check them too:
+        if torch.isnan(self.leg_phase).any():
+            print("NaN in leg_phase before obs!")
+            print("leg_phase:", self.leg_phase)
+            raise ValueError("NaNs in leg_phase.")
         # compute observations
         self.obs_buf = torch.cat(
             [
@@ -700,6 +728,23 @@ class LeggedEnv:
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
         self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
         self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
+
+        # 1a. Check right after setting position
+        if torch.isnan(self.base_pos[envs_idx]).any():
+            print("NaN in base_pos right after setting it in reset_idx()")
+            print("envs_idx:", envs_idx)
+            print("base_pos:", self.base_pos[envs_idx])
+            raise ValueError("NaNs in base_pos during reset.")
+
+        # 1b. Check DOFs
+        dof_pos = self.robot.get_dofs_position(self.motor_dofs)
+        if torch.isnan(dof_pos[envs_idx]).any():
+            print("NaN in dof_pos right after reset_idx()")
+            print("envs_idx:", envs_idx)
+            print("dof_pos:", dof_pos[envs_idx])
+            raise ValueError("NaNs in dof_pos during reset.")
+
+
         self.base_lin_vel[envs_idx] = 0
         self.base_ang_vel[envs_idx] = 0
         self.robot.zero_all_dofs_velocity(envs_idx)
@@ -826,6 +871,12 @@ class LeggedEnv:
 
         ratios = gs.rand((len(env_ids), 1), dtype=float).repeat(1, solver.n_geoms) \
                  * (max_friction - min_friction) + min_friction
+        if torch.isnan(ratios).any():
+            print("NaN in friction ratios before applying them!")
+            print("ratios:", ratios)
+            raise ValueError("NaNs in friction ratios.")
+
+
         solver.set_geoms_friction_ratio(ratios, torch.arange(0, solver.n_geoms), env_ids)
 
     def _randomize_base_mass(self, env_ids):

@@ -471,6 +471,7 @@ def get_cfgs():
         "reward_scales": {
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 0.75,
+            # "base_height": -1.0,
             "lin_vel_z": -0.001,
             "ang_vel_xy": -0.05,
             "collision": -5.0,
@@ -478,10 +479,10 @@ def get_cfgs():
             "contact_no_vel": -0.7,
             "dof_acc": -2.5e-7,
             "hip_pos": -0.2,
-            "contact": 0.08,
+            "contact": 0.15,
             "dof_pos_limits": -2.0,
             "torques": -0.00001,
-            "termination": -0.1,
+            "termination": -5.0,
             "feet_swing_height": -1.0,
         },
     }
@@ -511,12 +512,12 @@ def get_cfgs():
         "cols": 10,
         "rows": 10,
         "selected_terrains":{
-            "flat_terrain" : {"probability": .001},
-            "random_uniform_terrain" : {"probability": .1},
-            "pyramid_sloped_terrain" : {"probability": .1},
-            "discrete_obstacles_terrain" : {"probability": .1},
-            "pyramid_stairs_terrain" : {"probability": .9},
-            "wave_terrain": {"probability": .1},
+            "flat_terrain" : {"probability": .000},
+            "random_uniform_terrain" : {"probability": .0},
+            "pyramid_sloped_terrain" : {"probability": .0},
+            "discrete_obstacles_terrain" : {"probability": .0},
+            "pyramid_stairs_terrain" : {"probability": 1.},
+            "wave_terrain": {"probability": .0},
         }
     }
 
