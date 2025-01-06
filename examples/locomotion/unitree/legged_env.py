@@ -4,6 +4,7 @@ import genesis as gs
 # from genesis.utils.terrain import parse_terrain
 
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
+from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 import numpy as np
 import random
 import copy
@@ -19,7 +20,7 @@ class LeggedEnv:
         self.num_privileged_obs = obs_cfg["num_privileged_obs"]
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
-        self.joint_limits = env_cfg["joint_limits"]
+        # self.joint_limits = env_cfg["joint_limits"]
         self.simulate_action_latency = True  # there is a 1 step latency on real robot
         self.dt = 0.02  # control frequence on real robot is 50hz
         self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
@@ -55,6 +56,11 @@ class LeggedEnv:
             ),
             show_viewer=False,
         )
+        for solver in self.scene.sim.solvers:
+            if not isinstance(solver, RigidSolver):
+                continue
+            self.rigid_solver = solver
+
         self.show_vis = show_viewer
         if self.show_vis:
             self.selected_robot = 0
@@ -66,69 +72,74 @@ class LeggedEnv:
                 GUI=True,
             )
 
+        self.terrain_type = terrain_cfg["terrain_type"]
+        if self.terrain_type != "plane":
+            # # add plain
+            subterrain_size = terrain_cfg["subterrain_size"]
+            horizontal_scale = terrain_cfg["horizontal_scale"]
+            vertical_scale = terrain_cfg["vertical_scale"]
+            ########################## entities ##########################
+            self.cols = terrain_cfg["cols"]
+            self.rows = terrain_cfg["rows"]
+            n_subterrains=(self.cols, self.rows)
+            terrain_types = list(self.selected_terrains.keys())
+            probs = [terrain["probability"] for terrain in self.selected_terrains.values()]
+            total = sum(probs)
+            normalized_probs = [p / total for p in probs]
+            subterrain_grid, subterrain_center_z_values  = self.generate_subterrain_grid(self.rows, self.cols, terrain_types, normalized_probs)
 
 
-        # # add plain
-        subterrain_size = terrain_cfg["subterrain_size"]
-        horizontal_scale = terrain_cfg["horizontal_scale"]
-        vertical_scale = terrain_cfg["vertical_scale"]
-        ########################## entities ##########################
-        self.cols = terrain_cfg["cols"]
-        self.rows = terrain_cfg["rows"]
-        n_subterrains=(self.cols, self.rows)
-        terrain_types = list(self.selected_terrains.keys())
-        probs = [terrain["probability"] for terrain in self.selected_terrains.values()]
-        total = sum(probs)
-        normalized_probs = [p / total for p in probs]
-        subterrain_grid, subterrain_center_z_values  = self.generate_subterrain_grid(self.rows, self.cols, terrain_types, normalized_probs)
+            # Calculate the total width and height of the terrain
+            total_width = (self.cols)* subterrain_size
+            total_height =(self.rows)* subterrain_size
 
+            # Calculate the center coordinates
+            center_x = total_width / 2
+            center_y = total_height / 2
 
-        # Calculate the total width and height of the terrain
-        total_width = (self.cols)* subterrain_size
-        total_height =(self.rows)* subterrain_size
+            self.terrain  = gs.morphs.Terrain(
+                pos=(-center_x,-center_y,0),
+                subterrain_size=(subterrain_size, subterrain_size),
+                n_subterrains=n_subterrains,
+                horizontal_scale=horizontal_scale,
+                vertical_scale=vertical_scale,
+                subterrain_types=subterrain_grid
+            )        
+            # Get the terrain's origin position in world coordinates
+            terrain_origin_x, terrain_origin_y, terrain_origin_z = self.terrain.pos
 
-        # Calculate the center coordinates
-        center_x = total_width / 2
-        center_y = total_height / 2
+            # Calculate the center of each subterrain in world coordinates
+            self.subterrain_centers = []
+            
+            for row in range(self.rows):
+                for col in range(self.cols):
+                    if row == 0 or row == 1 or col == 0 or col == 1 or row == (self.rows -2) or row == (self.rows -1) or col == (self.cols -2) or col == (self.cols -1):
+                        continue
+                    subterrain_center_x = terrain_origin_x + (col + 0.5) * subterrain_size
+                    subterrain_center_y = terrain_origin_y + (row + 0.5) * subterrain_size
+                    subterrain_center_z = subterrain_center_z_values[row][col]
+                    self.subterrain_centers.append((subterrain_center_x, subterrain_center_y, subterrain_center_z))
 
-        self.terrain  = gs.morphs.Terrain(
-            pos=(-center_x,-center_y,0),
-            subterrain_size=(subterrain_size, subterrain_size),
-            n_subterrains=n_subterrains,
-            horizontal_scale=horizontal_scale,
-            vertical_scale=vertical_scale,
-            subterrain_types=subterrain_grid
-        )        
-        # Get the terrain's origin position in world coordinates
-        terrain_origin_x, terrain_origin_y, terrain_origin_z = self.terrain.pos
+            # Print the centers
+            self.spawn_counter = 0
+            self.max_num_centers = len(self.subterrain_centers)
 
-        # Calculate the center of each subterrain in world coordinates
-        self.subterrain_centers = []
-        
-        for row in range(self.rows):
-            for col in range(self.cols):
-                if row == 0 or row == 1 or col == 0 or col == 1 or row == (self.rows -2) or row == (self.rows -1) or col == (self.cols -2) or col == (self.cols -1):
-                    continue
-                subterrain_center_x = terrain_origin_x + (col + 0.5) * subterrain_size
-                subterrain_center_y = terrain_origin_y + (row + 0.5) * subterrain_size
-                subterrain_center_z = subterrain_center_z_values[row][col]
-                self.subterrain_centers.append((subterrain_center_x, subterrain_center_y, subterrain_center_z))
-
-        # Print the centers
-        self.spawn_counter = 0
-        self.max_num_centers = len(self.subterrain_centers)
-
-        self.scene.add_entity(self.terrain)
+            self.scene.add_entity(self.terrain)
+            self.random_pos = self.generate_random_positions()
+        else:
+            self.scene.add_entity(
+                gs.morphs.Plane(),
+            )
+            self.random_pos = self.generate_positions()
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=self.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=self.device)
-        self.random_pos = self.generate_random_positions()
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.robot = self.scene.add_entity(
             gs.morphs.URDF(
                 file=self.env_cfg["robot_urdf"],
                 pos=self.base_init_pos.cpu().numpy(),
                 quat=self.base_init_quat.cpu().numpy(),
-                links_to_keep = self.env_cfg["feet_names"]
+                links_to_keep=self.env_cfg['links_to_keep'],
             ),
         )
         self.envs_origins = torch.zeros((self.num_envs, 7), device=self.device)
@@ -140,19 +151,60 @@ class LeggedEnv:
         self.motor_dofs = [self.robot.get_joint(name).dof_idx_local for name in self.env_cfg["dof_names"]]
         self.hip_dofs = [self.robot.get_joint(str(name +"_joint")).dof_idx_local for name in self.env_cfg["hip_names"]]
 
-        # PD control parameters
-        self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motor_dofs)
-        self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motor_dofs)
+        def find_link_indices(names):
+            link_indices = list()
+            for link in self.robot.links:
+                flag = False
+                for name in names:
+                    if name in link.name:
+                        flag = True
+                if flag:
+                    link_indices.append(link.idx - self.robot.link_start)
+            return link_indices
 
+
+        self.termination_contact_indices = find_link_indices(
+            self.env_cfg['termination_contact_link_names']
+        )
+        self.penalised_contact_indices = find_link_indices(
+            self.env_cfg['penalized_contact_link_names']
+        )
+        self.feet_indices = find_link_indices(
+            self.env_cfg['feet_link_names']
+        )
+        print(self.feet_indices)
+        # PD control
+        stiffness = self.env_cfg['PD_stiffness']
+        damping = self.env_cfg['PD_damping']
+
+        self.p_gains, self.d_gains = [], []
+        for dof_name in self.env_cfg['dof_names']:
+            for key in stiffness.keys():
+                if key in dof_name:
+                    self.p_gains.append(stiffness[key])
+                    self.d_gains.append(damping[key])
+        self.p_gains = torch.tensor(self.p_gains, device=self.device)
+        self.d_gains = torch.tensor(self.d_gains, device=self.device)
+        self.batched_p_gains = self.p_gains[None, :].repeat(self.num_envs, 1)
+        self.batched_d_gains = self.d_gains[None, :].repeat(self.num_envs, 1)
+        self.robot.set_dofs_kp(self.p_gains, self.motor_dofs)
+        self.robot.set_dofs_kv(self.d_gains, self.motor_dofs)
 
         # Store link indices that trigger termination or penalty
 
         # self.termination_contact_indices = env_cfg.get("termination_contact_indices", [])
         # self.penalised_contact_indices = env_cfg.get("penalised_contact_indices", [])
         # Convert link names to indices
-        self.termination_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["termination_contact_names"]]
-        self.penalised_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["penalised_contact_names"]]
-        self.feet_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["feet_names"]]
+        # self.termination_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["termination_contact_names"]]
+        # self.penalised_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["penalised_contact_names"]]
+        # self.feet_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["feet_names"]]
+        self.feet_front_indices = self.feet_indices[:2]
+        print(self.feet_front_indices)
+        # for name in self.env_cfg["feet_names"]:
+        #     if "F" in name:
+        #         print(name)
+        #         index = self.robot.get_link(name).idx_local 
+        #         self.feet_front_indices.append(index)
         self.termination_exceed_degree_ignored = False
         self.termination_if_roll_greater_than_value = self.env_cfg["termination_if_roll_greater_than"]
         self.termination_if_pitch_greater_than_value = self.env_cfg["termination_if_pitch_greater_than"]
@@ -161,7 +213,7 @@ class LeggedEnv:
 
         for link in self.robot._links:
             print(link.name)
-        self.init_foot()
+        
         print(f"termination_contact_indicies {self.termination_contact_indices}")
         print(f"penalised_contact_indices {self.penalised_contact_indices}")
         # prepare reward functions and multiply reward scales by dt
@@ -200,6 +252,9 @@ class LeggedEnv:
         self.hip_pos = torch.zeros_like(self.hip_actions)
         self.hip_vel = torch.zeros_like(self.hip_actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
+        self.contact_forces = torch.zeros(
+            (self.num_envs, self.robot.n_links, 3), device=self.device, dtype=gs.tc_float
+        )
         self.base_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         self.base_quat = torch.zeros((self.num_envs, 4), device=self.device, dtype=gs.tc_float)
         self.default_dof_pos = torch.tensor(
@@ -223,38 +278,42 @@ class LeggedEnv:
             device=self.device, 
             requires_grad=False
         )
-        self.dof_pos_limits = torch.zeros(self.num_dof, 2, dtype=torch.float, device=self.device, requires_grad=False)
-        self.dof_vel_limits = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self.torque_limits = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         # Iterate over the motor DOFs
-        self.soft_dof_pos_limit = self.env_cfg["soft_dof_pos_limit"]
-        self.soft_dof_vel_limit = self.env_cfg["soft_dof_vel_limit"]
-        self.soft_torque_limit = self.env_cfg["soft_torque_limit"]
-        for i, joint_name in enumerate(self.env_cfg["dof_names"]):
-            if joint_name in self.joint_limits:
-                # Get joint limits from the self.joint_limits dictionary
-                joint_limit = self.joint_limits[joint_name]
+        # self.soft_dof_vel_limit = self.env_cfg["soft_dof_vel_limit"]
+        self.soft_torque_limit = self.reward_cfg["soft_torque_limit"]
+        self.dof_pos_limits = torch.stack(self.robot.get_dofs_limit(self.motor_dofs), dim=1)
 
-                # Set position limits
-                self.dof_pos_limits[i, 0] = joint_limit["lower"]
-                self.dof_pos_limits[i, 1] = joint_limit["upper"]
+        self.torque_limits = self.robot.get_dofs_force_range(self.motor_dofs)[1]
+        for i in range(self.dof_pos_limits.shape[0]):
+            # soft limits
+            m = (self.dof_pos_limits[i, 0] + self.dof_pos_limits[i, 1]) / 2
+            r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
+            self.dof_pos_limits[i, 0] = (
+                m - 0.5 * r * self.reward_cfg['soft_dof_pos_limit']
+            )
+            self.dof_pos_limits[i, 1] = (
+                m + 0.5 * r * self.reward_cfg['soft_dof_pos_limit']
+            )
+        self.motor_strengths = gs.ones((self.num_envs, self.num_dof), dtype=float)
+        self.motor_offsets = gs.zeros((self.num_envs, self.num_dof), dtype=float)
 
-                # Set velocity and effort limits
-                self.dof_vel_limits[i] = joint_limit["velocity"]
-                self.torque_limits[i] = joint_limit["effort"]
-
-                # Apply soft limits
-                m = (self.dof_pos_limits[i, 0] + self.dof_pos_limits[i, 1]) / 2
-                r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
-                self.dof_pos_limits[i, 0] = m - 0.5 * r * self.soft_dof_pos_limit 
-                self.dof_pos_limits[i, 1] = m + 0.5 * r * self.soft_dof_pos_limit 
-            else:
-                print(f"Warning: Joint limits for {joint_name} not found!")
-
-
+        self.init_foot()
+        self._randomize_controls()
+        self._randomize_rigids()
         print(f"Dof_pos_limits{self.dof_pos_limits}")
         print(f"Default dof pos {self.default_dof_pos}")
         print(f"Default hip pos {self.default_hip_pos}")
+        self.common_step_counter = 0
+        # extras
+        self.continuous_push = torch.zeros(
+            (self.num_envs, 3), device=self.device, dtype=gs.tc_float
+        )
+        self.env_identities = torch.arange(
+            self.num_envs,
+            device=self.device,
+            dtype=gs.tc_int, 
+        )
         self.extras = dict()  # extra information for logging
 
     def _resample_commands(self, envs_idx):
@@ -314,14 +373,17 @@ class LeggedEnv:
        
         self.step_period = self.reward_cfg["step_period"]
         self.step_offset = self.reward_cfg["step_offset"]
-        self.step_height = self.reward_cfg["feet_height_target"]
+        self.step_height = self.reward_cfg["front_feet_relative_height_from_base"]
+        self.step_forward = self.reward_cfg["front_feet_relative_position_from_base"]
         #todo get he first feet_pos here
         # Get positions for all links and slice using indices
         all_links_pos = self.robot.get_links_pos()
         all_links_vel = self.robot.get_links_vel()
 
         self.feet_pos = all_links_pos[:, self.feet_indices, :]
+        self.feet_front_pos = all_links_pos[:, self.feet_front_indices, :]
         self.feet_vel = all_links_vel[:, self.feet_indices, :]
+        self.feet_pos_base = self._world_to_base_transform(self.feet_front_pos, self.base_pos, self.base_quat)
 
     def update_feet_state(self):
         # Get positions for all links and slice using indices
@@ -329,7 +391,30 @@ class LeggedEnv:
         all_links_vel = self.robot.get_links_vel()
 
         self.feet_pos = all_links_pos[:, self.feet_indices, :]
+        self.feet_front_pos = all_links_pos[:, self.feet_front_indices, :]
         self.feet_vel = all_links_vel[:, self.feet_indices, :]
+        self.feet_pos_base = self._world_to_base_transform(self.feet_front_pos, self.base_pos, self.base_quat)
+
+    def _quaternion_to_matrix(self, quat):
+        w, x, y, z = quat.unbind(dim=-1)
+        R = torch.stack([
+            1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w),
+            2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w),
+            2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2)
+        ], dim=-1).reshape(-1, 3, 3)
+        return R
+
+    def _world_to_base_transform(self, points_world, base_pos, base_quat):
+        # Convert quaternion to rotation matrix
+        R = self._quaternion_to_matrix(base_quat)
+
+        # Subtract base position to get relative position
+        points_relative = points_world - base_pos.unsqueeze(1)
+
+        # Apply rotation to transform to base frame
+        points_base = torch.einsum('bij,bkj->bki', R.transpose(1, 2), points_relative)
+        return points_base
+
 
     def post_physics_step_callback(self):
         self.update_feet_state()
@@ -399,6 +484,11 @@ class LeggedEnv:
         self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
         self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
         self.hip_vel[:] = self.robot.get_dofs_velocity(self.hip_dofs)
+        self.contact_forces[:] = torch.tensor(
+            self.robot.get_links_net_contact_force(),
+            device=self.device,
+            dtype=gs.tc_float,
+        )        
         # resample commands
         envs_idx = (
             (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
@@ -408,7 +498,20 @@ class LeggedEnv:
         self._resample_commands(envs_idx)
 
         self.post_physics_step_callback()
-        # check termination and reset
+        self._resample_commands(envs_idx)
+        self._randomize_rigids(envs_idx)
+        # random push
+        self.common_step_counter += 1
+        push_interval_s = self.env_cfg['push_interval_s']
+        if push_interval_s > 0:
+            max_push_vel_xy = self.env_cfg['max_push_vel_xy']
+            dofs_vel = self.robot.get_dofs_velocity() # (num_envs, num_dof) [0:3] ~ base_link_vel
+            push_vel = gs_rand_float(-max_push_vel_xy, max_push_vel_xy, (self.num_envs, 2), self.device)
+            push_vel[((self.common_step_counter + self.env_identities) % int(push_interval_s / self.dt) != 0)] = 0
+            dofs_vel[:, :2] += push_vel
+            self.robot.set_dofs_velocity(dofs_vel)
+
+
 
         self.check_termination()
         time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
@@ -532,9 +635,8 @@ class LeggedEnv:
     def check_termination(self):
         """Check if environments need to be reset."""
         # (n_envs, n_links, 3) tensor of net contact forces
-        contact_forces = self.robot.get_links_net_contact_force()
         contact_threshold_exceeded = (torch.norm(
-            contact_forces[:, self.termination_contact_indices, :], dim=-1
+            self.contact_forces[:, self.termination_contact_indices, :], dim=-1
         ) > 1.0)
         # For each environment, if ANY contact index exceeds force threshold, treat it as contact
         in_contact = torch.any(contact_threshold_exceeded, dim=1)
@@ -545,6 +647,8 @@ class LeggedEnv:
             self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.termination_if_pitch_greater_than_value
             self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.termination_if_roll_greater_than_value
         # Timeout termination
+        self.reset_buf |= self.base_pos[:, 2] < self.env_cfg['termination_if_height_lower_than']
+
         self.time_out_buf = self.episode_length_buf > self.max_episode_length  # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
         # # if any link in `termination_contact_indices` exceeds threshold, reset that env
@@ -628,6 +732,16 @@ class LeggedEnv:
             positions[i] = torch.tensor([x, y, z], device=self.device)
         return positions
 
+    def generate_positions(self):
+        """
+        Use the _random_robot_position() method to generate unique random positions
+        for each environment.
+        """
+        positions = torch.zeros((self.num_envs, 3), device=self.device)
+        for i in range(self.num_envs):
+            positions[i] = torch.tensor([0, 0, 0], device=self.device)
+        return positions
+
     def _random_robot_position(self):
         # 1. Sample random row, col(a subterrain)
         # 0.775 ~ l2_norm(0.7, 0.31)
@@ -655,8 +769,13 @@ class LeggedEnv:
             [torch.Tensor]: Torques sent to the simulation
         """
         #pd controller
-        actions_scaled = actions * self.env_cfg["action_scale"] 
-        torques = self.env_cfg["kp"]*(actions_scaled + self.default_dof_pos - self.dof_pos) - self.env_cfg["kd"]*self.dof_vel
+        
+        actions_scaled = actions * self.env_cfg['action_scale']
+        torques = (
+            self.batched_p_gains * (actions_scaled + self.default_dof_pos - self.dof_pos + self.motor_offsets)
+            - self.batched_d_gains * self.dof_vel
+        )
+        torques =  torques * self.motor_strengths
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
 
@@ -664,6 +783,100 @@ class LeggedEnv:
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         return self.obs_buf, self.privileged_obs_buf
+
+
+    # ------------ domain randomization----------------
+
+    def _randomize_rigids(self, env_ids=None):
+
+
+        if env_ids == None:
+            env_ids = torch.arange(0, self.num_envs)
+        elif len(env_ids) == 0:
+            return
+
+        if self.env_cfg['randomize_friction']:
+            self._randomize_link_friction(env_ids)
+        if self.env_cfg['randomize_base_mass']:
+            self._randomize_base_mass(env_ids)
+        if self.env_cfg['randomize_com_displacement']:
+            self._randomize_com_displacement(env_ids)
+
+    def _randomize_controls(self, env_ids=None):
+
+        if env_ids == None:
+            env_ids = torch.arange(0, self.num_envs)
+        elif len(env_ids) == 0:
+            return
+
+        if self.env_cfg['randomize_motor_strength']:
+            self._randomize_motor_strength(env_ids)
+        if self.env_cfg['randomize_motor_offset']:
+            self._randomize_motor_offset(env_ids)
+        if self.env_cfg['randomize_kp_scale']:
+            self._randomize_kp(env_ids)
+        if self.env_cfg['randomize_kd_scale']:
+            self._randomize_kd(env_ids)
+
+    def _randomize_link_friction(self, env_ids):
+
+        min_friction, max_friction = self.env_cfg['friction_range']
+
+        solver = self.rigid_solver
+
+        ratios = gs.rand((len(env_ids), 1), dtype=float).repeat(1, solver.n_geoms) \
+                 * (max_friction - min_friction) + min_friction
+        solver.set_geoms_friction_ratio(ratios, torch.arange(0, solver.n_geoms), env_ids)
+
+    def _randomize_base_mass(self, env_ids):
+
+        min_mass, max_mass = self.env_cfg['added_mass_range']
+        base_link_id = 1
+
+        added_mass = gs.rand((len(env_ids), 1), dtype=float) \
+                        * (max_mass - min_mass) + min_mass
+
+        self.rigid_solver.set_links_mass_shift(added_mass, [base_link_id,], env_ids)
+
+    def _randomize_com_displacement(self, env_ids):
+
+        min_displacement, max_displacement = self.env_cfg['com_displacement_range']
+        base_link_id = 1
+
+        com_displacement = gs.rand((len(env_ids), 1, 3), dtype=float) \
+                            * (max_displacement - min_displacement) + min_displacement
+        # com_displacement[:, :, 0] -= 0.02
+
+        self.rigid_solver.set_links_COM_shift(com_displacement, [base_link_id,], env_ids)
+
+    def _randomize_motor_strength(self, env_ids):
+
+        min_strength, max_strength = self.env_cfg['motor_strength_range']
+        self.motor_strengths[env_ids, :] = gs.rand((len(env_ids), 1), dtype=float) \
+                                           * (max_strength - min_strength) + min_strength
+
+    def _randomize_motor_offset(self, env_ids):
+
+        min_offset, max_offset = self.env_cfg['motor_offset_range']
+        self.motor_offsets[env_ids, :] = gs.rand((len(env_ids), self.num_dof), dtype=float) \
+                                         * (max_offset - min_offset) + min_offset
+
+    def _randomize_kp(self, env_ids):
+
+        min_scale, max_scale = self.env_cfg['kp_scale_range']
+        kp_scales = gs.rand((len(env_ids), self.num_dof), dtype=float) \
+                    * (max_scale - min_scale) + min_scale
+        self.batched_p_gains[env_ids, :] = kp_scales * self.p_gains[None, :]
+
+    def _randomize_kd(self, env_ids):
+
+        min_scale, max_scale = self.env_cfg['kd_scale_range']
+        kd_scales = gs.rand((len(env_ids), self.num_dof), dtype=float) \
+                    * (max_scale - min_scale) + min_scale
+        self.batched_d_gains[env_ids, :] = kd_scales * self.d_gains[None, :]
+
+
+
 
     # ------------ reward functions----------------
 
@@ -702,23 +915,15 @@ class LeggedEnv:
         Penalize collisions on selected bodies.
         Returns the per-env penalty value as a 1D tensor of shape (n_envs,).
         """
-        # (n_envs, n_links, 3) net contact forces
-        contact_forces = self.robot.get_links_net_contact_force()
-        # print(contact_forces)
-        # Extract forces for the undesired-contact links
-        # => shape (n_envs, len(self.penalised_contact_indices), 3)
-        undesired_forces = torch.norm(contact_forces[:, self.penalised_contact_indices, :], dim=-1)
-        # print(undesired_forces)
-        # Boolean of whether each penalized link has force > threshold (e.g. > 0.1)
+        undesired_forces = torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1)
         collisions = (undesired_forces > 0.1).float()  # shape (n_envs, len(...))
         
         # Sum over those links to get # of collisions per environment
         return collisions.sum(dim=1)
 
     def _reward_contact_no_vel(self):
-        contact_forces = self.robot.get_links_net_contact_force()
         # Penalize contact with no velocity
-        contact = torch.norm(contact_forces[:, self.feet_indices, :3], dim=2) > 1.
+        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.
         # print(contact)
         contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
         # print(contact_feet_vel)
@@ -727,14 +932,13 @@ class LeggedEnv:
 
     def _reward_contact(self):
         res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-        contact_forces = self.robot.get_links_net_contact_force()
         # Iterate over legs (order: FL, FR, RL, RR)
         for i in range(self.feet_num):
             # Determine if the current phase indicates a stance phase (< 0.55)
             is_stance = self.leg_phase[:, i] < 0.55
 
             # Check if the foot is in contact with the ground
-            contact = contact_forces[:, self.feet_indices[i], 2] > 1
+            contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
 
             # Reward correct contact behavior (stance matches contact)
             res += ~(contact ^ is_stance)  # XOR for mismatch, negate for correct match
@@ -748,11 +952,35 @@ class LeggedEnv:
         return torch.sum(torch.abs(self.hip_pos- self.default_hip_pos), dim=(1))
 
 
+
     def _reward_feet_swing_height(self):
-        contact_forces = self.robot.get_links_net_contact_force()
-        contact = torch.norm(contact_forces[:, self.feet_indices, :3], dim=2) > 1.
-        pos_error = torch.square(self.feet_pos[:, :, 2] - self.step_height) * ~contact
-        return torch.sum(pos_error, dim=(1))
+        # Get contact forces and determine which feet are in contact
+        contact = torch.norm(self.contact_forces[:, self.feet_front_indices, :3], dim=2) > 1.0
+        pos_error = torch.square((self.step_height - self.feet_pos_base[:, :, 2]) * ~contact)
+        return torch.sum(pos_error, dim=1)
+
+    # def _reward_feet_swing_forward(self):
+    #     contact_forces = self.robot.get_links_net_contact_force()
+    #     contact = torch.norm(contact_forces[:, self.feet_front_indices, :3], dim=2) > 1.
+    #     pos_error = torch.square((self.feet_front_pos[:, :, 1] - self.base_pos[:, 1].unsqueeze(1)) - self.step_foward) * ~contact
+    #     # pos_error = torch.square((self.feet_front_pos[:, :, 1] - self.base_pos[:, 1].unsqueeze(1)) - self.step_foward) 
+    #     return torch.sum(pos_error, dim=(1))
+
+
+
+
+
+    def _reward_feet_swing_forward(self):
+        # Get contact forces and identify feet in contact
+        contact = torch.norm(self.contact_forces[:, self.feet_front_indices, :3], dim=2) > 1.0
+
+        # Transform feet positions from world to base frame
+
+        # Calculate forward position error in the base frame (X-axis is forward)
+        pos_error = torch.square((self.feet_pos_base[:, :, 0] - self.step_forward) * ~contact)
+
+        # Sum the position error for each environment
+        return torch.sum(pos_error, dim=1)
 
     def _reward_orientation(self):
         # Penalize non flat base orientation
@@ -765,10 +993,10 @@ class LeggedEnv:
         out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
         return torch.sum(out_of_limits, dim=1)
 
-    def _reward_dof_vel_limits(self):
-        # Penalize dof velocities too close to the limit
-        # clip to max error = 1 rad/s per joint to avoid huge penalties
-        return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
+    # def _reward_dof_vel_limits(self):
+    #     # Penalize dof velocities too close to the limit
+    #     # clip to max error = 1 rad/s per joint to avoid huge penalties
+    #     return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
 
     def _reward_dof_acc(self):
         # Penalize dof accelerations
