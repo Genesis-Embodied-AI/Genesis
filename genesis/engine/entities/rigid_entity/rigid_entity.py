@@ -2351,9 +2351,8 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        for i in range(len(link_indices)):
-            link_indices[i] += self._link_start
-        self._solver.set_links_mass_shift(mass_shift, link_indices, envs_idx)
+        global_link_indices = [self._link_start + i for i in link_indices]
+        self._solver.set_links_mass_shift(mass_shift, global_link_indices, envs_idx)
 
     def set_COM_shift(self, com_shift, link_indices, envs_idx=None):
         """
@@ -2367,9 +2366,8 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        for i in range(len(link_indices)):
-            link_indices[i] += self._link_start
-        self._solver.set_links_COM_shift(com_shift, link_indices, envs_idx)
+        global_link_indices = [self._link_start + i for i in link_indices]
+        self._solver.set_links_COM_shift(com_shift, global_link_indices, envs_idx)
 
     @gs.assert_built
     def set_links_inertial_mass(self, inertial_mass, ls_idx_local=None, envs_idx=None):
