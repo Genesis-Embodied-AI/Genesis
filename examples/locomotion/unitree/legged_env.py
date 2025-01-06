@@ -199,12 +199,8 @@ class LeggedEnv:
         # self.penalised_contact_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["penalised_contact_names"]]
         # self.feet_indices = [self.robot.get_link(name).idx_local  for name in self.env_cfg["feet_names"]]
         self.feet_front_indices = self.feet_indices[:2]
-        print(self.feet_front_indices)
-        # for name in self.env_cfg["feet_names"]:
-        #     if "F" in name:
-        #         print(name)
-        #         index = self.robot.get_link(name).idx_local 
-        #         self.feet_front_indices.append(index)
+        self.feet_rear_indices = self.feet_indices[2:]
+
         self.termination_exceed_degree_ignored = False
         self.termination_if_roll_greater_than_value = self.env_cfg["termination_if_roll_greater_than"]
         self.termination_if_pitch_greater_than_value = self.env_cfg["termination_if_pitch_greater_than"]
@@ -373,8 +369,8 @@ class LeggedEnv:
        
         self.step_period = self.reward_cfg["step_period"]
         self.step_offset = self.reward_cfg["step_offset"]
-        self.step_height = self.reward_cfg["front_feet_relative_height_from_base"]
-        self.step_forward = self.reward_cfg["front_feet_relative_position_from_base"]
+        self.step_height_for_front = self.reward_cfg["front_feet_relative_height_from_base"]
+        self.step_height_for_rear = self.reward_cfg["rear_feet_relative_height_from_base"]
         #todo get he first feet_pos here
         # Get positions for all links and slice using indices
         all_links_pos = self.robot.get_links_pos()
@@ -382,8 +378,10 @@ class LeggedEnv:
 
         self.feet_pos = all_links_pos[:, self.feet_indices, :]
         self.feet_front_pos = all_links_pos[:, self.feet_front_indices, :]
+        self.feet_rear_pos = all_links_pos[:, self.feet_rear_indices, :]
         self.feet_vel = all_links_vel[:, self.feet_indices, :]
-        self.feet_pos_base = self._world_to_base_transform(self.feet_front_pos, self.base_pos, self.base_quat)
+        self.front_feet_pos_base = self._world_to_base_transform(self.feet_front_pos, self.base_pos, self.base_quat)
+        self.rear_feet_pos_base = self._world_to_base_transform(self.feet_rear_pos, self.base_pos, self.base_quat)
 
     def update_feet_state(self):
         # Get positions for all links and slice using indices
@@ -392,8 +390,10 @@ class LeggedEnv:
 
         self.feet_pos = all_links_pos[:, self.feet_indices, :]
         self.feet_front_pos = all_links_pos[:, self.feet_front_indices, :]
+        self.feet_rear_pos = all_links_pos[:, self.feet_rear_indices, :]
         self.feet_vel = all_links_vel[:, self.feet_indices, :]
-        self.feet_pos_base = self._world_to_base_transform(self.feet_front_pos, self.base_pos, self.base_quat)
+        self.front_feet_pos_base = self._world_to_base_transform(self.feet_front_pos, self.base_pos, self.base_quat)
+        self.rear_feet_pos_base = self._world_to_base_transform(self.feet_rear_pos, self.base_pos, self.base_quat)
 
     def _quaternion_to_matrix(self, quat):
         w, x, y, z = quat.unbind(dim=-1)
@@ -953,34 +953,19 @@ class LeggedEnv:
 
 
 
-    def _reward_feet_swing_height(self):
+    def _reward_front_feet_swing_height(self):
         # Get contact forces and determine which feet are in contact
         contact = torch.norm(self.contact_forces[:, self.feet_front_indices, :3], dim=2) > 1.0
-        pos_error = torch.square((self.step_height - self.feet_pos_base[:, :, 2]) * ~contact)
+        pos_error = torch.square((self.step_height_for_front - self.front_feet_pos_base[:, :, 2]) * ~contact)
         return torch.sum(pos_error, dim=1)
 
-    # def _reward_feet_swing_forward(self):
-    #     contact_forces = self.robot.get_links_net_contact_force()
-    #     contact = torch.norm(contact_forces[:, self.feet_front_indices, :3], dim=2) > 1.
-    #     pos_error = torch.square((self.feet_front_pos[:, :, 1] - self.base_pos[:, 1].unsqueeze(1)) - self.step_foward) * ~contact
-    #     # pos_error = torch.square((self.feet_front_pos[:, :, 1] - self.base_pos[:, 1].unsqueeze(1)) - self.step_foward) 
-    #     return torch.sum(pos_error, dim=(1))
-
-
-
-
-
-    def _reward_feet_swing_forward(self):
-        # Get contact forces and identify feet in contact
-        contact = torch.norm(self.contact_forces[:, self.feet_front_indices, :3], dim=2) > 1.0
-
-        # Transform feet positions from world to base frame
-
-        # Calculate forward position error in the base frame (X-axis is forward)
-        pos_error = torch.square((self.feet_pos_base[:, :, 0] - self.step_forward) * ~contact)
-
-        # Sum the position error for each environment
+    def _reward_rear_feet_swing_height(self):
+        # Get contact forces and determine which feet are in contact
+        contact = torch.norm(self.contact_forces[:, self.feet_rear_indices, :3], dim=2) > 1.0
+        pos_error = torch.square((self.step_height_for_rear - self.rear_feet_pos_base[:, :, 2]) * ~contact)
         return torch.sum(pos_error, dim=1)
+
+
 
     def _reward_orientation(self):
         # Penalize non flat base orientation

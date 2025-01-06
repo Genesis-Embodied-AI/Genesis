@@ -63,16 +63,16 @@ def get_cfgs():
         # joint/link names
         'links_to_keep': ['FL_foot', 'FR_foot', 'RL_foot', 'RR_foot',],
         "default_joint_angles": {  # [rad]
-            "FL_hip_joint": 0.1,
-            "FR_hip_joint": -0.1,
-            "RL_hip_joint": 0.1,
-            "RR_hip_joint": -0.1,
-            "FL_thigh_joint": 0.0,
-            "FR_thigh_joint": 0.0,
-            "RL_thigh_joint": .5,
-            "RR_thigh_joint": .5,
-            "FL_calf_joint": -1.1,
-            "FR_calf_joint": -1.1,
+            "FL_hip_joint": 0.0,
+            "FR_hip_joint": -0.0,
+            "RL_hip_joint": 0.0,
+            "RR_hip_joint": -0.0,
+            "FL_thigh_joint": 0.8,
+            "FR_thigh_joint": 0.8,
+            "RL_thigh_joint": .8,
+            "RR_thigh_joint": .8,
+            "FL_calf_joint": -1.5,
+            "FR_calf_joint": -1.5,
             "RL_calf_joint": -1.5,
             "RR_calf_joint": -1.5,
         },
@@ -109,9 +109,9 @@ def get_cfgs():
         "termination_if_height_lower_than": -20,
         "termination_duration": 0.002, #seconds
         # base pose
-        "base_init_pos": [0.0, 0.0, 0.5],
+        "base_init_pos": [0.0, 0.0, 0.6],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 20.0,
+        "episode_length_s": 10.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,
         "simulate_action_latency": True,
@@ -153,7 +153,7 @@ def get_cfgs():
         "step_period": 0.8,
         "step_offset": 0.5,
         "front_feet_relative_height_from_base": 0.08,
-        "front_feet_relative_position_from_base": 0.25,
+        "rear_feet_relative_height_from_base": 0.1,
         "soft_dof_pos_limit": 0.9,
         "soft_torque_limit": 1.0,
         "reward_scales": {
@@ -177,7 +177,7 @@ def get_cfgs():
     }
     command_cfg = {
         "num_commands": 3,
-        "lin_vel_x_range": [.5, 1.0],
+        "lin_vel_x_range": [-1.0, 1.0],
         "lin_vel_y_range": [-.5, .5],
         "ang_vel_range": [-1.0, 1.0],
     }
@@ -194,7 +194,7 @@ def get_cfgs():
 
     }
     terrain_cfg = {
-        "terrain_type": "plane",
+        "terrain_type": "trimesh",
         "subterrain_size": 12.0,
         "horizontal_scale": 0.25,
         "vertical_scale": 0.005,

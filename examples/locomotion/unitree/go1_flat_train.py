@@ -67,12 +67,12 @@ def get_cfgs():
             "FR_hip_joint": -0.1,
             "RL_hip_joint": 0.1,
             "RR_hip_joint": -0.1,
-            "FL_thigh_joint": 0.0,
-            "FR_thigh_joint": 0.0,
-            "RL_thigh_joint": .5,
-            "RR_thigh_joint": .5,
-            "FL_calf_joint": -1.1,
-            "FR_calf_joint": -1.1,
+            "FL_thigh_joint": 0.8,
+            "FR_thigh_joint": 0.8,
+            "RL_thigh_joint": .8,
+            "RR_thigh_joint": .8,
+            "FL_calf_joint": -1.5,
+            "FR_calf_joint": -1.5,
             "RL_calf_joint": -1.5,
             "RR_calf_joint": -1.5,
         },
@@ -172,12 +172,13 @@ def get_cfgs():
             "dof_pos_limits": -20.0,
             "torques": -0.00002,
             "termination": -30.0,
-            "feet_swing_height": -1.0, #-10.0
+            "front_feet_swing_height": -1.0, #-10.0
+            "rear_feet_swing_height": -1.0, #-10.0
         },
     }
     command_cfg = {
         "num_commands": 3,
-        "lin_vel_x_range": [.5, 1.0],
+        "lin_vel_x_range": [-.5, .5],
         "lin_vel_y_range": [-.5, .5],
         "ang_vel_range": [-1.0, 1.0],
     }
