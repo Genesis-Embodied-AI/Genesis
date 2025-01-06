@@ -240,7 +240,7 @@ def main():
     train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     
-    env = Go1Env(
+    env = LeggedEnv(
         num_envs=args.num_envs, 
         env_cfg=env_cfg, 
         obs_cfg=obs_cfg, 

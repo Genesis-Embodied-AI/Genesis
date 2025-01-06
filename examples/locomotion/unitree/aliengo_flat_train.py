@@ -90,18 +90,18 @@ def get_cfgs():
             "RR_calf_joint",
         ],
         "joint_limits": {
-            "FL_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
-            "FL_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
-            "FL_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
-            "FR_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
-            "FR_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
-            "FR_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
-            "RL_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
-            "RL_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
-            "RL_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
-            "RR_hip_joint": {"lower": -0.863, "upper": 0.863, "effort": 23.7, "velocity": 30.1},
-            "RR_thigh_joint": {"lower": -0.686, "upper": 4.501, "effort": 23.7, "velocity": 30.1},
-            "RR_calf_joint": {"lower": -2.818, "upper": -0.888, "effort": 35.55, "velocity": 20.06},
+            "FL_hip_joint": {"lower": -1.22, "upper": 1.22, "effort": 35.278, "velocity": 20},
+            "FL_thigh_joint": {"lower": -1.57, "upper": 3.49, "effort": 35.278, "velocity": 20},
+            "FL_calf_joint": {"lower": -2.77, "upper": -0.645, "effort": 44.4, "velocity": 15.89},
+            "FR_hip_joint": {"lower": -1.22, "upper": 1.22, "effort": 35.278, "velocity": 20},
+            "FR_thigh_joint": {"lower": -1.57, "upper": 3.49, "effort": 35.278, "velocity": 20},
+            "FR_calf_joint": {"lower": -2.77, "upper": -0.645, "effort": 44.4, "velocity": 15.89},
+            "RL_hip_joint": {"lower": -1.22, "upper": 1.22, "effort": 35.278, "velocity": 20},
+            "RL_thigh_joint": {"lower": -1.57, "upper": 3.49, "effort": 35.278, "velocity": 20},
+            "RL_calf_joint": {"lower": -2.77, "upper": -0.645, "effort": 44.4, "velocity": 15.89},
+            "RR_hip_joint": {"lower": -1.22, "upper": 1.22, "effort": 35.278, "velocity": 20},
+            "RR_thigh_joint": {"lower": -1.57, "upper": 3.49, "effort": 35.278, "velocity": 20},
+            "RR_calf_joint": {"lower": -2.77, "upper": -0.645, "effort": 44.4, "velocity": 15.89},
         },
         # PD
         "kp": 20.0,
@@ -223,7 +223,7 @@ def get_cfgs():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="go1-walking")
+    parser.add_argument("-e", "--exp_name", type=str, default="aliengo_walking")
     parser.add_argument("-B", "--num_envs", type=int, default=4096)
     parser.add_argument("--max_iterations", type=int, default=100)
     parser.add_argument("--resume", action="store_true", help="Resume from the latest checkpoint if this flag is set")
@@ -240,7 +240,7 @@ def main():
     train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     
-    env = Go1Env(
+    env = LeggedEnv(
         num_envs=args.num_envs, 
         env_cfg=env_cfg, 
         obs_cfg=obs_cfg, 
@@ -288,7 +288,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-"""
-# training
-python examples/locomotion/go1_train.py
-"""

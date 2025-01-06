@@ -13,7 +13,7 @@ import re
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="go1-walking")
+    parser.add_argument("-e", "--exp_name", type=str, default="go1_walking")
     parser.add_argument("--ckpt", type=int, default=100)
     args = parser.parse_args()
 
