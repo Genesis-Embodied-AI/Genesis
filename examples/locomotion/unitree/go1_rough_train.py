@@ -139,14 +139,14 @@ def get_cfgs():
             "RL_hip",
             "RR_hip",            
         ],
-        "termination_if_roll_greater_than": 0,  # degree. 0 menas no use
-        "termination_if_pitch_greater_than": 0,
-        "termination_duration": 3, #seconds
+        "termination_if_roll_greater_than": 178,  # degree. 0 menas no use
+        "termination_if_pitch_greater_than": 178,
+        "termination_duration": 0.5, #seconds
         # base pose
         "base_init_pos": [0.0, 0.0, 0.5],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
-        "episode_length_s": 20.0,
-        "resampling_time_s": 4.0,
+        "episode_length_s": 40.0,
+        "resampling_time_s": 10.0,
         "action_scale": 0.25,
         "simulate_action_latency": True,
         "clip_actions": 100.0,
@@ -181,15 +181,16 @@ def get_cfgs():
             "hip_pos": -0.2,
             "contact": 0.15,
             "dof_pos_limits": -3.0,
-            "dof_vel_limits": 0.0,
+            "dof_vel_limits": -0.01,
             "torques": -0.00001,
+            "termination": -0.1,
         },
     }
     command_cfg = {
         "num_commands": 3,
         "lin_vel_x_range": [-1.0, 1.0],
         "lin_vel_y_range": [-1.0, 1.0],
-        "ang_vel_range": [-1.0, 1.0],
+        "ang_vel_range": [0.0, 0.0],
     }
     noise_cfg = {
         "add_noise": True,
@@ -207,14 +208,14 @@ def get_cfgs():
         "subterrain_size": 12.0,
         "horizontal_scale": 0.25,
         "vertical_scale": 0.005,
-        "cols": 10,
-        "rows":10,
+        "cols": 5,
+        "rows":5,
         "selected_terrains":{
             "flat_terrain" : {"probability": .001},
-            "random_uniform_terrain" : {"probability": .1},
-            "pyramid_sloped_terrain" : {"probability": 0.5},
-            "discrete_obstacles_terrain" : {"probability": 0.5},
-            "pyramid_stairs_terrain" : {"probability": .9},
+            "random_uniform_terrain" : {"probability": .9},
+            "pyramid_sloped_terrain" : {"probability": .1},
+            "discrete_obstacles_terrain" : {"probability": .1},
+            "pyramid_stairs_terrain" : {"probability": .1},
             "wave_terrain": {"probability": .1},
         }
     }

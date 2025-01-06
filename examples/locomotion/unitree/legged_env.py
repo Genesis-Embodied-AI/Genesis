@@ -53,8 +53,20 @@ class LeggedEnv:
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
-            show_viewer=show_viewer,
+            show_viewer=False,
         )
+        self.show_vis = show_viewer
+        if self.show_vis:
+            self.selected_robot = 0
+            self.cam_0 = self.scene.add_camera(
+                res=(640, 480),
+                pos=(5.0, 0.0, 2.5),
+                lookat=(0, 0, 0.5),
+                fov=30,
+                GUI=True,
+            )
+
+
 
         # # add plain
         subterrain_size = terrain_cfg["subterrain_size"]
@@ -366,7 +378,12 @@ class LeggedEnv:
         self.torques = self._compute_torques(exec_actions)
         self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
         self.scene.step()
-
+        if self.show_vis:
+            x, y, z = self.base_pos[self.selected_robot].cpu().numpy()  # Convert the tensor to NumPy
+            self.cam_0.set_pose(pos=(x+5.0, y, z+5.5), lookat=(x, y, z+0.5))
+            self.cam_0.render(
+                rgb=True,
+            )
         # update buffers
         self.episode_length_buf += 1
         self.base_pos[:] = self.robot.get_pos()
@@ -462,7 +479,7 @@ class LeggedEnv:
         if bad_envs.any():
             num_bad = bad_envs.sum().item()
             print(f"WARNING: {num_bad} envs have invalid observations -> resetting them.")
-
+            
             # Find the indices of NaN values in self.obs_buf
             nan_indices = torch.isnan(self.obs_buf).nonzero(as_tuple=False)
             for idx in nan_indices:
@@ -475,6 +492,7 @@ class LeggedEnv:
 
             # 2) Replace rows with NaN values in obs_buf and privileged_obs_buf
             for env_idx in bad_envs.nonzero(as_tuple=False).flatten():
+                self.random_pos[env_idx] = self.random_pos[0]
                 self.obs_buf[env_idx] =  copy.deepcopy(self.zero_obs)
                 self.privileged_obs_buf[env_idx] =  copy.deepcopy(self.zero_privileged_obs)
 
@@ -567,6 +585,13 @@ class LeggedEnv:
         else:
             self.base_pos[envs_idx] = self.random_pos[0] + self.base_init_pos
 
+        # if self.show_vis:
+        #     # Convert to CPU NumPy array
+        #     envs_idx_cpu = envs_idx.cpu().numpy()
+        #     if self.selected_robot in envs_idx_cpu:
+        #         # Randomly select a number
+        #         self.selected_robot = random.choice(envs_idx_cpu)
+        #         # print(f"Random Number: {random_number}")
 
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
         self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)

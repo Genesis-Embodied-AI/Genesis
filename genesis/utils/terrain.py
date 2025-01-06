@@ -61,7 +61,7 @@ def parse_terrain(morph: Terrain, surface):
                         new_subterrain,
                         min_height=-0.1,
                         max_height=0.1,
-                        step=0.1,
+                        step=0.25,
                         downsampled_scale=0.5,
                     ).height_field_raw
 
