@@ -3,7 +3,7 @@ import os
 import pickle
 import shutil
 
-from go1_env import Go1Env
+from legged_env import LeggedEnv
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -59,6 +59,7 @@ def get_train_cfg(exp_name, max_iterations):
 def get_cfgs():
     env_cfg = {
         "num_actions": 12,
+        "robot_urdf": "urdf/aliengo/urdf/aliengo.urdf",
         # joint/link names
         "default_joint_angles": {  # [rad]
             "FL_hip_joint": 0.1,
@@ -135,15 +136,16 @@ def get_cfgs():
             "RL_hip",
             "RR_hip",            
         ],
-        "termination_if_roll_greater_than": 90,  # degree
-        "termination_if_pitch_greater_than": 90,
+        "termination_if_roll_greater_than": 175,  # degree. 
+        "termination_if_pitch_greater_than": 175,
+        "termination_duration": 3, #seconds
         # base pose
         "base_init_pos": [0.0, 0.0, 0.5],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,
-        "simulate_action_latency": False,
+        "simulate_action_latency": True,
         "clip_actions": 100.0,
     }
     obs_cfg = {
@@ -166,23 +168,24 @@ def get_cfgs():
         "feet_height_target": 0.1,
         "reward_scales": {
             "tracking_lin_vel": 1.5,
-            "tracking_ang_vel": 1.0,
-            "lin_vel_z": -0.01,
+            "tracking_ang_vel": 0.75,
+            "lin_vel_z": -2.0,
+            "orientation": -1.0,
             "ang_vel_xy": -0.05,
             "collision": -2.0,
             "action_rate": -0.01,
             "contact_no_vel": -0.2,
-            "dof_acc": -2.5e-7,
+            "dof_acc": -2.5e-6,
             "hip_pos": -0.5,
-            "contact": 0.25,
-            "dof_pos_limits": -10.0,
+            "contact": 0.18,
+            "dof_pos_limits": -20.0,
             "dof_vel_limits": 0.0,
-            "torques": -0.00001
+            "torques": -0.0001
         },
     }
     command_cfg = {
         "num_commands": 3,
-        "lin_vel_x_range": [-1.0, 1.0],
+        "lin_vel_x_range": [-1.0, .0],
         "lin_vel_y_range": [-1.0, 1.0],
         "ang_vel_range": [-1.0, 1.0],
     }
@@ -198,9 +201,24 @@ def get_cfgs():
         }
 
     }
-    
+    terrain_cfg = {
+        "subterrain_size": 12.0,
+        "horizontal_scale": 0.25,
+        "vertical_scale": 0.005,
+        "cols": 8,
+        "rows":8,
+        "selected_terrains":{
+            "flat_terrain" : {"probability": .7},
+            "random_uniform_terrain" : {"probability": 0.5},
+            "pyramid_sloped_terrain" : {"probability": 0.5},
+            "discrete_obstacles_terrain" : {"probability": 0.5},
+            "pyramid_stairs_terrain" : {"probability": 0.0},
+            "wave_terrain": {"probability": 0.5},
 
-    return env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg
+        }
+    }
+
+    return env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, terrain_cfg
 
 
 def main():
@@ -218,7 +236,7 @@ def main():
     log_dir_ = f"logs/{args.exp_name}"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(log_dir_, timestamp)
-    env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg = get_cfgs()
+    env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, terrain_cfg = get_cfgs()
     train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     
@@ -229,6 +247,7 @@ def main():
         noise_cfg=noise_cfg, 
         reward_cfg=reward_cfg, 
         command_cfg=command_cfg,        
+        terrain_cfg=terrain_cfg,        
         show_viewer=args.view,
 
     )
@@ -259,7 +278,7 @@ def main():
         runner.load(resume_path)
 
     pickle.dump(
-        [env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg],
+        [env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg, terrain_cfg],
         open(f"{log_dir}/cfgs.pkl", "wb"),
     )
 

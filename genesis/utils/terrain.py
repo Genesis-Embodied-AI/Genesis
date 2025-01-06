@@ -72,15 +72,13 @@ def parse_terrain(morph: Terrain, surface):
                     ).height_field_raw
 
                 elif subterrain_type == "pyramid_sloped_terrain":
-                    slope = random.uniform(0.1, 0.3)
-                    # if random.choice([True, False]):
-                    #     slope *=-1
+                    slope = random.uniform(0.1, 0.25)
                     subterrain_height_field = isaacgym_terrain_utils.pyramid_sloped_terrain(
                         new_subterrain,
                         slope=slope,
                     ).height_field_raw
                 elif subterrain_type == "pyramid_down_sloped_terrain":
-                    slope = random.uniform(-0.1, -0.3)
+                    slope = random.uniform(-0.1, -0.25)
                     subterrain_height_field = isaacgym_terrain_utils.pyramid_sloped_terrain(
                         new_subterrain,
                         slope=slope,

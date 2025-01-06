@@ -7,13 +7,11 @@ from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transfo
 import numpy as np
 import random
 import copy
-
-
 def gs_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(size=shape, device=device) + lower
 
 
-class Go1Env:
+class LeggedEnv:
     def __init__(self, num_envs, env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, terrain_cfg, show_viewer=False, device="cuda"):
         self.device = torch.device(device)
         self.num_envs = num_envs

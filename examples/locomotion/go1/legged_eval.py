@@ -3,7 +3,7 @@ import os
 import pickle
 
 import torch
-from go1_env import Go1Env
+from legged_env import LeggedEnv
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -26,16 +26,17 @@ def main():
     # Sort subdirectories by their names (assuming they are timestamped in lexicographical order)
     most_recent_subdir = sorted(subdirs)[-1] if subdirs else None
     log_dir = os.path.join(log_dir, most_recent_subdir)
-    env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
+    env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg, terrain_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
     reward_cfg["reward_scales"] = {}
 
-    env = Go1Env(
-        num_envs=42,
+    env = LeggedEnv(
+        num_envs=1,
         env_cfg=env_cfg,
         obs_cfg=obs_cfg,
         noise_cfg=noise_cfg,
         reward_cfg=reward_cfg,
         command_cfg=command_cfg,
+        terrain_cfg=terrain_cfg,
         show_viewer=True,
     )
 
