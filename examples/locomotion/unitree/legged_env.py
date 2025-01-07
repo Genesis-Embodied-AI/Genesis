@@ -21,10 +21,12 @@ class LeggedEnv:
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
         # self.joint_limits = env_cfg["joint_limits"]
-        self.simulate_action_latency = True  # there is a 1 step latency on real robot
-        self.dt = 0.02  # control frequence on real robot is 50hz
-        self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
-
+        self.simulate_action_latency = env_cfg["simulate_action_latency"]  # there is a 1 step latency on real robot
+        self.dt = 1 / env_cfg['control_freq']
+        sim_dt = self.dt / env_cfg['decimation']
+        sim_substeps = 1
+        self.max_episode_length_s = env_cfg['episode_length_s']
+        self.max_episode_length = np.ceil(self.max_episode_length_s / self.dt)
         self.env_cfg = env_cfg
         self.obs_cfg = obs_cfg
         self.noise_cfg = noise_cfg
@@ -40,9 +42,12 @@ class LeggedEnv:
 
         # create scene
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
+            sim_options=gs.options.SimOptions(
+                dt=sim_dt,
+                substeps=sim_substeps,
+            ),
             viewer_options=gs.options.ViewerOptions(
-                max_FPS=int(0.5 / self.dt),
+                max_FPS=int(1 / self.dt * self.env_cfg['decimation']),
                 camera_pos=(2.0, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=40,
@@ -52,6 +57,7 @@ class LeggedEnv:
                 dt=self.dt,
                 constraint_solver=gs.constraint_solver.Newton,
                 enable_collision=True,
+                enable_self_collision=True,
                 enable_joint_limit=True,
             ),
             show_viewer=False,
@@ -312,6 +318,7 @@ class LeggedEnv:
         )
         self.extras = dict()  # extra information for logging
 
+
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), self.device)
@@ -458,25 +465,58 @@ class LeggedEnv:
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
-        target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
+        dof_pos_list = []
+        dof_vel_list = []
+        for i in range(self.env_cfg['decimation']):
+            self.torques = self._compute_torques(exec_actions)
+            if self.num_envs == 0:
+                torques = self.torques.squeeze()
+                self.robot.control_dofs_force(torques, self.motor_dofs)
+            else:
+                self.robot.control_dofs_force(self.torques, self.motor_dofs)
+            self.scene.step()
+            self.dof_pos[:] = self.robot.get_dofs_position(self.motor_dofs)
+            self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
 
-        self.torques = self._compute_torques(exec_actions)
-        self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
-        self.scene.step()
+            if i == 0 or i == 2:
+                dof_pos_list.append(self.robot.get_dofs_position().detach().cpu())
+                dof_vel_list.append(self.robot.get_dofs_velocity().detach().cpu())
+
+        # target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
+        self.dof_pos_list = dof_pos_list
+        self.dof_vel_list = dof_vel_list
+        # self.torques = self._compute_torques(exec_actions)
+        # self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
+
+
+
+        
+        # self.scene.step()
+        # Check for NaNs in base pose and quat
+        pos_after_step = self.robot.get_pos()
+        quat_after_step = self.robot.get_quat()
+
+        # Identify bad environments
+        bad_envs = torch.isnan(pos_after_step).any(dim=1) | torch.isnan(quat_after_step).any(dim=1)
+        if bad_envs.any():
+            print(f"NaN detected in {bad_envs.sum().item()} envs. Removing from batch.")
+            print(f"bad actions {self.actions[bad_envs]}")
+            self.reset_buf[bad_envs] = True
+
         # 2a. Check for NaNs in base state
-        if torch.isnan(self.robot.get_pos()).any() or torch.isnan(self.robot.get_quat()).any():
-            print("NaN detected right after scene.step() in base pos/quat!")
-            print("Base pos:", self.robot.get_pos())
-            print("Base quat:", self.robot.get_quat())
-            raise ValueError("NaNs in base pose after scene step.")
+        # if torch.isnan(self.robot.get_pos()).any() or torch.isnan(self.robot.get_quat()).any():
+        #     print("NaN detected right after scene.step() in base pos/quat!")
+        #     print("Base pos:", self.robot.get_pos())
+        #     print("Base quat:", self.robot.get_quat())
+        #     raise ValueError("NaNs in base pose after scene step.")
         # 2b. Check for NaNs in DOF states
-        dof_pos_check = self.robot.get_dofs_position(self.motor_dofs)
-        dof_vel_check = self.robot.get_dofs_velocity(self.motor_dofs)
-        if torch.isnan(dof_pos_check).any() or torch.isnan(dof_vel_check).any():
-            print("NaN detected right after scene.step() in DOF pos/vel!")
-            print("DOF pos:", dof_pos_check)
-            print("DOF vel:", dof_vel_check)
-            raise ValueError("NaNs in DOF states after scene step.")
+        # dof_pos_check = self.robot.get_dofs_position(self.motor_dofs)
+        # dof_vel_check = self.robot.get_dofs_velocity(self.motor_dofs)
+        # if torch.isnan(dof_pos_check).any() or torch.isnan(dof_vel_check).any():
+        #     print("NaN detected right after scene.step() in DOF pos/vel!")
+        #     print("DOF pos:", dof_pos_check)
+        #     print("DOF vel:", dof_vel_check)
+        #     raise ValueError("NaNs in DOF states after scene step.")
 
         if self.show_vis:
             x, y, z = self.base_pos[self.selected_robot].cpu().numpy()  # Convert the tensor to NumPy
@@ -546,18 +586,18 @@ class LeggedEnv:
         cos_phase = torch.cos(2 * np.pi * self.leg_phase)  # Shape: (batch_size, 4)
 
 
-        # Right before building self.obs_buf
-        if torch.isnan(self.base_lin_vel).any() or torch.isnan(self.base_ang_vel).any():
-            print("NaN in base_lin_vel or base_ang_vel before obs!")
-            print("base_lin_vel:", self.base_lin_vel)
-            print("base_ang_vel:", self.base_ang_vel)
-            raise ValueError("NaNs in velocity terms before building obs.")
+        # # Right before building self.obs_buf
+        # if torch.isnan(self.base_lin_vel).any() or torch.isnan(self.base_ang_vel).any():
+        #     print("NaN in base_lin_vel or base_ang_vel before obs!")
+        #     print("base_lin_vel:", self.base_lin_vel)
+        #     print("base_ang_vel:", self.base_ang_vel)
+        #     raise ValueError("NaNs in velocity terms before building obs.")
 
-        # If you're computing sin/cos phases, check them too:
-        if torch.isnan(self.leg_phase).any():
-            print("NaN in leg_phase before obs!")
-            print("leg_phase:", self.leg_phase)
-            raise ValueError("NaNs in leg_phase.")
+        # # If you're computing sin/cos phases, check them too:
+        # if torch.isnan(self.leg_phase).any():
+        #     print("NaN in leg_phase before obs!")
+        #     print("leg_phase:", self.leg_phase)
+        #     raise ValueError("NaNs in leg_phase.")
         # compute observations
         self.obs_buf = torch.cat(
             [
@@ -613,13 +653,13 @@ class LeggedEnv:
             
             # Find the indices of NaN values in self.obs_buf
             nan_indices = torch.isnan(self.obs_buf).nonzero(as_tuple=False)
-            for idx in nan_indices:
-                env_idx, obs_idx = idx
-                print(f"NaN detected at env {env_idx}, observation {obs_idx}: {self.obs_buf[env_idx, obs_idx]}")
-                print(f"base pose {self.base_pos[env_idx]}")
+            # for idx in nan_indices:
+            #     env_idx, obs_idx = idx
+            #     print(f"NaN detected at env {env_idx}, observation {obs_idx}: {self.obs_buf[env_idx, obs_idx]}")
+            #     print(f"base pose {self.base_pos[env_idx]}")
             
             # Reset those environments
-            self.reset_idx(bad_envs.nonzero(as_tuple=False).flatten())
+            # self.reset_idx(bad_envs.nonzero(as_tuple=False).flatten())
 
             # 2) Replace rows with NaN values in obs_buf and privileged_obs_buf
             for env_idx in bad_envs.nonzero(as_tuple=False).flatten():
@@ -710,7 +750,9 @@ class LeggedEnv:
         )
         # reset base
         # Check if the new_base_pos contains any NaNs
-
+        # random_index = random.randrange(len(self.random_pos))
+        # Randomly choose positions from pre-generated random_pos for each environment
+        # random_indices = torch.randint(0, self.num_envs, (len(envs_idx),), device=self.device)
         self.base_pos[envs_idx] = self.random_pos[envs_idx] + self.base_init_pos
         if torch.isnan(self.base_pos[envs_idx]).any():
             print(f"WARNING: NaN detected in base_pos for envs {envs_idx}. Skipping assignment.")
@@ -762,7 +804,6 @@ class LeggedEnv:
                 torch.mean(self.episode_sums[key][envs_idx]).item() / self.env_cfg["episode_length_s"]
             )
             self.episode_sums[key][envs_idx] = 0.0
-
         self._resample_commands(envs_idx)
 
 
