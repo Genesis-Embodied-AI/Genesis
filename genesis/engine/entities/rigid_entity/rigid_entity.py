@@ -2290,27 +2290,29 @@ class RigidEntity(Entity):
 
         return entity_links_force
 
-    def set_friction_ratio(self, friction_ratio, link_indices, envs_idx=None):
+    def set_friction_ratio(self, friction_ratio, ls_idx_local, envs_idx=None):
         """
         Set the friction ratio of the geoms of the specified links.
         Parameters
         ----------
         friction_ratio : torch.Tensor, shape (n_envs, n_links)
             The friction ratio
-        link_indices : array_like
+        ls_idx_local : array_like
             The indices of the links to set friction ratio.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        geom_indices = []
-        for i in link_indices:
-            for j in range(self._links[i].n_geoms):
-                geom_indices.append(self._links[i]._geom_start + j)
+        geom_indices = [
+            self._links[il]._geom_start + g_idx
+            for il in ls_idx_local
+            for g_idx in range(self._links[il].n_geoms)
+        ]
+
         self._solver.set_geoms_friction_ratio(
             torch.cat(
                 [
                     ratio.unsqueeze(-1).repeat(1, self._links[j].n_geoms)
-                    for j, ratio in zip(link_indices, friction_ratio.unbind(-1))
+                    for j, ratio in zip(ls_idx_local, friction_ratio.unbind(-1))
                 ],
                 dim=-1,
             ),
@@ -2339,35 +2341,33 @@ class RigidEntity(Entity):
         for link in self._links:
             link.set_friction(friction)
 
-    def set_mass_shift(self, mass_shift, link_indices, envs_idx=None):
+    def set_mass_shift(self, mass_shift, ls_idx_local, envs_idx=None):
         """
         Set the mass shift of specified links.
         Parameters
         ----------
         mass : torch.Tensor, shape (n_envs, n_links)
             The mass shift
-        link_indices : array_like
+        ls_idx_local : array_like
             The indices of the links to set mass shift.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        global_link_indices = [self._link_start + i for i in link_indices]
-        self._solver.set_links_mass_shift(mass_shift, global_link_indices, envs_idx)
+        self._solver.set_links_mass_shift(mass_shift, self._get_ls_idx(ls_idx_local), envs_idx)
 
-    def set_COM_shift(self, com_shift, link_indices, envs_idx=None):
+    def set_COM_shift(self, com_shift, ls_idx_local, envs_idx=None):
         """
         Set the center of mass (COM) shift of specified links.
         Parameters
         ----------
         com : torch.Tensor, shape (n_envs, n_links, 3)
             The COM shift
-        link_indices : array_like
+        ls_idx_local : array_like
             The indices of the links to set COM shift.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        global_link_indices = [self._link_start + i for i in link_indices]
-        self._solver.set_links_COM_shift(com_shift, global_link_indices, envs_idx)
+        self._solver.set_links_COM_shift(com_shift, self._get_ls_idx(ls_idx_local), envs_idx)
 
     @gs.assert_built
     def set_links_inertial_mass(self, inertial_mass, ls_idx_local=None, envs_idx=None):
