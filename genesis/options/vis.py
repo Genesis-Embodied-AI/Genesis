@@ -70,7 +70,7 @@ class VisOptions(Options):
         Whether to visualize the boundary of the SPH Solver.
     visualize_pbd_boundary : bool
         Whether to visualize the boundary of the PBD Solver.
-    segmentation_level  : str
+    segmentation_level : str
         The segmentation level used for segmentation mask rendering. Should be one of ['entity', 'link', 'geom']. Defaults to 'link'.
     render_particle_as : str
         How particles in the scene should be rendered. Should be one of ['sphere', 'tet']. Defaults to 'sphere'.
@@ -82,6 +82,8 @@ class VisOptions(Options):
         Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies. Defaults to 12.
     n_rendered_envs : int, optional
         Number of environments with being rendered. If None, all environments will be rendered. Defaults to None.
+    env_separate_rigid : bool
+        Whether to share rigid objects across environments. Disabled when on-screen render. Defaults to False.
     lights  : list of dict.
         Lights added to the scene.
     """
@@ -108,6 +110,7 @@ class VisOptions(Options):
         12  # number of neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies.
     )
     n_rendered_envs: Optional[int] = None  # number of environments being rendered
+    env_separate_rigid: bool = False   
     lights: list = [
         {"type": "directional", "dir": (-1, -1, -1), "color": (1.0, 1.0, 1.0), "intensity": 5.0},
     ]

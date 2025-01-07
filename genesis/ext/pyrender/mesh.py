@@ -150,6 +150,7 @@ class Mesh(object):
         smooth=False,
         double_sided=False,
         is_floor=False,
+        env_shared=True,
     ):
         """Create a Mesh from a :class:`~trimesh.base.Trimesh`.
 
@@ -231,6 +232,7 @@ class Mesh(object):
                     vertex_mapping=vertex_mapping,
                     double_sided=double_sided,
                     is_floor=is_floor,
+                    env_shared=env_shared,
                 )
             )
 

@@ -33,6 +33,7 @@ class RasterizerContext:
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
         self.n_rendered_envs = options.n_rendered_envs
+        self.env_separate_rigid = options.env_separate_rigid
 
         self.init_meshes()
 
@@ -65,7 +66,11 @@ class RasterizerContext:
             self.n_rendered_envs = self.sim._B
 
         # pyrender scene
-        self._scene = pyrender.Scene(ambient_light=self.ambient_light, bg_color=self.background_color)
+        self._scene = pyrender.Scene(
+            ambient_light=self.ambient_light,
+            bg_color=self.background_color,
+            n_envs=self.n_rendered_envs,
+        )
 
         self.jit = JITRenderer(self._scene, [], [])
 
@@ -178,6 +183,7 @@ class RasterizerContext:
                         pyrender.Mesh.from_trimesh(
                             mesh=self.link_frame_mesh,
                             poses=gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx]),
+                            env_shared=not self.env_separate_rigid
                         )
                     )
             self.link_frame_shown = True
@@ -268,6 +274,7 @@ class RasterizerContext:
                                 geom.surface.double_sided if "collision" not in rigid_entity.surface.vis_mode else False
                             ),
                             is_floor=isinstance(rigid_entity._morph, gs.morphs.Plane),
+                            env_shared=not self.env_separate_rigid
                         )
                     )
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):

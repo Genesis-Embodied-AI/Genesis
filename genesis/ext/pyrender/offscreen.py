@@ -68,6 +68,7 @@ class OffscreenRenderer(object):
         seg=False,
         ret_depth=False,
         plane_reflection=False,
+        env_separate_rigid=False,
         normal=False,
     ):
         """Render a scene with the given set of flags.
@@ -111,6 +112,9 @@ class OffscreenRenderer(object):
 
         if plane_reflection:
             flags |= RenderFlags.REFLECTIVE_FLOOR
+
+        if env_separate_rigid:
+            flags |= RenderFlags.ENV_SEPARATE
 
         if seg:
             seg_node_map = self._seg_node_map

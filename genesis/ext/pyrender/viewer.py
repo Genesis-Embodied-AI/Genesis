@@ -191,6 +191,7 @@ class Viewer(pyglet.window.Window):
         auto_start=True,
         shadow=False,
         plane_reflection=False,
+        env_separate_rigid=False,
         **kwargs,
     ):
 
@@ -219,6 +220,7 @@ class Viewer(pyglet.window.Window):
             "all_solid": False,
             "shadows": shadow,
             "plane_reflection": plane_reflection,
+            "env_separate_rigid" : env_separate_rigid,
             "vertex_normals": False,
             "face_normals": False,
             "cull_faces": True,
@@ -1040,6 +1042,8 @@ class Viewer(pyglet.window.Window):
             flags |= RenderFlags.SHADOWS_ALL
         if self.render_flags["plane_reflection"]:
             flags |= RenderFlags.REFLECTIVE_FLOOR
+        if self.render_flags["env_separate_rigid"]:
+            flags |= RenderFlags.ENV_SEPARATE
         if self.render_flags["vertex_normals"]:
             flags |= RenderFlags.VERTEX_NORMALS
         if self.render_flags["face_normals"]:
