@@ -1087,8 +1087,7 @@ class RigidEntity(Entity):
                         tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
                         err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
                         for k in range(3):
-                            err_pos_i[k] *= pos_mask[k]
-                        err_pos_i *= link_pos_mask[i_ee]
+                            err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                         if err_pos_i.norm() > pos_tol:
                             solved = False
 
@@ -1101,8 +1100,7 @@ class RigidEntity(Entity):
                             )
                         )
                         for k in range(3):
-                            err_rot_i[k] *= rot_mask[k]
-                        err_rot_i *= link_rot_mask[i_ee]
+                            err_rot_i[k] *= rot_mask[k] * link_rot_mask[i_ee]
                         if err_rot_i.norm() > rot_tol:
                             solved = False
 
@@ -1172,7 +1170,7 @@ class RigidEntity(Entity):
                         tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
                         err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
                         for k in range(3):
-                            err_pos_i[k] *= pos_mask[k]
+                            err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                         if err_pos_i.norm() > pos_tol:
                             solved = False
 
@@ -1185,7 +1183,7 @@ class RigidEntity(Entity):
                             )
                         )
                         for k in range(3):
-                            err_rot_i[k] *= rot_mask[k]
+                            err_rot_i[k] *= rot_mask[k] * link_rot_mask[i_ee]
                         if err_rot_i.norm() > rot_tol:
                             solved = False
 
