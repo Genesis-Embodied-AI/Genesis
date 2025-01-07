@@ -19,7 +19,7 @@ class Go2Env:
         self.num_commands = command_cfg["num_commands"]
 
         self.simulate_action_latency = True  # there is a 1 step latency on real robot
-        self.dt = 0.02  # control frequence on real robot is 50hz
+        self.dt = 0.02  # control frequency on real robot is 50hz
         self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.dt)
 
         self.env_cfg = env_cfg
