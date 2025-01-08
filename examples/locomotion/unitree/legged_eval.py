@@ -68,6 +68,12 @@ def main():
         traced_script_module = torch.jit.script(model)
         traced_script_module.save(path)
         print('Exported policy as jit script to: ', path)
+        # Convert the policy to a version-less format
+        versionless_path = os.path.join(path, "policy_safe.pt")
+        loaded_model = torch.jit.load(policy_path)
+        loaded_model.eval()
+        loaded_model.save(versionless_path)
+        print("Model successfully converted to version-less format: ", versionless_path)
     obs, _ = env.reset()
     with torch.no_grad():
         while True:
