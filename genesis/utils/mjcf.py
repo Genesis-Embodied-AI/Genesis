@@ -273,16 +273,19 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
             tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2, count=(8, 12))
         else:
             tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2)
+        data[1] *= 2
         gs_type = gs.GEOM_TYPE.CAPSULE
 
     elif mj_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
         radius = mj.geom_size[i_g, 0]
         halflength = mj.geom_size[i_g, 1]
+        data[1] *= 2
         tmesh = trimesh.creation.cylinder(radius=radius, height=halflength * 2)
         gs_type = gs.GEOM_TYPE.CYLINDER
 
     elif mj_type == mujoco.mjtGeom.mjGEOM_BOX:
         tmesh = trimesh.creation.box(extents=mj.geom_size[i_g, :3] * 2)
+        data *= 2
         gs_type = gs.GEOM_TYPE.BOX
 
         # TODO: not sure if it is the right way to load texture for box

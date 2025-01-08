@@ -45,7 +45,7 @@ def main():
 
     obs, _ = env.reset()
 
-    max_sim_step = int(env_cfg["episode_length_s"]*env_cfg["max_visualize_FPS"])
+    max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
     with torch.no_grad():
         if args.record:
             env.cam.start_recording()
@@ -58,6 +58,7 @@ def main():
             for _ in range(max_sim_step):
                 actions = policy(obs)
                 obs, _, rews, dones, infos = env.step(actions)
+
 
 if __name__ == "__main__":
     main()

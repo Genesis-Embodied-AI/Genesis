@@ -82,7 +82,6 @@ class Scene(RBC):
         show_viewer=True,
         show_FPS=True,
     ):
-
         self._uid = gs.UID()
         self._t = 0
         self._is_built = False
@@ -360,6 +359,49 @@ class Scene(RBC):
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
+
+    @gs.assert_unbuilt
+    def link_entities(
+        self,
+        parent_entity,
+        child_entity,
+        parent_link_name="",
+        child_link_name="",
+    ):
+        """
+        links two entities to act as single entity.
+
+        Parameters
+        ----------
+        parent_entity : genesis.Entity
+            The entity in the scene that will be a parent of kinematic tree.
+        child_entity : genesis.Entity
+            The entity in the scene that will be a child of kinematic tree.
+        parent_link_name : str
+            The name of the link in the parent entity to be linked.
+        child_link_name : str
+            The name of the link in the child entity to be linked.
+        """
+        if not isinstance(parent_entity, gs.engine.entities.RigidEntity):
+            gs.raise_exception("Currently only rigid entities are supported for merging.")
+        if not isinstance(child_entity, gs.engine.entities.RigidEntity):
+            gs.raise_exception("Currently only rigid entities are supported for merging.")
+
+        if not child_link_name:
+            for link in child_entity._links:
+                if link.parent_idx == -1:
+                    child_link = link
+                    break
+        else:
+            child_link = child_entity.get_link(child_link_name)
+        parent_link = parent_entity.get_link(parent_link_name)
+
+        if child_link._parent_idx != -1:
+            gs.logger.warning(
+                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure this operation is intended."
+            )
+        child_link._parent_idx = parent_link.idx
+        parent_link._child_idxs.append(child_link.idx)
 
     @gs.assert_unbuilt
     def add_light(

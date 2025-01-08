@@ -16,6 +16,10 @@ class SFSolver(Solver):
     Stable Fluid solver for eulerian-based gaseous simulation.
     """
 
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- Initialization -----------------------------------
+    # ------------------------------------------------------------------------------------
+
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
 
@@ -37,7 +41,6 @@ class SFSolver(Solver):
         self.jets = jets
 
     def build(self):
-
         if self.is_active():
             self.t = 0.0
             self.setup_fields()
@@ -68,25 +71,6 @@ class SFSolver(Solver):
         for i, j, k in ti.ndrange(*self.res):
             for q in ti.static(range(self.grid.q.n)):
                 self.grid.q[i, j, k][q] = 0.0
-
-    def substep_pre_coupling(self, f):
-        self.advect_and_impulse(f, self.t)
-        self.divergence()
-
-        # projection
-        self.reset_swap()
-        self.pressure_to_swap()
-        for _ in range(self.solver_iters):
-            self.pressure_jacobi(self.p_swap.cur, self.p_swap.nxt)
-            self.p_swap.swap()
-        self.pressure_from_swap()
-        self.reset_swap()
-
-        self.subtract_gradient()
-        self.t += self.dt
-
-    def substep_post_coupling(self, f):
-        return
 
     def reset_swap(self):
         self.p_swap.cur.fill(0)
@@ -166,7 +150,6 @@ class SFSolver(Solver):
     @ti.kernel
     def subtract_gradient(self):
         for i, j, k in ti.ndrange(*self.res):
-
             pl = self.grid.p[self.compute_location(i, j, k, -1, 0, 0)]
             pr = self.grid.p[self.compute_location(i, j, k, 1, 0, 0)]
             pb = self.grid.p[self.compute_location(i, j, k, 0, -1, 0)]
@@ -252,20 +235,62 @@ class SFSolver(Solver):
         p -= dt * ((2 / 9) * v1 + (1 / 3) * v2 + (4 / 9) * v3)
         return p
 
-    def get_state(self, f):
-        return None
+    # ------------------------------------------------------------------------------------
+    # ------------------------------------ stepping --------------------------------------
+    # ------------------------------------------------------------------------------------
 
     def process_input(self, in_backward):
         return None
 
-    def save_ckpt(self, f):
+    def substep_pre_coupling(self, f):
+        self.advect_and_impulse(f, self.t)
+        self.divergence()
+
+        # projection
+        self.reset_swap()
+        self.pressure_to_swap()
+        for _ in range(self.solver_iters):
+            self.pressure_jacobi(self.p_swap.cur, self.p_swap.nxt)
+            self.p_swap.swap()
+        self.pressure_from_swap()
+        self.reset_swap()
+
+        self.subtract_gradient()
+        self.t += self.dt
+
+    def substep_post_coupling(self, f):
+        return
+
+    def reset_grad(self):
+        return None
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------------- io -----------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def get_state(self, f):
         return None
 
     def set_state(self, f, state):
         return None
 
-    def reset_grad(self):
-        return None
+    # ------------------------------------------------------------------------------------
+    # ------------------------------------ gradient --------------------------------------
+    # ------------------------------------------------------------------------------------
+    def collect_output_grads(self):
+        """
+        Collect gradients from downstream queried states.
+        """
+        pass
+
+    def add_grad_from_state(self, state):
+        pass
+
+    def save_ckpt(self, ckpt_name):
+        pass
+
+    def load_ckpt(self, ckpt_name):
+        pass
 
 
 class TexPair:

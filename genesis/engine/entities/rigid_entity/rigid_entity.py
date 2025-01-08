@@ -738,6 +738,7 @@ class RigidEntity(Entity):
         pos_mask=[True, True, True],
         rot_mask=[True, True, True],
         max_step_size=0.5,
+        dofs_idx_local=None,
         return_error=False,
     ):
         """
@@ -771,6 +772,8 @@ class RigidEntity(Entity):
             Mask for rotation axis alignment. Defaults to [True, True, True]. E.g.: If you only want the link's Z-axis to be aligned with the Z-axis in the given quat, you can set it to [False, False, True].
         max_step_size : float, optional
             Maximum step size in q space for each IK solver step. Defaults to 0.5.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
 
@@ -803,6 +806,7 @@ class RigidEntity(Entity):
             pos_mask=pos_mask,
             rot_mask=rot_mask,
             max_step_size=max_step_size,
+            dofs_idx_local=dofs_idx_local,
             return_error=return_error,
         )
 
@@ -830,6 +834,7 @@ class RigidEntity(Entity):
         pos_mask=[True, True, True],
         rot_mask=[True, True, True],
         max_step_size=0.5,
+        dofs_idx_local=None,
         return_error=False,
     ):
         """
@@ -863,6 +868,8 @@ class RigidEntity(Entity):
             Mask for rotation axis alignment. Defaults to [True, True, True]. E.g.: If you only want the link's Z-axis to be aligned with the Z-axis in the given quat, you can set it to [False, False, True].
         max_step_size : float, optional
             Maximum step size in q space for each IK solver step. Defaults to 0.5.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
 
@@ -949,11 +956,33 @@ class RigidEntity(Entity):
             [self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device)) for quat in quats]
         )
 
+        dofs_idx = self._get_dofs_idx_local(dofs_idx_local)
+        n_dofs = len(dofs_idx)
+        if n_dofs == 0:
+            gs.raise_exception("Target dofs not provided.")
+        links_idx_by_dofs = []
+        for v in self.links:
+            links_idx_by_dof_at_v = v.joint.dof_idx_local
+            if links_idx_by_dof_at_v is None:
+                link_relevant = False
+            elif isinstance(links_idx_by_dof_at_v, list):
+                link_relevant = any([vv in dofs_idx for vv in links_idx_by_dof_at_v])
+            else:
+                link_relevant = links_idx_by_dof_at_v in dofs_idx
+            if link_relevant:
+                links_idx_by_dofs.append(v.idx_local)  # converted to global later
+        links_idx_by_dofs = self._get_ls_idx(links_idx_by_dofs)
+        n_links_by_dofs = len(links_idx_by_dofs)
+
         self._kernel_inverse_kinematics(
             links_idx,
             poss,
             quats,
             n_links,
+            dofs_idx,
+            n_dofs,
+            links_idx_by_dofs,
+            n_links_by_dofs,
             custom_init_qpos,
             init_qpos,
             max_samples,
@@ -990,6 +1019,10 @@ class RigidEntity(Entity):
         poss: ti.types.ndarray(),
         quats: ti.types.ndarray(),
         n_links: ti.i32,
+        dofs_idx: ti.types.ndarray(),
+        n_dofs: ti.i32,
+        links_idx_by_dofs: ti.types.ndarray(),
+        n_links_by_dofs: ti.i32,
         custom_init_qpos: ti.i32,
         init_qpos: ti.types.ndarray(),
         max_samples: ti.i32,
@@ -1063,30 +1096,40 @@ class RigidEntity(Entity):
                     for i_ee in range(n_links):
                         # update jacobian for ee link
                         i_l_ee = links_idx[i_ee]
-                        self._func_get_jacobian(i_l_ee, i_b, pos_mask, rot_mask)
+                        self._func_get_jacobian(
+                            i_l_ee, i_b, pos_mask, rot_mask
+                        )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
-                        # copy to multi-link jacobian
-                        for i_error, i_dof in ti.ndrange(6, self.n_dofs):
+                        # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
+                        for i_error, i_dof in ti.ndrange(6, n_dofs):
                             i_row = i_ee * 6 + i_error
-                            self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof, i_b]
+                            i_dof_ = dofs_idx[i_dof]
+                            self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
 
-                    # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error
-                    lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, self.n_dofs, i_b)
+                    # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
+                    lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, n_dofs, i_b)
                     lu.mat_mul(
                         self._IK_jacobian,
                         self._IK_jacobian_T,
                         self._IK_mat,
                         n_error_dims,
-                        self.n_dofs,
+                        n_dofs,
                         n_error_dims,
                         i_b,
                     )
                     lu.mat_add_eye(self._IK_mat, damping**2, n_error_dims, i_b)
                     lu.mat_inverse(self._IK_mat, self._IK_L, self._IK_U, self._IK_y, self._IK_inv, n_error_dims, i_b)
                     lu.mat_mul_vec(self._IK_inv, self._IK_err_pose, self._IK_vec, n_error_dims, n_error_dims, i_b)
-                    lu.mat_mul_vec(
-                        self._IK_jacobian_T, self._IK_vec, self._IK_delta_qpos, self.n_dofs, n_error_dims, i_b
-                    )
+
+                    for i in range(self.n_dofs):  # IK_delta_qpos = IK_jacobian_T @ IK_vec
+                        self._IK_delta_qpos[i, i_b] = 0
+                    for i in range(n_dofs):
+                        for j in range(n_error_dims):
+                            i_ = dofs_idx[
+                                i
+                            ]  # NOTE: IK_delta_qpos uses the original indexing instead of the effective n_dofs
+                            self._IK_delta_qpos[i_, i_b] += self._IK_jacobian_T[i, j, i_b] * self._IK_vec[j, i_b]
+
                     for i in range(self.n_dofs):
                         self._IK_delta_qpos[i, i_b] = ti.math.clamp(
                             self._IK_delta_qpos[i, i_b], -max_step_size, max_step_size
@@ -1159,7 +1202,8 @@ class RigidEntity(Entity):
 
                     # Resample init q
                     if respect_joint_limit and i_sample < max_samples - 1:
-                        for i_l in range(self.link_start, self.link_end):
+                        for _i_l in range(n_links_by_dofs):
+                            i_l = links_idx_by_dofs[_i_l]
                             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
                             l_info = self._solver.links_info[I_l]
                             I_dof_start = (
@@ -1371,16 +1415,16 @@ class RigidEntity(Entity):
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_joint(self, name=None, id=None):
+    def get_joint(self, name=None, uid=None):
         """
-        Get a RigidJoint object by name or id.
+        Get a RigidJoint object by name or uid.
 
         Parameters
         ----------
         name : str, optional
             The name of the joint. Defaults to None.
-        id : str, optional
-            The id of the joint. This can be a substring of the joint's id. Defaults to None.
+        uid : str, optional
+            The uid of the joint. This can be a substring of the joint's uid. Defaults to None.
 
         Returns
         -------
@@ -1394,25 +1438,25 @@ class RigidEntity(Entity):
                     return joint
             gs.raise_exception(f"Joint not found for name: {name}.")
 
-        elif id is not None:
+        elif uid is not None:
             for joint in self._joints:
-                if id in str(joint.id):
+                if uid in str(joint.uid):
                     return joint
-            gs.raise_exception(f"Joint not found for id: {id}.")
+            gs.raise_exception(f"Joint not found for uid: {uid}.")
 
         else:
-            gs.raise_exception("Neither `name` nor `id` is provided.")
+            gs.raise_exception("Neither `name` nor `uid` is provided.")
 
-    def get_link(self, name=None, id=None):
+    def get_link(self, name=None, uid=None):
         """
-        Get a RigidLink object by name or id.
+        Get a RigidLink object by name or uid.
 
         Parameters
         ----------
         name : str, optional
             The name of the link. Defaults to None.
-        id : str, optional
-            The id of the link. This can be a substring of the link's id. Defaults to None.
+        uid : str, optional
+            The uid of the link. This can be a substring of the link's uid. Defaults to None.
 
         Returns
         -------
@@ -1426,14 +1470,14 @@ class RigidEntity(Entity):
                     return link
             gs.raise_exception(f"Link not found for name: {name}.")
 
-        elif id is not None:
+        elif uid is not None:
             for link in self._links:
-                if id in str(link.id):
+                if uid in str(link.uid):
                     return link
-            gs.raise_exception(f"Link not found for id: {id}.")
+            gs.raise_exception(f"Link not found for uid: {uid}.")
 
         else:
-            gs.raise_exception("Neither `name` nor `id` is provided.")
+            gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @gs.assert_built
     def get_pos(self, envs_idx=None):
