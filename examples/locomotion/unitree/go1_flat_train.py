@@ -121,22 +121,22 @@ def get_cfgs():
         'control_freq': 50,
         'decimation': 4,
         # random push
-        'push_interval_s': -1,
+        'push_interval_s': 5,
         'max_push_vel_xy': 1.0,
         # domain randomization
         'randomize_friction': True,
-        'friction_range': [0.2, 1.5],
+        'friction_range': [0.1, 1.5],
         'randomize_base_mass': True,
         'added_mass_range': [-1., 3.],
         'randomize_com_displacement': True,
         'com_displacement_range': [-0.01, 0.01],
         'randomize_motor_strength': False,
         'motor_strength_range': [0.9, 1.1],
-        'randomize_motor_offset': True,
+        'randomize_motor_offset': False,
         'motor_offset_range': [-0.02, 0.02],
-        'randomize_kp_scale': True,
+        'randomize_kp_scale': False,
         'kp_scale_range': [0.8, 1.2],
-        'randomize_kd_scale': True,
+        'randomize_kd_scale': False,
         'kd_scale_range': [0.8, 1.2],
     }
     obs_cfg = {
@@ -153,37 +153,37 @@ def get_cfgs():
 
     reward_cfg = {
         "tracking_sigma": 0.25,
-        "base_height_target": 0.25,
+        "base_height_target": 0.27,
         "step_period": 0.8,
         "step_offset": 0.5,
-        "front_feet_relative_height_from_base": 0.05,
-        "rear_feet_relative_height_from_base": 0.25,
+        "front_feet_relative_height_from_base": 0.1,
+        "rear_feet_relative_height_from_base": 0.15,
         "soft_dof_pos_limit": 0.9,
         "soft_torque_limit": 1.0,
         "reward_scales": {
-            "tracking_lin_vel": 1.5,
-            "tracking_ang_vel": 0.75,
-            "lin_vel_z": -1.0, #-5.0
-            # "base_height": -30.0, # -30.0
-            # "orientation": -1.0, #-30.0
+            "tracking_lin_vel": 1.0,
+            "tracking_ang_vel": 0.5,
+            "lin_vel_z": -5.0, #-5.0
+            "base_height": -30.0, # -30.0
+            "orientation": -1.0, #-30.0
             "ang_vel_xy": -0.05,
             "collision": -2.0,
-            "action_rate": -0.01,
-            "contact_no_vel": -0.2,
+            "action_rate": -0.001,
+            "contact_no_vel": -0.002,
             "dof_acc": -2.5e-7,
-            "hip_pos": -1.0,
-            "contact": 0.2,
-            "dof_pos_limits": -2.0,
-            'torques': -0.0002,
+            "hip_pos": -0.1, #-1.0
+            "contact": 0.01,
+            "dof_pos_limits": -5.0,
+            'torques': -0.00002,
             "termination": -30.0,
-            "front_feet_swing_height": -5.0, #-10.0
-            # "rear_feet_swing_height": -5.0, #-10.0
+            "front_feet_swing_height": -0.5, #-10.0
+            "rear_feet_swing_height": -0.1, #-10.0
         },
     }
     command_cfg = {
         "num_commands": 3,
         "lin_vel_x_range": [-1.0, 1.0],
-        "lin_vel_y_range": [-1.0, 1.0],
+        "lin_vel_y_range": [-.5, .5],
         "ang_vel_range": [-1.0, 1.0],
     }
     noise_cfg = {
@@ -199,7 +199,7 @@ def get_cfgs():
 
     }
     terrain_cfg = {
-        "terrain_type": "trimesh",
+        "terrain_type": "plane",
         "subterrain_size": 12.0,
         "horizontal_scale": 0.25,
         "vertical_scale": 0.005,
