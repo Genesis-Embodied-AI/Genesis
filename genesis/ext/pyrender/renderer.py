@@ -195,10 +195,16 @@ class Renderer(object):
             if flags & (RenderFlags.VERTEX_NORMALS | RenderFlags.FACE_NORMALS):
                 self._normals_pass(scene, flags, env_idx=env_idx)
 
-        if isinstance(retval_list, list):
-            retval_list = np.stack(retval_list, axis=0)
-        elif isinstance(retval_list, tuple):
-            retval_list = tuple([np.stack(val_list, axis=0) for val_list in retval_list])
+        if use_env_idx:
+            if isinstance(retval_list, list):
+                retval_list = np.stack(retval_list, axis=0)
+            elif isinstance(retval_list, tuple):
+                retval_list = tuple([np.stack(val_list, axis=0) for val_list in retval_list])
+        else:
+            if isinstance(retval_list, list):
+                retval_list = retval_list[0]
+            elif isinstance(retval_list, tuple):
+                retval_list = tuple([val_list[0] for val_list in retval_list])
 
         # Update camera settings for retrieving depth buffers
         self._latest_znear = scene.main_camera_node.camera.znear
@@ -412,7 +418,7 @@ class Renderer(object):
         except Exception:
             pass
 
-    def _forward_pass_legacy(self, scene, flags, seg_node_map=None):
+    def _forward_pass_legacy(self, scene, flags, seg_node_map=None, env_idx=-1):
         # Set up viewport for render
         self._configure_forward_pass_viewport(flags)
 
@@ -473,7 +479,11 @@ class Renderer(object):
 
                 # Finally, bind and draw the primitive
                 self._bind_and_draw_primitive(
-                    primitive=primitive, pose=scene.get_pose(node), program=program, flags=flags
+                    primitive=primitive,
+                    pose=scene.get_pose(node),
+                    program=program,
+                    flags=flags,
+                    env_idx=env_idx,
                 )
                 self._reset_active_textures()
 
@@ -585,7 +595,7 @@ class Renderer(object):
 
         self.jit.point_shadow_mapping_pass(self, light_matrix, position, flags, ProgramFlags.POINT_SHADOW, env_idx=env_idx)
 
-    def _point_shadow_mapping_pass_legacy(self, scene, light_node, flags):
+    def _point_shadow_mapping_pass_legacy(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light
         position = scene.get_pose(light_node)[:3, 3]
         camera = light._get_shadow_camera(scene.scale)
@@ -618,7 +628,11 @@ class Renderer(object):
 
                 # Finally, bind and draw the primitive
                 self._bind_and_draw_primitive(
-                    primitive=primitive, pose=scene.get_pose(node), program=program, flags=RenderFlags.DEPTH_ONLY
+                    primitive=primitive,
+                    pose=scene.get_pose(node),
+                    program=program,
+                    flags=RenderFlags.DEPTH_ONLY,
+                    env_idx=env_idx,
                 )
                 self._reset_active_textures()
 
@@ -648,7 +662,7 @@ class Renderer(object):
         # plt.show()
         # plt.savefig('tmp/tmp_dep.jpg')
 
-    def _shadow_mapping_pass_legacy(self, scene, light_node, flags):
+    def _shadow_mapping_pass_legacy(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light
 
         # Set up viewport for render
@@ -680,7 +694,11 @@ class Renderer(object):
 
                 # Finally, bind and draw the primitive
                 self._bind_and_draw_primitive(
-                    primitive=primitive, pose=scene.get_pose(node), program=program, flags=RenderFlags.DEPTH_ONLY
+                    primitive=primitive,
+                    pose=scene.get_pose(node),
+                    program=program,
+                    flags=RenderFlags.DEPTH_ONLY,
+                    env_idx=env_idx,
                 )
                 self._reset_active_textures()
 
@@ -732,7 +750,11 @@ class Renderer(object):
 
                 # Finally, bind and draw the primitive
                 self._bind_and_draw_primitive(
-                    primitive=primitive, pose=scene.get_pose(node), program=program, flags=RenderFlags.DEPTH_ONLY
+                    primitive=primitive,
+                    pose=scene.get_pose(node),
+                    program=program,
+                    flags=RenderFlags.DEPTH_ONLY,
+                    env_idx=env_idx,
                 )
                 self._reset_active_textures()
 
@@ -745,7 +767,7 @@ class Renderer(object):
     # Handlers for binding uniforms and drawing primitives
     ###########################################################################
 
-    def _bind_and_draw_primitive(self, primitive, pose, program, flags):
+    def _bind_and_draw_primitive(self, primitive, pose, program, flags, env_idx):
         # Set model pose matrix
         program.set_uniform("M", pose)
 
@@ -826,12 +848,20 @@ class Renderer(object):
         if primitive.poses is not None:
             n_instances = len(primitive.poses)
 
-        if primitive.indices is not None:
-            glDrawElementsInstanced(
-                primitive.mode, primitive.indices.size, GL_UNSIGNED_INT, ctypes.c_void_p(0), n_instances
-            )
+        if primitive.env_shared or env_idx == -1:
+            if primitive.indices is not None:
+                glDrawElementsInstanced(
+                    primitive.mode, primitive.indices.size, GL_UNSIGNED_INT, ctypes.c_void_p(0), n_instances
+                )
+            else:
+                glDrawArraysInstanced(primitive.mode, 0, len(primitive.positions), n_instances)
         else:
-            glDrawArraysInstanced(primitive.mode, 0, len(primitive.positions), n_instances)
+            if primitive.indices is not None:
+                glDrawElementsInstancedBaseInstance(
+                    primitive.mode, primitive.indices.size, GL_UNSIGNED_INT, ctypes.c_void_p(0), 1, env_idx
+                )
+            else:
+                glDrawArraysInstancedBaseInstance(primitive.mode, 0, len(primitive.positions), 1, env_idx)
 
         # Unbind mesh buffers
         primitive._unbind()
@@ -1401,7 +1431,7 @@ class Renderer(object):
     # Shadowmap Debugging
     ###########################################################################
 
-    def _forward_pass_no_reset(self, scene, flags):
+    def _forward_pass_no_reset(self, scene, flags, env_idx=-1):
         # Set up camera matrices
         V, P = self._get_camera_matrices(scene)
 
@@ -1430,7 +1460,11 @@ class Renderer(object):
 
                 # Finally, bind and draw the primitive
                 self._bind_and_draw_primitive(
-                    primitive=primitive, pose=scene.get_pose(node), program=program, flags=flags
+                    primitive=primitive,
+                    pose=scene.get_pose(node),
+                    program=program,
+                    flags=flags,
+                    env_idx=env_idx,
                 )
                 self._reset_active_textures()
 
@@ -1439,7 +1473,7 @@ class Renderer(object):
             program._unbind()
         glFlush()
 
-    def _render_light_shadowmaps(self, scene, light_nodes, flags, tile=False):
+    def _render_light_shadowmaps(self, scene, light_nodes, flags, tile=False, env_idx=-1):
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
         glClearColor(*scene.bg_color)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -1481,7 +1515,7 @@ class Renderer(object):
                 glFlush()
             i += 1
             glViewport(*viewport_dims[(i, num_nodes + 1)])
-            self._forward_pass_no_reset(scene, flags)
+            self._forward_pass_no_reset(scene, flags, env_idx=env_idx)
         else:
             for i, ln in enumerate(light_nodes):
                 light = ln.light
