@@ -163,9 +163,9 @@ def get_cfgs():
         "reward_scales": {
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 0.75,
-            "lin_vel_z": -.1, #-5.0
+            "lin_vel_z": -1.0, #-5.0
             # "base_height": -30.0, # -30.0
-            "orientation": -1.0, #-30.0
+            # "orientation": -1.0, #-30.0
             "ang_vel_xy": -0.05,
             "collision": -2.0,
             "action_rate": -0.01,
@@ -173,10 +173,10 @@ def get_cfgs():
             "dof_acc": -2.5e-7,
             "hip_pos": -1.0,
             "contact": 0.2,
-            "dof_pos_limits": -5.0,
+            "dof_pos_limits": -2.0,
             'torques': -0.0002,
             "termination": -30.0,
-            # "front_feet_swing_height": -5.0, #-10.0
+            "front_feet_swing_height": -5.0, #-10.0
             # "rear_feet_swing_height": -5.0, #-10.0
         },
     }
