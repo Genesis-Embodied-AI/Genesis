@@ -18,7 +18,7 @@
 # Genesis
 
 ## 🔥 News
-- [2025-01-09] We released a detailed performance report on Genesis and code: https://github.com/zhouxian/genesis-speed-benchmark
+- [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
 - [2025-01-08] Released v0.2.1 🎊 🎉
 - [2025-01-08] Created [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group.
 - [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
