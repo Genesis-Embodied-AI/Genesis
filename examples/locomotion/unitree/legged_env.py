@@ -76,6 +76,7 @@ class LeggedEnv:
                 lookat=(0, 0, 0.5),
                 fov=30,
                 GUI=True,
+                spp=512
             )
 
         self.terrain_type = terrain_cfg["terrain_type"]
