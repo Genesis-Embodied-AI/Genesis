@@ -1415,16 +1415,16 @@ class RigidEntity(Entity):
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_joint(self, name=None, id=None):
+    def get_joint(self, name=None, uid=None):
         """
-        Get a RigidJoint object by name or id.
+        Get a RigidJoint object by name or uid.
 
         Parameters
         ----------
         name : str, optional
             The name of the joint. Defaults to None.
-        id : str, optional
-            The id of the joint. This can be a substring of the joint's id. Defaults to None.
+        uid : str, optional
+            The uid of the joint. This can be a substring of the joint's uid. Defaults to None.
 
         Returns
         -------
@@ -1438,25 +1438,25 @@ class RigidEntity(Entity):
                     return joint
             gs.raise_exception(f"Joint not found for name: {name}.")
 
-        elif id is not None:
+        elif uid is not None:
             for joint in self._joints:
-                if id in str(joint.id):
+                if uid in str(joint.uid):
                     return joint
-            gs.raise_exception(f"Joint not found for id: {id}.")
+            gs.raise_exception(f"Joint not found for uid: {uid}.")
 
         else:
-            gs.raise_exception("Neither `name` nor `id` is provided.")
+            gs.raise_exception("Neither `name` nor `uid` is provided.")
 
-    def get_link(self, name=None, id=None):
+    def get_link(self, name=None, uid=None):
         """
-        Get a RigidLink object by name or id.
+        Get a RigidLink object by name or uid.
 
         Parameters
         ----------
         name : str, optional
             The name of the link. Defaults to None.
-        id : str, optional
-            The id of the link. This can be a substring of the link's id. Defaults to None.
+        uid : str, optional
+            The uid of the link. This can be a substring of the link's uid. Defaults to None.
 
         Returns
         -------
@@ -1470,14 +1470,14 @@ class RigidEntity(Entity):
                     return link
             gs.raise_exception(f"Link not found for name: {name}.")
 
-        elif id is not None:
+        elif uid is not None:
             for link in self._links:
-                if id in str(link.id):
+                if uid in str(link.uid):
                     return link
-            gs.raise_exception(f"Link not found for id: {id}.")
+            gs.raise_exception(f"Link not found for uid: {uid}.")
 
         else:
-            gs.raise_exception("Neither `name` nor `id` is provided.")
+            gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @gs.assert_built
     def get_pos(self, envs_idx=None):
