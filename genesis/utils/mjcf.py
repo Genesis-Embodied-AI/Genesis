@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
@@ -11,8 +12,6 @@ from genesis.ext.trimesh.visual.texture import TextureVisuals
 from . import geom as gu
 from . import mesh as mu
 from .misc import get_assets_dir
-
-import xml.etree.ElementTree as ET
 
 
 def extract_compiler_attributes(xml_path):
@@ -45,7 +44,6 @@ def parse_mjcf(path):
 
 
 def parse_link(mj, i_l, q_offset, dof_offset, scale):
-
     # mj.body
     l_info = dict()
 
@@ -274,17 +272,41 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
             tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2, count=(8, 12))
         else:
             tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2)
+        data[1] *= 2
         gs_type = gs.GEOM_TYPE.CAPSULE
 
     elif mj_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
         radius = mj.geom_size[i_g, 0]
         halflength = mj.geom_size[i_g, 1]
+        data[1] *= 2
         tmesh = trimesh.creation.cylinder(radius=radius, height=halflength * 2)
         gs_type = gs.GEOM_TYPE.CYLINDER
 
     elif mj_type == mujoco.mjtGeom.mjGEOM_BOX:
         tmesh = trimesh.creation.box(extents=mj.geom_size[i_g, :3] * 2)
+        data *= 2
         gs_type = gs.GEOM_TYPE.BOX
+
+        # TODO: not sure if it is the right way to load texture for box
+        mat_id = mj.geom_matid[i_g]
+        if mat_id >= 0:
+            mat_id = mj.geom_matid[i_g]
+            tex_id = next((x for x in mj.mat_texid[mat_id] if x != -1), None)
+
+            if tex_id is not None:
+                tex_path = mj.paths[mj.tex_pathadr[tex_id] :].decode("utf-8").split("\x00")[0]
+                texturedir = extract_compiler_attributes(xml_path)["texturedir"]
+                assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
+
+                uv_coordinates = tmesh.vertices[:, :2].copy()
+                uv_coordinates -= uv_coordinates.min(axis=0)
+                uv_coordinates /= uv_coordinates.max(axis=0)
+                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
+                image_array = np.array(image)
+                tex_repeat = mj.mat_texrepeat[mat_id].astype(int)
+                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
+                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array, mode="RGBA"))
+                tmesh.visual = visual
 
     elif mj_type == mujoco.mjtGeom.mjGEOM_MESH:
         i = mj.geom_dataid[i_g]
@@ -298,6 +320,10 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
 
         if tex_start >= 0:
             tex_end = mj.mesh_texcoordadr[i + 1] if not last else mj.mesh_texcoord.shape[0]
+            if tex_end == -1:
+                tex_end = tex_start + (vert_end - vert_start)
+            assert tex_end - tex_start == vert_end - vert_start
+
             mat_id = mj.geom_matid[i_g]
             tex_id = next((x for x in mj.mat_texid[mat_id] if x != -1), None)
             if not tex_id is None:
@@ -308,7 +334,12 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 # TODO: check if we can parse <compiler> tag with mj model
                 texturedir = extract_compiler_attributes(xml_path)["texturedir"]
                 assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
-                visual = TextureVisuals(uv=uv, image=Image.open(os.path.join(assets_dir, tex_path)))
+
+                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
+                image_array = np.array(image)
+                tex_repeat = mj.mat_texrepeat[mat_id].astype(int)
+                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
+                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array, mode="RGBA"))
 
         tmesh = trimesh.Trimesh(
             vertices=mj.mesh_vert[vert_start:vert_end],

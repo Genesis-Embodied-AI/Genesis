@@ -252,7 +252,7 @@ def load_meshes(filename):
     if isinstance(meshes, (list, tuple, set)):
         meshes = list(meshes)
         if len(meshes) == 0:
-            raise ValueError("At least one mesh must be pmeshesent in file")
+            raise ValueError("At least one mesh must be present in file")
         for r in meshes:
             if not isinstance(r, trimesh.Trimesh):
                 raise TypeError("Could not load meshes from file")

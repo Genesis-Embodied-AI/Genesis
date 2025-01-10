@@ -14,10 +14,29 @@ import OpenGL
 
 import genesis as gs
 
-from tkinter import Tk
-from tkinter import filedialog
-root = Tk()
-root.withdraw()
+import sys
+
+if sys.platform.startswith("darwin"):
+    # Mac OS
+    from tkinter import Tk
+    from tkinter import filedialog
+else:
+    try:
+        from Tkinter import Tk
+        from Tkinter import tkFileDialog as filedialog
+    except Exception:
+        try:
+            from tkinter import Tk
+            from tkinter import filedialog as filedialog
+        except Exception:
+            pass
+
+
+try:
+    root = Tk()
+    root.withdraw()
+except:
+    pass
 
 import pyglet
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
