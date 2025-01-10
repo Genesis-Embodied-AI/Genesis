@@ -18,9 +18,9 @@
 # Genesis
 
 ## 🔥 News
-
+- [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
 - [2025-01-08] Released v0.2.1 🎊 🎉
-- [2025-01-08] Added [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group. Join us to push the boundary of general-purpose robotics/embodied AI/physical AI applications.
+- [2025-01-08] Created [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group.
 - [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
 - [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)
 
