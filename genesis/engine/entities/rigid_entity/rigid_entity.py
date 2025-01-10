@@ -2323,9 +2323,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         geom_indices = [
-            self._links[il]._geom_start + g_idx
-            for il in ls_idx_local
-            for g_idx in range(self._links[il].n_geoms)
+            self._links[il]._geom_start + g_idx for il in ls_idx_local for g_idx in range(self._links[il].n_geoms)
         ]
 
         self._solver.set_geoms_friction_ratio(
