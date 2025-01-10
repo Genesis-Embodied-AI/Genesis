@@ -42,7 +42,7 @@ def get_train_cfg(exp_name, max_iterations):
             "max_iterations": max_iterations,
             "num_steps_per_env": 24,
             "policy_class_name": "ActorCritic",
-            "record_interval": -1,
+            "record_interval": 50,
             "resume": False,
             "resume_path": None,
             "run_name": "",
@@ -90,8 +90,12 @@ def get_cfgs():
             "RR_thigh_joint",
             "RR_calf_joint",
         ],
-        'PD_stiffness': {'joint': 20.0},
-        'PD_damping': {'joint': 0.5},
+        'PD_stiffness': {'hip': 20.0,
+                         'thigh': 20,
+                          'calf': 20},
+        'PD_damping': {'hip': 0.5,
+                        'thigh': 0.5,
+                        'calf': 0.5},
 
         # termination
         'termination_contact_link_names': ['base'],
@@ -149,7 +153,7 @@ def get_cfgs():
 
     reward_cfg = {
         "tracking_sigma": 0.25,
-        "base_height_target": 0.45,
+        "base_height_target": 0.4,
         "step_period": 0.8,
         "step_offset": 0.5,
         "front_feet_relative_height_from_base": 0.08,
@@ -159,20 +163,20 @@ def get_cfgs():
         "reward_scales": {
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 0.75,
-            "lin_vel_z": -1.0, #-5.0
-            # "base_height": -30.0,
+            "lin_vel_z": -5.0, #-5.0
+            "base_height": -30.0,
             "orientation": -1.0,
             "ang_vel_xy": -0.05,
             "collision": -2.0,
             "action_rate": -0.01,
-            "contact_no_vel": -0.2,
+            "contact_no_vel": -0.02,
             "dof_acc": -2.5e-6,
-            "hip_pos": -1.0,
-            "contact": 0.2,
+            # "hip_pos": -1.0,
+            "contact": 0.01,
             "dof_pos_limits": -20.0,
-            "torques": -0.00002,
+            "torques": -0.0002,
             "termination": -30.0,
-            "feet_swing_height": -1.0, #-10.0
+            "feet_air_time": -1.0, #-10.0
         },
     }
     command_cfg = {
@@ -194,7 +198,7 @@ def get_cfgs():
 
     }
     terrain_cfg = {
-        "terrain_type": "trimesh",
+        "terrain_type": "plane",
         "subterrain_size": 12.0,
         "horizontal_scale": 0.25,
         "vertical_scale": 0.005,
@@ -269,6 +273,9 @@ def main():
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
     if args.resume:
         runner.load(resume_path)
+
+
+    wandb.init(project='custom_genesis', name=args.exp_name, dir=log_dir, mode='offline' if args.offline else 'online')
 
     pickle.dump(
         [env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg, terrain_cfg],

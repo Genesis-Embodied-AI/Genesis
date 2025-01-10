@@ -94,12 +94,12 @@ def get_cfgs():
             "RR_thigh_joint",
             "RR_calf_joint",
         ],
-        'PD_stiffness': {'hip': 20.0,
+        'PD_stiffness': {'hip':   20,
                          'thigh': 20,
                           'calf': 20},
-        'PD_damping': {'hip': 0.5,
+        'PD_damping': {'hip':    0.5,
                         'thigh': 0.5,
-                        'calf': 0.5},
+                        'calf':  0.5},
 
         # termination
         'termination_contact_link_names': ['base'],
@@ -107,8 +107,8 @@ def get_cfgs():
         'feet_link_names': ['foot'],
         'base_link_name': ['base'], 
         "hip_names": [
-            "FL_hip",
-            "FR_hip",
+            # "FL_hip",
+            # "FR_hip",
             "RL_hip",
             "RR_hip",            
         ],
@@ -122,7 +122,7 @@ def get_cfgs():
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,
-        "simulate_action_latency": False,
+        "simulate_action_latency": True,
         "clip_actions": 100.0,
         'control_freq': 50,
         'decimation': 4,
@@ -134,7 +134,7 @@ def get_cfgs():
         'friction_range': [0.1, 1.5],
         'randomize_base_mass': True,
         'added_mass_range': [-1., 3.],
-        'randomize_com_displacement': False,
+        'randomize_com_displacement': True,
         'com_displacement_range': [-0.01, 0.01],
         'randomize_motor_strength': False,
         'motor_strength_range': [0.9, 1.1],
@@ -177,7 +177,7 @@ def get_cfgs():
             "action_rate": -0.001,
             "contact_no_vel": -0.2,
             "dof_acc": -2.5e-7,
-            # "hip_pos": -.1, #-1.0
+            "hip_pos": -.1, #-1.0
             "contact": 0.18,
             "dof_pos_limits": -10.0,
             'torques': -0.00002,
@@ -190,8 +190,8 @@ def get_cfgs():
     command_cfg = {
         "num_commands": 3,
         "lin_vel_x_range": [-1.0, 1.0],
-        "lin_vel_y_range": [-0.8, 0.8],
-        "ang_vel_range": [-1.0, 1.0],
+        "lin_vel_y_range": [-0.5, 0.5],
+        "ang_vel_range": [-0.5, 0.5],
     }
     noise_cfg = {
         "add_noise": True,

@@ -156,7 +156,7 @@ class LeggedEnv:
 
         # names to indices
         self.motor_dofs = [self.robot.get_joint(name).dof_idx_local for name in self.env_cfg["dof_names"]]
-        # self.hip_dofs = [self.robot.get_joint(str(name +"_joint")).dof_idx_local for name in self.env_cfg["hip_names"]]
+        self.hip_dofs = [self.robot.get_joint(str(name +"_joint")).dof_idx_local for name in self.env_cfg["hip_names"]]
 
         def find_link_indices(names):
             link_indices = list()
@@ -253,7 +253,7 @@ class LeggedEnv:
             dtype=gs.tc_float,
         )
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=gs.tc_float)
-        # self.hip_actions = torch.zeros((self.num_envs, len(self.hip_dofs)), device=self.device, dtype=gs.tc_float)
+        self.hip_actions = torch.zeros((self.num_envs, len(self.hip_dofs)), device=self.device, dtype=gs.tc_float)
 
         self.feet_air_time = torch.zeros(
             (self.num_envs, len(self.feet_indices)),
@@ -275,8 +275,8 @@ class LeggedEnv:
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.zeros_like(self.actions)
         self.dof_vel = torch.zeros_like(self.actions)
-        # self.hip_pos = torch.zeros_like(self.hip_actions)
-        # self.hip_vel = torch.zeros_like(self.hip_actions)
+        self.hip_pos = torch.zeros_like(self.hip_actions)
+        self.hip_vel = torch.zeros_like(self.hip_actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
         self.contact_forces = torch.zeros(
             (self.num_envs, self.robot.n_links, 3), device=self.device, dtype=gs.tc_float
@@ -289,15 +289,15 @@ class LeggedEnv:
             dtype=gs.tc_float,
         )
         self.num_dof = len(self.default_dof_pos )
-        # self.default_hip_pos = torch.tensor(
-        #     [
-        #         self.env_cfg["default_joint_angles"][name]
-        #         for name in self.env_cfg["dof_names"]
-        #         if "hip" in name
-        #     ],
-        #     device=self.device,
-        #     dtype=gs.tc_float,
-        # )
+        self.default_hip_pos = torch.tensor(
+            [
+                self.env_cfg["default_joint_angles"][name]
+                for name in self.env_cfg["dof_names"]
+                if name.startswith("R") and name.endswith("_hip_joint")
+            ],
+            device=self.device,
+            dtype=gs.tc_float,
+        )
         self.contact_duration_buf = torch.zeros(
             self.num_envs, 
             dtype=torch.float, 
@@ -329,7 +329,7 @@ class LeggedEnv:
         self._randomize_rigids()
         print(f"Dof_pos_limits{self.dof_pos_limits}")
         print(f"Default dof pos {self.default_dof_pos}")
-        # print(f"Default hip pos {self.default_hip_pos}")
+        print(f"Default hip pos {self.default_hip_pos}")
         self.common_step_counter = 0
         # extras
         self.continuous_push = torch.zeros(
@@ -561,8 +561,8 @@ class LeggedEnv:
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
         self.dof_pos[:] = self.robot.get_dofs_position(self.motor_dofs)
         self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
-        # self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
-        # self.hip_vel[:] = self.robot.get_dofs_velocity(self.hip_dofs)
+        self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
+        self.hip_vel[:] = self.robot.get_dofs_velocity(self.hip_dofs)
         self.contact_forces[:] = torch.tensor(
             self.robot.get_links_net_contact_force(),
             device=self.device,
@@ -772,8 +772,8 @@ class LeggedEnv:
         # reset dofs
         self.dof_pos[envs_idx] = self.default_dof_pos
         self.dof_vel[envs_idx] = 0.0
-        # self.hip_pos[envs_idx] = self.default_hip_pos
-        # self.hip_vel[envs_idx] = 0.0
+        self.hip_pos[envs_idx] = self.default_hip_pos
+        self.hip_vel[envs_idx] = 0.0
         self.robot.set_dofs_position(
             position=self.dof_pos[envs_idx],
             dofs_idx_local=self.motor_dofs,
@@ -1119,8 +1119,8 @@ class LeggedEnv:
     # def _reward_hip_vel(self):
     #     return torch.sum(torch.square(self.hip_vel), dim=(1))
 
-    # def _reward_hip_pos(self):
-    #     return torch.sum(torch.abs(self.hip_pos- self.default_hip_pos), dim=(1))
+    def _reward_hip_pos(self):
+        return torch.sum(torch.abs(self.hip_pos- self.default_hip_pos), dim=(1))
 
 
 

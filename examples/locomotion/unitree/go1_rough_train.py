@@ -9,6 +9,8 @@ from rsl_rl.runners import OnPolicyRunner
 import genesis as gs
 from datetime import datetime
 import re
+import wandb
+
 def get_train_cfg(exp_name, max_iterations):
 
     train_cfg_dict = {
@@ -53,8 +55,6 @@ def get_train_cfg(exp_name, max_iterations):
         "seed": 1,
     }
 
-
-
     return train_cfg_dict
 
 
@@ -94,12 +94,12 @@ def get_cfgs():
             "RR_thigh_joint",
             "RR_calf_joint",
         ],
-        'PD_stiffness': {'hip':   20,
+        'PD_stiffness': {'hip': 20.0,
                          'thigh': 20,
                           'calf': 20},
-        'PD_damping': {'hip':    0.5,
+        'PD_damping': {'hip': 0.5,
                         'thigh': 0.5,
-                        'calf':  0.5},
+                        'calf': 0.5},
 
         # termination
         'termination_contact_link_names': ['base'],
@@ -107,8 +107,8 @@ def get_cfgs():
         'feet_link_names': ['foot'],
         'base_link_name': ['base'], 
         "hip_names": [
-            "FL_hip",
-            "FR_hip",
+            # "FL_hip",
+            # "FR_hip",
             "RL_hip",
             "RR_hip",            
         ],
@@ -122,19 +122,19 @@ def get_cfgs():
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
         "action_scale": 0.25,
-        "simulate_action_latency": False,
+        "simulate_action_latency": True,
         "clip_actions": 100.0,
         'control_freq': 50,
         'decimation': 4,
         # random push
-        'push_interval_s': -1,
+        'push_interval_s': 5,
         'max_push_vel_xy': 1.0,
         # domain randomization
-        'randomize_friction': False,
+        'randomize_friction': True,
         'friction_range': [0.1, 1.5],
-        'randomize_base_mass': False,
+        'randomize_base_mass': True,
         'added_mass_range': [-1., 3.],
-        'randomize_com_displacement': False,
+        'randomize_com_displacement': True,
         'com_displacement_range': [-0.01, 0.01],
         'randomize_motor_strength': False,
         'motor_strength_range': [0.9, 1.1],
@@ -169,17 +169,16 @@ def get_cfgs():
         "reward_scales": {
             "tracking_lin_vel": 1.5,
             "tracking_ang_vel": 0.75,
-            "lin_vel_z": -.05, #-5.0
-            # "base_height": -50.0, # -30.0
-            # "orientation": -1.0, #-30.0
+            "lin_vel_z": -.1, #-5.0
+            "orientation": -0.1, #-30.0
             "ang_vel_xy": -0.05,
-            "collision": -5.0,
+            "collision": -10.0,
             "action_rate": -0.001,
-            "contact_no_vel": -0.02,
+            "contact_no_vel": -0.01,
             "dof_acc": -2.5e-7,
-            "hip_pos": -.01, #-1.0
-            "contact": 0.01,
-            "dof_pos_limits": -5.0,
+            "hip_pos": -1.0, #-1.0
+            "contact": 0.05,
+            "dof_pos_limits": -3.0,
             'torques': -0.00002,
             "termination": -30.0,
             # "front_feet_swing_height": -10.0, #-10.0
@@ -188,22 +187,19 @@ def get_cfgs():
     }
     command_cfg = {
         "num_commands": 3,
-        "lin_vel_x_range": [-1.0, 1.0],
-        "lin_vel_y_range": [-0.8, 0.8],
-        "ang_vel_range": [-1.0, 1.0],
-        # "lin_vel_x_range": [1.0, 1.0],
-        # "lin_vel_y_range": [0.0, 0.0],
-        # "ang_vel_range": [0.0, 0.0],
+        "lin_vel_x_range": [-0.5, 0.5],
+        "lin_vel_y_range": [-0.5, 0.5],
+        "ang_vel_range": [-0.5, 0.5],
     }
     noise_cfg = {
         "add_noise": True,
         "noise_level": 1.0,
         "noise_scales":{
             "dof_pos": 0.01,
-            "dof_vel": 0.5,  #1.5
-            "lin_vel": 0.1, #0?
-            "ang_vel": 0.1,  #0.2
-            "gravity": 0.02, #0.05
+            "dof_vel": 1.5,
+            "lin_vel": 0.1,
+            "ang_vel": 0.2,
+            "gravity": 0.05,
         }
 
     }
@@ -215,12 +211,12 @@ def get_cfgs():
         "cols": 5,  #should be more than 5
         "rows": 5,   #should be more than 5
         "selected_terrains":{
-            "flat_terrain" : {"probability": .00},
-            "random_uniform_terrain" : {"probability": 0.0},
-            "pyramid_sloped_terrain" : {"probability": 0.0},
-            "discrete_obstacles_terrain" : {"probability": 0.0},
-            "pyramid_stairs_terrain" : {"probability": 1.0},
-            "wave_terrain": {"probability": 0.0},
+            "flat_terrain" : {"probability": .5},
+            "random_uniform_terrain" : {"probability": 0.5},
+            "pyramid_sloped_terrain" : {"probability": 0.1},
+            "discrete_obstacles_terrain" : {"probability": 0.5},
+            "pyramid_stairs_terrain" : {"probability": 0.0},
+            "wave_terrain": {"probability": 0.5},
 
         }
     }
@@ -231,11 +227,12 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="go1_rough_walking")
-    parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("-B", "--num_envs", type=int, default=10000)
+    parser.add_argument("--max_iterations", type=int, default=1000)
     parser.add_argument("--resume", action="store_true", help="Resume from the latest checkpoint if this flag is set")
     parser.add_argument("--ckpt", type=int, default=0)
-    parser.add_argument("--view", type=bool, default=False)
+    parser.add_argument("--view", action="store_true", help="If you would like to see how robot is trained")
+    parser.add_argument("--offline", action="store_true", help="If you do not want to upload online via wandb")
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
@@ -283,6 +280,9 @@ def main():
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
     if args.resume:
         runner.load(resume_path)
+
+
+    wandb.init(project='custom_genesis', name=args.exp_name, dir=log_dir, mode='offline' if args.offline else 'online')
 
     pickle.dump(
         [env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg, terrain_cfg],
