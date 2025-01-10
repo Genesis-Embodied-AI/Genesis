@@ -9,6 +9,8 @@ from rsl_rl.runners import OnPolicyRunner
 import genesis as gs
 from datetime import datetime
 import re
+import wandb
+
 def get_train_cfg(exp_name, max_iterations):
 
     train_cfg_dict = {
@@ -42,7 +44,7 @@ def get_train_cfg(exp_name, max_iterations):
             "max_iterations": max_iterations,
             "num_steps_per_env": 24,
             "policy_class_name": "ActorCritic",
-            "record_interval": -1,
+            "record_interval": 50,
             "resume": False,
             "resume_path": None,
             "run_name": "",
@@ -175,11 +177,12 @@ def get_cfgs():
             "action_rate": -0.001,
             "contact_no_vel": -0.2,
             "dof_acc": -2.5e-7,
-            "hip_pos": -.1, #-1.0
+            # "hip_pos": -.1, #-1.0
             "contact": 0.18,
             "dof_pos_limits": -10.0,
             'torques': -0.00002,
             "termination": -30.0,
+            "feet_air_time": -1.0
             # "front_feet_swing_height": -10.0, #-10.0
             # "rear_feet_swing_height": -0.1, #-10.0
         },
@@ -226,11 +229,12 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="go1_walking")
-    parser.add_argument("-B", "--num_envs", type=int, default=4096)
-    parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("-B", "--num_envs", type=int, default=10000)
+    parser.add_argument("--max_iterations", type=int, default=1000)
     parser.add_argument("--resume", action="store_true", help="Resume from the latest checkpoint if this flag is set")
     parser.add_argument("--ckpt", type=int, default=0)
-    parser.add_argument("--view", type=bool, default=False)
+    parser.add_argument("--view", action="store_true", help="If you would like to see how robot is trained")
+    parser.add_argument("--offline", action="store_true", help="If you do not want to upload online via wandb")
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
@@ -278,6 +282,9 @@ def main():
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
     if args.resume:
         runner.load(resume_path)
+
+
+    wandb.init(project='custom_genesis', name=args.exp_name, dir=log_dir, mode='offline' if args.offline else 'online')
 
     pickle.dump(
         [env_cfg, obs_cfg, noise_cfg, reward_cfg, command_cfg, train_cfg, terrain_cfg],

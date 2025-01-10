@@ -42,7 +42,7 @@ def get_train_cfg(exp_name, max_iterations):
             "max_iterations": max_iterations,
             "num_steps_per_env": 24,
             "policy_class_name": "ActorCritic",
-            "record_interval": -1,
+            "record_interval": 50,
             "resume": False,
             "resume_path": None,
             "run_name": "",
@@ -52,6 +52,8 @@ def get_train_cfg(exp_name, max_iterations):
         "runner_class_name": "OnPolicyRunner",
         "seed": 1,
     }
+
+
 
     return train_cfg_dict
 
@@ -92,12 +94,12 @@ def get_cfgs():
             "RR_thigh_joint",
             "RR_calf_joint",
         ],
-        'PD_stiffness': {'hip': 20.0,
+        'PD_stiffness': {'hip':   20,
                          'thigh': 20,
                           'calf': 20},
-        'PD_damping': {'hip': 0.5,
+        'PD_damping': {'hip':    0.5,
                         'thigh': 0.5,
-                        'calf': 0.5},
+                        'calf':  0.5},
 
         # termination
         'termination_contact_link_names': ['base'],
@@ -125,12 +127,12 @@ def get_cfgs():
         'control_freq': 50,
         'decimation': 4,
         # random push
-        'push_interval_s': 5,
+        'push_interval_s': -1,
         'max_push_vel_xy': 1.0,
         # domain randomization
-        'randomize_friction': True,
+        'randomize_friction': False,
         'friction_range': [0.1, 1.5],
-        'randomize_base_mass': True,
+        'randomize_base_mass': False,
         'added_mass_range': [-1., 3.],
         'randomize_com_displacement': False,
         'com_displacement_range': [-0.01, 0.01],
@@ -189,16 +191,19 @@ def get_cfgs():
         "lin_vel_x_range": [-1.0, 1.0],
         "lin_vel_y_range": [-0.8, 0.8],
         "ang_vel_range": [-1.0, 1.0],
+        # "lin_vel_x_range": [1.0, 1.0],
+        # "lin_vel_y_range": [0.0, 0.0],
+        # "ang_vel_range": [0.0, 0.0],
     }
     noise_cfg = {
         "add_noise": True,
         "noise_level": 1.0,
         "noise_scales":{
             "dof_pos": 0.01,
-            "dof_vel": 1.5,
-            "lin_vel": 0.1,
-            "ang_vel": 0.2,
-            "gravity": 0.05,
+            "dof_vel": 0.5,  #1.5
+            "lin_vel": 0.1, #0?
+            "ang_vel": 0.1,  #0.2
+            "gravity": 0.02, #0.05
         }
 
     }
@@ -207,15 +212,15 @@ def get_cfgs():
         "subterrain_size": 12.0,
         "horizontal_scale": 0.25,
         "vertical_scale": 0.005,
-        "cols": 8,  #should be more than 5
-        "rows": 8,   #should be more than 5
+        "cols": 5,  #should be more than 5
+        "rows": 5,   #should be more than 5
         "selected_terrains":{
-            "flat_terrain" : {"probability": .001},
-            "random_uniform_terrain" : {"probability": 0.5},
-            "pyramid_sloped_terrain" : {"probability": 0.5},
-            "discrete_obstacles_terrain" : {"probability": 0.5},
-            "pyramid_stairs_terrain" : {"probability": 0.2},
-            "wave_terrain": {"probability": 0.5},
+            "flat_terrain" : {"probability": .00},
+            "random_uniform_terrain" : {"probability": 0.0},
+            "pyramid_sloped_terrain" : {"probability": 0.0},
+            "discrete_obstacles_terrain" : {"probability": 0.0},
+            "pyramid_stairs_terrain" : {"probability": 1.0},
+            "wave_terrain": {"probability": 0.0},
 
         }
     }

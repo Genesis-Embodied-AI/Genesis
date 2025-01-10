@@ -68,16 +68,16 @@ class LeggedEnv:
             self.rigid_solver = solver
 
         self.show_vis = show_viewer
-        if self.show_vis:
-            self.selected_robot = 0
-            self.cam_0 = self.scene.add_camera(
-                res=(640, 480),
-                pos=(5.0, 0.0, 2.5),
-                lookat=(0, 0, 0.5),
-                fov=30,
-                GUI=True,
-                spp=512
-            )
+        self.selected_robot = 0
+        self.cam_0 = self.scene.add_camera(
+            # res=(640, 480),
+            pos=(5.0, 0.0, 2.5),
+            lookat=(0, 0, 0.5),
+            fov=30,
+            GUI=show_viewer        )
+        self._recording = False
+        self._recorded_frames = []
+
 
         self.terrain_type = terrain_cfg["terrain_type"]
         if self.terrain_type != "plane":
@@ -156,7 +156,7 @@ class LeggedEnv:
 
         # names to indices
         self.motor_dofs = [self.robot.get_joint(name).dof_idx_local for name in self.env_cfg["dof_names"]]
-        self.hip_dofs = [self.robot.get_joint(str(name +"_joint")).dof_idx_local for name in self.env_cfg["hip_names"]]
+        # self.hip_dofs = [self.robot.get_joint(str(name +"_joint")).dof_idx_local for name in self.env_cfg["hip_names"]]
 
         def find_link_indices(names):
             link_indices = list()
@@ -227,6 +227,12 @@ class LeggedEnv:
             self.episode_sums[name] = torch.zeros((self.num_envs,), device=self.device, dtype=gs.tc_float)
 
         # initialize buffers
+
+        self.init_buffers()
+
+
+
+    def init_buffers(self):
         self.base_lin_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         self.base_ang_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         self.projected_gravity = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
@@ -247,13 +253,30 @@ class LeggedEnv:
             dtype=gs.tc_float,
         )
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device, dtype=gs.tc_float)
-        self.hip_actions = torch.zeros((self.num_envs, len(self.hip_dofs)), device=self.device, dtype=gs.tc_float)
+        # self.hip_actions = torch.zeros((self.num_envs, len(self.hip_dofs)), device=self.device, dtype=gs.tc_float)
+
+        self.feet_air_time = torch.zeros(
+            (self.num_envs, len(self.feet_indices)),
+            device=self.device,
+            dtype=gs.tc_float,
+        )
+        self.feet_max_height = torch.zeros(
+            (self.num_envs, len(self.feet_indices)),
+            device=self.device,
+            dtype=gs.tc_float,
+        )
+
+        self.last_contacts = torch.zeros(
+            (self.num_envs, len(self.feet_indices)),
+            device=self.device,
+            dtype=gs.tc_int,
+        )
         self.noise_scale_vec = self._get_noise_scale_vec()
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.zeros_like(self.actions)
         self.dof_vel = torch.zeros_like(self.actions)
-        self.hip_pos = torch.zeros_like(self.hip_actions)
-        self.hip_vel = torch.zeros_like(self.hip_actions)
+        # self.hip_pos = torch.zeros_like(self.hip_actions)
+        # self.hip_vel = torch.zeros_like(self.hip_actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
         self.contact_forces = torch.zeros(
             (self.num_envs, self.robot.n_links, 3), device=self.device, dtype=gs.tc_float
@@ -266,15 +289,15 @@ class LeggedEnv:
             dtype=gs.tc_float,
         )
         self.num_dof = len(self.default_dof_pos )
-        self.default_hip_pos = torch.tensor(
-            [
-                self.env_cfg["default_joint_angles"][name]
-                for name in self.env_cfg["dof_names"]
-                if "hip" in name
-            ],
-            device=self.device,
-            dtype=gs.tc_float,
-        )
+        # self.default_hip_pos = torch.tensor(
+        #     [
+        #         self.env_cfg["default_joint_angles"][name]
+        #         for name in self.env_cfg["dof_names"]
+        #         if "hip" in name
+        #     ],
+        #     device=self.device,
+        #     dtype=gs.tc_float,
+        # )
         self.contact_duration_buf = torch.zeros(
             self.num_envs, 
             dtype=torch.float, 
@@ -306,7 +329,7 @@ class LeggedEnv:
         self._randomize_rigids()
         print(f"Dof_pos_limits{self.dof_pos_limits}")
         print(f"Default dof pos {self.default_dof_pos}")
-        print(f"Default hip pos {self.default_hip_pos}")
+        # print(f"Default hip pos {self.default_hip_pos}")
         self.common_step_counter = 0
         # extras
         self.continuous_push = torch.zeros(
@@ -318,6 +341,9 @@ class LeggedEnv:
             dtype=gs.tc_int, 
         )
         self.extras = dict()  # extra information for logging
+
+
+
 
 
     def _resample_commands(self, envs_idx):
@@ -519,12 +545,9 @@ class LeggedEnv:
         #     print("DOF vel:", dof_vel_check)
         #     raise ValueError("NaNs in DOF states after scene step.")
 
-        if self.show_vis:
-            x, y, z = self.base_pos[self.selected_robot].cpu().numpy()  # Convert the tensor to NumPy
-            self.cam_0.set_pose(pos=(x+5.0, y, z+5.5), lookat=(x, y, z+0.5))
-            self.cam_0.render(
-                rgb=True,
-            )
+
+        self._render_headless()
+
         # update buffers
         self.episode_length_buf += 1
         self.base_pos[:] = self.robot.get_pos()
@@ -538,8 +561,8 @@ class LeggedEnv:
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
         self.dof_pos[:] = self.robot.get_dofs_position(self.motor_dofs)
         self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
-        self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
-        self.hip_vel[:] = self.robot.get_dofs_velocity(self.hip_dofs)
+        # self.hip_pos[:] = self.robot.get_dofs_position(self.hip_dofs)
+        # self.hip_vel[:] = self.robot.get_dofs_velocity(self.hip_dofs)
         self.contact_forces[:] = torch.tensor(
             self.robot.get_links_net_contact_force(),
             device=self.device,
@@ -577,12 +600,16 @@ class LeggedEnv:
         self.reset_idx(self.reset_buf.nonzero(as_tuple=False).flatten())
 
         # compute reward
-        self.rew_buf[:] = 0.0
-        for name, reward_func in self.reward_functions.items():
-            rew = reward_func() * self.reward_scales[name]
-            self.rew_buf += rew
-            self.episode_sums[name] += rew
+        self.compute_rewards()
 
+        self.compute_observations()
+
+        self._render_headless()
+
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+
+
+    def compute_observations(self):
         sin_phase = torch.sin(2 * np.pi * self.leg_phase)  # Shape: (batch_size, 4)
         cos_phase = torch.cos(2 * np.pi * self.leg_phase)  # Shape: (batch_size, 4)
 
@@ -637,8 +664,6 @@ class LeggedEnv:
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
 
-        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
-
 
     def check_and_sanitize_observations(self):
         """
@@ -669,6 +694,12 @@ class LeggedEnv:
                 self.privileged_obs_buf[env_idx] =  copy.deepcopy(self.zero_privileged_obs)
 
 
+    def compute_rewards(self):
+        self.rew_buf[:] = 0.0
+        for name, reward_func in self.reward_functions.items():
+            rew = reward_func() * self.reward_scales[name]
+            self.rew_buf += rew
+            self.episode_sums[name] += rew
 
     def get_observations(self):
         return self.obs_buf
@@ -741,8 +772,8 @@ class LeggedEnv:
         # reset dofs
         self.dof_pos[envs_idx] = self.default_dof_pos
         self.dof_vel[envs_idx] = 0.0
-        self.hip_pos[envs_idx] = self.default_hip_pos
-        self.hip_vel[envs_idx] = 0.0
+        # self.hip_pos[envs_idx] = self.default_hip_pos
+        # self.hip_vel[envs_idx] = 0.0
         self.robot.set_dofs_position(
             position=self.dof_pos[envs_idx],
             dofs_idx_local=self.motor_dofs,
@@ -796,6 +827,8 @@ class LeggedEnv:
         self.last_actions[envs_idx] = 0.0
         self.last_dof_vel[envs_idx] = 0.0
         self.episode_length_buf[envs_idx] = 0
+        self.feet_air_time[envs_idx] = 0.0
+        self.feet_max_height[envs_idx] = 0.0
         self.reset_buf[envs_idx] = True
         self.contact_duration_buf[envs_idx] = 0.0
         # fill extras
@@ -871,6 +904,51 @@ class LeggedEnv:
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         return self.obs_buf, self.privileged_obs_buf
 
+
+    def _render_headless(self):
+        if self._recording and len(self._recorded_frames) < 150:
+            # robot_pos = np.array(self.base_pos[0].cpu())
+            # self._floating_camera.set_pose(pos=robot_pos + np.array([-1, -1, 0.5]), lookat=robot_pos + np.array([0, 0, -0.1]))
+            # # import time
+            # # start = time.time()
+            x, y, z = self.base_pos[self.selected_robot].cpu().numpy()  # Convert the tensor to NumPy
+            self.cam_0.set_pose(pos=(x+5.0, y, z+5.5), lookat=(x, y, z+0.5))
+            if self.show_vis:
+                self.cam_0.render(
+                    rgb=True,
+                )
+            frame, _, _, _ = self.cam_0.render()
+            # end = time.time()
+            # print(end-start)
+            self._recorded_frames.append(frame)
+            # from PIL import Image
+            # img = Image.fromarray(np.uint8(frame))
+            # img.save('./test.png')
+            # print('save')
+
+    def get_recorded_frames(self):
+        if len(self._recorded_frames) == 150:
+            frames = self._recorded_frames
+            self._recorded_frames = []
+            self._recording = False
+            return frames
+        else:
+            return None
+
+    def start_recording(self, record_internal=True):
+        self._recorded_frames = []
+        self._recording = True
+        if record_internal:
+            self._record_frames = True
+        else:
+            self.cam_0.start_recording()
+
+    def stop_recording(self, save_path=None):
+        self._recorded_frames = []
+        self._recording = False
+        if save_path is not None:
+            print("fps", int(1 / self.dt))
+            self.cam_0.stop_recording(save_path, fps = int(1 / self.dt))
 
     # ------------ domain randomization----------------
 
@@ -1041,8 +1119,8 @@ class LeggedEnv:
     # def _reward_hip_vel(self):
     #     return torch.sum(torch.square(self.hip_vel), dim=(1))
 
-    def _reward_hip_pos(self):
-        return torch.sum(torch.abs(self.hip_pos- self.default_hip_pos), dim=(1))
+    # def _reward_hip_pos(self):
+    #     return torch.sum(torch.abs(self.hip_pos- self.default_hip_pos), dim=(1))
 
 
 
@@ -1096,3 +1174,15 @@ class LeggedEnv:
     def _reward_termination(self):
         # Terminal reward / penalty
         return self.reset_buf * ~self.time_out_buf
+
+    def _reward_feet_air_time(self):
+        # Reward long steps
+        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        contact_filt = torch.logical_or(contact, self.last_contacts) 
+        self.last_contacts = contact
+        first_contact = (self.feet_air_time > 0.) * contact_filt
+        self.feet_air_time += self.dt
+        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+        self.feet_air_time *= ~contact_filt
+        return rew_airTime

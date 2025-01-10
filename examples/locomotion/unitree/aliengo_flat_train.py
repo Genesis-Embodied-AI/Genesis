@@ -149,7 +149,7 @@ def get_cfgs():
 
     reward_cfg = {
         "tracking_sigma": 0.25,
-        "base_height_target": 0.4,
+        "base_height_target": 0.45,
         "step_period": 0.8,
         "step_offset": 0.5,
         "front_feet_relative_height_from_base": 0.08,
