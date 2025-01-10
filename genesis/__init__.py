@@ -129,6 +129,8 @@ def init(
     ti_vec3 = ti.types.vector(3, ti_float)
     global ti_vec4
     ti_vec4 = ti.types.vector(4, ti_float)
+    global ti_vec6
+    ti_vec6 = ti.types.vector(6, ti_float)
     global ti_vec7
     ti_vec7 = ti.types.vector(7, ti_float)
     global ti_mat3
