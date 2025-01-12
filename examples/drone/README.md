@@ -71,6 +71,9 @@ Run with:
 python hover_eval.py -e drone-hovering --ckpt 500 --record
 ```
 
+**Note**: If you experience slow performance or encounter other issues 
+during evaluation, try removing the `--record` option.
+
 ## Technical Details
 
 - The drone model used is the Crazyflie 2.X (`urdf/drones/cf2x.urdf`)
