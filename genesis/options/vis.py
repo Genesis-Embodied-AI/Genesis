@@ -57,9 +57,11 @@ class VisOptions(Options):
     show_cameras : bool
         Whether to render the cameras added to the scene, together with their frustums.
     shadow : bool
-        Whether to render shadow.
+        Whether to render shadow. Defaults to True.
     plane_reflection : bool
         Whether to render plane reflection. Defaults to False.
+    env_separate_rigid : bool
+        Whether to share rigid objects across environments. Disabled when shown by the viewer. Defaults to False.
     background_color : tuple of float, shape (3,)
         The color of the scene background.
     ambient_light : tuple of float, shape (3,)
@@ -82,8 +84,6 @@ class VisOptions(Options):
         Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies. Defaults to 12.
     n_rendered_envs : int, optional
         Number of environments with being rendered. If None, all environments will be rendered. Defaults to None.
-    env_separate_rigid : bool
-        Whether to share rigid objects across environments. Disabled when on-screen render. Defaults to False.
     lights  : list of dict.
         Lights added to the scene.
     """
@@ -95,6 +95,7 @@ class VisOptions(Options):
     show_cameras: bool = False
     shadow: bool = True
     plane_reflection: bool = False
+    env_separate_rigid: bool = False   
     background_color: tuple = (0.04, 0.08, 0.12)
     ambient_light: tuple = (0.1, 0.1, 0.1)
     visualize_mpm_boundary: bool = False
@@ -110,7 +111,6 @@ class VisOptions(Options):
         12  # number of neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies.
     )
     n_rendered_envs: Optional[int] = None  # number of environments being rendered
-    env_separate_rigid: bool = False   
     lights: list = [
         {"type": "directional", "dir": (-1, -1, -1), "color": (1.0, 1.0, 1.0), "intensity": 5.0},
     ]

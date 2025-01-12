@@ -155,7 +155,12 @@ class OffscreenRenderer(object):
 
             old_cache = renderer._program_cache
             renderer._program_cache = CustomShaderCache()
-            normal_arr, _ = renderer.render(scene, RenderFlags.FLAT | RenderFlags.OFFSCREEN)
+
+            flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
+            if env_separate_rigid:
+                flags |= RenderFlags.ENV_SEPARATE
+            
+            normal_arr, _ = renderer.render(scene, flags)
             retval = retval + (normal_arr,)
             renderer._program_cache = old_cache
 

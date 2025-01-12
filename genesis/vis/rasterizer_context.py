@@ -803,7 +803,7 @@ class RasterizerContext:
     def seg_idxc_rgb_arr_to_idxc_arr(self, seg_idxc_rgb_arr):
         # Combine the RGB components into a single integer
         seg_idxc_arr = np.array(
-            seg_idxc_rgb_arr[:, :, 0] * 256 * 256 + seg_idxc_rgb_arr[:, :, 1] * 256 + seg_idxc_rgb_arr[:, :, 2],
+            seg_idxc_rgb_arr[..., 0] * 256 * 256 + seg_idxc_rgb_arr[..., 1] * 256 + seg_idxc_rgb_arr[..., 2],
             dtype=int,
         )
         return seg_idxc_arr
