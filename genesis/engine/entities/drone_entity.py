@@ -12,7 +12,6 @@ from .rigid_entity import RigidEntity
 
 @ti.data_oriented
 class DroneEntity(RigidEntity):
-
     def _load_URDF(self, morph, surface):
         super()._load_URDF(morph, surface)
 
