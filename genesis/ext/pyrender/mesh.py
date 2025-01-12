@@ -163,7 +163,7 @@ class Mesh(object):
             If not specified and the mesh has no material, a default material
             will be used.
         is_visible : bool
-            If False, the mesh will not be rendered.
+            If `False`, the mesh will not be rendered.
         poses : (n,4,4) float
             Array of 4x4 transformation matrices for instancing this object.
         wireframe : bool
