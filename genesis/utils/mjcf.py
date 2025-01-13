@@ -377,6 +377,10 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
     friction = mj.geom_friction[i_g, 0]
     sol_params = np.concatenate((mj.geom_solref[i_g], mj.geom_solimp[i_g]))
 
+    # Add handling for contype and conaffinity attributes
+    contype = mj.geom_contype[i_g] if mj.geom_contype[i_g] else 0
+    conaffinity = mj.geom_conaffinity[i_g] if mj.geom_conaffinity[i_g] else 0
+
     info = {
         "type": gs_type,
         "pos": pos,
@@ -387,6 +391,8 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         "data": data,
         "friction": friction,
         "sol_params": sol_params,
+        "contype": contype,
+        "conaffinity": conaffinity,
     }
 
     return info

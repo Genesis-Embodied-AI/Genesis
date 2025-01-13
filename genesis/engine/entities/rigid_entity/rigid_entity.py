@@ -449,6 +449,8 @@ class RigidEntity(Entity):
                     sol_params=g_info["sol_params"],
                     data=g_info["data"],
                     needs_coup=self.material.needs_coup,
+                    contype=g_info["contype"],
+                    conaffinity=g_info["conaffinity"],
                 )
             if not g_info["is_col"] and morph.visualization:
                 link._add_vgeom(
