@@ -437,6 +437,37 @@ class Custom(ForceField):
         self.get_acc = func
 
 
+class CustomWind(Wind):
+    """
+    Wind force field with a static acceleration in a cylindrical region.
+
+    Parameters:
+    -----------
+    direction: array_like, shape=(3,)
+        The direction of the wind. Will be normalized.
+    strength: float
+        The strength of the wind.
+    radius: float
+        The radius of the cylinder.
+    center: array_like, shape=(3,)
+        The center of the cylinder.
+    """
+
+    def __init__(self, direction=(1, 0, 0), strength=1.0, radius=1, center=(0, 0, 0)):
+        super().__init__(direction, strength, radius, center)
+
+    @ti.func
+    def _get_acc(self, pos, vel, t, i):
+        # distance to the center of the cylinder pointing in the direction of the wind
+        dist = (pos - self._center_ti).cross(self._direction_ti).norm()
+        acc = self._acc_ti
+        s = ti.sin(2 * ti.math.pi * t)  # Sinusoidal oscillation with period of 1 second
+        acc = acc * s  # Modulate acceleration by sinusoidal factor
+        if dist > self._radius:
+            acc = ti.Vector.zero(gs.ti_float, 3)
+        return acc
+
+
 @ti.data_oriented
 class PerlinNoiseField:
     """
