@@ -93,6 +93,10 @@ class Camera(RBC):
         self._in_recording = False
         self._recorded_imgs = []
 
+        self._follow_entity = None
+        self._follow_height = None
+        self._follow_smoothing = None
+
         if self._model not in ["pinhole", "thinlens"]:
             gs.raise_exception(f"Invalid camera model: {self._model}")
 
@@ -145,6 +149,9 @@ class Camera(RBC):
             gs.raise_exception("Nothing to render.")
 
         rgb_arr, depth_arr, seg_idxc_arr, seg_arr, normal_arr = None, None, None, None, None
+
+        if self._follow_entity is not None:
+            self.follow_entity()
 
         if self._raytracer is not None:
             if rgb:
@@ -278,6 +285,46 @@ class Camera(RBC):
             self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+
+    @gs.assert_built
+    def follow_entity(self, entity, height=None, smoothing=None):
+        """
+        Set the camera to follow a specified entity.
+
+        Parameters
+        ----------
+        entity : genesis.Entity
+            The entity to follow.
+        height : float, optional
+            The height at which the camera should follow the entity. If None, the camera will maintain its current height.
+        smoothing : float, optional
+            The smoothing factor for the camera's movement. If None, no smoothing will be applied.
+        """
+        self._follow_entity = entity
+        self._follow_height = height
+        self._follow_smoothing = smoothing
+
+    def follow_entity(self):
+        """
+        Update the camera position to follow the specified entity.
+        """
+        if self._follow_entity is None:
+            return
+
+        entity_pos = self._follow_entity.get_pos()
+        camera_pos = np.array(self._pos)
+
+        if self._follow_height is not None:
+            camera_pos[2] = self._follow_height
+
+        if self._follow_smoothing is not None:
+            camera_pos[:2] = (
+                self._follow_smoothing * camera_pos[:2] + (1 - self._follow_smoothing) * entity_pos[:2]
+            )
+        else:
+            camera_pos[:2] = entity_pos[:2]
+
+        self.set_pose(pos=camera_pos, lookat=entity_pos)
 
     @gs.assert_built
     def start_recording(self):
