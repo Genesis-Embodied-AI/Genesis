@@ -213,7 +213,7 @@ class Scene(RBC):
             gs.raise_exception("`viewer_options` should be an instance of `ViewerOptions`.")
 
         if not isinstance(renderer, Renderer):
-            gs.raise_exception("`viewer_options` should be an instance of `gs.renderers.Renderer`.")
+            gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
     @gs.assert_unbuilt
     def add_entity(
