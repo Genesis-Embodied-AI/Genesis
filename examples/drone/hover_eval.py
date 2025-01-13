@@ -66,4 +66,8 @@ if __name__ == "__main__":
 """
 # evaluation
 python examples/drone/hover_eval.py
+
+# Note
+If you experience slow performance or encounter other issues 
+during evaluation, try removing the --record option.
 """
