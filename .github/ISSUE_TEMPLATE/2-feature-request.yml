@@ -22,10 +22,11 @@ body:
     attributes:
       label: Motivation
       description: What is your motivation for adding / enhancing this feature, optimally described in the form of a concrete user story or use case.
-      value: "<!--  Motivation for adding / enhancing this feature, optimally describing a concrete use case in the form of a user story -->
-      As a [e.g. civil engineering researcher working on flood simulation]
-      I want to [e.g. be able to simulate city-scale fluid / terrain simulations]
-      Because [e.g. this enables the efficient design and validation of flood protection structures]."
+      value: |
+        <!--  Motivation for adding / enhancing this feature, optimally describing a concrete use case in the form of a user story -->
+        As a [e.g. civil engineering researcher working on flood simulation]
+        I want to [e.g. be able to simulate city-scale fluid / terrain simulations]
+        Because [e.g. this enables the efficient design and validation of flood protection structures].
     validations:
       required: true
   - type: textarea
