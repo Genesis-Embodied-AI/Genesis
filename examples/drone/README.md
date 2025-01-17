@@ -80,6 +80,8 @@ python hover_eval.py -e drone-hovering --ckpt 300 --record
 **Note**: If you experience slow performance or encounter other issues 
 during evaluation, try removing the `--record` option.
 
+For the latest updates, detailed documentation, and additional resources, visit this repository: [GenesisDroneEnv](https://github.com/KafuuChikai/GenesisDroneEnv).
+
 ## Technical Details
 
 - The drone model used is the Crazyflie 2.X (`urdf/drones/cf2x.urdf`)
