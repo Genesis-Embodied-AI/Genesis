@@ -904,7 +904,7 @@ class RigidEntity(Entity):
             quats = [None] * n_links
             rot_mask = [False, False, False]
         elif len(quats) != n_links:
-            gs.raise_exception("Accepting only `quatss` with length equal to `links` or empty list.")
+            gs.raise_exception("Accepting only `quats` with length equal to `links` or empty list.")
 
         link_pos_mask = []
         link_rot_mask = []
