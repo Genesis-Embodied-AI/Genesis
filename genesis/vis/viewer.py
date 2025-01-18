@@ -22,7 +22,6 @@ class ViewerLock:
         self._pyrender_viewer.render_lock.release()
 
 
-
 class DummyViewerLock:
     def __enter__(self):
         pass
@@ -65,9 +64,7 @@ class Viewer(RBC):
         elif gs.platform == "Windows":
             run_in_thread = True
             auto_start = True
-            gs.logger.warning(
-                "Windows system detected. Viewer may have some issues."
-            )
+            gs.logger.warning("Windows system detected. Viewer may have some issues.")
 
         self._pyrender_viewer = pyrender.Viewer(
             context=self.context,

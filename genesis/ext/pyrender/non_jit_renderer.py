@@ -18,7 +18,6 @@ RenderFlags_REFLECTIVE_FLOOR = RenderFlags.REFLECTIVE_FLOOR
 RenderFlags_FLAT = RenderFlags.FLAT
 
 
-
 # Helper methods for uniform setting
 def set_uniform_matrix_4fv(pid, name, value):
     """Helper method for setting 4x4 matrix uniforms"""
@@ -75,7 +74,7 @@ def set_uniform_4fv(pid, name, value):
 
 
 def bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light):
-    """ define another function for binding """
+    """define another function for binding"""
     n = len(light)
     set_uniform_3fv(pid, "ambient_light", ambient_light)
     n_dir, n_pt, n_spot = 0, 0, 0
@@ -257,7 +256,9 @@ class SimpleNonJITRenderer:
         self.textures = np.zeros((n, 8), np.int32)  # 0: flag, 1-7: texture ids
         self.pbr_mat = np.zeros((n, 9), np.float32)  # base_color(4), metallic(1), roughness(1), emissive(3)
         self.spec_mat = np.zeros((n, 11), np.float32)  # diffuse(4), specular(3), glossiness(1), emissive(3)
-        self.render_flags = np.zeros((n, 6), np.int8)  # blend, wireframe, double_sided, pbr_texture, reflective_floor, transparent
+        self.render_flags = np.zeros(
+            (n, 6), np.int8
+        )  # blend, wireframe, double_sided, pbr_texture, reflective_floor, transparent
         self.mode = np.zeros(n, np.int32)
         self.n_instances = np.zeros(n, np.int32)
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
@@ -353,7 +354,9 @@ class SimpleNonJITRenderer:
             if pid != last_pid:
                 glUseProgram(pid)
                 if not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG or flags & RenderFlags_FLAT):
-                    lighting_texture = bind_lighting(pid, flags, self.light, self.shadow_map, self.light_matrix, self.ambient_light)
+                    lighting_texture = bind_lighting(
+                        pid, flags, self.light, self.shadow_map, self.light_matrix, self.ambient_light
+                    )
                     set_uniform_3fv(pid, "cam_pos", cam_pos)
                     set_uniform_matrix_4fv(pid, "reflection_mat", reflection_mat)
 
@@ -653,7 +656,13 @@ class SimpleNonJITRenderer:
 
         # Read depth buffer
         glReadPixels(
-            0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, buf  # (x,y) position  # size  # format  # type  # output array
+            0,
+            0,
+            width,
+            height,
+            GL_DEPTH_COMPONENT,
+            GL_FLOAT,
+            buf,  # (x,y) position  # size  # format  # type  # output array
         )
 
         # Flip vertically since OpenGL has origin at bottom-left
@@ -698,7 +707,9 @@ class SimpleNonJITRenderer:
             format = GL_RGB
 
         # Read color buffer
-        glReadPixels(0, 0, width, height, format, GL_UNSIGNED_BYTE, buf)  # (x,y) position  # size  # format  # type  # output array
+        glReadPixels(
+            0, 0, width, height, format, GL_UNSIGNED_BYTE, buf
+        )  # (x,y) position  # size  # format  # type  # output array
 
         # Flip vertically to match typical image convention
         return buf[::-1, :, :]

@@ -208,7 +208,6 @@ class Viewer(pyglet.window.Window):
         plane_reflection=False,
         **kwargs,
     ):
-
         #######################################################################
         # Save attributes and flags
         #######################################################################
@@ -1149,7 +1148,6 @@ class Viewer(pyglet.window.Window):
         self.set_caption(self.viewer_flags["window_title"])
 
         last_time = time.time()
-
 
         while self.is_active:
             time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
