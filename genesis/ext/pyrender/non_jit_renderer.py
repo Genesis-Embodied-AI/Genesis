@@ -18,6 +18,7 @@ RenderFlags_REFLECTIVE_FLOOR = RenderFlags.REFLECTIVE_FLOOR
 RenderFlags_FLAT = RenderFlags.FLAT
 
 
+
 # Helper methods for uniform setting
 def set_uniform_matrix_4fv(pid, name, value):
     """Helper method for setting 4x4 matrix uniforms"""

@@ -64,6 +64,7 @@ class RasterizerContext:
         if self.n_rendered_envs is None:
             self.n_rendered_envs = self.sim._B
 
+
         # pyrender scene
         self._scene = pyrender.Scene(ambient_light=self.ambient_light, bg_color=self.background_color)
 

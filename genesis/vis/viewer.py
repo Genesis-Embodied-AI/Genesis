@@ -22,6 +22,7 @@ class ViewerLock:
         self._pyrender_viewer.render_lock.release()
 
 
+
 class DummyViewerLock:
     def __enter__(self):
         pass

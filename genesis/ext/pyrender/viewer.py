@@ -1150,6 +1150,7 @@ class Viewer(pyglet.window.Window):
 
         last_time = time.time()
 
+
         while self.is_active:
             time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
             while self._offscreen_event.wait(time_next_frame - time.time()):
