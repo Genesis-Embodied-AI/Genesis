@@ -67,7 +67,11 @@ class RasterizerContext:
         # pyrender scene
         self._scene = pyrender.Scene(ambient_light=self.ambient_light, bg_color=self.background_color)
 
-        self.jit = JITRenderer(self._scene, [], [])
+        if gs.platform != "Windows":
+            self.jit = JITRenderer(self._scene, [], [])
+        else:
+            from genesis.ext.pyrender.non_jit_renderer import SimpleNonJITRenderer
+            self.jit = SimpleNonJITRenderer(self._scene, [], [])
 
         # nodes
         self.world_frame_node = None
