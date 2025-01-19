@@ -93,6 +93,13 @@ class Camera(RBC):
         self._in_recording = False
         self._recorded_imgs = []
 
+        self._init_pos = np.array(pos)
+
+        self._followed_entity = None
+        self._follow_fixed_axis = None
+        self._follow_smoothing = None
+        self._follow_fix_orientation = None
+
         if self._model not in ["pinhole", "thinlens"]:
             gs.raise_exception(f"Invalid camera model: {self._model}")
 
@@ -145,6 +152,9 @@ class Camera(RBC):
             gs.raise_exception("Nothing to render.")
 
         rgb_arr, depth_arr, seg_idxc_arr, seg_arr, normal_arr = None, None, None, None, None
+
+        if self._followed_entity is not None:
+            self.update_following()
 
         if self._raytracer is not None:
             if rgb:
@@ -244,6 +254,60 @@ class Camera(RBC):
             self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+
+    def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
+        """
+        Set the camera to follow a specified entity.
+
+        Parameters
+        ----------
+        entity : genesis.Entity
+            The entity to follow.
+        fixed_axis : (float, float, float), optional
+            The fixed axis for the camera's movement. For each axis, if None, the camera will move freely. If a float, the viewer will be fixed on at that value.
+            For example, [None, None, None] will allow the camera to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.   
+        smoothing : float, optional
+            The smoothing factor for the camera's movement. If None, no smoothing will be applied.
+        fix_orientation : bool, optional
+            If True, the camera will maintain its orientation relative to the world. If False, the camera will look at the base link of the entity.
+        """
+        self._followed_entity = entity
+        self._follow_fixed_axis = fixed_axis
+        self._follow_smoothing = smoothing
+        self._follow_fix_orientation = fix_orientation
+
+    @gs.assert_built
+    def update_following(self):
+        """
+        Update the camera position to follow the specified entity.
+        """
+
+        entity_pos = self._followed_entity.get_pos()[0].cpu().numpy()
+        if entity_pos.ndim > 1: #check for multiple envs
+            entity_pos = entity_pos[0]
+        camera_pos = np.array(self._pos)
+        camera_pose = np.array(self._transform)
+        lookat_pos = np.array(self._lookat)
+
+        if self._follow_smoothing is not None:
+            # Smooth camera movement with a low-pass filter
+            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (entity_pos + self._init_pos)
+            lookat_pos = self._follow_smoothing * lookat_pos + (1 - self._follow_smoothing) * entity_pos
+        else:
+            camera_pos = entity_pos + self._init_pos
+            lookat_pos = entity_pos
+
+        for i, fixed_axis in enumerate(self._follow_fixed_axis):
+            # Fix the camera's position along the specified axis
+            if fixed_axis is not None:
+                camera_pos[i] = fixed_axis
+
+        if self._follow_fix_orientation:
+            # Keep the camera orientation fixed by overriding the lookat point
+            camera_pose[:3, 3] = camera_pos
+            self.set_pose(transform=camera_pose)
+        else:
+            self.set_pose(pos=camera_pos, lookat=lookat_pos)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None):
