@@ -205,7 +205,10 @@ class RasterizerContext:
                 for link in links:
                     link_T = gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx])
                     buffer_updates[
-                        self._scene.get_buffer_id(self.link_frame_nodes[link.uid], "model")
+                        self._scene.get_buffer_id(
+                            self.link_frame_nodes[link.uid],
+                            "model",
+                        )
                     ] = link_T.transpose([0, 2, 1])
 
     def on_tool(self):
@@ -416,7 +419,10 @@ class RasterizerContext:
                     tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end]
 
                     buffer_updates[
-                        self._scene.get_buffer_id(self.static_nodes[mpm_entity.uid], "model")
+                        self._scene.get_buffer_id(
+                            self.static_nodes[mpm_entity.uid],
+                            "model",
+                        )
                     ] = tfs.transpose([0, 2, 1])
 
                 elif mpm_entity.surface.vis_mode == "visual":
@@ -481,7 +487,10 @@ class RasterizerContext:
                     tfs[:, :3, 3] = particles_all[sph_entity.particle_start : sph_entity.particle_end]
 
                     buffer_updates[
-                        self._scene.get_buffer_id(self.static_nodes[sph_entity.uid], "model")
+                        self._scene.get_buffer_id(
+                            self.static_nodes[sph_entity.uid],
+                            "model",
+                        )
                     ] = tfs.transpose([0, 2, 1])
 
     def on_pbd(self):
@@ -561,7 +570,10 @@ class RasterizerContext:
                         tfs[:, :3, 3] = particles_all[pbd_entity.particle_start : pbd_entity.particle_end]
 
                         buffer_updates[
-                            self._scene.get_buffer_id(self.static_nodes[pbd_entity.uid], "model")
+                            self._scene.get_buffer_id(
+                                self.static_nodes[pbd_entity.uid],
+                                "model",
+                            )
                         ] = tfs.transpose([0, 2, 1])
 
                     elif self.render_particle_as == "tet":
