@@ -855,15 +855,15 @@ class RigidSolver(Solver):
         if ti.static(self._options.batch_links_info):
             for i_b in range(self._B):
                 self.links_info[link_idx, i_b].invweight /= ratio
-                self.links_info[link_idx, i_b].invertial_mass *= ratio
-
-            for j1, j2 in ti.ndrange(3, 3):
-                self.links_info[link_idx, i_b].inertial_i[j1, j2] *= ratio
+                self.links_info[link_idx, i_b].inertial_mass *= ratio
+                for j1, j2 in ti.ndrange(3, 3):
+                    self.links_info[link_idx, i_b].inertial_i[j1, j2] *= ratio
         else:
             for i_b in range(self._B):
                 self.links_info[link_idx].invweight /= ratio
-                self.links_info[link_idx].invertial_mass *= ratio
-                self.links_info[link_idx].inertial_i[j1, j2] *= ratio
+                self.links_info[link_idx].inertial_mass *= ratio
+                for j1, j2 in ti.ndrange(3, 3):
+                    self.links_info[link_idx].inertial_i[j1, j2] *= ratio
 
     def _init_vgeom_fields(self):
         struct_vgeom_info = ti.types.struct(
