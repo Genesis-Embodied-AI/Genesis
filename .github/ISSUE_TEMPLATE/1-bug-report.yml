@@ -21,10 +21,31 @@ body:
     attributes:
       label: Steps to Reproduce
       placeholder: |
-        1. Go to '...'
-        2. Load asset '...'
-        3. Execute function '...'
-        4. See error
+        If possible, provide a script triggering the bug, e.g.
+        ```python
+        # code snippet triggering the bug
+        import genesis as gs
+        gs.init()
+        scene = gs.Scene(show_viewer=False)
+        broken = scene.add_entity(
+            gs.morphs.MJCF(file='attachement.xml'),
+        )
+        scene.build()
+        ```
+        Make sure to attached any needed assets (here `attachement.xml`)!
+      value: |
+        If possible, provide a script triggering the bug, e.g.
+        ```python
+        # code snippet triggering the bug
+        import genesis as gs
+        gs.init()
+        scene = gs.Scene(show_viewer=False)
+        broken = scene.add_entity(
+            gs.morphs.MJCF(file='attachement.xml'),
+        )
+        scene.build()
+        ```
+        Make sure to attached any needed assets (here `attachement.xml`)!
     validations:
       required: true
   - type: textarea
@@ -53,10 +74,14 @@ body:
       label: Environment
       placeholder: |
         - OS: [e.g. Ubuntu 24.04, Windows 11 24H2]
-        - CPU/CPU [e.g. A100, RTX 4090, M3pr, Intel I9-9900k, Ryzen 5900x]
+        - GPU/CPU [e.g. A100, RTX 4090, M3pr, Intel I9-9900k, Ryzen 5900x] (N/A if no GPU/CPU)
+        - GPU-driver version (N/A if no GPU)
+        - CUDA / CUDA-toolkit version (N/A if non-Nvidia)
       value: |
         - OS: [e.g. Ubuntu 24.04, Windows 11 24H2]
-        - CPU/CPU [e.g. A100, RTX 4090, M3pr, Intel I9-9900k, Ryzen 5900x]
+        - GPU/CPU [e.g. A100, RTX 4090, M3pr, Intel I9-9900k, Ryzen 5900x] (N/A if no GPU/CPU)
+        - GPU-driver version (N/A if no GPU)
+        - CUDA / CUDA-toolkit version (N/A if non-Nvidia)
     validations:
       required: true
   - type: textarea
