@@ -67,7 +67,12 @@ class RasterizerContext:
         # pyrender scene
         self._scene = pyrender.Scene(ambient_light=self.ambient_light, bg_color=self.background_color)
 
-        self.jit = JITRenderer(self._scene, [], [])
+        if gs.platform != "Windows":
+            self.jit = JITRenderer(self._scene, [], [])
+        else:
+            from genesis.ext.pyrender.non_jit_renderer import SimpleNonJITRenderer
+
+            self.jit = SimpleNonJITRenderer(self._scene, [], [])
 
         # nodes
         self.world_frame_node = None
@@ -199,14 +204,16 @@ class RasterizerContext:
 
                 for link in links:
                     link_T = gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx])
-                    buffer_updates[self._scene.get_buffer_id(self.link_frame_nodes[link.uid], "model")] = (
-                        link_T.transpose([0, 2, 1])
-                    )
+                    buffer_updates[
+                        self._scene.get_buffer_id(
+                            self.link_frame_nodes[link.uid],
+                            "model",
+                        )
+                    ] = link_T.transpose([0, 2, 1])
 
     def on_tool(self):
         if self.sim.tool_solver.is_active():
             for tool_entity in self.sim.tool_solver.entities:
-
                 if tool_entity.mesh is not None:
                     mesh = trimesh.Trimesh(
                         tool_entity.mesh.init_vertices_np,
@@ -411,9 +418,12 @@ class RasterizerContext:
                     tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
                     tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end]
 
-                    buffer_updates[self._scene.get_buffer_id(self.static_nodes[mpm_entity.uid], "model")] = (
-                        tfs.transpose([0, 2, 1])
-                    )
+                    buffer_updates[
+                        self._scene.get_buffer_id(
+                            self.static_nodes[mpm_entity.uid],
+                            "model",
+                        )
+                    ] = tfs.transpose([0, 2, 1])
 
                 elif mpm_entity.surface.vis_mode == "visual":
                     mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end]
@@ -476,9 +486,12 @@ class RasterizerContext:
                     tfs = np.tile(np.eye(4), (sph_entity.n_particles, 1, 1))
                     tfs[:, :3, 3] = particles_all[sph_entity.particle_start : sph_entity.particle_end]
 
-                    buffer_updates[self._scene.get_buffer_id(self.static_nodes[sph_entity.uid], "model")] = (
-                        tfs.transpose([0, 2, 1])
-                    )
+                    buffer_updates[
+                        self._scene.get_buffer_id(
+                            self.static_nodes[sph_entity.uid],
+                            "model",
+                        )
+                    ] = tfs.transpose([0, 2, 1])
 
     def on_pbd(self):
         if self.sim.pbd_solver.is_active():
@@ -556,9 +569,12 @@ class RasterizerContext:
                         tfs = np.tile(np.eye(4), (pbd_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[pbd_entity.particle_start : pbd_entity.particle_end]
 
-                        buffer_updates[self._scene.get_buffer_id(self.static_nodes[pbd_entity.uid], "model")] = (
-                            tfs.transpose([0, 2, 1])
-                        )
+                        buffer_updates[
+                            self._scene.get_buffer_id(
+                                self.static_nodes[pbd_entity.uid],
+                                "model",
+                            )
+                        ] = tfs.transpose([0, 2, 1])
 
                     elif self.render_particle_as == "tet":
                         new_verts = mu.transform_tets_mesh_verts(
@@ -574,7 +590,6 @@ class RasterizerContext:
                             buffer_updates[self._scene.get_buffer_id(node, "normal")] = normal_data
 
                 elif pbd_entity.surface.vis_mode == "visual":
-
                     vverts = vverts_all[pbd_entity.vvert_start : pbd_entity.vvert_end]
                     node = self.static_nodes[pbd_entity.uid]
                     update_data = self._scene.reorder_vertices(node, vverts)

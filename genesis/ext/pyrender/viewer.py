@@ -208,7 +208,6 @@ class Viewer(pyglet.window.Window):
         plane_reflection=False,
         **kwargs,
     ):
-
         #######################################################################
         # Save attributes and flags
         #######################################################################
@@ -1159,7 +1158,14 @@ class Viewer(pyglet.window.Window):
                 # print('e1', time.time() - last_time); last_time = time.time()
 
             pyglet.clock.tick()
-            pyglet.app.platform_event_loop.step(0.0)
+
+            if gs.platform != "Windows":
+                pyglet.app.platform_event_loop.step(0.0)
+            else:
+                # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
+                # this is a workaround on Windows. not sure if it's correct
+                time.sleep(0.001)
+
             self.switch_to()
             self.dispatch_pending_events()
             if self.is_active:
