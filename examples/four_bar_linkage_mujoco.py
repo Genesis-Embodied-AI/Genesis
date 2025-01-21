@@ -2,7 +2,7 @@ import mujoco
 import mujoco_viewer
 import numpy as np
 
-model = mujoco.MjModel.from_xml_path("/home/zhenjia/Projects/Genesis/genesis/assets/xml/four_bar_linkage.xml")
+model = mujoco.MjModel.from_xml_path("genesis/assets/xml/four_bar_linkage.xml")
 data = mujoco.MjData(model)
 
 # create the viewer object
