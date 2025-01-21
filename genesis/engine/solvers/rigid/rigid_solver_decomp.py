@@ -1029,7 +1029,9 @@ class RigidSolver(Solver):
             entity_idx=gs.ti_int,
             sol_params=gs.ti_vec7,
         )
-        self.equality_info = struct_equality_info.field(shape=self.n_equalities, needs_grad=False, layout=ti.Layout.SOA)
+        self.equality_info = struct_equality_info.field(
+            shape=self.n_equalities_, needs_grad=False, layout=ti.Layout.SOA
+        )
         if self.n_equalities > 0:
             equalities = self.equalities
             self._kernel_init_equality_fields(
