@@ -3939,7 +3939,6 @@ class RigidSolver(Solver):
             final_acc = acc + correction
 
             final_acc = self.links_state[i_l, i_b].cdd_vel
-            print("i", self.links_state[i_l, i_b].cdd_vel, self.links_state[i_l, i_b].cd_vel)
             for i in range(3):
                 tensor[i_b_, i_l_, i] = final_acc[i]
 
