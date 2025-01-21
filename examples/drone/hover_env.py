@@ -129,10 +129,7 @@ class HoverEnv:
 
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
-        exec_actions = self.actions.cpu()
-        # exec_actions = self.last_actions.cpu() if self.simulate_action_latency else self.actions.cpu()
-        # target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
-        # self.drone.control_dofs_position(target_dof_pos)
+        exec_actions = self.actions
 
         # 14468 is hover rpm
         self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)

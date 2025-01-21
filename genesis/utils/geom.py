@@ -563,10 +563,10 @@ def quat_to_T(quat):
     if isinstance(quat, torch.Tensor):
         T = torch.eye(4, dtype=quat.dtype, device=quat.device)
         if quat.ndim == 1:
-            T[:3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:3, :3] = quat_to_R(quat)
         elif quat.ndim == 2:
             T = T.unsqueeze(0).repeat(quat.shape[0], 1, 1)
-            T[:, :3, :3] = Rotation.from_quat(wxyz_to_xyzw(quat)).as_matrix()
+            T[:, :3, :3] = quat_to_R(quat)
         else:
             gs.raise_exception(f"ndim expected to be 1 or 2, but got {quat.ndim=}")
         return T

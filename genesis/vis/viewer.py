@@ -62,9 +62,9 @@ class Viewer(RBC):
                 "Non-linux system detected. In order to use the interactive viewer, you need to manually run simulation in a separate thread and then start viewer. See `examples/render_on_macos.py`."
             )
         elif gs.platform == "Windows":
-            run_in_thread = False
-            auto_start = False
-            gs.raise_exception("Viewer has some issues on Windows. Can anyone help?")
+            run_in_thread = True
+            auto_start = True
+            gs.logger.warning("Windows system detected. Viewer may have some issues.")
 
         self._pyrender_viewer = pyrender.Viewer(
             context=self.context,
