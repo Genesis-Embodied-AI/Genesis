@@ -369,6 +369,51 @@ class Vortex(ForceField):
         return self._falloff_max
 
 
+class VortexCustom(Vortex):
+    """
+    Vortex force field with custom direction.
+    """
+    def __init__(
+        self,
+        direction=(0.0, 0.0, 1.0),
+        center=(0.0, 0.0, 0.0),
+        strength_perpendicular=20.0,
+        strength_radial=0.0,
+        falloff_pow=2.0,
+        falloff_min=0.01,
+        falloff_max=np.inf,
+        damping=0.0,
+    ):
+        super().__init__(direction, center, strength_perpendicular, strength_radial, falloff_pow, falloff_min, falloff_max, damping)
+    
+    @ti.func
+    def _get_acc(self, pos, vel, t, i):
+        # Get vector from center to position
+        pos_centered = pos - self._center_ti
+        # Project onto direction vector to get parallel component
+        proj = pos_centered.dot(self._direction_ti) * self._direction_ti
+        # Subtract parallel component to get perpendicular component
+        relative_pos = pos_centered - proj
+
+        radius = relative_pos.norm()
+        perpendicular = self._direction_ti.cross(relative_pos)
+        radial = -relative_pos
+
+        falloff = gs.ti_float(0.0)
+        if radius < self._falloff_min:
+            falloff = 1.0
+        elif radius < self._falloff_max:
+            falloff = 1 / (radius - self._falloff_min + 1.0) ** self._falloff_pow
+        else:
+            falloff = 0.0
+
+        acceleration = falloff * (self._strength_perpendicular * perpendicular + self._strength_radial * radial)
+
+        acceleration -= self._damping * vel
+
+        return acceleration
+
+
 class Turbulence(ForceField):
     """
     Turbulence force field generated using Perlin noise.
