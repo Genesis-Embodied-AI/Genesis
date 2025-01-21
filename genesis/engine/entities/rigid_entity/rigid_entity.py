@@ -14,6 +14,7 @@ from genesis.utils.misc import tensor_to_array
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
+from .rigid_equality import RigidEquality
 
 
 @ti.data_oriented
@@ -43,6 +44,7 @@ class RigidEntity(Entity):
         vgeom_start=0,
         vvert_start=0,
         vface_start=0,
+        equality_start=0,
         visualize_contact=False,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
@@ -60,6 +62,7 @@ class RigidEntity(Entity):
         self._vgeom_start = vgeom_start
         self._vvert_start = vvert_start
         self._vface_start = vface_start
+        self._equality_start = equality_start
 
         self._visualize_contact = visualize_contact
 
@@ -70,6 +73,7 @@ class RigidEntity(Entity):
     def _load_model(self):
         self._links = gs.List()
         self._joints = gs.List()
+        self._equalities = gs.List()
 
         if isinstance(self._morph, gs.morphs.Mesh):
             self._load_mesh(self._morph, self._surface)
@@ -358,7 +362,7 @@ class RigidEntity(Entity):
             q_offset += j_info["n_qs"]
             dof_offset += j_info["n_dofs"]
 
-        l_infos, j_infos, links_g_info = uu._order_links(l_infos, j_infos, links_g_info)
+        l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
         for i_l in range(len(l_infos)):
             l_info = l_infos[i_l]
             j_info = j_infos[i_l]
@@ -386,6 +390,20 @@ class RigidEntity(Entity):
                 l_world_info["quat"] = np.array(morph.quat)
                 gs.logger.warning("Overriding base link's quat with user provided value in morph.")
             self._add_by_info(l_world_info, j_world_info, world_g_info, morph, surface)
+
+        for i_e in range(mj.neq):
+            e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
+            self._add_equality(
+                name=e_info["name"],
+                type=e_info["type"],
+                link1_idx=e_info["link1_idx"],
+                link2_idx=e_info["link2_idx"],
+                anchor1_pos=e_info["anchor1_pos"],
+                anchor2_pos=e_info["anchor2_pos"],
+                rel_pose=e_info["rel_pose"],
+                torque_scale=e_info["torque_scale"],
+                sol_params=e_info["sol_params"],
+            )
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
@@ -611,6 +629,25 @@ class RigidEntity(Entity):
         )
         self._joints.append(joint)
         return joint
+
+    def _add_equality(
+        self, name, type, link1_idx, link2_idx, anchor1_pos, anchor2_pos, rel_pose, torque_scale, sol_params
+    ):
+        equality = RigidEquality(
+            entity=self,
+            name=name,
+            idx=self.n_equalities + self._equality_start,
+            type=type,
+            link1_idx=link1_idx + self._link_start,
+            link2_idx=link2_idx + self._link_start,
+            anchor1_pos=anchor1_pos,
+            anchor2_pos=anchor2_pos,
+            rel_pose=rel_pose,
+            torque_scale=torque_scale,
+            sol_params=sol_params,
+        )
+        self._equalities.append(equality)
+        return equality
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Jacobian & IK ------------------------------------
@@ -2616,3 +2653,23 @@ class RigidEntity(Entity):
     def base_joint(self):
         """The base joint of the entity"""
         return self._joints[0]
+
+    @property
+    def n_equalities(self):
+        """The number of equality constraints in the entity."""
+        return len(self._equalities)
+
+    @property
+    def equality_start(self):
+        """The index of the entity's first RigidEquality in the scene."""
+        return self._equality_start
+
+    @property
+    def equality_end(self):
+        """The index of the entity's last RigidEquality in the scene *plus one*."""
+        return self._equality_start + self.n_equalities
+
+    @property
+    def equalities(self):
+        """The list of equality constraints (`RigidEquality`) in the entity."""
+        return self._equalities

@@ -20,10 +20,11 @@ class ConstraintSolver:
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         self.sparse_solve = rigid_solver._options.sparse_solve
 
-        # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
+        # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 1 constraints per equality
         self.len_constraints = (
             5 * self._collider._max_contact_pairs
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
+            + self._solver.n_equalities
         )
         self.len_constraints_ = max(1, self.len_constraints)
 
@@ -184,6 +185,35 @@ class ConstraintSolver:
                     self.efc_D[n_con, i_b] = 1 / ti.max(diag, gs.EPS)
 
     @ti.kernel
+    def add_equality_constraints(self):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b in range(self._B):
+            for i_e in range(self._solver.n_equalities):
+                eq_info = self._solver.equality_info[i_e]
+                link1_idx = eq_info.link1_idx
+                link2_idx = eq_info.link2_idx
+                anchor1_pos = eq_info.anchor1_pos
+                anchor2_pos = eq_info.anchor2_pos
+                sol_params = eq_info.sol_params
+
+                link1_maybe_batch = [link1_idx, 0] if ti.static(self._solver._options.batch_links_info) else link1_idx
+                link2_maybe_batch = [link2_idx, 0] if ti.static(self._solver._options.batch_links_info) else link2_idx
+
+                # Transform anchor positions to global coordinates
+                global_anchor1 = gu.ti_transform_by_trans_quat(
+                    pos=anchor1_pos,
+                    trans=self._solver.links_state[link1_idx, i_b].pos,
+                    quat=self._solver.links_state[link1_idx, i_b].quat,
+                )
+                global_anchor2 = gu.ti_transform_by_trans_quat(
+                    pos=anchor2_pos,
+                    trans=self._solver.links_state[link2_idx, i_b].pos,
+                    quat=self._solver.links_state[link2_idx, i_b].quat,
+                )
+
+                # TODO: Implement the rest of the function to connect the two links with an equality constraint
+
+    @ti.kernel
     def add_joint_limit_constraints(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
@@ -191,7 +221,6 @@ class ConstraintSolver:
                 I_l = [i_l, i_b] if ti.static(self._solver._options.batch_links_info) else i_l
                 l_info = self._solver.links_info[I_l]
                 if l_info.joint_type == gs.JOINT_TYPE.REVOLUTE or l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
-
                     i_q = l_info.q_start
                     i_d = l_info.dof_start
                     I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
@@ -401,12 +430,13 @@ class ConstraintSolver:
             self.jac_n_relevant_dofs.fill(0)
 
     def handle_constraints(self):
-
         if self._solver._enable_collision:
             self.add_collision_constraints()
 
         if self._solver._enable_joint_limit:
             self.add_joint_limit_constraints()
+
+        self.add_equality_constraints()
 
         if self._solver._enable_collision or self._solver._enable_joint_limit:
             self.resolve()
@@ -523,7 +553,6 @@ class ConstraintSolver:
             )
             quad_gauss_2 += 0.5 * self.search[i_d, i_b] * self.mv[i_d, i_b]
         for _i0 in range(1):
-
             self.quad_gauss[_i0 + 0, i_b] = self.gauss[i_b]
             self.quad_gauss[_i0 + 1, i_b] = quad_gauss_1
             self.quad_gauss[_i0 + 2, i_b] = quad_gauss_2
@@ -573,7 +602,6 @@ class ConstraintSolver:
 
     @ti.func
     def _func_linesearch(self, i_b):
-
         ## use adaptive linesearch tolerance
         snorm = gs.ti_float(0.0)
         for jd in range(self._solver.n_dofs):
@@ -631,7 +659,6 @@ class ConstraintSolver:
                         done = True
                         break
                 if not done:
-
                     if self.ls_its[i_b] >= self.ls_iterations:
                         self.ls_result[i_b] = 3
                         ls_slope = ti.abs(p1_deriv_0) * slopescl
@@ -645,7 +672,6 @@ class ConstraintSolver:
                         done = True
 
                     if not done:
-
                         p2_next_alpha, p2_next_cost, p2_next_deriv_0, p2_next_deriv_1 = (
                             p1_alpha,
                             p1_cost,
@@ -658,7 +684,6 @@ class ConstraintSolver:
                         )
 
                         while self.ls_its[i_b] < self.ls_iterations:
-
                             pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = self._func_ls_point_fn(
                                 i_b, (p1_alpha + p2_alpha) * 0.5
                             )
@@ -698,7 +723,6 @@ class ConstraintSolver:
                                 res_alpha = self.candidates[4 * best_i + 0, i_b]
                                 done = True
                             else:
-
                                 (
                                     b1,
                                     p1_alpha,
@@ -734,7 +758,6 @@ class ConstraintSolver:
                                     done = True
 
                         if not done:
-
                             if p1_cost <= p2_cost and p1_cost < p0_cost:
                                 self.ls_result[i_b] = 4
                                 ls_slope = ti.abs(p1_deriv_0) * slopescl
@@ -909,7 +932,6 @@ class ConstraintSolver:
     def initialize_Ma(self, Ma, qacc):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e, i_d1_, i_b in ti.ndrange(self._solver.n_entities, self._solver.entity_max_dofs, self._B):
-
             e_info = self._solver.entities_info[i_e]
             if i_d1_ < e_info.n_dofs:
                 i_d1 = e_info.dof_start + i_d1_

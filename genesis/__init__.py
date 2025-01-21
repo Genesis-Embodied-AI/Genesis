@@ -43,7 +43,6 @@ def init(
     theme="dark",
     logger_verbose_time=False,
 ):
-
     # genesis._initialized
     global _initialized
     if _initialized:
@@ -251,6 +250,7 @@ from .constants import (
     IntEnum,
     JOINT_TYPE,
     GEOM_TYPE,
+    EQUALITY_TYPE,
     CTRL_MODE,
     PARA_LEVEL,
     ACTIVE,
