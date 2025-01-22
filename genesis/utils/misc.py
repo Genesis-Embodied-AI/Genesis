@@ -11,6 +11,7 @@ import psutil
 import torch
 
 import genesis as gs
+from genesis.constants import backend as gs_backend
 
 
 def raise_exception(msg="Something went wrong."):
@@ -96,23 +97,8 @@ def get_cpu_name():
         return platform.processor()
 
 
-def get_cpu_device():
-    device_name = get_cpu_name()
-    total_mem = psutil.virtual_memory().total / 1024**3
-    device = torch.device("cpu")
-    return device, device_name, total_mem
-
-
-def get_gpu_device():
-    if get_platform() == "macOS":
-        if not torch.backends.mps.is_available():
-            gs.raise_exception("metal device not available")
-
-        # on mac, cpu and gpu are in the same device
-        _, device_name, total_mem = get_cpu_device()
-        device = torch.device("mps")
-
-    else:
+def get_device(backend: gs_backend):
+    if backend == gs_backend.cuda:
         if not torch.cuda.is_available():
             gs.raise_exception("cuda device not available")
 
@@ -121,7 +107,37 @@ def get_gpu_device():
         device_name = device_property.name
         total_mem = device_property.total_memory / 1024**3
 
-    return device, device_name, total_mem
+    elif backend == gs_backend.metal:
+        if not torch.backends.mps.is_available():
+            gs.raise_exception("metal device not available")
+
+        # on mac, cpu and gpu are in the same device
+        _, device_name, total_mem, _ = get_device(gs_backend.cpu)
+        device = torch.device("mps")
+
+    elif backend == gs_backend.vulkan:
+        if torch.xpu.is_available():  # pytorch 2.5+ Intel XPU device
+            device = torch.device("xpu")
+            device_property = torch.xpu.get_device_properties(0)
+            device_name = device_property.name
+            total_mem = device_property.total_memory / 1024**3
+        else:  # pytorch tensors on cpu
+            device, device_name, total_mem, _ = get_device(gs_backend.cpu)
+
+    elif backend == gs_backend.gpu:
+        if torch.cuda.is_available():
+            return get_device(gs_backend.cuda)
+        elif get_platform() == "macOS":
+            return get_device(gs_backend.metal)
+        else:
+            return get_device(gs_backend.vulkan)
+
+    else:
+        device_name = get_cpu_name()
+        total_mem = psutil.virtual_memory().total / 1024**3
+        device = torch.device("cpu")
+
+    return device, device_name, total_mem, backend
 
 
 def get_src_dir():
