@@ -2584,11 +2584,14 @@ class RigidSolver(Solver):
                             map_sum_ang = (
                                 map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].vel
                             )
-                                
-                            if for_sensor:
-                                map_sum_ang = map_sum_vel + self.dofs_state[i_d, i_b].cdof_vel * self.dofs_state[i_d, i_b].acc
-                                map_sum_vel = map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].acc
 
+                            if for_sensor:
+                                map_sum_ang = (
+                                    map_sum_vel + self.dofs_state[i_d, i_b].cdof_vel * self.dofs_state[i_d, i_b].acc
+                                )
+                                map_sum_vel = (
+                                    map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].acc
+                                )
 
                         self.links_state[i_l, i_b].cdd_vel = self.links_state[i_l, i_b].cdd_vel + map_sum_vel
                         self.links_state[i_l, i_b].cdd_ang = self.links_state[i_l, i_b].cdd_ang + map_sum_ang
@@ -2604,7 +2607,9 @@ class RigidSolver(Solver):
                         if for_sensor:
                             self.links_state[i_l, i_b].cdd_vel = ti.Vector.zero(gs.ti_float, 3)
                         else:
-                            self.links_state[i_l, i_b].cdd_vel = -self._gravity[None] * (1 - e_info.gravity_compensation)
+                            self.links_state[i_l, i_b].cdd_vel = -self._gravity[None] * (
+                                1 - e_info.gravity_compensation
+                            )
                         self.links_state[i_l, i_b].cdd_ang = ti.Vector.zero(gs.ti_float, 3)
                     else:
                         self.links_state[i_l, i_b].cdd_vel = self.links_state[i_p, i_b].cdd_vel
@@ -2619,9 +2624,12 @@ class RigidSolver(Solver):
                         map_sum_ang = map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].vel
 
                         if for_sensor:
-                            map_sum_ang = map_sum_vel + self.dofs_state[i_d, i_b].cdof_vel * self.dofs_state[i_d, i_b].acc
-                            map_sum_vel = map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].acc
-
+                            map_sum_ang = (
+                                map_sum_vel + self.dofs_state[i_d, i_b].cdof_vel * self.dofs_state[i_d, i_b].acc
+                            )
+                            map_sum_vel = (
+                                map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].acc
+                            )
 
                     self.links_state[i_l, i_b].cdd_vel = self.links_state[i_l, i_b].cdd_vel + map_sum_vel
                     self.links_state[i_l, i_b].cdd_ang = self.links_state[i_l, i_b].cdd_ang + map_sum_ang
@@ -2655,8 +2663,12 @@ class RigidSolver(Solver):
                     self.links_state[i_l, i_b].cfrc_flat_vel = f1_vel + f2_vel
                     self.links_state[i_l, i_b].cfrc_flat_ang = f1_ang + f2_ang
 
-                    self.links_state[i_l, i_b].cfrc_flat_vel = self.links_state[i_l, i_b].cfrc_ext_vel + self.links_state[i_l, i_b].cfrc_flat_vel
-                    self.links_state[i_l, i_b].cfrc_flat_ang = self.links_state[i_l, i_b].cfrc_ext_ang + self.links_state[i_l, i_b].cfrc_flat_ang
+                    self.links_state[i_l, i_b].cfrc_flat_vel = (
+                        self.links_state[i_l, i_b].cfrc_ext_vel + self.links_state[i_l, i_b].cfrc_flat_vel
+                    )
+                    self.links_state[i_l, i_b].cfrc_flat_ang = (
+                        self.links_state[i_l, i_b].cfrc_ext_ang + self.links_state[i_l, i_b].cfrc_flat_ang
+                    )
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
@@ -2682,8 +2694,12 @@ class RigidSolver(Solver):
                 self.links_state[i_l, i_b].cfrc_flat_vel = f1_vel + f2_vel
                 self.links_state[i_l, i_b].cfrc_flat_ang = f1_ang + f2_ang
 
-                self.links_state[i_l, i_b].cfrc_flat_vel = self.links_state[i_l, i_b].cfrc_ext_vel + self.links_state[i_l, i_b].cfrc_flat_vel
-                self.links_state[i_l, i_b].cfrc_flat_ang = self.links_state[i_l, i_b].cfrc_ext_ang + self.links_state[i_l, i_b].cfrc_flat_ang
+                self.links_state[i_l, i_b].cfrc_flat_vel = (
+                    self.links_state[i_l, i_b].cfrc_ext_vel + self.links_state[i_l, i_b].cfrc_flat_vel
+                )
+                self.links_state[i_l, i_b].cfrc_flat_ang = (
+                    self.links_state[i_l, i_b].cfrc_ext_ang + self.links_state[i_l, i_b].cfrc_flat_ang
+                )
 
     @ti.func
     def _func_inverse_link_force(self):
@@ -3901,13 +3917,11 @@ class RigidSolver(Solver):
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].ang[i]
 
-
     @ti.kernel
     def _kernel_inverse_dynamics_for_sensors(self):
         self._func_system_update_acc(True)
         self._func_system_update_force()
         self._func_inverse_link_force()
-
 
     def get_links_acc(self, links_idx, envs_idx=None):
         tensor, links_idx, envs_idx = self._validate_2D_io_variables(None, links_idx, 3, envs_idx, idx_name="links_idx")
