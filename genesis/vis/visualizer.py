@@ -144,6 +144,10 @@ class Visualizer(RBC):
         if self._t < self._scene._t:
             self._t = self._scene._t
 
+            for camera in self._cameras:
+                if camera._attached_link is not None:
+                    camera.move_to_attach()
+
             if self._scene.rigid_solver.is_active():
                 self._scene.rigid_solver.update_geoms_render_T()
                 self._scene.rigid_solver._kernel_update_vgeoms()
