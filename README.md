@@ -22,7 +22,7 @@
 - [2025-01-08] Released v0.2.1 🎊 🎉
 - [2025-01-08] Created [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group.
 - [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
-- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)
+- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)
 
 ## Table of Contents
 
@@ -120,7 +120,7 @@ The Genesis project is an open and collaborative effort. We welcome all forms of
 - **Bug reports** through GitHub Issues.
 - **Suggestions** to improve Genesis's usability.
 
-Refer to our [contribution guide](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md) for more details.
+Refer to our [contribution guide](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) for more details.
 
 ## Support
 
