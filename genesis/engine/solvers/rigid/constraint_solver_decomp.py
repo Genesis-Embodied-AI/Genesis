@@ -211,7 +211,71 @@ class ConstraintSolver:
                     quat=self._solver.links_state[link2_idx, i_b].quat,
                 )
 
-                # TODO: Implement the rest of the function to connect the two links with an equality constraint
+                link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
+                link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
+                invweight = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+                    link_b_maybe_batch
+                ].invweight 
+
+                for i_3 in range(3):
+                    n_con = ti.atomic_add(self.n_constraints[i_b], 1)
+                    jac_qvel = gs.ti_float(0.0)
+                    for i_ab in range(2):
+                        sign = gs.ti_float(1.0)
+                        link = link1_idx
+                        pos = global_anchor1
+                        if i_ab == 1:
+                            sign = gs.ti_float(-1.0)
+                            link = link2_idx
+                            pos = global_anchor2
+
+                        while link > -1:
+                            link_maybe_batch = (
+                                [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
+                            )
+
+                            # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                            for i_d_ in range(self._solver.links_info[link_maybe_batch].n_dofs):
+                                i_d = self._solver.links_info[link_maybe_batch].dof_end - 1 - i_d_
+
+                                cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang
+                                cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
+
+                                t_quat = gu.ti_identity_quat()
+                                t_pos = pos - self._solver.links_state[link, i_b].root_COM
+                                ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+
+                                diff = sign * vel
+                                jac = diff[i_3]
+                                # print("jac", i_3, jac, diff)
+                                jac_qvel = jac_qvel + jac * self._solver.dofs_state[i_d, i_b].vel
+                                self.jac[n_con, i_d, i_b] = self.jac[n_con, i_d, i_b] + jac
+                                print("jac", n_con, i_d, jac)
+
+                                if ti.static(self.sparse_solve):
+                                    self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
+                                    con_n_relevant_dofs += 1
+
+                            link = self._solver.links_info[link_maybe_batch].parent_idx
+
+                    if ti.static(self.sparse_solve):
+                        self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+
+                    pos_diff = global_anchor1 - global_anchor2
+                    penetration = pos_diff.norm()
+
+                    sol_params = [2 * 0.01, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
+                    imp, aref = gu.imp_aref2(sol_params, -penetration, jac_qvel, pos_diff[i_3])
+
+                    diag = invweight * (1 - imp) / (imp + gs.EPS)
+                    # print("n_con", n_con, penetration, jac_qvel, diag, aref, pos_diff[i_3])
+
+                    self.diag[n_con, i_b] = diag
+                    self.aref[n_con, i_b] = aref
+
+                    self.efc_D[n_con, i_b] = 1 / ti.max(diag, gs.EPS)
+                    print("aref", n_con, pos_diff[i_3], aref, jac_qvel, self.efc_D[n_con, i_b])
+
 
     @ti.kernel
     def add_joint_limit_constraints(self):
@@ -517,6 +581,7 @@ class ConstraintSolver:
 
                     gradient = ti.sqrt(gradient / self._solver.n_dofs_)
                     improvement = self.prev_cost[i_b] - self.cost[i_b]
+                    print("it", it, improvement, self.cost[i_b])
                     if gradient < self.tolerance or improvement < self.tolerance:
                         break
                 # print(cnt)
@@ -572,7 +637,8 @@ class ConstraintSolver:
             tmp_quad_total1 = self.quad_gauss[_i0 + 1, i_b]
             tmp_quad_total2 = self.quad_gauss[_i0 + 2, i_b]
             for i_c in range(self.n_constraints[i_b]):
-                active = self.Jaref[i_c, i_b] + alpha * self.jv[i_c, i_b] < 0
+                # active = self.Jaref[i_c, i_b] + alpha * self.jv[i_c, i_b] < 0
+                active = 1
                 tmp_quad_total0 += self.quad[i_c, _i0 + 0, i_b] * active
                 tmp_quad_total1 += self.quad[i_c, _i0 + 1, i_b] * active
                 tmp_quad_total2 += self.quad[i_c, _i0 + 2, i_b] * active
@@ -860,8 +926,11 @@ class ConstraintSolver:
             if ti.static(self._solver_type == gs.constraint_solver.Newton):
                 self.prev_active[i_c, i_b] = self.active[i_c, i_b]
             self.active[i_c, i_b] = self.Jaref[i_c, i_b] < 0
+            # self.active[i_c, i_b] = 1
+            print("active", i_c, self.active[i_c, i_b], self.n_constraints[i_b])
             self.efc_force[i_c, i_b] = -self.efc_D[i_c, i_b] * self.Jaref[i_c, i_b] * self.active[i_c, i_b]
 
+        print("?0", self.active[1, i_b])
         if ti.static(self.sparse_solve):
             for i_d in range(self._solver.n_dofs):
                 self.qfrc_constraint[i_d, i_b] = gs.ti_float(0.0)
@@ -872,12 +941,13 @@ class ConstraintSolver:
                         self.qfrc_constraint[i_d, i_b] + self.jac[i_c, i_d, i_b] * self.efc_force[i_c, i_b]
                     )
         else:
+            print("?1", self.active[1, i_b])
             for i_d in range(self._solver.n_dofs):
                 qfrc_constraint = gs.ti_float(0.0)
                 for i_c in range(self.n_constraints[i_b]):
                     qfrc_constraint += self.jac[i_c, i_d, i_b] * self.efc_force[i_c, i_b]
                 self.qfrc_constraint[i_d, i_b] = qfrc_constraint
-
+        print("?2", self.active[1, i_b])
         # (Mx - Mx') * (x - x')
         for i_d in range(self._solver.n_dofs):
             v = (
@@ -887,12 +957,16 @@ class ConstraintSolver:
             )
             self.gauss[i_b] = self.gauss[i_b] + v
             cost[i_b] = cost[i_b] + v
+        print("gauss", cost[i_b])
 
         # D * (Jx - aref) ** 2
         for i_c in range(self.n_constraints[i_b]):
+            print("active~", i_c, self.active[i_c, i_b], self.n_constraints[i_b])
             cost[i_b] = cost[i_b] + 0.5 * (
                 self.efc_D[i_c, i_b] * self.Jaref[i_c, i_b] * self.Jaref[i_c, i_b] * self.active[i_c, i_b]
             )
+            print("penalty", cost[i_b], self.Jaref[i_c, i_b], self.efc_D[i_c, i_b])
+            print("active", self.active[i_c, i_b])
 
     @ti.func
     def _func_update_gradient(self, i_b):
