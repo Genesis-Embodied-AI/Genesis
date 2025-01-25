@@ -403,7 +403,7 @@ def parse_equality(mj, i_e, scale, ordered_links_idx):
     e_info["anchor2_pos"] = mj_equality.data[3:6] * scale
     e_info["rel_pose"] = mj_equality.data[6:10]
     e_info["torque_scale"] = mj_equality.data[10]
-    
+
     e_info["sol_params"] = np.concatenate((mj_equality.solref, mj_equality.solimp))
 
     if mj_equality.type == mujoco.mjtEq.mjEQ_CONNECT:

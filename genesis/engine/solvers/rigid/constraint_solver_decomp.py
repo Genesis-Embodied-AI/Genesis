@@ -210,11 +210,16 @@ class ConstraintSolver:
                     quat=self._solver.links_state[link2_idx, i_b].quat,
                 )
 
-                link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
-                link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
-                invweight = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
-                    link_b_maybe_batch
-                ].invweight 
+                link_a_maybe_batch = (
+                    [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
+                )
+                link_b_maybe_batch = (
+                    [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
+                )
+                invweight = (
+                    self._solver.links_info[link_a_maybe_batch].invweight
+                    + self._solver.links_info[link_b_maybe_batch].invweight
+                )
 
                 for i_3 in range(3):
                     n_con = ti.atomic_add(self.n_constraints[i_b], 1)
@@ -227,7 +232,7 @@ class ConstraintSolver:
                     else:
                         for i_d in range(self._solver.n_dofs):
                             self.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
-                            
+
                     jac_qvel = gs.ti_float(0.0)
                     for i_ab in range(2):
                         sign = gs.ti_float(1.0)
@@ -279,7 +284,6 @@ class ConstraintSolver:
                     self.aref[n_con, i_b] = aref
 
                     self.efc_D[n_con, i_b] = 1 / ti.max(diag, gs.EPS)
-
 
     @ti.kernel
     def add_joint_limit_constraints(self):
@@ -499,13 +503,12 @@ class ConstraintSolver:
 
     def handle_constraints(self):
         self.add_equality_constraints()
-        
+
         if self._solver._enable_collision:
             self.add_collision_constraints()
 
         if self._solver._enable_joint_limit:
             self.add_joint_limit_constraints()
-
 
         if self._solver._enable_collision or self._solver._enable_joint_limit:
             self.resolve()

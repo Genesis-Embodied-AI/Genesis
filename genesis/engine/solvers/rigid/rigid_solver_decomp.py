@@ -2325,12 +2325,12 @@ class RigidSolver(Solver):
                 else:
                     # update collider sort_buffer
                     for i_g in range(self.entities_info[i_e].geom_start, self.entities_info[i_e].geom_end):
-                        self.collider.sort_buffer[
-                            self.geoms_state[i_g, i_b].min_buffer_idx, i_b
-                        ].value = self.geoms_state[i_g, i_b].aabb_min[0]
-                        self.collider.sort_buffer[
-                            self.geoms_state[i_g, i_b].max_buffer_idx, i_b
-                        ].value = self.geoms_state[i_g, i_b].aabb_max[0]
+                        self.collider.sort_buffer[self.geoms_state[i_g, i_b].min_buffer_idx, i_b].value = (
+                            self.geoms_state[i_g, i_b].aabb_min[0]
+                        )
+                        self.collider.sort_buffer[self.geoms_state[i_g, i_b].max_buffer_idx, i_b].value = (
+                            self.geoms_state[i_g, i_b].aabb_max[0]
+                        )
 
     @ti.func
     def _func_aggregate_awake_entities(self):

@@ -304,6 +304,7 @@ def orthogonals2(a):
     b = c.cross(a).normalized()
     return b, c
 
+
 @ti.func
 def imp_aref(params, neg_penetration, vel, pos):
     # The first term in parms is the timeconst parsed from mjcf. However, we don't use it here but use the one passed in, which is 2*substep_dt.
@@ -323,6 +324,7 @@ def imp_aref(params, neg_penetration, vel, pos):
     aref = -b * vel - k * imp * pos
 
     return imp, aref
+
 
 @ti.func
 def closest_segment_point(a, b, pt):
