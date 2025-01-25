@@ -11,10 +11,9 @@ scene = gs.Scene(
     ),
     sim_options=gs.options.SimOptions(
         dt=1e-2,
-        gravity=(0, 0, 0),
     ),
     rigid_options=gs.options.RigidOptions(
-        constraint_solver=gs.constraint_solver.CG,
+        constraint_solver=gs.constraint_solver.Newton,
     ),
 )
 
@@ -32,12 +31,16 @@ franka = scene.add_entity(
 
 scene.build()
 rigid = scene.sim.rigid_solver
-rigid.qpos.from_numpy(np.array([0.1, 0.1, 0.1])[:, None])
+rigid.qpos.from_numpy(np.array([0.09920997, 0.04553844, 0.10750141])[:, None])
+rigid.dofs_state.vel.from_numpy(np.array([-0.22096718, -1.19638867, -3.11377182])[:, None])
 rigid._kernel_forward_kinematics_links_geoms()
 import time
 for i in range(10000):
-    print("i-----------------", i)
     scene.step()
-    if i >= 0:
-        from IPython import embed; embed()
-    # import ipdb; ipdb.set_trace()
+
+    # print("state", rigid.qpos.to_numpy().reshape(-1), rigid.dofs_state.acc.to_numpy().reshape(-1))
+    # print("efc_force", rigid.constraint_solver.efc_force.to_numpy().reshape(-1))
+    # print("qacc_warmstart", rigid.constraint_solver.qacc_ws.to_numpy().reshape(-1))
+    # if i >= 0:
+    #     from IPython import embed; embed()
+    # # import ipdb; ipdb.set_trace()

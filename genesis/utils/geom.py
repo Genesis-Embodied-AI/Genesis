@@ -304,30 +304,8 @@ def orthogonals2(a):
     b = c.cross(a).normalized()
     return b, c
 
-
 @ti.func
-def imp_aref(params, neg_penetration, vel):
-    # The first term in parms is the timeconst parsed from mjcf. However, we don't use it here but use the one passed in, which is 2*substep_dt.
-    timeconst, dampratio, dmin, dmax, width, mid, power = params
-    imp_x = ti.abs(neg_penetration) / width
-    imp_a = (1.0 / mid ** (power - 1)) * imp_x**power
-    imp_b = 1 - (1.0 / (1 - mid) ** (power - 1)) * (1 - imp_x) ** power
-    imp_y = imp_a if imp_x < mid else imp_b
-
-    imp = dmin + imp_y * (dmax - dmin)
-    imp = ti.math.clamp(imp, dmin, dmax)
-    imp = dmax if imp_x > 1.0 else imp
-
-    b = 2 / (dmax * timeconst)
-    k = 1 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
-
-    aref = -b * vel - k * imp * neg_penetration
-
-    return imp, aref
-
-
-@ti.func
-def imp_aref2(params, neg_penetration, vel, pos):
+def imp_aref(params, neg_penetration, vel, pos):
     # The first term in parms is the timeconst parsed from mjcf. However, we don't use it here but use the one passed in, which is 2*substep_dt.
     timeconst, dampratio, dmin, dmax, width, mid, power = params
     imp_x = ti.abs(neg_penetration) / width
