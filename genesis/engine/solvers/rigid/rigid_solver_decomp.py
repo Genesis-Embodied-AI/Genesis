@@ -1044,6 +1044,8 @@ class RigidSolver(Solver):
                 equalities_torque_scale=np.array([equality.torque_scale for equality in equalities], dtype=gs.np_float),
                 equalities_sol_params=np.array([equality.sol_params for equality in equalities], dtype=gs.np_float),
             )
+            if self._use_contact_island:
+                gs.logger.warn("contact island is not supported for equality constraints yet")
 
     @ti.kernel
     def _kernel_init_equality_fields(
