@@ -1574,7 +1574,7 @@ class RigidEntity(Entity):
 
         Parameters
         ----------
-        ls_idx_local : array_like
+        ls_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1593,11 +1593,11 @@ class RigidEntity(Entity):
 
         Parameters
         ----------
-        ls_idx_local : array_like
+        ls_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        
+
         Returns
         -------
         quat : torch.Tensor, shape (n_links, 4) or (n_envs, n_links, 4)
@@ -1612,7 +1612,7 @@ class RigidEntity(Entity):
 
         Parameters
         ----------
-        ls_idx_local : array_like
+        ls_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1631,7 +1631,7 @@ class RigidEntity(Entity):
 
         Parameters
         ----------
-        ls_idx_local : array_like
+        ls_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1650,7 +1650,7 @@ class RigidEntity(Entity):
 
         Parameters
         ----------
-        ls_idx_local : array_like
+        ls_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
