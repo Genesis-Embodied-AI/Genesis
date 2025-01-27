@@ -88,7 +88,7 @@ class Trackball(object):
         self._target = self._n_target
 
     def drag(self, point):
-        """Update the tracball during a drag.
+        """Update the trackball during a drag.
 
         Parameters
         ----------
