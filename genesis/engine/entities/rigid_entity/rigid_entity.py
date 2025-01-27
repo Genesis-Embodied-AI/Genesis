@@ -393,17 +393,18 @@ class RigidEntity(Entity):
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
-            self._add_equality(
-                name=e_info["name"],
-                type=e_info["type"],
-                link1_idx=e_info["link1_idx"],
-                link2_idx=e_info["link2_idx"],
-                anchor1_pos=e_info["anchor1_pos"],
-                anchor2_pos=e_info["anchor2_pos"],
-                rel_pose=e_info["rel_pose"],
-                torque_scale=e_info["torque_scale"],
-                sol_params=e_info["sol_params"],
-            )
+            if e_info["type"] == gs.EQUALITY_TYPE.CONNECT:  # only this type is supported right now
+                self._add_equality(
+                    name=e_info["name"],
+                    type=e_info["type"],
+                    link1_idx=e_info["link1_idx"],
+                    link2_idx=e_info["link2_idx"],
+                    anchor1_pos=e_info["anchor1_pos"],
+                    anchor2_pos=e_info["anchor2_pos"],
+                    rel_pose=e_info["rel_pose"],
+                    torque_scale=e_info["torque_scale"],
+                    sol_params=e_info["sol_params"],
+                )
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
