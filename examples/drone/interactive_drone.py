@@ -134,6 +134,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=True, help="Enable visualization (default: True)")
     parser.add_argument("-m", "--mac", action="store_true", default=False, help="Running on MacOS (default: False)")
+    parser.add_argument("-f", "--follow", action="store_true", default=False, help="Enable camera follow (default: False)")
     args = parser.parse_args()
 
     # Initialize Genesis
@@ -183,6 +184,16 @@ def main():
     # Start keyboard listener
     listener = keyboard.Listener(on_press=controller.on_press, on_release=controller.on_release)
     listener.start()
+
+    if args.follow:
+        camera = scene.add_camera(
+            res=(640, 480),
+            pos=(0.0, -4.0, 2.0),
+            lookat=(0.0, 0.0, 0.5),
+            fov=45,
+            GUI=True,
+        )
+        scene.set_camera_follow_entity(camera, drone, height=2.0, smoothing=0.1)
 
     if args.mac:
         # Run simulation in another thread

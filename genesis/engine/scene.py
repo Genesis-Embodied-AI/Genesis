@@ -729,6 +729,10 @@ class Scene(RBC):
         if self._show_FPS:
             self.FPS_tracker.step()
 
+        # Update camera to follow entity if enabled
+        if hasattr(self, "_camera_follow_entity") and self._camera_follow_entity is not None:
+            self._camera_follow_entity.follow_entity()
+
     def _step_grad(self):
         self._sim.collect_output_grads()
         self._sim._step_grad()
@@ -912,6 +916,24 @@ class Scene(RBC):
 
         self._backward_ready = False
         self._forward_ready = False
+
+    def set_camera_follow_entity(self, camera, entity, height=None, smoothing=None):
+        """
+        Set the camera to follow a specified entity.
+
+        Parameters
+        ----------
+        camera : genesis.Camera
+            The camera to follow the entity.
+        entity : genesis.Entity
+            The entity to follow.
+        height : float, optional
+            The height at which the camera should follow the entity. If None, the camera will maintain its current height.
+        smoothing : float, optional
+            The smoothing factor for the camera's movement. If None, no smoothing will be applied.
+        """
+        camera.follow_entity(entity, height, smoothing)
+        self._camera_follow_entity = camera
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
