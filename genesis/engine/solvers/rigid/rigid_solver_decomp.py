@@ -2121,9 +2121,11 @@ class RigidSolver(Solver):
                 self.dofs_state[l_info.dof_start, i_b].pos = self.qpos[l_info.q_start, i_b]
                 I_dof_start = [l_info.dof_start, i_b] if ti.static(self._options.batch_dofs_info) else l_info.dof_start
                 dof_info = self.dofs_info[I_dof_start]
-                self.links_state[i_l, i_b].j_pos = dof_info.motion_vel * self.qpos[l_info.q_start, i_b]
+                self.links_state[i_l, i_b].j_pos = dof_info.motion_vel * (
+                    self.qpos[l_info.q_start, i_b] - self.qpos0[l_info.q_start, i_b]
+                )
                 self.links_state[i_l, i_b].j_quat = gu.ti_rotvec_to_quat(
-                    dof_info.motion_ang * self.qpos[l_info.q_start, i_b]
+                    dof_info.motion_ang * (self.qpos[l_info.q_start, i_b] - self.qpos0[l_info.q_start, i_b])
                 )
                 self.links_state[i_l, i_b].j_ang = dof_info.motion_ang * self.dofs_state[l_info.dof_start, i_b].vel
                 self.links_state[i_l, i_b].j_vel = dof_info.motion_vel * self.dofs_state[l_info.dof_start, i_b].vel
