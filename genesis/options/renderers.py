@@ -49,8 +49,6 @@ class RayTracer(Renderer):
         Russian Roulette depth. Defaults to 0.
     rr_threshold : float, optional
         Russian Roulette threshold. Defaults to 0.95.
-    denoise : bool, optional
-        Whether to use AI denoiser. Defaults to True.
     env_surface : Optional[Surface], optional
         Environment surface. Defaults to None.
     env_radius : float, optional

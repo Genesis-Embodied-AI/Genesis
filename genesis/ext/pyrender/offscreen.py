@@ -68,6 +68,7 @@ class OffscreenRenderer(object):
         seg=False,
         ret_depth=False,
         plane_reflection=False,
+        env_separate_rigid=False,
         normal=False,
     ):
         """Render a scene with the given set of flags.
@@ -112,6 +113,9 @@ class OffscreenRenderer(object):
         if plane_reflection:
             flags |= RenderFlags.REFLECTIVE_FLOOR
 
+        if env_separate_rigid:
+            flags |= RenderFlags.ENV_SEPARATE
+
         if seg:
             seg_node_map = self._seg_node_map
             flags |= RenderFlags.SEG
@@ -151,7 +155,12 @@ class OffscreenRenderer(object):
 
             old_cache = renderer._program_cache
             renderer._program_cache = CustomShaderCache()
-            normal_arr, _ = renderer.render(scene, RenderFlags.FLAT | RenderFlags.OFFSCREEN)
+
+            flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
+            if env_separate_rigid:
+                flags |= RenderFlags.ENV_SEPARATE
+            
+            normal_arr, _ = renderer.render(scene, flags)
             retval = retval + (normal_arr,)
             renderer._program_cache = old_cache
 

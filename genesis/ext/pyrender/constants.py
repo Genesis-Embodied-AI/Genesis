@@ -62,6 +62,8 @@ class RenderFlags(object):
     """Skip the floor"""
     REFLECTIVE_FLOOR = 1 << 16
     """Render the reflection of floor"""
+    ENV_SEPARATE = 1 << 17
+    """Render the reflection of floor"""
 
 
 class TextAlign:
