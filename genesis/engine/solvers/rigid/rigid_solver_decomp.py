@@ -487,8 +487,11 @@ class RigidSolver(Solver):
         )
 
         self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
+        self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
-            self.qpos.from_numpy(self._batch_array(self.init_qpos.astype(gs.np_float)))
+            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            self.qpos.from_numpy(init_qpos)
+            self.qpos0.from_numpy(init_qpos)
 
         # This is for IK use only
         # TODO: support IK with parallel envs
