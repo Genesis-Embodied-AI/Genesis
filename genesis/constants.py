@@ -44,6 +44,12 @@ class JOINT_TYPE(IntEnum):
     PLANAR = 5
 
 
+class EQUALITY_TYPE(IntEnum):
+    CONNECT = 0
+    WELD = 1
+    JOINT = 2
+
+
 # joint type in rigid solver, ranked by number of dofs
 class CTRL_MODE(IntEnum):
     FORCE = 0

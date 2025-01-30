@@ -1,0 +1,50 @@
+<mujoco>
+    <option gravity="0 0 0" timestep="0.002" />
+    <asset>
+        <material name="blue_" rgba="0 0 1 1" />
+        <material name="green" rgba="0 1 0 1" />
+        <material name="red__" rgba="1 0 0 1" />
+        <material name="white" rgba="1 1 1 1" />
+    </asset>
+
+    <default>
+        <default class="visual">
+            <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+        </default>
+    </default>
+
+    <worldbody>
+        <geom type="plane" size="10 10 0.1" pos="0 0 -2" rgba=".9 0 0 1" />
+        <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1" />
+        <body name="link_1" pos="0 0 0">
+            <geom type="cylinder" size=".2    2" pos="0 0 2" euler="0 0 0" material="red__" class="visual"/>
+            <geom type="cylinder" size=".25 .25" pos="0 0 4" euler="0 90 0" material="red__" class="visual"/>
+            <geom type="cylinder" size=".25 .25" pos="0 0 0" euler="0 90 0" material="red__" class="visual"/>
+            <body name="link_2" pos="0.5 0 0" euler="0 0 0">
+                <joint name="hinge_1" pos="0 0 0" axis="1 0 0" />
+                <geom type="cylinder" size=".2    2" pos="0 2 0" euler="90 0 0" material="blue_" class="visual"/>
+                <geom type="cylinder" size=".25 .25" pos="0 4 0" euler="0 90 0" material="blue_" class="visual"/>
+                <geom type="cylinder" size=".25 .25" pos="0 0 0" euler="0 90 0" material="blue_" class="visual"/>
+                <body name="link_3" pos="-0.5 4 0" euler="0 0 0">
+                    <joint name="hinge_2" pos="0 0 0" axis="1 0 0" />
+                    <geom type="cylinder" size=".2    2" pos="0 0 2" euler="0 0 0" material="green" class="visual"/>
+                    <geom type="cylinder" size=".25 .25" pos="0 0 0" euler="0 90 0" material="green" class="visual"/>
+                    <geom type="cylinder" size=".25 .25" pos="0 0 4" euler="0 90 0" material="green" class="visual"/>
+                    <body name="link_4" pos="0.5 0 4" euler="0 0 0">
+                        <joint name="hinge_3" pos="0 0 0" axis="1 0 0" />
+                        <geom type="cylinder" size=".2    2" pos="0 -2 0" euler="90 0 0" material="white" class="visual"/>
+                        <geom type="cylinder" size=".25 .25" pos="0 0 0" euler="0 90 0" material="white" class="visual"/>
+                        <geom type="cylinder" size=".25 .25" pos="0 -4 0" euler="0 90 0" material="white" class="visual"/>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+    <equality>
+        <connect name="kinematic_link1" active="true" body1="link_1" body2="link_4" anchor="0 0 4" />
+    </equality>
+    <actuator>
+        <motor joint="hinge_1" ctrlrange="-100000 100000" ctrllimited="true" />
+        <motor joint="hinge_2" ctrlrange="-100000 100000" ctrllimited="true" />
+    </actuator>
+</mujoco>

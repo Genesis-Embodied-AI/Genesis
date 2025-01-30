@@ -247,6 +247,7 @@ from .constants import (
     IntEnum,
     JOINT_TYPE,
     GEOM_TYPE,
+    EQUALITY_TYPE,
     CTRL_MODE,
     PARA_LEVEL,
     ACTIVE,
