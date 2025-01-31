@@ -143,6 +143,7 @@ class Mesh(object):
     @staticmethod
     def from_trimesh(
         mesh,
+        name=None,
         material=None,
         is_visible=True,
         poses=None,
@@ -157,6 +158,8 @@ class Mesh(object):
         ----------
         mesh : :class:`~trimesh.base.Trimesh` or list of them
             A triangular mesh or a list of meshes.
+        name : str
+            The user-defined name of this object.
         material : :class:`Material`
             The material of the object. Overrides any mesh material.
             If not specified and the mesh has no material, a default material
@@ -234,7 +237,7 @@ class Mesh(object):
                 )
             )
 
-        return Mesh(primitives=primitives, is_visible=is_visible)
+        return Mesh(primitives=primitives, name=name, is_visible=is_visible)
 
     @staticmethod
     def _get_trimesh_props(mesh, smooth=False, material=None):
