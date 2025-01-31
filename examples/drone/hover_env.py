@@ -131,8 +131,13 @@ class HoverEnv:
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.actions
 
-        # 14468 is hover rpm
-        self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)
+        # 14468 is hover env
+        rpm = (1 + exec_actions * 0.8) * 14468.429183500699
+        if rpm.is_cuda:
+            rpm_cpu = rpm.cpu()
+        else:
+            rpm_cpu = rpm
+        self.drone.set_propellels_rpm(rpm_cpu)
         self.scene.step()
 
         # update buffers
