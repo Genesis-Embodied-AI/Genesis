@@ -2150,13 +2150,13 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_force_range(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_limit(self, dofs_idx=None, envs_idx=None):
+    def get_dofs_limit(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the positional limits (min and max) for the entity's dofs.
 
         Parameters
         ----------
-        dofs_idx : None | array_like, optional
+        dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -2168,7 +2168,7 @@ class RigidEntity(Entity):
         upper_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The upper limit of the positional limits for the entity's dofs.
         """
-        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx), envs_idx)
+        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
     def get_dofs_stiffness(self, dofs_idx_local=None, envs_idx=None):
