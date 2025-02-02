@@ -5,4 +5,4 @@ repos:
       - id: black
         args:
           - --line-length=120
-          - genesis
+          - .
