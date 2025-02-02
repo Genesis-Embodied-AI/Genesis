@@ -64,16 +64,6 @@ class Go2Env:
             ),
         )
 
-        # add follower camera
-        if show_viewer:
-            self.follower_camera = self.scene.add_camera(res=(640,480),
-                                        pos=(0.0, 2.0, 0.5),
-                                        lookat=(0.0, 0.0, 0.5),
-                                        fov=40,
-                                        GUI=True)
-            # follow the robot at a fixed height and orientation 
-            self.follower_camera.follow_entity(self.robot, fixed_axis=(None, None, 0.5), smoothing=0.5, fix_orientation=True)
-
         # build
         self.scene.build(n_envs=num_envs)
 
@@ -133,9 +123,6 @@ class Go2Env:
         target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
         self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
         self.scene.step()
-
-        if hasattr(self, "follower_camera"):
-            self.follower_camera.render()
 
         # update buffers
         self.episode_length_buf += 1

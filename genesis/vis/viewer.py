@@ -171,7 +171,7 @@ class Viewer(RBC):
             The entity to follow.
         fixed_axis : (float, float, float), optional
             The fixed axis for the viewer's movement. For each axis, if None, the viewer will move freely. If a float, the viewer will be fixed on at that value.
-            For example, [None, None, None] will allow the viewer to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.   
+            For example, [None, None, None] will allow the viewer to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.
         smoothing : float, optional
             The smoothing factor in ]0,1[ for the viewer's movement. If None, no smoothing will be applied.
         fix_orientation : bool, optional
@@ -188,15 +188,19 @@ class Viewer(RBC):
         Update the viewer position to follow the specified entity.
         """
         entity_pos = self._followed_entity.get_pos().cpu().numpy()
-        if entity_pos.ndim > 1: #check for multiple envs
+        if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
         camera_pose = np.array(self._pyrender_viewer._trackball.pose)
         camera_pos = np.array(self._pyrender_viewer._trackball.pose[:3, 3])
 
         if self._follow_smoothing is not None:
             # Smooth viewer movement with a low-pass filter
-            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (entity_pos + np.array(self._camera_init_pos)) 
-            self._follow_lookat = self._follow_smoothing * self._follow_lookat + (1 - self._follow_smoothing) * entity_pos
+            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (
+                entity_pos + np.array(self._camera_init_pos)
+            )
+            self._follow_lookat = (
+                self._follow_smoothing * self._follow_lookat + (1 - self._follow_smoothing) * entity_pos
+            )
         else:
             camera_pos = entity_pos + np.array(self._camera_init_pos)
             self._follow_lookat = entity_pos

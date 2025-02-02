@@ -91,7 +91,6 @@ class DroneController:
         return self.rpms
 
 
-
 def run_sim(scene, drone, controller):
     while controller.running:
         try:

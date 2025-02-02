@@ -288,7 +288,7 @@ class Camera(RBC):
             The entity to follow.
         fixed_axis : (float, float, float), optional
             The fixed axis for the camera's movement. For each axis, if None, the camera will move freely. If a float, the viewer will be fixed on at that value.
-            For example, [None, None, None] will allow the camera to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.   
+            For example, [None, None, None] will allow the camera to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.
         smoothing : float, optional
             The smoothing factor for the camera's movement. If None, no smoothing will be applied.
         fix_orientation : bool, optional
@@ -306,7 +306,7 @@ class Camera(RBC):
         """
 
         entity_pos = self._followed_entity.get_pos()[0].cpu().numpy()
-        if entity_pos.ndim > 1: #check for multiple envs
+        if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
         camera_pos = np.array(self._pos)
         camera_pose = np.array(self._transform)
@@ -314,7 +314,9 @@ class Camera(RBC):
 
         if self._follow_smoothing is not None:
             # Smooth camera movement with a low-pass filter
-            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (entity_pos + self._init_pos)
+            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (
+                entity_pos + self._init_pos
+            )
             lookat_pos = self._follow_smoothing * lookat_pos + (1 - self._follow_smoothing) * entity_pos
         else:
             camera_pos = entity_pos + self._init_pos
