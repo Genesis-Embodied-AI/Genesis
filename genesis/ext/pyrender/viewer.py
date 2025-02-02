@@ -1,5 +1,4 @@
-"""A pyglet-based interactive 3D scene viewer.
-"""
+"""A pyglet-based interactive 3D scene viewer."""
 
 import copy
 import os
