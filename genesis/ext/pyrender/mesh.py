@@ -115,13 +115,15 @@ class Mesh(object):
         return False
 
     @staticmethod
-    def from_points(points, colors=None, normals=None, is_visible=True, poses=None):
+    def from_points(points, name=None, colors=None, normals=None, is_visible=True, poses=None):
         """Create a Mesh from a set of points.
 
         Parameters
         ----------
         points : (n,3) float
             The point positions.
+        name : str
+            The user-defined name of this object.
         colors : (n,3) or (n,4) float, optional
             RGB or RGBA colors for each point.
         normals : (n,3) float, optionals
@@ -137,7 +139,7 @@ class Mesh(object):
             The created mesh.
         """
         primitive = Primitive(positions=points, normals=normals, color_0=colors, mode=GLTF.POINTS, poses=poses)
-        mesh = Mesh(primitives=[primitive], is_visible=is_visible)
+        mesh = Mesh(primitives=[primitive], name=name, is_visible=is_visible)
         return mesh
 
     @staticmethod
