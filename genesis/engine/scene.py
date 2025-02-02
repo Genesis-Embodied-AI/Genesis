@@ -749,9 +749,14 @@ class Scene(RBC):
             The radius of the line (represented as a cylinder)
         color : array_like, shape (4,), optional
             The color of the line in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_line(start, end, radius, color)
+            return self._visualizer.context.draw_debug_line(start, end, radius, color)
 
     @gs.assert_built
     def draw_debug_arrow(self, pos, vec=(0, 0, 1), radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
@@ -768,10 +773,14 @@ class Scene(RBC):
             The radius of the arrow body (represented as a cylinder).
         color : array_like, shape (4,), optional
             The color of the arrow in RGBA format.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_arrow(pos, vec, radius, color)
+            return self._visualizer.context.draw_debug_arrow(pos, vec, radius, color)
 
     @gs.assert_built
     def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
@@ -788,10 +797,14 @@ class Scene(RBC):
             The size of the origin point (represented as a sphere).
         axis_radius : float, optional
             The radius of the axes (represented as cylinders).
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
+            return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
 
     @gs.assert_built
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
@@ -806,10 +819,14 @@ class Scene(RBC):
             The position of the mesh in the scene.
         T : array_like, shape (4, 4) | None, optional
             The transformation matrix of the mesh. If None, the mesh will be drawn at the position specified by `pos`. Otherwise, `T` has a higher priority than `pos`.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_mesh(mesh, pos, T)
+            return self._visualizer.context.draw_debug_mesh(mesh, pos, T)
 
     @gs.assert_built
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
@@ -824,9 +841,14 @@ class Scene(RBC):
             radius of the sphere.
         color : array_like, shape (4,), optional
             The color of the sphere in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_sphere(pos, radius, color)
+            return self._visualizer.context.draw_debug_sphere(pos, radius, color)
 
     @gs.assert_built
     def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
@@ -841,9 +863,14 @@ class Scene(RBC):
             The radius of the spheres.
         color : array_like, shape (4,), optional
             The color of the spheres in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_spheres(poss, radius, color)
+            return self._visualizer.context.draw_debug_spheres(poss, radius, color)
 
     @gs.assert_built
     def draw_debug_box(
@@ -866,10 +893,14 @@ class Scene(RBC):
             Whether to draw the box as a wireframe.
         wireframe_radius : float, optional
             The radius of the wireframe lines.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_box(
+            return self._visualizer.context.draw_debug_box(
                 bounds, color, wireframe=wireframe, wireframe_radius=wireframe_radius
             )
 
@@ -884,10 +915,22 @@ class Scene(RBC):
             The positions of the points.
         colors : array_like, shape (4,), optional
             The color of the points in RGBA format.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_points(poss, colors)
+            return self._visualizer.context.draw_debug_points(poss, colors)
+
+    @gs.assert_built
+    def clear_debug_object(self, object):
+        """
+        Clears all the debug objects in the scene.
+        """
+        with self._visualizer.viewer_lock:
+            self._visualizer.context.clear_debug_object(object)
 
     @gs.assert_built
     def clear_debug_objects(self):
