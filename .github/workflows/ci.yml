@@ -46,7 +46,7 @@ jobs:
 
 
       - name: Upload Test Results as Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: speed-test-results
           path: speed_test.txt
