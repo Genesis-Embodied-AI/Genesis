@@ -9,7 +9,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 
-
 class Camera(RBC):
     """
     Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.

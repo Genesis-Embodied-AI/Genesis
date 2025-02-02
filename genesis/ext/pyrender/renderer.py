@@ -176,6 +176,7 @@ class Renderer(object):
             # forward_pass_start = time()
             if flags & RenderFlags.REFLECTIVE_FLOOR:
                 self._floor_pass(scene, flags, env_idx=env_idx)
+
             retval = self._forward_pass(scene, flags, seg_node_map=seg_node_map, env_idx=env_idx)
             if isinstance(retval, tuple):
                 if retval_list is None:
@@ -549,14 +550,8 @@ class Renderer(object):
 
         # Set up camera matrices
         V, P = self._get_camera_matrices(scene)
-
         cam_pos = scene.get_pose(scene.main_camera_node)[:3, 3]
-
-        # for i in range(6):
-        #     dep = self.get_depth_image(self.jit.shadow_map[0], GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_POSITIVE_X+i)
-        #     print(dep.min(), dep.max())
-        #     plt.imshow(dep)
-        #     plt.show()
+        
         floor_tex = self._floor_texture_color._texid if flags & RenderFlags.REFLECTIVE_FLOOR else 0
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 

@@ -1140,7 +1140,12 @@ class Viewer(pyglet.window.Window):
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,
             ),
-            Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
+            Config(
+                depth_size=24,
+                double_buffer=True,
+                major_version=MIN_OPEN_GL_MAJOR,
+                minor_version=MIN_OPEN_GL_MINOR
+            ),
         ]
         for conf in confs:
             try:

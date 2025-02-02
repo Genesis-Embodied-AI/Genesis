@@ -305,9 +305,9 @@ class RasterizerContext:
                 contact_data = self.sim.rigid_solver.collider.contact_data[i_con, batch_idx]
                 contact_pos = np.array(contact_data.pos) + self.scene.envs_offset[batch_idx]
 
-                if self.sim.rigid_solver.links[contact_data["link_a"]].visualize_contact:
+                if self.sim.rigid_solver.links[contact_data.link_a].visualize_contact:
                     self.draw_contact_arrow(pos=contact_pos, force=-contact_data.force)
-                if self.sim.rigid_solver.links[contact_data["link_b"]].visualize_contact:
+                if self.sim.rigid_solver.links[contact_data.link_b].visualize_contact:
                     self.draw_contact_arrow(pos=contact_pos, force=contact_data.force)
 
     def on_avatar(self):
