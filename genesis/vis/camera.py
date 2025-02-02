@@ -88,6 +88,8 @@ class Camera(RBC):
         self._aspect_ratio = self._res[0] / self._res[1]
         self._visualizer = visualizer
         self._is_built = False
+        self._attached_link = None
+        self._attached_offset_T = None
 
         self._in_recording = False
         self._recorded_imgs = []
@@ -109,6 +111,27 @@ class Camera(RBC):
 
         self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
+
+    def attach(self, rigid_link, offset_T):
+        self._attached_link = rigid_link
+        self._attached_offset_T = offset_T
+
+    def detach(self):
+        self._attached_link = None
+        self._attached_offset_T = None
+
+    @gs.assert_built
+    def move_to_attach(self):
+        if self._attached_link is None:
+            gs.raise_exception(f"The camera hasn't been mounted!")
+        if self._visualizer._scene.n_envs > 0:
+            gs.raise_exception(f"Mounted camera not supported in parallel simulation!")
+
+        link_pos = self._attached_link.get_pos().cpu().numpy()
+        link_quat = self._attached_link.get_quat().cpu().numpy()
+        link_T = gu.trans_quat_to_T(link_pos, link_quat)
+        transform = link_T @ self._attached_offset_T
+        self.set_pose(transform=transform)
 
     @gs.assert_built
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):

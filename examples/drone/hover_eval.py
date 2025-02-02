@@ -12,7 +12,7 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
-    parser.add_argument("--ckpt", type=int, default=500)
+    parser.add_argument("--ckpt", type=int, default=300)
     parser.add_argument("--record", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -66,4 +66,8 @@ if __name__ == "__main__":
 """
 # evaluation
 python examples/drone/hover_eval.py
+
+# Note
+If you experience slow performance or encounter other issues 
+during evaluation, try removing the --record option.
 """

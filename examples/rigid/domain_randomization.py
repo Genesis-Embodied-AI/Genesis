@@ -48,6 +48,19 @@ def main():
         friction_ratio=0.5 + torch.rand(scene.n_envs, robot.n_links),
         ls_idx_local=np.arange(0, robot.n_links),
     )
+    from IPython import embed
+
+    embed()
+
+    # set mass of a single link
+    link = robot.get_link("RR_thigh")
+    rigid = scene.sim.rigid_solver
+    ori_mass = rigid.links_info.inertial_mass.to_numpy()
+    print("original mass", link.get_mass(), ori_mass)
+    link.set_mass(1)
+    new_mass = rigid.links_info.inertial_mass.to_numpy()
+    print("diff mass", new_mass - ori_mass)
+
     robot.set_mass_shift(
         mass_shift=-0.5 + torch.rand(scene.n_envs, robot.n_links),
         ls_idx_local=np.arange(0, robot.n_links),

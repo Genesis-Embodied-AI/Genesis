@@ -23,7 +23,7 @@ from .constants import GS_ARCH, TI_ARCH
 from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
-from .utils import set_random_seed, get_platform, get_cpu_device, get_gpu_device
+from .utils import set_random_seed, get_platform, get_device
 
 _initialized = False
 backend = None
@@ -43,7 +43,6 @@ def init(
     theme="dark",
     logger_verbose_time=False,
 ):
-
     # genesis._initialized
     global _initialized
     if _initialized:
@@ -72,19 +71,16 @@ def init(
 
         first_init = False
 
-    # get default device and compute total device memory
-    global platform
-    global device
-    platform = get_platform()
-    if backend == gs_backend.cpu:
-        device, device_name, total_mem = get_cpu_device()
-    else:
-        device, device_name, total_mem = get_gpu_device()
-
     # genesis.backend
+    global platform
+    platform = get_platform()
     if backend not in GS_ARCH[platform]:
         raise_exception(f"backend ~~<{backend}>~~ not supported for platform ~~<{platform}>~~")
-    backend = GS_ARCH[platform][backend]
+
+    # get default device and compute total device memory
+    global device
+    device, device_name, total_mem, backend = get_device(backend)
+
     _globalize_backend(backend)
 
     logger.info(
