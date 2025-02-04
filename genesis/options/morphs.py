@@ -49,6 +49,7 @@ class Morph(Options):
     visualization: bool = True
     collision: bool = True
     requires_jac_and_IK: bool = False
+    is_free: bool = True
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -642,6 +643,7 @@ class Terrain(Morph):
         The height field to generate the terrain. If specified, all other configurations will be ignored. Defaults to None.
     """
 
+    is_free: bool = False
     randomize: bool = False  # whether to randomize the terrain
     n_subterrains: Tuple[int, int] = (3, 3)  # number of subterrains in x and y directions
     subterrain_size: Tuple[float, float] = (12.0, 12.0)  # meter
