@@ -20,7 +20,7 @@
 ## 🔥 새 소식
 
 - [2024-12-25] 레이 트레이싱 렌더러를 지원하는 [docker](#docker) 추가
-- [2024-12-24] [제네시스 기여](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md) 가이드라인 추가
+- [2024-12-24] [제네시스 기여](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) 가이드라인 추가
 
 ## Table of Contents
 
@@ -114,7 +114,7 @@ Genesis 프로젝트는 오픈 소스 및 협력 프로젝트입니다. 다음�
 - GitHub Issues를 통한 **버그 리포트**.
 - Genesis의 사용성을 향상시키기 위한 **제안**.
 
-자세한 내용은 [기여 가이드](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)를 참조하세요.
+자세한 내용은 [기여 가이드](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)를 참조하세요.
 
 ## 지원
 

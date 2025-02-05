@@ -255,10 +255,11 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 uv_coordinates = tmesh.vertices[:, :2].copy()
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
-                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
-                uv_coordinates = uv_coordinates * mj_mat.texrepeat
-                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
+                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
+                image_array = np.array(image)
+                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
+                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
+                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array, mode="RGBA"))
                 tmesh.visual = visual
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
@@ -291,10 +292,15 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                         ]  # this may overwrite the same vertex
                 uv[:, 1] = 1 - uv[:, 1]
 
-                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
-                uv = uv * mj_mat.texrepeat
-                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
+                # TODO: check if we can parse <compiler> tag with mj model
+                texturedir = extract_compiler_attributes(xml_path)["texturedir"]
+                assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
+
+                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
+                image_array = np.array(image)
+                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
+                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
+                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array, mode="RGBA"))
 
         tmesh = trimesh.Trimesh(
             vertices=mj.mesh_vert[vert_start:vert_end],
