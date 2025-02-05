@@ -303,7 +303,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 uv_coordinates /= uv_coordinates.max(axis=0)
                 image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
                 image_array = np.array(image)
-                tex_repeat = mj.mat_texrepeat[mat_id].astype(int)
+                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
                 image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array, mode="RGBA"))
                 tmesh.visual = visual
@@ -337,7 +337,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
 
                 image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
                 image_array = np.array(image)
-                tex_repeat = mj.mat_texrepeat[mat_id].astype(int)
+                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
                 image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
                 visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array, mode="RGBA"))
 
