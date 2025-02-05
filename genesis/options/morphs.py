@@ -653,6 +653,8 @@ class Terrain(Morph):
         ["random_uniform_terrain", "pyramid_stairs_terrain", "sloped_terrain"],
     ]
     height_field: Any = None
+    name: str = "default"  # name to store and reuse the terrain
+    from_stored: Any = None
 
     def __init__(self, **data):
         super().__init__(**data)
