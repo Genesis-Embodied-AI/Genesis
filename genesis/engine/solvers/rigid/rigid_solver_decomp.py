@@ -23,9 +23,6 @@ class RigidSolver(Solver):
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
 
-        self._free_entities = gs.List()
-        self._fixed_entities = gs.List()
-
         # options
         self._enable_collision = options.enable_collision
         self._enable_joint_limit = options.enable_joint_limit
@@ -93,10 +90,6 @@ class RigidSolver(Solver):
             visualize_contact=visualize_contact,
         )
         self._entities.append(entity)
-        if entity.is_free:
-            self._free_entities.append(entity)
-        else:
-            self._fixed_entities.append(entity)
 
         return entity
 
@@ -2228,16 +2221,15 @@ class RigidSolver(Solver):
     @ti.func
     def _func_update_all_verts(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_v in range(self.n_verts):
+        for i_v, i_b in ti.ndrange(self.n_verts, self._B):
             g_state = self.geoms_state[self.verts_info[i_v].geom_idx, i_b]
             verts_state_idx = self.verts_info[i_v].verts_state_idx
             if self.verts_info[i_v].is_free:
-                for i_b in range(self._B):
-                    self.free_verts_state[verts_state_idx, i_b].pos = gu.ti_transform_by_trans_quat(
-                        self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
-                    )
-            else:
-                self.free_verts_state[verts_state_idx].pos = gu.ti_transform_by_trans_quat(
+                self.free_verts_state[verts_state_idx, i_b].pos = gu.ti_transform_by_trans_quat(
+                    self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
+                )
+            elif i_b == 0:
+                self.fixed_verts_state[verts_state_idx].pos = gu.ti_transform_by_trans_quat(
                     self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
                 )
 

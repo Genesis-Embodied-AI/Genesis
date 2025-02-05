@@ -40,7 +40,8 @@ class Morph(Options):
         Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
-
+    is_free : bool, optional
+        Whether the entity is free to move. Defaults to True. **This is only used for RigidEntity.**
     """
 
     pos: tuple = (0.0, 0.0, 0.0)
