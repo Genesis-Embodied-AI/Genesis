@@ -35,6 +35,7 @@ dependencies = [
     "coacd",
     "OpenEXR",
     "black",
+    "scipy == 1.15.1",
 ]
 
 [tool.setuptools.packages.find]
