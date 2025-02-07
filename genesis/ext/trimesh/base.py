@@ -46,24 +46,24 @@ from .visual import TextureVisuals, create_visual
 class Trimesh(Geometry3D):
 
     def __init__(
-            self,
-            vertices=None,
-            faces=None,
-            face_normals=None,
-            vertex_normals=None,
-            face_colors=None,
-            vertex_colors=None,
-            face_attributes=None,
-            vertex_attributes=None,
-            metadata=None,
-            process=True,
-            validate=False,
-            merge_tex=None,
-            merge_norm=None,
-            use_embree=True,
-            initial_cache=None,
-            visual=None,
-            **kwargs,
+        self,
+        vertices=None,
+        faces=None,
+        face_normals=None,
+        vertex_normals=None,
+        face_colors=None,
+        vertex_colors=None,
+        face_attributes=None,
+        vertex_attributes=None,
+        metadata=None,
+        process=True,
+        validate=False,
+        merge_tex=None,
+        merge_norm=None,
+        use_embree=True,
+        initial_cache=None,
+        visual=None,
+        **kwargs,
     ):
         """
         A Trimesh object contains a triangular 3D mesh.
@@ -2483,10 +2483,6 @@ class Trimesh(Geometry3D):
         points_out, faces_out, collapses = fast_simplification.simplify(self.vertices, self.faces, 0.9,
                                                                         return_collapses=True)
         return Trimesh(vertices=points_out, faces=faces_out)
-        # simple = self.as_open3d.simplify_quadric_decimation(
-        #     int(face_count), float(maximum_error), float(boundary_weight)
-        # )
-        # return Trimesh(vertices=simple.vertices, faces=simple.triangles)
 
     def outline(self, face_ids=None, **kwargs):
         """

@@ -36,6 +36,7 @@ dependencies = [
     "OpenEXR",
     "black",
     "scipy == 1.15.1",
+    "fast-simplification"
 ]
 
 [tool.setuptools.packages.find]
