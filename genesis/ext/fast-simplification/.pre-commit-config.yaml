@@ -1,0 +1,62 @@
+# Integration with GitHub Actions
+# See https://pre-commit.ci/
+ci:
+  autoupdate_schedule: monthly
+
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.8.1
+  hooks:
+  - id: ruff
+    args: [--fix, --exit-non-zero-on-fix]
+    exclude: ^(docs/|tests)
+  - id: ruff-format
+
+- repo: https://github.com/pycqa/isort
+  rev: 5.13.2
+  hooks:
+  - id: isort
+
+- repo: https://github.com/codespell-project/codespell
+  rev: v2.3.0
+  hooks:
+  - id: codespell
+    args: [--toml, pyproject.toml]
+    additional_dependencies: [tomli]
+
+- repo: https://github.com/keewis/blackdoc
+  rev: v0.3.9
+  hooks:
+  - id: blackdoc
+    files: \.py$
+
+# - repo: https://github.com/pycqa/pydocstyle
+#   rev: 6.1.1
+#   hooks:
+#   - id: pydocstyle
+#     additional_dependencies: [toml]
+#     exclude: "tests/"
+
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+  - id: check-merge-conflict
+  - id: debug-statements
+  - id: trailing-whitespace
+  - id: no-commit-to-branch
+    args: [--branch, main]
+  - id: requirements-txt-fixer
+
+- repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+  rev: v2.14.0
+  hooks:
+  - id: pretty-format-toml
+    args: [--autofix]
+  - id: pretty-format-yaml
+    args: [--autofix, --indent, '2']
+
+# this validates our github workflow files
+- repo: https://github.com/python-jsonschema/check-jsonschema
+  rev: 0.30.0
+  hooks:
+  - id: check-github-workflows

@@ -2464,25 +2464,29 @@ class Trimesh(Geometry3D):
         )
         return self.simplify_quadric_decimation(*args, **kwargs)
 
-    def simplify_quadric_decimation(self, face_count, maximum_error=np.inf, boundary_weight=1.0):
+    def simplify_quadric_decimation(self, face_count, lossless=False):
         """
-        A thin wrapper around the `open3d` implementation of this:
-        `open3d.geometry.TriangleMesh.simplify_quadric_decimation`
+        A thin wrapper around the `fast_simplification` implementation of this:
+        `fast_simplification.simplify`
 
         Parameters
         -----------
         face_count : int
           Number of faces desired in the resulting mesh.
+        loss_less : bool
+          Wether to use lossless simplification or not.
 
         Returns
         ---------
         simple : trimesh.Trimesh
           Simplified version of mesh.
         """
-        simple = self.as_open3d.simplify_quadric_decimation(
-            int(face_count), float(maximum_error), float(boundary_weight)
+        import fast_simplification
+
+        vertices, faces, collapses = fast_simplification.simplify(
+            self.vertices, self.faces, target_count=face_count, lossless=lossless, return_collapses=True
         )
-        return Trimesh(vertices=simple.vertices, faces=simple.triangles)
+        return Trimesh(vertices=vertices, faces=faces)
 
     def outline(self, face_ids=None, **kwargs):
         """

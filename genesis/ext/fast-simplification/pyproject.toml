@@ -1,0 +1,48 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+  "cython>=3.0.0",
+  "setuptools>=45.0",
+  "wheel>=0.37.0"
+]
+
+[tool.cibuildwheel]
+archs = ["auto64"]  # 64-bit only
+skip = "cp313-* pp* *musllinux*"  # Build CPython 3.9 - 3.13
+test-command = "pytest {project}/tests"
+test-requires = "pyvista pytest"
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+
+[tool.codespell]
+ignore-words-list = 'THIRDPARTY'
+quiet-level = 3
+skip = '*.pyc,*.txt,*.gif,*.png,*.jpg,*.js,*.html,*.doctree,*.ttf,*.woff,*.woff2,*.eot,*.mp4,*.inv,*.pickle,*.ipynb,flycheck*,./.git/*,./.hypothesis/*,*.yml,./doc/build/*,./doc/images/*,./dist/*,*~,.hypothesis*,./doc/source/examples/*,*cover,*.dat,*.mac,build,fast_simplification/Simplify.h,PKG-INFO,*.mypy_cache/*,./docker/mapdl/*,./_unused/*'
+
+[tool.isort]
+default_section = "THIRDPARTY"
+force_sort_within_sections = true
+line_length = 100
+profile = "black"
+skip_glob = ["__init__.py"]
+src_paths = ["doc", "fast_simplification", "tests"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+  # bogus numpy ABI warning (see numpy/#432)
+  "ignore:.*numpy.dtype size changed.*:RuntimeWarning",
+  "ignore:.*numpy.ufunc size changed.*:RuntimeWarning",
+  "ignore:.*Distutils was imported before Setuptools*"
+]
+junit_family = "legacy"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+ignore = []
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default.
+select = ["E4", "E7", "E9", "F"]
