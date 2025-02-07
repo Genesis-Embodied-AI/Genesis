@@ -2480,7 +2480,7 @@ class Trimesh(Geometry3D):
           Simplified version of mesh.
         """
         import fast_simplification
-        points_out, faces_out, collapses = fast_simplification.simplify(self.vertices, self.faces, 0.8,
+        points_out, faces_out, collapses = fast_simplification.simplify(self.vertices, self.faces, 0.9,
                                                                         return_collapses=True)
         return Trimesh(vertices=points_out, faces=faces_out)
         # simple = self.as_open3d.simplify_quadric_decimation(
