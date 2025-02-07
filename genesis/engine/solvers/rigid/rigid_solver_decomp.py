@@ -61,6 +61,11 @@ class RigidSolver(Solver):
             else:
                 entity_class = RigidEntity
 
+        if morph.is_free:
+            verts_state_start = self.n_free_verts
+        else:
+            verts_state_start = self.n_fixed_verts
+
         entity = entity_class(
             scene=self._scene,
             solver=self,
@@ -76,6 +81,7 @@ class RigidSolver(Solver):
             geom_start=self.n_geoms,
             cell_start=self.n_cells,
             vert_start=self.n_verts,
+            verts_state_start=verts_state_start,
             face_start=self.n_faces,
             edge_start=self.n_edges,
             vgeom_start=self.n_vgeoms,
@@ -102,6 +108,8 @@ class RigidSolver(Solver):
         self._n_geoms = self.n_geoms
         self._n_cells = self.n_cells
         self._n_verts = self.n_verts
+        self._n_free_verts = self.n_free_verts
+        self._n_fixed_verts = self.n_fixed_verts
         self._n_faces = self.n_faces
         self._n_edges = self.n_edges
         self._n_vgeoms = self.n_vgeoms
@@ -576,6 +584,8 @@ class RigidSolver(Solver):
             init_normal=gs.ti_vec3,
             geom_idx=gs.ti_int,
             init_center_pos=gs.ti_vec3,
+            verts_state_idx=gs.ti_int,
+            is_free=gs.ti_int,
         )
         struct_face_info = ti.types.struct(
             verts_idx=gs.ti_ivec3,
@@ -594,9 +604,14 @@ class RigidSolver(Solver):
         self.faces_info = struct_face_info.field(shape=(self.n_faces_), needs_grad=False, layout=ti.Layout.SOA)
         self.edges_info = struct_edge_info.field(shape=(self.n_edges_), needs_grad=False, layout=ti.Layout.SOA)
 
-        self.verts_state = struct_vert_state.field(
-            shape=self._batch_shape(self.n_verts_), needs_grad=False, layout=ti.Layout.SOA
-        )
+        if self.n_free_verts > 0:
+            self.free_verts_state = struct_vert_state.field(
+                shape=self._batch_shape(self.n_free_verts), needs_grad=False, layout=ti.Layout.SOA
+            )
+        if self.n_fixed_verts > 0:
+            self.fixed_verts_state = struct_vert_state.field(
+                shape=(self.n_fixed_verts,), needs_grad=False, layout=ti.Layout.SOA
+            )
 
         if self.n_verts > 0:
             geoms = self.geoms
@@ -607,6 +622,11 @@ class RigidSolver(Solver):
                 normals=np.concatenate([geom.init_normals for geom in geoms], dtype=gs.np_float),
                 verts_geom_idx=np.concatenate([np.full(geom.n_verts, geom.idx) for geom in geoms], dtype=gs.np_int),
                 init_center_pos=np.concatenate([geom.init_center_pos for geom in geoms], dtype=gs.np_float),
+                verts_state_idx=np.concatenate(
+                    [np.arange(geom.verts_state_start, geom.verts_state_start + geom.n_verts + 1) for geom in geoms],
+                    dtype=gs.np_int,
+                ),
+                is_free=np.concatenate([np.full(geom.n_verts, geom.is_free) for geom in geoms], dtype=gs.np_int),
             )
 
     def _init_vvert_fields(self):
@@ -644,6 +664,8 @@ class RigidSolver(Solver):
         normals: ti.types.ndarray(),
         verts_geom_idx: ti.types.ndarray(),
         init_center_pos: ti.types.ndarray(),
+        verts_state_idx: ti.types.ndarray(),
+        is_free: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_verts):
@@ -653,6 +675,8 @@ class RigidSolver(Solver):
                 self.verts_info[i].init_center_pos[j] = init_center_pos[i, j]
 
             self.verts_info[i].geom_idx = verts_geom_idx[i]
+            self.verts_info[i].verts_state_idx = verts_state_idx[i]
+            self.verts_info[i].is_free = is_free[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_faces):
@@ -703,6 +727,8 @@ class RigidSolver(Solver):
             vert_num=gs.ti_int,
             vert_start=gs.ti_int,
             vert_end=gs.ti_int,
+            verts_state_start=gs.ti_int,
+            verts_state_end=gs.ti_int,
             face_num=gs.ti_int,
             face_start=gs.ti_int,
             face_end=gs.ti_int,
@@ -714,6 +740,7 @@ class RigidSolver(Solver):
             coup_friction=gs.ti_float,
             coup_softness=gs.ti_float,
             coup_restitution=gs.ti_float,
+            is_free=gs.ti_int,
         )
         struct_geom_state = ti.types.struct(
             pos=gs.ti_vec3,
@@ -748,15 +775,18 @@ class RigidSolver(Solver):
                 geoms_vert_start=np.array([geom.vert_start for geom in geoms], dtype=gs.np_int),
                 geoms_face_start=np.array([geom.face_start for geom in geoms], dtype=gs.np_int),
                 geoms_edge_start=np.array([geom.edge_start for geom in geoms], dtype=gs.np_int),
+                geoms_verts_state_start=np.array([geom.verts_state_start for geom in geoms], dtype=gs.np_int),
                 geoms_vert_end=np.array([geom.vert_end for geom in geoms], dtype=gs.np_int),
                 geoms_face_end=np.array([geom.face_end for geom in geoms], dtype=gs.np_int),
                 geoms_edge_end=np.array([geom.edge_end for geom in geoms], dtype=gs.np_int),
+                geoms_verts_state_end=np.array([geom.verts_state_end for geom in geoms], dtype=gs.np_int),
                 geoms_data=np.array([geom.data for geom in geoms], dtype=gs.np_float),
                 geoms_is_convex=np.array([geom.is_convex for geom in geoms], dtype=gs.np_int),
                 geoms_needs_coup=np.array([geom.needs_coup for geom in geoms], dtype=gs.np_int),
                 geoms_coup_softness=np.array([geom.coup_softness for geom in geoms], dtype=gs.np_float),
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
+                geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
             )
 
     @ti.kernel
@@ -771,15 +801,18 @@ class RigidSolver(Solver):
         geoms_vert_start: ti.types.ndarray(),
         geoms_face_start: ti.types.ndarray(),
         geoms_edge_start: ti.types.ndarray(),
+        geoms_verts_state_start: ti.types.ndarray(),
         geoms_vert_end: ti.types.ndarray(),
         geoms_face_end: ti.types.ndarray(),
         geoms_edge_end: ti.types.ndarray(),
+        geoms_verts_state_end: ti.types.ndarray(),
         geoms_data: ti.types.ndarray(),
         geoms_is_convex: ti.types.ndarray(),
         geoms_needs_coup: ti.types.ndarray(),
         geoms_coup_softness: ti.types.ndarray(),
         geoms_coup_friction: ti.types.ndarray(),
         geoms_coup_restitution: ti.types.ndarray(),
+        geoms_is_free: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_geoms):
@@ -808,6 +841,9 @@ class RigidSolver(Solver):
             self.geoms_info[i].edge_end = geoms_edge_end[i]
             self.geoms_info[i].edge_num = geoms_edge_end[i] - geoms_edge_start[i]
 
+            self.geoms_info[i].verts_state_start = geoms_verts_state_start[i]
+            self.geoms_info[i].verts_state_end = geoms_verts_state_end[i]
+
             self.geoms_info[i].link_idx = geoms_link_idx[i]
             self.geoms_info[i].type = geoms_type[i]
             self.geoms_info[i].friction = geoms_friction[i]
@@ -818,6 +854,8 @@ class RigidSolver(Solver):
             self.geoms_info[i].coup_softness = geoms_coup_softness[i]
             self.geoms_info[i].coup_friction = geoms_coup_friction[i]
             self.geoms_info[i].coup_restitution = geoms_coup_restitution[i]
+
+            self.geoms_info[i].is_free = geoms_is_free[i]
 
             # compute init AABB
             lower = gu.ti_vec3(ti.math.inf)
@@ -2167,20 +2205,33 @@ class RigidSolver(Solver):
         g_state = self.geoms_state[i_g, i_b]
         if not g_state.verts_updated:
             g_info = self.geoms_info[i_g]
-            for i_v in range(g_info.vert_start, g_info.vert_end):
-                self.verts_state[i_v, i_b].pos = gu.ti_transform_by_trans_quat(
-                    self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
-                )
-            self.geoms_state[i_g, i_b].verts_updated = 1
+            if g_info.is_free:
+                for i_v in range(g_info.vert_start, g_info.vert_end):
+                    self.free_verts_state[i_v, i_b].pos = gu.ti_transform_by_trans_quat(
+                        self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
+                    )
+                self.geoms_state[i_g, i_b].verts_updated = 1
+            elif i_b == 0:
+                for i_v in range(g_info.vert_start, g_info.vert_end):
+                    self.fixed_verts_state[i_v].pos = gu.ti_transform_by_trans_quat(
+                        self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
+                    )
+                self.geoms_state[i_g].verts_updated = 1
 
     @ti.func
     def _func_update_all_verts(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_v, i_b in ti.ndrange(self.n_verts, self._B):
             g_state = self.geoms_state[self.verts_info[i_v].geom_idx, i_b]
-            self.verts_state[i_v, i_b].pos = gu.ti_transform_by_trans_quat(
-                self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
-            )
+            verts_state_idx = self.verts_info[i_v].verts_state_idx
+            if self.verts_info[i_v].is_free:
+                self.free_verts_state[verts_state_idx, i_b].pos = gu.ti_transform_by_trans_quat(
+                    self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
+                )
+            elif i_b == 0:
+                self.fixed_verts_state[verts_state_idx].pos = gu.ti_transform_by_trans_quat(
+                    self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
+                )
 
     @ti.func
     def _func_update_geom_aabbs(self):
@@ -2210,15 +2261,26 @@ class RigidSolver(Solver):
             self._func_update_verts_for_geom(i_g, i_b)
 
             g_info = self.geoms_info[i_g]
-            lower = self.verts_state[g_info.vert_start, i_b].pos
-            upper = self.verts_state[g_info.vert_start, i_b].pos
+            if g_info.is_free:
+                lower = self.free_verts_state[g_info.verts_state_start, i_b].pos
+                upper = self.free_verts_state[g_info.verts_state_start, i_b].pos
 
-            for i_v in range(g_info.vert_start, g_info.vert_end):
-                lower = ti.min(lower, self.verts_state[i_v, i_b].pos)
-                upper = ti.max(upper, self.verts_state[i_v, i_b].pos)
+                for i_v in range(g_info.verts_state_start, g_info.verts_state_end):
+                    lower = ti.min(lower, self.free_verts_state[i_v, i_b].pos)
+                    upper = ti.max(upper, self.free_verts_state[i_v, i_b].pos)
 
-            self.geoms_state[i_g, i_b].aabb_min = lower
-            self.geoms_state[i_g, i_b].aabb_max = upper
+                self.geoms_state[i_g, i_b].aabb_min = lower
+                self.geoms_state[i_g, i_b].aabb_max = upper
+            else:
+                lower = self.fixed_verts_state[g_info.verts_state_start].pos
+                upper = self.fixed_verts_state[g_info.verts_state_start].pos
+
+                for i_v in range(g_info.verts_state_start, g_info.verts_state_end):
+                    lower = ti.min(lower, self.fixed_verts_state[i_v].pos)
+                    upper = ti.max(upper, self.fixed_verts_state[i_v].pos)
+
+                self.geoms_state[i_g, i_b].aabb_min = lower
+                self.geoms_state[i_g, i_b].aabb_max = upper
 
     @ti.kernel
     def _kernel_update_vgeoms(self):
@@ -4601,6 +4663,20 @@ class RigidSolver(Solver):
             return self._n_verts
         else:
             return sum([entity.n_verts for entity in self._entities])
+
+    @property
+    def n_free_verts(self):
+        if self.is_built:
+            return self._n_free_verts
+        else:
+            return sum([entity.n_verts if entity.is_free else 0 for entity in self._entities])
+
+    @property
+    def n_fixed_verts(self):
+        if self.is_built:
+            return self._n_fixed_verts
+        else:
+            return sum([entity.n_verts if not entity.is_free else 0 for entity in self._entities])
 
     @property
     def n_vverts(self):

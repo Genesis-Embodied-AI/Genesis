@@ -39,6 +39,7 @@ def main():
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
             n_subterrains=(2, 2),
+            subterrain_size=(6.0, 6.0),
             horizontal_scale=horizontal_scale,
             vertical_scale=vertical_scale,
             subterrain_types=[
@@ -47,17 +48,34 @@ def main():
             ],
         ),
     )
+    ball = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(1.0, 1.0, 1.0),
+            radius=0.1,
+        ),
+    )
     ########################## build ##########################
-    scene.build(n_envs=1)
+    scene.build(n_envs=100)
+
+    ball.set_pos(
+        torch.cat(
+            [
+                torch.range(1, 10, 1).unsqueeze(1).repeat(1, 10).unsqueeze(-1),
+                torch.range(1, 10, 1).unsqueeze(0).repeat(10, 1).unsqueeze(-1),
+                torch.ones(10, 10, 1),
+            ],
+            dim=-1,
+        ).reshape(-1, 3)
+    )
 
     height_field = terrain.geoms[0].metadata["height_field"]
-    rows = horizontal_scale * torch.range(0, height_field.shape[0] - 1, 1, device="cuda").unsqueeze(1).repeat(
+    rows = horizontal_scale * torch.range(0, height_field.shape[0] - 1, 1).unsqueeze(1).repeat(
         1, height_field.shape[1]
     ).unsqueeze(-1)
-    cols = horizontal_scale * torch.range(0, height_field.shape[1] - 1, 1, device="cuda").unsqueeze(0).repeat(
+    cols = horizontal_scale * torch.range(0, height_field.shape[1] - 1, 1).unsqueeze(0).repeat(
         height_field.shape[0], 1
     ).unsqueeze(-1)
-    heights = vertical_scale * torch.tensor(height_field, device="cuda").unsqueeze(-1)
+    heights = vertical_scale * torch.tensor(height_field).unsqueeze(-1)
 
     poss = torch.cat([rows, cols, heights], dim=-1).reshape(-1, 3)
     scene.draw_debug_spheres(poss=poss, radius=0.05, color=(0, 0, 1, 0.7))
