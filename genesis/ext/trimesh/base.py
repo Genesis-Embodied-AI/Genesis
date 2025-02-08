@@ -2481,7 +2481,7 @@ class Trimesh(Geometry3D):
         simple : trimesh.Trimesh
           Simplified version of mesh.
         """
-        import fast_simplification
+        from genesis.ext import fast_simplification
 
         vertices, faces, collapses = fast_simplification.simplify(
             self.vertices, self.faces, target_count=face_count, lossless=lossless, return_collapses=True

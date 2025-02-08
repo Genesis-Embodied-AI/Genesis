@@ -1,7 +1,0 @@
-numpydoc>=1.8.0
-pydata-sphinx-theme
-pyvista
-Sphinx>=4.0.0
-sphinx-copybutton
-sphinx-gallery>=0.8.1
-sphinx-notfound-page>=0.3.0

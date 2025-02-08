@@ -108,8 +108,8 @@ def simplify(
     ... ]
     >>> points_out, faces_out = fast_simplification.simplify(points, faces, 0.5)
 
-
     """
+
     if not isinstance(points, np.ndarray):
         points = np.array(points, dtype=np.float64)
     points = points.astype(np.float64, copy=False)

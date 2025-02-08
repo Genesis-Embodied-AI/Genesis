@@ -12,7 +12,13 @@ __pycache__/
 *$py.class
 
 # C extensions
+*.pyc
+*.pyd
 *.so
+*.o
+simplify.c
+_simplify.cpp
+_replay.cpp
 
 # Distribution / packaging
 .Python

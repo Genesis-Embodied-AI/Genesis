@@ -1,2 +1,0 @@
-def simplify():
-    pass
