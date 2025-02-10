@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy==1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -35,6 +35,7 @@ dependencies = [
     "coacd",
     "OpenEXR",
     "black",
+    "scipy == 1.15.1",
 ]
 
 [tool.setuptools.packages.find]
