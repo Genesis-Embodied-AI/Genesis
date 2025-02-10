@@ -345,8 +345,8 @@ def parse_equality(mj, i_e, scale, ordered_links_idx):
 
     if mj_equality.type == mujoco.mjtEq.mjEQ_CONNECT:
         e_info["type"] = gs.EQUALITY_TYPE.CONNECT
-        e_info["link1_idx"] = -1 if mj_equality.obj1id[0] == 0 else ordered_links_idx[mj_equality.obj1id[0] - 1]
-        e_info["link2_idx"] = -1 if mj_equality.obj2id[0] == 0 else ordered_links_idx[mj_equality.obj2id[0] - 1]
+        e_info["link1_idx"] = -1 if mj_equality.obj1id[0] == 0 else ordered_links_idx.index(mj_equality.obj1id[0] - 1)
+        e_info["link2_idx"] = -1 if mj_equality.obj2id[0] == 0 else ordered_links_idx.index(mj_equality.obj2id[0] - 1)
         e_info["anchor1_pos"] = mj_equality.data[0:3] * scale
         e_info["anchor2_pos"] = mj_equality.data[3:6] * scale
         e_info["rel_pose"] = mj_equality.data[6:10]
