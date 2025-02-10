@@ -31,7 +31,7 @@ jobs:
           pip install black
 
       - name: Black Format Check
-        run: black --check .
+        run: black --line-length 120 --check .
 
       - name: Run Tests
         run: |
@@ -46,7 +46,7 @@ jobs:
 
 
       - name: Upload Test Results as Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: speed-test-results
           path: speed_test.txt

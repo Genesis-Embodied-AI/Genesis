@@ -1,0 +1,51 @@
+name: "🚀 Feature Request"
+description: Sugest a new feature request or improvement on the project
+title: '[Feature]: '
+labels:
+  - feature
+  - enhancement
+  - triage-needed
+  
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please providee a well-structured and concise breakdown of context, expected outcomes, and potential of the feature you are proposing. 
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What feature or enhancement are you proposing?
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What is your motivation for adding / enhancing this feature, optimally described in the form of a concrete user story or use case.
+      value: |
+        <!--  Motivation for adding / enhancing this feature, optimally describing a concrete use case in the form of a user story -->
+        As a [e.g. civil engineering researcher working on flood simulation]
+        I want to [e.g. be able to simulate city-scale fluid / terrain simulations]
+        Because [e.g. this enables the efficient design and validation of flood protection structures].
+    validations:
+      required: true
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Potential Benefit
+      placeholder: Describe the potential benefit of implementing this feature / enhancement
+    validations:
+      required: true      
+  - type: textarea
+    id: acceptcriterea
+    attributes:
+      label: What is the expected outcome of the implementation work?
+      description: List the acceptance criteria for this task in a form of a list.
+      value: '- [ ]'
+    validations:
+      required: true
+  - type: textarea
+    id: additionalinfo
+    attributes:
+      label: Additional information
+      description: If you think that any additional information would be useful please provide them here.

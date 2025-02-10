@@ -42,6 +42,12 @@ class Viewer(RBC):
 
         self.context = context
 
+        self._followed_entity = None
+        self._follow_fixed_axis = None
+        self._follow_smoothing = None
+        self._follow_fix_orientation = None
+        self._follow_lookat = None
+
         if self._max_FPS is not None:
             self.rate = Rate(self._max_FPS)
 
@@ -109,6 +115,9 @@ class Viewer(RBC):
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
     def update(self):
+        if self._followed_entity is not None:
+            self.update_following()
+
         with self.lock:
             buffer_updates = self.context.update()
             for buffer_id, buffer_data in buffer_updates.items():
@@ -152,6 +161,61 @@ class Viewer(RBC):
                 gs.raise_exception("pose should be a 4x4 matrix.")
 
         self._pyrender_viewer._trackball.set_camera_pose(pose)
+
+    def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
+        """
+        Set the viewer to follow a specified entity.
+        Parameters
+        ----------
+        entity : genesis.Entity
+            The entity to follow.
+        fixed_axis : (float, float, float), optional
+            The fixed axis for the viewer's movement. For each axis, if None, the viewer will move freely. If a float, the viewer will be fixed on at that value.
+            For example, [None, None, None] will allow the viewer to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.
+        smoothing : float, optional
+            The smoothing factor in ]0,1[ for the viewer's movement. If None, no smoothing will be applied.
+        fix_orientation : bool, optional
+            If True, the viewer will maintain its orientation relative to the world. If False, the viewer will look at the base link of the entity.
+        """
+        self._followed_entity = entity
+        self._follow_fixed_axis = fixed_axis
+        self._follow_smoothing = smoothing
+        self._follow_fix_orientation = fix_orientation
+        self._follow_lookat = self._camera_init_lookat
+
+    def update_following(self):
+        """
+        Update the viewer position to follow the specified entity.
+        """
+        entity_pos = self._followed_entity.get_pos().cpu().numpy()
+        if entity_pos.ndim > 1:  # check for multiple envs
+            entity_pos = entity_pos[0]
+        camera_pose = np.array(self._pyrender_viewer._trackball.pose)
+        camera_pos = np.array(self._pyrender_viewer._trackball.pose[:3, 3])
+
+        if self._follow_smoothing is not None:
+            # Smooth viewer movement with a low-pass filter
+            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (
+                entity_pos + np.array(self._camera_init_pos)
+            )
+            self._follow_lookat = (
+                self._follow_smoothing * self._follow_lookat + (1 - self._follow_smoothing) * entity_pos
+            )
+        else:
+            camera_pos = entity_pos + np.array(self._camera_init_pos)
+            self._follow_lookat = entity_pos
+
+        for i, fixed_axis in enumerate(self._follow_fixed_axis):
+            # Fix the camera's position along the specified axis
+            if fixed_axis is not None:
+                camera_pos[i] = fixed_axis
+
+        if self._follow_fix_orientation:
+            # Keep the camera orientation fixed by overriding the lookat point
+            camera_pose[:3, 3] = camera_pos
+            self.set_camera_pose(pose=camera_pose)
+        else:
+            self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

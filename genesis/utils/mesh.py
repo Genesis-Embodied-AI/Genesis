@@ -224,6 +224,10 @@ def parse_visual_and_col_mesh(morph, surface):
 
     # compute collision mesh
     ms = list()
+
+    if not morph.collision:
+        return vms, ms
+
     if morph.merge_submeshes_for_collision:
         tmeshes = []
         for vm in vms:

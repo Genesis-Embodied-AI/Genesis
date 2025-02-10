@@ -20,7 +20,7 @@
 ## 🔥 最新情報
 
 - [2024-12-25] [レイトレーシングレンダラー](#docker)をサポートするDockerを追加しました。
-- [2024-12-24] [Genesisへの貢献方法](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)に関するガイドラインを追加しました。
+- [2024-12-24] [Genesisへの貢献方法](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)に関するガイドラインを追加しました。
 
 ## 目次
 
@@ -114,7 +114,7 @@ Genesisプロジェクトはオープンで協力的な取り組みです。以�
 - GitHub Issuesを通じた**バグ報告**。
 - Genesisの使いやすさを向上させるための**提案**。
 
-詳細は[貢献ガイド](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)をご参照ください。
+詳細は[貢献ガイド](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)をご参照ください。
 
 ## サポート
 

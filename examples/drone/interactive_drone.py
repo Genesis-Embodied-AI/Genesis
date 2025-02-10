@@ -91,24 +91,6 @@ class DroneController:
         return self.rpms
 
 
-def update_camera(scene, drone):
-    """Updates the camera position to follow the drone"""
-    if not scene.viewer:
-        return
-
-    drone_pos = drone.get_pos()
-
-    # Camera position relative to drone
-    offset_x = 0.0  # centered horizontally
-    offset_y = -4.0  # 4 units behind (in Y axis)
-    offset_z = 2.0  # 2 units above
-
-    camera_pos = (float(drone_pos[0] + offset_x), float(drone_pos[1] + offset_y), float(drone_pos[2] + offset_z))
-
-    # Update camera position and look target
-    scene.viewer.set_camera_pose(pos=camera_pos, lookat=tuple(float(x) for x in drone_pos))
-
-
 def run_sim(scene, drone, controller):
     while controller.running:
         try:
@@ -118,9 +100,6 @@ def run_sim(scene, drone, controller):
 
             # Update physics
             scene.step()
-
-            # Update camera position to follow drone
-            update_camera(scene, drone)
 
             time.sleep(1 / 60)  # Limit simulation rate
         except Exception as e:
@@ -164,6 +143,8 @@ def main():
             pos=(0.0, 0, 0.5),  # Start a bit higher
         ),
     )
+
+    scene.viewer.follow_entity(drone)
 
     # Build scene
     scene.build()

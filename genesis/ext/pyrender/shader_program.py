@@ -1,5 +1,4 @@
-"""OpenGL shader program wrapper.
-"""
+"""OpenGL shader program wrapper."""
 
 import numpy as np
 import os
