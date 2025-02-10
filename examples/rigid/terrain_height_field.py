@@ -46,6 +46,7 @@ def main():
             horizontal_scale=horizontal_scale,
             vertical_scale=vertical_scale,
             height_field=height_field,
+            slope_threshold=2,
             name="example",
             # from_stored=True,
         ),

@@ -638,6 +638,8 @@ class Terrain(Morph):
         The size of each cell in the subterrain in meters. Defaults to 0.25.
     vertical_scale : float, optional
         The height of each step in the subterrain in meters. Defaults to 0.005.
+    slope_threshold: float, optional
+        The threshold to corrects vertical surfaces
     subterrain_types : str or 2D list of str, optional
         The types of subterrains to generate. If a string, it will be repeated for all subterrains. If a 2D list, it should have the same shape as `n_subterrains`.
     height_field : array-like, optional
@@ -650,6 +652,7 @@ class Terrain(Morph):
     subterrain_size: Tuple[float, float] = (12.0, 12.0)  # meter
     horizontal_scale: float = 0.25  # meter size of each cell in the subterrain
     vertical_scale: float = 0.005  # meter height of each step in the subterrain
+    slope_threshold: float = None  # slope threshold to corrects vertical surfaces
     subterrain_types: Any = [
         ["flat_terrain", "random_uniform_terrain", "stepping_stones_terrain"],
         ["pyramid_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain"],
