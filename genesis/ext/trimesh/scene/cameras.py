@@ -317,7 +317,7 @@ def look_at(points, fov, rotation=None, distance=None, center=None, pad=None):
 
     if center is None:
         # Find the center of the points' AABB in camera frame
-        center_c = points_c.min(axis=0) + 0.5 * points_c.ptp(axis=0)
+        center_c = points_c.min(axis=0) + 0.5 * np.ptp(points_c, axis=0)
     else:
         # Transform center to camera frame
         center_c = rinv.dot(center)

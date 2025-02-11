@@ -301,7 +301,7 @@ def overlap(origins, vectors, params):
     # create the overlapping segment pairs (2, 2, 3)
     segments = np.array([o + v * new_range.reshape((-1, 1)) for o, v in zip(origins, vectors)])
     # get the length of the new range
-    length = new_range.ptp()
+    length = np.ptp(new_range)
 
     return length, segments
 

@@ -134,7 +134,7 @@ def is_circle(points, scale, verbose=False):
     if np.linalg.norm(points[0] - points[-1]) > tol.merge:
         return None
 
-    box = points.ptp(axis=0)
+    box = np.ptp(points, axis=0)
     # the bounding box size of the points
     # check aspect ratio as an early exit if the path is not a circle
     aspect = np.divide(*box)

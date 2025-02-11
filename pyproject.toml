@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy==1.26.4"]
+requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,7 +15,7 @@ dependencies = [
     "scikit-image",
     "taichi == 1.7.3",
     "pydantic == 2.7.1",
-    "numpy == 1.26.4",
+    "numpy >= 1.26.4",
     "six",
     "PyOpenGL",
     "freetype-py",
