@@ -2202,8 +2202,8 @@ class Joint(URDFType):
         if self.joint_limit is None:
             return True
         cfg = float(cfg)
-        lower = -np.infty
-        upper = np.infty
+        lower = -np.inf
+        upper = np.inf
         if self.limit.lower is not None:
             lower = self.limit.lower
         if self.limit.upper is not None:
@@ -2870,7 +2870,7 @@ class URDF(URDFType):
         """(n,2) float : A lower and upper limit for each joint."""
         limits = []
         for joint in self.actuated_joints:
-            limit = [-np.infty, np.infty]
+            limit = [-np.inf, np.inf]
             if joint.limit is not None:
                 if joint.limit.lower is not None:
                     limit[0] = joint.limit.lower
