@@ -2723,6 +2723,7 @@ class RigidEntity(Entity):
         """The list of equality constraints (`RigidEquality`) in the entity."""
         return self._equalities
 
+    @property
     def is_free(self):
         """Whether the entity is free to move."""
         return self._is_free
