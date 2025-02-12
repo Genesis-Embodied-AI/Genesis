@@ -287,8 +287,8 @@ class JITRenderer:
         self.pbr_mat = np.zeros((n, 9), np.float32)  # base_color <- 4, metallic <- 1, roughness <- 1, emissive <- 3
         self.spec_mat = np.zeros((n, 11), np.float32)  # diffuse <- 4, specular <- 3, glossiness <- 1, emissive <- 3
         self.render_flags = np.zeros(
-            (n, 6), np.int8
-        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent)
+            (n, 7), np.int8
+        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent, env shared)
         self.mode = np.zeros(n, np.int32)
         self.n_instances = np.zeros(n, np.int32)
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
@@ -334,6 +334,7 @@ class JITRenderer:
             self.render_flags[i, 3] = isinstance(material, MetallicRoughnessMaterial)
             self.render_flags[i, 4] = primitive.is_floor and not floor_existed
             self.render_flags[i, 5] = node_list[i].mesh.is_transparent
+            self.render_flags[i, 6] = primitive.env_shared
 
             if primitive.is_floor:
                 floor_existed = True
@@ -377,6 +378,7 @@ class JITRenderer:
                 float32[:, :],
                 int32,
                 float32[:],
+                int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -404,6 +406,7 @@ class JITRenderer:
             reflection_mat,
             floor_tex,
             screen_size,
+            env_idx,
             gl,
         ):
             det_reflection = np.linalg.det(reflection_mat)
@@ -508,12 +511,20 @@ class JITRenderer:
                         continue
                     set_uniform_3fv(pid, "color", color_list[id], gl)
 
-                if n_indices[id] > 0:
-                    gl.glDrawElementsInstanced(
-                        mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
-                    )
+                if render_flags[id, 6] or env_idx == -1:
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstanced(
+                            mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
+                        )
+                    else:
+                        gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
                 else:
-                    gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstancedBaseInstance(
+                            mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1, env_idx
+                        )
+                    else:
+                        gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -530,11 +541,14 @@ class JITRenderer:
                 float32[:, :],
                 float32[:, :],
                 int8[:, :],
+                int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
         )
-        def shadow_mapping_pass(vao_id, program_id, pose, mode, n_instances, n_indices, mat_V, mat_P, render_flags, gl):
+        def shadow_mapping_pass(
+            vao_id, program_id, pose, mode, n_instances, n_indices, mat_V, mat_P, render_flags, env_idx, gl
+        ):
             last_pid = -1
             for id in range(len(vao_id)):
                 if render_flags[id, 5]:
@@ -559,12 +573,20 @@ class JITRenderer:
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
 
-                if n_indices[id] > 0:
-                    gl.glDrawElementsInstanced(
-                        mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
-                    )
+                if render_flags[id, 6] or env_idx == -1:
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstanced(
+                            mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
+                        )
+                    else:
+                        gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
                 else:
-                    gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstancedBaseInstance(
+                            mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1, env_idx
+                        )
+                    else:
+                        gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -581,12 +603,13 @@ class JITRenderer:
                 float32[:, :, :],
                 float32[:],
                 int8[:, :],
+                int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
         )
         def point_shadow_mapping_pass(
-            vao_id, program_id, pose, mode, n_instances, n_indices, light_matrix, light_pos, render_flags, gl
+            vao_id, program_id, pose, mode, n_instances, n_indices, light_matrix, light_pos, render_flags, env_idx, gl
         ):
             last_pid = -1
             for id in range(len(vao_id)):
@@ -613,12 +636,20 @@ class JITRenderer:
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
 
-                if n_indices[id] > 0:
-                    gl.glDrawElementsInstanced(
-                        mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
-                    )
+                if render_flags[id, 6] or env_idx == -1:
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstanced(
+                            mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
+                        )
+                    else:
+                        gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
                 else:
-                    gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstancedBaseInstance(
+                            mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1, env_idx
+                        )
+                    else:
+                        gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -704,6 +735,7 @@ class JITRenderer:
         color_list=None,
         reflection_mat=np.identity(4, np.float32),
         floor_tex=0,
+        env_idx=-1,
     ):
         self.load_programs(renderer, flags, program_flags)
         func = self._forward_pass
@@ -732,6 +764,7 @@ class JITRenderer:
                 reflection_mat,
                 floor_tex,
                 screen_size,
+                env_idx,
                 self.gl.wrapper_instance,
             )
         else:
@@ -758,11 +791,12 @@ class JITRenderer:
                 reflection_mat,
                 floor_tex,
                 screen_size,
+                env_idx,
                 self.gl.wrapper_instance,
             )
         # print(100.0/(time()-timer))
 
-    def shadow_mapping_pass(self, renderer, V, P, flags, program_flags):
+    def shadow_mapping_pass(self, renderer, V, P, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
         func = self._shadow_mapping_pass
         func(
@@ -775,10 +809,11 @@ class JITRenderer:
             V.astype(np.float32),
             P.astype(np.float32),
             self.render_flags,
+            env_idx,
             self.gl.wrapper_instance,
         )
 
-    def point_shadow_mapping_pass(self, renderer, light_matrix, light_pos, flags, program_flags):
+    def point_shadow_mapping_pass(self, renderer, light_matrix, light_pos, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
         func = self._point_shadow_mapping_pass
         func(
@@ -791,6 +826,7 @@ class JITRenderer:
             light_matrix.astype(np.float32),
             light_pos.astype(np.float32),
             self.render_flags,
+            env_idx,
             self.gl.wrapper_instance,
         )
 

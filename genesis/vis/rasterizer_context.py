@@ -33,6 +33,7 @@ class RasterizerContext:
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
         self.n_rendered_envs = options.n_rendered_envs
+        self.env_separate_rigid = options.env_separate_rigid
 
         self.init_meshes()
 
@@ -65,7 +66,11 @@ class RasterizerContext:
             self.n_rendered_envs = self.sim._B
 
         # pyrender scene
-        self._scene = pyrender.Scene(ambient_light=self.ambient_light, bg_color=self.background_color)
+        self._scene = pyrender.Scene(
+            ambient_light=self.ambient_light,
+            bg_color=self.background_color,
+            n_envs=self.n_rendered_envs,
+        )
 
         if gs.platform != "Windows":
             self.jit = JITRenderer(self._scene, [], [])
@@ -197,6 +202,7 @@ class RasterizerContext:
                         pyrender.Mesh.from_trimesh(
                             mesh=self.link_frame_mesh,
                             poses=gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx]),
+                            env_shared=not self.env_separate_rigid
                         )
                     )
             self.link_frame_shown = True
@@ -289,6 +295,7 @@ class RasterizerContext:
                                 geom.surface.double_sided if "collision" not in rigid_entity.surface.vis_mode else False
                             ),
                             is_floor=isinstance(rigid_entity._morph, gs.morphs.Plane),
+                            env_shared=not self.env_separate_rigid
                         )
                     )
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):
@@ -319,9 +326,9 @@ class RasterizerContext:
                 contact_data = self.sim.rigid_solver.collider.contact_data[i_con, batch_idx]
                 contact_pos = np.array(contact_data.pos) + self.scene.envs_offset[batch_idx]
 
-                if self.sim.rigid_solver.links[contact_data["link_a"]].visualize_contact:
+                if self.sim.rigid_solver.links[contact_data.link_a].visualize_contact:
                     self.draw_contact_arrow(pos=contact_pos, force=-contact_data.force)
-                if self.sim.rigid_solver.links[contact_data["link_b"]].visualize_contact:
+                if self.sim.rigid_solver.links[contact_data.link_b].visualize_contact:
                     self.draw_contact_arrow(pos=contact_pos, force=contact_data.force)
 
     def on_avatar(self):
@@ -842,7 +849,7 @@ class RasterizerContext:
     def seg_idxc_rgb_arr_to_idxc_arr(self, seg_idxc_rgb_arr):
         # Combine the RGB components into a single integer
         seg_idxc_arr = np.array(
-            seg_idxc_rgb_arr[:, :, 0] * 256 * 256 + seg_idxc_rgb_arr[:, :, 1] * 256 + seg_idxc_rgb_arr[:, :, 2],
+            seg_idxc_rgb_arr[..., 0] * 256 * 256 + seg_idxc_rgb_arr[..., 1] * 256 + seg_idxc_rgb_arr[..., 2],
             dtype=int,
         )
         return seg_idxc_arr

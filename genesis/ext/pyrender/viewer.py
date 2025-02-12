@@ -205,6 +205,7 @@ class Viewer(pyglet.window.Window):
         auto_start=True,
         shadow=False,
         plane_reflection=False,
+        env_separate_rigid=False,
         **kwargs,
     ):
         #######################################################################
@@ -232,6 +233,7 @@ class Viewer(pyglet.window.Window):
             "all_solid": False,
             "shadows": shadow,
             "plane_reflection": plane_reflection,
+            "env_separate_rigid" : env_separate_rigid,
             "vertex_normals": False,
             "face_normals": False,
             "cull_faces": True,
@@ -1041,36 +1043,6 @@ class Viewer(pyglet.window.Window):
         elif self.scene.has_node(self._direct_light):
             self.scene.remove_node(self._direct_light)
 
-        flags = RenderFlags.NONE
-        if self.render_flags["flip_wireframe"]:
-            flags |= RenderFlags.FLIP_WIREFRAME
-        elif self.render_flags["all_wireframe"]:
-            flags |= RenderFlags.ALL_WIREFRAME
-        elif self.render_flags["all_solid"]:
-            flags |= RenderFlags.ALL_SOLID
-
-        if self.render_flags["shadows"]:
-            flags |= RenderFlags.SHADOWS_ALL
-        if self.render_flags["plane_reflection"]:
-            flags |= RenderFlags.REFLECTIVE_FLOOR
-        if self.render_flags["vertex_normals"]:
-            flags |= RenderFlags.VERTEX_NORMALS
-        if self.render_flags["face_normals"]:
-            flags |= RenderFlags.FACE_NORMALS
-        if not self.render_flags["cull_faces"]:
-            flags |= RenderFlags.SKIP_CULL_FACES
-
-        if self.render_flags["offscreen"]:
-            flags |= RenderFlags.OFFSCREEN
-
-        seg_node_map = None
-        if self.render_flags["seg"]:
-            flags |= RenderFlags.SEG
-            seg_node_map = self._seg_node_map
-
-        if self.render_flags["depth"]:
-            flags |= RenderFlags.RET_DEPTH
-
         if normal:
 
             class CustomShaderCache:
@@ -1089,10 +1061,47 @@ class Viewer(pyglet.window.Window):
                     return self.program
 
             renderer._program_cache = CustomShaderCache()
-            # retval = renderer.render(scene, RenderFlags.FLAT|RenderFlags.OFFSCREEN)
-            retval = renderer.render(scene, RenderFlags.FLAT | RenderFlags.OFFSCREEN)
+
+            flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
+            if self.render_flags["env_separate_rigid"]:
+                flags |= RenderFlags.ENV_SEPARATE
+
+            retval = renderer.render(scene, flags)
             renderer._program_cache = ShaderProgramCache()
+
         else:
+            flags = RenderFlags.NONE
+            if self.render_flags["flip_wireframe"]:
+                flags |= RenderFlags.FLIP_WIREFRAME
+            elif self.render_flags["all_wireframe"]:
+                flags |= RenderFlags.ALL_WIREFRAME
+            elif self.render_flags["all_solid"]:
+                flags |= RenderFlags.ALL_SOLID
+
+            if self.render_flags["shadows"]:
+                flags |= RenderFlags.SHADOWS_ALL
+            if self.render_flags["plane_reflection"]:
+                flags |= RenderFlags.REFLECTIVE_FLOOR
+            if self.render_flags["env_separate_rigid"]:
+                flags |= RenderFlags.ENV_SEPARATE
+            if self.render_flags["vertex_normals"]:
+                flags |= RenderFlags.VERTEX_NORMALS
+            if self.render_flags["face_normals"]:
+                flags |= RenderFlags.FACE_NORMALS
+            if not self.render_flags["cull_faces"]:
+                flags |= RenderFlags.SKIP_CULL_FACES
+
+            if self.render_flags["offscreen"]:
+                flags |= RenderFlags.OFFSCREEN
+
+            seg_node_map = None
+            if self.render_flags["seg"]:
+                flags |= RenderFlags.SEG
+                seg_node_map = self._seg_node_map
+
+            if self.render_flags["depth"]:
+                flags |= RenderFlags.RET_DEPTH
+
             retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
 
         if camera_node is not None:
@@ -1129,7 +1138,12 @@ class Viewer(pyglet.window.Window):
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,
             ),
-            Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
+            Config(
+                depth_size=24,
+                double_buffer=True,
+                major_version=MIN_OPEN_GL_MAJOR,
+                minor_version=MIN_OPEN_GL_MINOR
+            ),
         ]
         for conf in confs:
             try:

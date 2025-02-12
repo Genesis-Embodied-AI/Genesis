@@ -9,7 +9,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 
-
 class Camera(RBC):
     """
     Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
@@ -144,16 +143,17 @@ class Camera(RBC):
     @gs.assert_built
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
         """
-        Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `vis_options.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
+        Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
+        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `n_rendered_envs`.
 
         Parameters
         ----------
         rgb : bool, optional
-            Whether to render an RGB image.
+            Whether to render RGB image(s).
         depth : bool, optional
-            Whether to render a depth image.
+            Whether to render depth image(s).
         segmentation : bool, optional
-            Whether to render the segmentation mask.
+            Whether to render the segmentation mask(s).
         colorize_seg : bool, optional
             If True, the segmentation mask will be colorized.
         normal : bool, optional
@@ -162,13 +162,13 @@ class Camera(RBC):
         Returns
         -------
         rgb_arr : np.ndarray
-            The rendered RGB image.
+            The rendered RGB image(s).
         depth_arr : np.ndarray
-            The rendered depth image.
+            The rendered depth image(s).
         seg_arr : np.ndarray
-            The rendered segmentation mask.
+            The rendered segmentation mask(s).
         normal_arr : np.ndarray
-            The rendered surface normal.
+            The rendered surface normal(s).
         """
 
         if (rgb or depth or segmentation or normal) is False:
