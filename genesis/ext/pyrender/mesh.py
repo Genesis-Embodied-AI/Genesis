@@ -153,6 +153,7 @@ class Mesh(object):
         smooth=False,
         double_sided=False,
         is_floor=False,
+        env_shared=True,
     ):
         """Create a Mesh from a :class:`~trimesh.base.Trimesh`.
 
@@ -167,7 +168,7 @@ class Mesh(object):
             If not specified and the mesh has no material, a default material
             will be used.
         is_visible : bool
-            If False, the mesh will not be rendered.
+            If `False`, the mesh will not be rendered.
         poses : (n,4,4) float
             Array of 4x4 transformation matrices for instancing this object.
         wireframe : bool
@@ -236,6 +237,7 @@ class Mesh(object):
                     vertex_mapping=vertex_mapping,
                     double_sided=double_sided,
                     is_floor=is_floor,
+                    env_shared=env_shared,
                 )
             )
 

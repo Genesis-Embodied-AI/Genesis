@@ -74,6 +74,7 @@ class Primitive(object):
         vertex_mapping=None,
         double_sided=False,
         is_floor=False,
+        env_shared=True,
     ):
 
         if mode is None:
@@ -95,6 +96,7 @@ class Primitive(object):
         self.vertex_mapping = vertex_mapping
         self.double_sided = double_sided
         self.is_floor = is_floor
+        self.env_shared = env_shared
 
         self._bounds = None
         self._vaid = None
