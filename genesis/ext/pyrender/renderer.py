@@ -522,7 +522,7 @@ class Renderer(object):
             ProgramFlags.USE_MATERIAL,
             screen_size,
             reflection_mat=self.jit.reflection_mat,
-            env_idx=env_idx
+            env_idx=env_idx,
         )
 
         # tmp = self.get_tex_image(self._floor_texture_color._texid, width=self.viewport_width, height=self.viewport_height)
@@ -551,7 +551,7 @@ class Renderer(object):
         # Set up camera matrices
         V, P = self._get_camera_matrices(scene)
         cam_pos = scene.get_pose(scene.main_camera_node)[:3, 3]
-        
+
         floor_tex = self._floor_texture_color._texid if flags & RenderFlags.REFLECTIVE_FLOOR else 0
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 
@@ -588,7 +588,9 @@ class Renderer(object):
 
         self._configure_point_shadow_mapping_viewport(light, flags)
 
-        self.jit.point_shadow_mapping_pass(self, light_matrix, position, flags, ProgramFlags.POINT_SHADOW, env_idx=env_idx)
+        self.jit.point_shadow_mapping_pass(
+            self, light_matrix, position, flags, ProgramFlags.POINT_SHADOW, env_idx=env_idx
+        )
 
     def _point_shadow_mapping_pass_legacy(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light

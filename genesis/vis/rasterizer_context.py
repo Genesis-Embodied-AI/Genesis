@@ -202,7 +202,7 @@ class RasterizerContext:
                         pyrender.Mesh.from_trimesh(
                             mesh=self.link_frame_mesh,
                             poses=gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx]),
-                            env_shared=not self.env_separate_rigid
+                            env_shared=not self.env_separate_rigid,
                         )
                     )
             self.link_frame_shown = True
@@ -295,7 +295,7 @@ class RasterizerContext:
                                 geom.surface.double_sided if "collision" not in rigid_entity.surface.vis_mode else False
                             ),
                             is_floor=isinstance(rigid_entity._morph, gs.morphs.Plane),
-                            env_shared=not self.env_separate_rigid
+                            env_shared=not self.env_separate_rigid,
                         )
                     )
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):

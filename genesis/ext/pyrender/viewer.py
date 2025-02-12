@@ -233,7 +233,7 @@ class Viewer(pyglet.window.Window):
             "all_solid": False,
             "shadows": shadow,
             "plane_reflection": plane_reflection,
-            "env_separate_rigid" : env_separate_rigid,
+            "env_separate_rigid": env_separate_rigid,
             "vertex_normals": False,
             "face_normals": False,
             "cull_faces": True,
@@ -1138,12 +1138,7 @@ class Viewer(pyglet.window.Window):
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,
             ),
-            Config(
-                depth_size=24,
-                double_buffer=True,
-                major_version=MIN_OPEN_GL_MAJOR,
-                minor_version=MIN_OPEN_GL_MINOR
-            ),
+            Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
         ]
         for conf in confs:
             try:

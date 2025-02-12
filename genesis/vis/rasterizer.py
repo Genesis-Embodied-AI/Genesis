@@ -55,9 +55,7 @@ class Rasterizer(RBC):
         if not self._offscreen:
             if rgb or depth:
                 rgb_arr, depth_arr = self._viewer._pyrender_viewer.render_offscreen(
-                    self._camera_nodes[camera.uid],
-                    self._camera_targets[camera.uid],
-                    depth=depth
+                    self._camera_nodes[camera.uid], self._camera_targets[camera.uid], depth=depth
                 )
 
             if segmentation:
