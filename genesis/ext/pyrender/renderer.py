@@ -514,7 +514,10 @@ class Renderer(object):
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 
         self.jit.forward_pass(
-            self, V, P, cam_pos,
+            self,
+            V,
+            P,
+            cam_pos,
             flags | RenderFlags.SKIP_FLOOR,
             ProgramFlags.USE_MATERIAL,
             screen_size,
@@ -560,19 +563,19 @@ class Renderer(object):
                 else:
                     color_list[i] = seg_node_map[node] / 255.0
             self.jit.forward_pass(
-                self, V, P, cam_pos, flags,
+                self,
+                V,
+                P,
+                cam_pos,
+                flags,
                 ProgramFlags.USE_MATERIAL,
                 screen_size,
                 color_list=color_list,
-                env_idx=env_idx
+                env_idx=env_idx,
             )
         else:
             self.jit.forward_pass(
-                self, V, P, cam_pos, flags,
-                ProgramFlags.USE_MATERIAL,
-                screen_size,
-                floor_tex=floor_tex,
-                env_idx=env_idx
+                self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, floor_tex=floor_tex, env_idx=env_idx
             )
             # self.jit.forward_pass(self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL,
             #                       reflection_mat=np.diag(np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)))

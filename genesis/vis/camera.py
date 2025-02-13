@@ -9,6 +9,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 
+
 class Camera(RBC):
     """
     Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
@@ -110,7 +111,7 @@ class Camera(RBC):
     def _build(self):
         self._rasterizer = self._visualizer.rasterizer
         self._raytracer = self._visualizer.raytracer
-        
+
         self._rgb_stacked = self._visualizer._context.env_separate_rigid
         self._other_stacked = self._visualizer._context.env_separate_rigid
 
@@ -118,7 +119,7 @@ class Camera(RBC):
             self._rasterizer.add_camera(self)
         if self._raytracer is not None:
             self._raytracer.add_camera(self)
-            self._rgb_stacked = False       # TODO: Raytracer currently does not support batch rendering
+            self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
 
         self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
@@ -218,7 +219,7 @@ class Camera(RBC):
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
             title = f"Genesis - Camera {self._idx}"
-            
+
             if rgb:
                 rgb_img = rgb_arr[..., [2, 1, 0]]
                 rgb_env = ""
@@ -232,11 +233,11 @@ class Camera(RBC):
                 depth_min = depth_arr.min()
                 depth_max = depth_arr.max()
                 depth_normalized = (depth_arr - depth_min) / (depth_max - depth_min)
-                depth_normalized = 1 - depth_normalized     # closer objects appear brighter
+                depth_normalized = 1 - depth_normalized  # closer objects appear brighter
                 depth_img = (depth_normalized * 255).astype(np.uint8)
                 if self._other_stacked:
                     depth_img = depth_img[0]
-                
+
                 cv2.imshow(f"{title + other_env} [Depth]", depth_img)
 
             if segmentation:
@@ -447,7 +448,7 @@ class Camera(RBC):
                 gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
         else:
             gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
-            
+
         self._recorded_imgs.clear()
         self._in_recording = False
 

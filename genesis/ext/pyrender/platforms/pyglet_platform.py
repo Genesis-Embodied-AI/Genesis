@@ -51,17 +51,12 @@ class PygletPlatform(Platform):
                 minor_version=MIN_OPEN_GL_MINOR,
             ),
             pyglet.gl.Config(
-                depth_size=24,
-                double_buffer=True,
-                major_version=MIN_OPEN_GL_MAJOR,
-                minor_version=MIN_OPEN_GL_MINOR
+                depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR
             ),
         ]
         for conf in confs:
             try:
-                self._window = pyglet.window.Window(
-                    config=conf, visible=False, resizable=False, width=1, height=1
-                )
+                self._window = pyglet.window.Window(config=conf, visible=False, resizable=False, width=1, height=1)
                 break
             except pyglet.window.NoSuchConfigException as e:
                 pass

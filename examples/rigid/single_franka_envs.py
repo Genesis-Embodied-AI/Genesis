@@ -71,5 +71,6 @@ def main():
     if args.record:
         cam_0.stop_recording(save_to_filename="video.mp4")
 
+
 if __name__ == "__main__":
     main()
