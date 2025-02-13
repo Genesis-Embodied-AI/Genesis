@@ -56,11 +56,19 @@ def main():
     ########################## build ##########################
     scene.build(n_envs=args.num_env, env_spacing=(0.5, 0.5))
 
+    import os
+    pic_dir = "data/render/franka"
+    if not os.path.exists(pic_dir):
+        os.makedirs(pic_dir)
+
     if args.record:
         cam_0.start_recording()
 
-    horizon = 1000
+    horizon = 100
     for i in range(horizon):
+        cam_0.set_params(fov=cam_0.fov + 0.5, intrinsics=cam_0.intrinsics)
+        print(cam_0.fov)
+
         scene.step()
 
         color, depth, seg, normal = cam_0.render(
@@ -68,8 +76,12 @@ def main():
         )
         print(f"Step {i}:", args.num_env, color.shape, depth.shape, seg.shape, normal.shape)
 
+        if not args.sep:
+            gs.tools.save_img_arr(color, f"{pic_dir}/{i}.png")
+
     if args.record:
-        cam_0.stop_recording(save_to_filename="video.mp4")
+        # cam_0.stop_recording(save_to_filename="video.mp4")
+        cam_0.stop_recording(save_to_filename=f"{pic_dir}/video.mp4")
 
 if __name__ == "__main__":
     main()
