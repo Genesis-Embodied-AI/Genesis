@@ -160,11 +160,14 @@ class Renderer(object):
             if not bool(flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.SEG):
                 for ln in scene.light_nodes:
                     take_pass = False
-                    if isinstance(ln.light, DirectionalLight) and bool(flags & RenderFlags.SHADOWS_DIRECTIONAL):
+                    if (isinstance(ln.light, DirectionalLight) and
+                            bool(flags & RenderFlags.SHADOWS_DIRECTIONAL)):
                         take_pass = True
-                    elif isinstance(ln.light, SpotLight) and bool(flags & RenderFlags.SHADOWS_SPOT):
+                    elif (isinstance(ln.light, SpotLight) and
+                            bool(flags & RenderFlags.SHADOWS_SPOT)):
                         take_pass = False
-                    elif isinstance(ln.light, PointLight) and bool(flags & RenderFlags.SHADOWS_POINT):
+                    elif (isinstance(ln.light, PointLight) and
+                            bool(flags & RenderFlags.SHADOWS_POINT)):
                         take_pass = True
                     if take_pass:
                         if isinstance(ln.light, PointLight):
@@ -514,10 +517,7 @@ class Renderer(object):
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 
         self.jit.forward_pass(
-            self,
-            V,
-            P,
-            cam_pos,
+            self, V, P, cam_pos,
             flags | RenderFlags.SKIP_FLOOR,
             ProgramFlags.USE_MATERIAL,
             screen_size,
@@ -563,11 +563,19 @@ class Renderer(object):
                 else:
                     color_list[i] = seg_node_map[node] / 255.0
             self.jit.forward_pass(
-                self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, color_list, env_idx=env_idx
+                self, V, P, cam_pos, flags,
+                ProgramFlags.USE_MATERIAL,
+                screen_size,
+                color_list=color_list,
+                env_idx=env_idx
             )
         else:
             self.jit.forward_pass(
-                self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, floor_tex=floor_tex, env_idx=env_idx
+                self, V, P, cam_pos, flags,
+                ProgramFlags.USE_MATERIAL,
+                screen_size,
+                floor_tex=floor_tex,
+                env_idx=env_idx
             )
             # self.jit.forward_pass(self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL,
             #                       reflection_mat=np.diag(np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)))
