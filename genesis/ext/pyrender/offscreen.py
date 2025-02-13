@@ -159,7 +159,6 @@ class OffscreenRenderer(object):
             flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
             if env_separate_rigid:
                 flags |= RenderFlags.ENV_SEPARATE
-            
             normal_arr, _ = renderer.render(scene, flags)
             retval = retval + (normal_arr,)
             renderer._program_cache = old_cache

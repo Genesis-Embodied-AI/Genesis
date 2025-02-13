@@ -44,8 +44,15 @@ class SupportField:
                 vert_end = self.solver.geoms_info.vert_end[i_g]
                 this_pos = init_pos[vert_start:vert_end]
 
-                dot_products = v1.dot(this_pos.T)
-                max_indices = np.argmax(dot_products, axis=1)
+                num_v = v1.shape[0]
+                window_size = int(5e8 // this_pos.shape[0])
+                max_indices = np.empty(num_v, dtype=np.intp)
+
+                for i in range(0, num_v, window_size):
+                    end = min(i + window_size, num_v)
+                    dot_chunk = v1[i:end] @ this_pos.T
+                    max_indices[i:end] = np.argmax(dot_chunk, axis=1)
+
                 support = this_pos[max_indices]
 
                 support_cell_start.append(start)

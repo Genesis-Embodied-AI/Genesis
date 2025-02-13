@@ -1,5 +1,4 @@
-"""A pyglet-based interactive 3D scene viewer.
-"""
+"""A pyglet-based interactive 3D scene viewer."""
 
 import copy
 import os
@@ -234,7 +233,7 @@ class Viewer(pyglet.window.Window):
             "all_solid": False,
             "shadows": shadow,
             "plane_reflection": plane_reflection,
-            "env_separate_rigid" : env_separate_rigid,
+            "env_separate_rigid": env_separate_rigid,
             "vertex_normals": False,
             "face_normals": False,
             "cull_faces": True,

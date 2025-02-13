@@ -26,6 +26,7 @@ class RigidLink(RBC):
         vert_start,
         face_start,
         edge_start,
+        verts_state_start,
         vgeom_start,
         vvert_start,
         vface_start,
@@ -55,6 +56,7 @@ class RigidLink(RBC):
         self._vert_start = vert_start
         self._face_start = face_start
         self._edge_start = edge_start
+        self._verts_state_start = verts_state_start
         self._vgeom_start = vgeom_start
         self._vvert_start = vvert_start
         self._vface_start = vface_start
@@ -177,6 +179,7 @@ class RigidLink(RBC):
             vert_start=self.n_verts + self._vert_start,
             face_start=self.n_faces + self._face_start,
             edge_start=self.n_edges + self._edge_start,
+            verts_state_start=self.n_verts + self._verts_state_start,
             mesh=mesh,
             init_pos=init_pos,
             init_quat=init_quat,
@@ -258,21 +261,37 @@ class RigidLink(RBC):
         """
         Get the vertices of the link's collision body (concatenation of all `link.geoms`) in the world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_verts(tensor)
-        if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+        if self.is_free:
+            tensor = torch.empty(
+                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
+            )
+            self._kernel_get_free_verts(tensor)
+            if self._solver.n_envs == 0:
+                tensor = tensor.squeeze(0)
+        else:
+            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
+            self._kernel_get_fixed_verts(tensor)
         return tensor
 
     @ti.kernel
-    def _kernel_get_verts(self, tensor: ti.types.ndarray()):
+    def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
         for i_g_, i_b in ti.ndrange(self.n_geoms, self._solver._B):
             i_g = i_g_ + self._geom_start
             self._solver._func_update_verts_for_geom(i_g, i_b)
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._vert_start
-            tensor[b, i, j] = self._solver.verts_state[idx_vert, b].pos[j]
+            idx_vert = i + self._verts_state_start
+            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+
+    @ti.kernel
+    def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
+        for i_g_ in range(self.n_geoms):
+            i_g = i_g_ + self._geom_start
+            self._solver._func_update_verts_for_geom(i_g, 0)
+
+        for i, j in ti.ndrange(self.n_verts, 3):
+            idx_vert = i + self._verts_state_start
+            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
 
     @gs.assert_built
     def get_vverts(self):
@@ -605,6 +624,13 @@ class RigidLink(RBC):
         Whether the entity the link belongs to is built.
         """
         return self.entity.is_built
+
+    @property
+    def is_free(self):
+        """
+        Whether the entity the link belongs to is free.
+        """
+        return self.entity.is_free
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------

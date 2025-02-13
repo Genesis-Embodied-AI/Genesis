@@ -38,6 +38,7 @@ class RigidEntity(Entity):
         geom_start=0,
         cell_start=0,
         vert_start=0,
+        verts_state_start=0,
         face_start=0,
         edge_start=0,
         vgeom_start=0,
@@ -57,11 +58,14 @@ class RigidEntity(Entity):
         self._vert_start = vert_start
         self._face_start = face_start
         self._edge_start = edge_start
+        self._verts_state_start = verts_state_start
         self._vgeom_start = vgeom_start
         self._vvert_start = vvert_start
         self._vface_start = vface_start
 
         self._visualize_contact = visualize_contact
+
+        self._is_free = morph.is_free
 
         self._is_built = False
 
@@ -548,6 +552,7 @@ class RigidEntity(Entity):
             vert_start=self.n_verts + self._vert_start,
             face_start=self.n_faces + self._face_start,
             edge_start=self.n_edges + self._edge_start,
+            verts_state_start=self.n_verts + self._verts_state_start,
             vgeom_start=self.n_vgeoms + self._vgeom_start,
             vvert_start=self.n_vverts + self._vvert_start,
             vface_start=self.n_vfaces + self._vface_start,
@@ -1743,21 +1748,37 @@ class RigidEntity(Entity):
             The vertices of the entity (using collision geoms).
         """
 
-        tensor = torch.empty(self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_verts(tensor)
-        if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+        if self.is_free:
+            tensor = torch.empty(
+                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
+            )
+            self._kernel_get_free_verts(tensor)
+            if self._solver.n_envs == 0:
+                tensor = tensor.squeeze(0)
+        else:
+            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
+            self._kernel_get_fixed_verts(tensor)
         return tensor
 
     @ti.kernel
-    def _kernel_get_verts(self, tensor: ti.types.ndarray()):
+    def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
         for i_g_, i_b in ti.ndrange(self.n_geoms, self._solver._B):
             i_g = i_g_ + self._geom_start
             self._solver._func_update_verts_for_geom(i_g, i_b)
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._vert_start
-            tensor[b, i, j] = self._solver.verts_state[idx_vert, b].pos[j]
+            idx_vert = i + self._verts_state_start
+            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+
+    @ti.kernel
+    def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
+        for i_g_ in range(self.n_geoms):
+            i_g = i_g_ + self._geom_start
+            self._solver._func_update_verts_for_geom(i_g, 0)
+
+        for i, j in ti.ndrange(self.n_verts, 3):
+            idx_vert = i + self._verts_state_start
+            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
 
     @gs.assert_built
     def get_AABB(self):
@@ -2150,13 +2171,13 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_force_range(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
-    def get_dofs_limit(self, dofs_idx=None, envs_idx=None):
+    def get_dofs_limit(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the positional limits (min and max) for the entity's dofs.
 
         Parameters
         ----------
-        dofs_idx : None | array_like, optional
+        dofs_idx_local : None | array_like, optional
             The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -2168,7 +2189,7 @@ class RigidEntity(Entity):
         upper_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
             The upper limit of the positional limits for the entity's dofs.
         """
-        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx), envs_idx)
+        return self._solver.get_dofs_limit(self._get_dofs_idx(dofs_idx_local), envs_idx)
 
     @gs.assert_built
     def get_dofs_stiffness(self, dofs_idx_local=None, envs_idx=None):
@@ -2643,3 +2664,8 @@ class RigidEntity(Entity):
     def base_joint(self):
         """The base joint of the entity"""
         return self._joints[0]
+
+    @property
+    def is_free(self):
+        """Whether the entity is free to move."""
+        return self._is_free

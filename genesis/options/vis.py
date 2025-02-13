@@ -95,7 +95,7 @@ class VisOptions(Options):
     show_cameras: bool = False
     shadow: bool = True
     plane_reflection: bool = False
-    env_separate_rigid: bool = False   
+    env_separate_rigid: bool = False
     background_color: tuple = (0.04, 0.08, 0.12)
     ambient_light: tuple = (0.1, 0.1, 0.1)
     visualize_mpm_boundary: bool = False
