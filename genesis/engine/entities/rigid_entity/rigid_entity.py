@@ -2282,15 +2282,15 @@ class RigidEntity(Entity):
             The contact information.
         """
 
-        scene_contact_info = self._solver.collider.contact_data.to_numpy()
-        n_contacts = self._solver.collider.n_contacts.to_numpy()
+        scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
+        n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        valid_mask = np.logical_or(
-            np.logical_and(
+        valid_mask = torch.logical_or(
+            torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
                 scene_contact_info["geom_a"] < self.geom_end,
             ),
-            np.logical_and(
+            torch.logical_and(
                 scene_contact_info["geom_b"] >= self.geom_start,
                 scene_contact_info["geom_b"] < self.geom_end,
             ),
@@ -2298,24 +2298,27 @@ class RigidEntity(Entity):
         if with_entity is not None:
             if self.idx == with_entity.idx:
                 gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
-
-            valid_mask = np.logical_and(
+            valid_mask = torch.logical_and(
                 valid_mask,
-                np.logical_or(
-                    np.logical_and(
+                torch.logical_or(
+                    torch.logical_and(
                         scene_contact_info["geom_a"] >= with_entity.geom_start,
                         scene_contact_info["geom_a"] < with_entity.geom_end,
                     ),
-                    np.logical_and(
+                    torch.logical_and(
                         scene_contact_info["geom_b"] >= with_entity.geom_start,
                         scene_contact_info["geom_b"] < with_entity.geom_end,
                     ),
                 ),
             )
-        valid_mask = np.logical_and(valid_mask, np.arange(valid_mask.shape[0])[:, None] < n_contacts)
+
+        # Create an index tensor for contacts and compare against per-env n_contacts.
+        # Assumes valid_mask.shape[0] corresponds to the maximum number of contacts.
+        contact_indices = torch.arange(valid_mask.shape[0], device=valid_mask.device).unsqueeze(1)
+        valid_mask = torch.logical_and(valid_mask, contact_indices < n_contacts)
 
         if self._solver.n_envs == 0:
-            valid_idx = np.where(valid_mask.squeeze())[0]
+            valid_idx = torch.nonzero(valid_mask.squeeze(), as_tuple=True)[0]
             contact_info = {
                 "geom_a": scene_contact_info["geom_a"][valid_idx, 0],
                 "geom_b": scene_contact_info["geom_b"][valid_idx, 0],
@@ -2326,16 +2329,16 @@ class RigidEntity(Entity):
                 "force_b": scene_contact_info["force"][valid_idx, 0],
             }
         else:
-            max_env_collisions = np.max(n_contacts)
+            max_env_collisions = int(torch.max(n_contacts).item())
             contact_info = {
-                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].T,
-                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].T,
-                "link_a": scene_contact_info["link_a"][:max_env_collisions].T,
-                "link_b": scene_contact_info["link_b"][:max_env_collisions].T,
-                "position": scene_contact_info["pos"][:max_env_collisions].transpose([1, 0, 2]),
-                "force_a": -scene_contact_info["force"][:max_env_collisions].transpose([1, 0, 2]),
-                "force_b": scene_contact_info["force"][:max_env_collisions].transpose([1, 0, 2]),
-                "valid_mask": valid_mask[:max_env_collisions].T,
+                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].t(),
+                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].t(),
+                "link_a": scene_contact_info["link_a"][:max_env_collisions].t(),
+                "link_b": scene_contact_info["link_b"][:max_env_collisions].t(),
+                "position": scene_contact_info["pos"][:max_env_collisions].permute(1, 0, 2),
+                "force_a": -scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "force_b": scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "valid_mask": valid_mask[:max_env_collisions].t(),
             }
         return contact_info
 
