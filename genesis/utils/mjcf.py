@@ -255,11 +255,10 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 uv_coordinates = tmesh.vertices[:, :2].copy()
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
-                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
-                image_array = np.array(image)
-                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
-                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
-                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array, mode="RGBA"))
+                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
+                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                uv_coordinates = uv_coordinates * mj_mat.texrepeat
+                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
@@ -292,15 +291,10 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                         ]  # this may overwrite the same vertex
                 uv[:, 1] = 1 - uv[:, 1]
 
-                # TODO: check if we can parse <compiler> tag with mj model
-                texturedir = extract_compiler_attributes(xml_path)["texturedir"]
-                assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
-
-                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
-                image_array = np.array(image)
-                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
-                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
-                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array, mode="RGBA"))
+                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
+                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                uv = uv * mj_mat.texrepeat
+                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
 
         tmesh = trimesh.Trimesh(
             vertices=mj.mesh_vert[vert_start:vert_end],
@@ -351,8 +345,8 @@ def parse_equality(mj, i_e, scale, ordered_links_idx):
 
     if mj_equality.type == mujoco.mjtEq.mjEQ_CONNECT:
         e_info["type"] = gs.EQUALITY_TYPE.CONNECT
-        e_info["link1_idx"] = -1 if mj_equality.obj1id[0] == 0 else ordered_links_idx.index(mj_equality.obj1id[0] - 1)
-        e_info["link2_idx"] = -1 if mj_equality.obj2id[0] == 0 else ordered_links_idx.index(mj_equality.obj2id[0] - 1)
+        e_info["link1_idx"] = -1 if mj_equality.obj1id[0] == 0 else ordered_links_idx[mj_equality.obj1id[0] - 1]
+        e_info["link2_idx"] = -1 if mj_equality.obj2id[0] == 0 else ordered_links_idx[mj_equality.obj2id[0] - 1]
         e_info["anchor1_pos"] = mj_equality.data[0:3] * scale
         e_info["anchor2_pos"] = mj_equality.data[3:6] * scale
         e_info["rel_pose"] = mj_equality.data[6:10]
