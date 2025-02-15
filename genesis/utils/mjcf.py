@@ -283,6 +283,10 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         gs_type = gs.GEOM_TYPE.CYLINDER
 
     elif mj_type == mujoco.mjtGeom.mjGEOM_BOX:
+        if is_col:
+            gs.logger.warning(f"Genesis does not currently support MJCF geom type: \
+                              {mj_type} with collisions enabled (conaffinity or contype).")
+
         tmesh = trimesh.creation.box(extents=mj.geom_size[i_g, :3] * 2)
         data *= 2
         gs_type = gs.GEOM_TYPE.BOX
