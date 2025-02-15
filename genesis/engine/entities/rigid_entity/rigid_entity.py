@@ -782,12 +782,14 @@ class RigidEntity(Entity):
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
+        envs_idx: None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
 
         Returns
         -------
-        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs)
+        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs) or (len(envs_idx), n_dofs)
             Solver qpos (joint positions).
-        (optional) error_pose : array_like, shape (6,) or (n_envs, 6)
+        (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
@@ -882,13 +884,14 @@ class RigidEntity(Entity):
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
-        envs_idx:
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
 
         Returns
         -------
-        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs)
+        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs) or (len(envs_idx), n_dofs)
             Solver qpos (joint positions).
-        (optional) error_pose : array_like, shape (6,) or (n_envs, 6)
+        (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
