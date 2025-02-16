@@ -112,10 +112,14 @@ class Camera(RBC):
         self._rasterizer = self._visualizer.rasterizer
         self._raytracer = self._visualizer.raytracer
 
+        self._rgb_stacked = self._visualizer._context.env_separate_rigid
+        self._other_stacked = self._visualizer._context.env_separate_rigid
+
         if self._rasterizer is not None:
             self._rasterizer.add_camera(self)
         if self._raytracer is not None:
             self._raytracer.add_camera(self)
+            self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
 
         self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
@@ -214,23 +218,41 @@ class Camera(RBC):
 
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
-            if rgb:
-                cv2.imshow(f"Genesis - Camera {self._idx} [RGB]", rgb_arr[..., [2, 1, 0]])
+            title = f"Genesis - Camera {self._idx}"
 
+            if rgb:
+                rgb_img = rgb_arr[..., [2, 1, 0]]
+                rgb_env = ""
+                if self._rgb_stacked:
+                    rgb_img = rgb_img[0]
+                    rgb_env = " Environment 0"
+                cv2.imshow(f"{title + rgb_env} [RGB]", rgb_img)
+
+            other_env = " Environment 0" if self._other_stacked else ""
             if depth:
                 depth_min = depth_arr.min()
                 depth_max = depth_arr.max()
                 depth_normalized = (depth_arr - depth_min) / (depth_max - depth_min)
-                # closer objects appear brighter
-                depth_normalized = 1 - depth_normalized
+                depth_normalized = 1 - depth_normalized  # closer objects appear brighter
                 depth_img = (depth_normalized * 255).astype(np.uint8)
-                cv2.imshow(f"Genesis - Camera {self._idx} [Depth]", depth_img)
+                if self._other_stacked:
+                    depth_img = depth_img[0]
+
+                cv2.imshow(f"{title + other_env} [Depth]", depth_img)
 
             if segmentation:
-                cv2.imshow(f"Genesis - Camera {self._idx} [Segmentation]", seg_color_arr[..., [2, 1, 0]])
+                seg_img = seg_color_arr[..., [2, 1, 0]]
+                if self._other_stacked:
+                    seg_img = seg_img[0]
+
+                cv2.imshow(f"{title + other_env} [Segmentation]", seg_img)
 
             if normal:
-                cv2.imshow(f"Genesis - Camera {self._idx} [Normal]", normal_arr[..., [2, 1, 0]])
+                normal_img = normal_arr[..., [2, 1, 0]]
+                if self._other_stacked:
+                    normal_img = normal_img[0]
+
+                cv2.imshow(f"{title + other_env} [Normal]", normal_img)
 
             cv2.waitKey(1)
 
@@ -336,7 +358,7 @@ class Camera(RBC):
             self.set_pose(pos=camera_pos, lookat=lookat_pos)
 
     @gs.assert_built
-    def set_params(self, fov=None, aperture=None, focus_dist=None):
+    def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
         """
         Update the camera parameters.
 
@@ -348,6 +370,8 @@ class Camera(RBC):
             The aperture of the camera. Only supports 'thinlens' camera model.
         focus_dist : float, optional
             The focus distance of the camera. Only supports 'thinlens' camera model.
+        intrinsics : np.ndarray, shape (3, 3), optional
+            The intrinsics matrix of the camera. If provided, it should be consistent with the specified 'fov'.
         """
         if self.model != "thinlens" and (aperture is not None or focus_dist is not None):
             gs.logger.warning("Only `thinlens` camera model supports parameter update.")
@@ -363,6 +387,14 @@ class Camera(RBC):
 
         if fov is not None:
             self._fov = fov
+
+        if intrinsics is not None:
+            intrinsics_fov = 2 * np.rad2deg(np.arctan(0.5 * self._res[1] / intrinsics[0, 0]))
+            if fov is not None:
+                if abs(intrinsics_fov - fov) > 1e-4:
+                    gs.raise_exception("The camera's intrinsic values and fov do not match.")
+            else:
+                self._fov = intrinsics_fov
 
         if self._rasterizer is not None:
             self._rasterizer.update_camera(self)
@@ -389,6 +421,7 @@ class Camera(RBC):
     def stop_recording(self, save_to_filename=None, fps=60):
         """
         Stop recording on the camera. Once this is called, all the rgb images stored so far will be saved to a video file. If `save_to_filename` is None, the video file will be saved with the name '{caller_file_name}_cam_{camera.idx}.mp4'.
+        If `env_separate_rigid` in `VisOptions` is set to True, each environment will record and save a video separately. The filenames will be identified by the indices of the environments.
 
         Parameters
         ----------
@@ -408,7 +441,14 @@ class Camera(RBC):
                 + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
             )
 
-        gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
+        if self._rgb_stacked:
+            for env_idx in range(self._visualizer._context.n_rendered_envs):
+                env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
+                env_name, env_ext = os.path.splitext(save_to_filename)
+                gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
+        else:
+            gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
+
         self._recorded_imgs.clear()
         self._in_recording = False
 

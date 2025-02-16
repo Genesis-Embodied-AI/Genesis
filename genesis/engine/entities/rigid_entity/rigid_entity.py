@@ -745,6 +745,7 @@ class RigidEntity(Entity):
         max_step_size=0.5,
         dofs_idx_local=None,
         return_error=False,
+        envs_idx=None,
     ):
         """
         Compute inverse kinematics for a single target link.
@@ -781,20 +782,24 @@ class RigidEntity(Entity):
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
+        envs_idx: None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
 
         Returns
         -------
-        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs)
+        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs) or (len(envs_idx), n_dofs)
             Solver qpos (joint positions).
-        (optional) error_pose : array_like, shape (6,) or (n_envs, 6)
+        (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
+            envs_idx = self._solver._get_envs_idx(envs_idx)
+
             if pos is not None:
-                if pos.shape[0] != self._solver.n_envs:
+                if pos.shape[0] != len(envs_idx):
                     gs.raise_exception("First dimension of `pos` must be equal to `scene.n_envs`.")
             if quat is not None:
-                if quat.shape[0] != self._solver.n_envs:
+                if quat.shape[0] != len(envs_idx):
                     gs.raise_exception("First dimension of `quat` must be equal to `scene.n_envs`.")
 
         ret = self.inverse_kinematics_multilink(
@@ -813,6 +818,7 @@ class RigidEntity(Entity):
             max_step_size=max_step_size,
             dofs_idx_local=dofs_idx_local,
             return_error=return_error,
+            envs_idx=envs_idx,
         )
 
         if return_error:
@@ -841,6 +847,7 @@ class RigidEntity(Entity):
         max_step_size=0.5,
         dofs_idx_local=None,
         return_error=False,
+        envs_idx=None,
     ):
         """
         Compute inverse kinematics for  multiple target links.
@@ -877,15 +884,18 @@ class RigidEntity(Entity):
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
-
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
 
         Returns
         -------
-        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs)
+        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs) or (len(envs_idx), n_dofs)
             Solver qpos (joint positions).
-        (optional) error_pose : array_like, shape (6,) or (n_envs, 6)
+        (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
+        if self._solver.n_envs > 0:
+            envs_idx = self._solver._get_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
             gs.raise_exception(
@@ -919,7 +929,7 @@ class RigidEntity(Entity):
             if poss[i] is not None:
                 link_pos_mask.append(True)
                 if self._solver.n_envs > 0:
-                    if poss[i].shape[0] != self._solver.n_envs:
+                    if poss[i].shape[0] != len(envs_idx):
                         gs.raise_exception("First dimension of elements in `poss` must be equal to scene.n_envs.")
             else:
                 link_pos_mask.append(False)
@@ -930,7 +940,7 @@ class RigidEntity(Entity):
             if quats[i] is not None:
                 link_rot_mask.append(True)
                 if self._solver.n_envs > 0:
-                    if quats[i].shape[0] != self._solver.n_envs:
+                    if quats[i].shape[0] != len(envs_idx):
                         gs.raise_exception("First dimension of elements in `quats` must be equal to scene.n_envs.")
             else:
                 link_rot_mask.append(False)
@@ -971,10 +981,16 @@ class RigidEntity(Entity):
 
         links_idx = torch.as_tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
         poss = torch.stack(
-            [self._solver._process_dim(torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)) for pos in poss]
+            [
+                self._solver._process_dim(torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
+                for pos in poss
+            ]
         )
         quats = torch.stack(
-            [self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device)) for quat in quats]
+            [
+                self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
+                for quat in quats
+            ]
         )
 
         dofs_idx = self._get_dofs_idx_local(dofs_idx_local)
@@ -1017,10 +1033,12 @@ class RigidEntity(Entity):
             link_rot_mask,
             max_step_size,
             respect_joint_limit,
+            envs_idx,
         )
-        qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0)
-        if self._solver.n_envs == 0:
-            qpos = qpos.squeeze(0)
+        if self._solver.n_envs > 0:
+            qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0)[envs_idx]
+        else:
+            qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0).squeeze(0)
 
         if return_error:
             error_pose = (
@@ -1059,6 +1077,7 @@ class RigidEntity(Entity):
         link_rot_mask: ti.types.ndarray(),
         max_step_size: ti.f32,
         respect_joint_limit: ti.i32,
+        envs_idx: ti.types.ndarray(),
     ):
         # convert to ti Vector
         pos_mask = ti.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.ti_float)
@@ -1066,7 +1085,7 @@ class RigidEntity(Entity):
         n_error_dims = 6 * n_links
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
+        for i_b in envs_idx:
             # save original qpos
             for i_q in range(self.n_qs):
                 self._IK_qpos_orig[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
@@ -2282,15 +2301,15 @@ class RigidEntity(Entity):
             The contact information.
         """
 
-        scene_contact_info = self._solver.collider.contact_data.to_numpy()
-        n_contacts = self._solver.collider.n_contacts.to_numpy()
+        scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
+        n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        valid_mask = np.logical_or(
-            np.logical_and(
+        valid_mask = torch.logical_or(
+            torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
                 scene_contact_info["geom_a"] < self.geom_end,
             ),
-            np.logical_and(
+            torch.logical_and(
                 scene_contact_info["geom_b"] >= self.geom_start,
                 scene_contact_info["geom_b"] < self.geom_end,
             ),
@@ -2298,24 +2317,27 @@ class RigidEntity(Entity):
         if with_entity is not None:
             if self.idx == with_entity.idx:
                 gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
-
-            valid_mask = np.logical_and(
+            valid_mask = torch.logical_and(
                 valid_mask,
-                np.logical_or(
-                    np.logical_and(
+                torch.logical_or(
+                    torch.logical_and(
                         scene_contact_info["geom_a"] >= with_entity.geom_start,
                         scene_contact_info["geom_a"] < with_entity.geom_end,
                     ),
-                    np.logical_and(
+                    torch.logical_and(
                         scene_contact_info["geom_b"] >= with_entity.geom_start,
                         scene_contact_info["geom_b"] < with_entity.geom_end,
                     ),
                 ),
             )
-        valid_mask = np.logical_and(valid_mask, np.arange(valid_mask.shape[0])[:, None] < n_contacts)
+
+        # Create an index tensor for contacts and compare against per-env n_contacts.
+        # Assumes valid_mask.shape[0] corresponds to the maximum number of contacts.
+        contact_indices = torch.arange(valid_mask.shape[0], device=valid_mask.device).unsqueeze(1)
+        valid_mask = torch.logical_and(valid_mask, contact_indices < n_contacts)
 
         if self._solver.n_envs == 0:
-            valid_idx = np.where(valid_mask.squeeze())[0]
+            valid_idx = torch.nonzero(valid_mask.squeeze(), as_tuple=True)[0]
             contact_info = {
                 "geom_a": scene_contact_info["geom_a"][valid_idx, 0],
                 "geom_b": scene_contact_info["geom_b"][valid_idx, 0],
@@ -2326,16 +2348,16 @@ class RigidEntity(Entity):
                 "force_b": scene_contact_info["force"][valid_idx, 0],
             }
         else:
-            max_env_collisions = np.max(n_contacts)
+            max_env_collisions = int(torch.max(n_contacts).item())
             contact_info = {
-                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].T,
-                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].T,
-                "link_a": scene_contact_info["link_a"][:max_env_collisions].T,
-                "link_b": scene_contact_info["link_b"][:max_env_collisions].T,
-                "position": scene_contact_info["pos"][:max_env_collisions].transpose([1, 0, 2]),
-                "force_a": -scene_contact_info["force"][:max_env_collisions].transpose([1, 0, 2]),
-                "force_b": scene_contact_info["force"][:max_env_collisions].transpose([1, 0, 2]),
-                "valid_mask": valid_mask[:max_env_collisions].T,
+                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].t(),
+                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].t(),
+                "link_a": scene_contact_info["link_a"][:max_env_collisions].t(),
+                "link_b": scene_contact_info["link_b"][:max_env_collisions].t(),
+                "position": scene_contact_info["pos"][:max_env_collisions].permute(1, 0, 2),
+                "force_a": -scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "force_b": scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "valid_mask": valid_mask[:max_env_collisions].t(),
             }
         return contact_info
 

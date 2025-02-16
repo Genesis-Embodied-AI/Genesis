@@ -608,10 +608,9 @@ class RigidSolver(Solver):
             self.free_verts_state = struct_vert_state.field(
                 shape=self._batch_shape(self.n_free_verts), needs_grad=False, layout=ti.Layout.SOA
             )
-        if self.n_fixed_verts > 0:
-            self.fixed_verts_state = struct_vert_state.field(
-                shape=(self.n_fixed_verts,), needs_grad=False, layout=ti.Layout.SOA
-            )
+        self.fixed_verts_state = struct_vert_state.field(
+            shape=(max(1, self.n_fixed_verts),), needs_grad=False, layout=ti.Layout.SOA
+        )
 
         if self.n_verts > 0:
             geoms = self.geoms
@@ -2216,7 +2215,7 @@ class RigidSolver(Solver):
                     self.fixed_verts_state[i_v].pos = gu.ti_transform_by_trans_quat(
                         self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
                     )
-                self.geoms_state[i_g].verts_updated = 1
+                self.geoms_state[i_g, 0].verts_updated = 1
 
     @ti.func
     def _func_update_all_verts(self):

@@ -39,7 +39,7 @@ def animate(imgs, filename=None, fps=60):
         logger=None,
         codec="libx264",
         preset="ultrafast",
-        ffmpeg_params=["-crf", "0"],
+        # ffmpeg_params=["-crf", "0"],
     )
     gs.logger.info("Video saved.")
 
