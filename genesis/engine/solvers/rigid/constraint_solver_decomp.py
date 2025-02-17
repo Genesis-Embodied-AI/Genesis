@@ -278,7 +278,6 @@ class ConstraintSolver:
                     imp, aref = gu.imp_aref(sol_params, -penetration, jac_qvel, pos_diff[i_3])
 
                     diag = invweight * (1 - imp) / (imp + gs.EPS)
-                    # print("n_con", n_con, penetration, jac_qvel, diag, aref, pos_diff[i_3])
 
                     self.diag[n_con, i_b] = diag
                     self.aref[n_con, i_b] = aref

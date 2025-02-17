@@ -609,6 +609,14 @@ class RigidEntity(Entity):
         dofs_force_range,
         init_qpos,
     ):
+        if (
+            len(np.array(dofs_sol_params).shape) == 2
+            and np.array(dofs_sol_params).shape[0] == 1
+            and (dofs_sol_params[0][3] >= 1.0 or dofs_sol_params[0][2] >= dofs_sol_params[0][3])
+        ):
+            gs.logger.warning(f"Joint {name}'s sol_params {dofs_sol_params[0]} look not right, change to default.")
+            dofs_sol_params = gu.default_solver_params(1)
+
         joint = RigidJoint(
             entity=self,
             name=name,
