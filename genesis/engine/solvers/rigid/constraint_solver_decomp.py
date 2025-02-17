@@ -20,7 +20,7 @@ class ConstraintSolver:
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         self.sparse_solve = rigid_solver._options.sparse_solve
 
-        # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 1 constraints per equality
+        # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 3 constraints per equality
         self.len_constraints = (
             5 * self._collider._max_contact_pairs
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
