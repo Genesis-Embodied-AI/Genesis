@@ -82,6 +82,17 @@ during evaluation, try removing the `--record` option.
 
 For the latest updates, detailed documentation, and additional resources, visit this repository: [GenesisDroneEnv](https://github.com/KafuuChikai/GenesisDroneEnv).
 
+### 4. Quadcopter Controller (`quadcopter_controller.py` & `fly_route.py`)
+A PID-based controller to provide stable point-to-point flight without controlling each rotor. Parameters
+have been tuned for controlled flight but not optimized. Stored in `fly_route.py`. Run `fly_route.py` to
+test.
+
+Run with:
+
+```bash
+python fly_route.py
+```
+
 ## Technical Details
 
 - The drone model used is the Crazyflie 2.X (`urdf/drones/cf2x.urdf`)
