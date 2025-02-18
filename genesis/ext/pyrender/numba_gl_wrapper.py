@@ -38,6 +38,8 @@ class GLWrapper:
         load_func("glCullFace", GLvoid, GLenum)
         load_func("glDrawElementsInstanced", GLvoid, GLenum, GLsizei, GLenum, GLvoidp, GLsizei)
         load_func("glDrawArraysInstanced", GLvoid, GLenum, GLint, GLsizei, GLsizei)
+        load_func("glDrawElementsInstancedBaseInstance", GLvoid, GLenum, GLsizei, GLenum, GLvoidp, GLsizei, GLuint)
+        load_func("glDrawArraysInstancedBaseInstance", GLvoid, GLenum, GLint, GLsizei, GLsizei, GLuint)
         load_func("glUseProgram", GLvoid, GLuint)
         load_func("glFlush", GLvoid)
         load_func("glReadPixels", GLvoid, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoidp)

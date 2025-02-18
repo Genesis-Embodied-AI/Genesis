@@ -5,6 +5,7 @@ imgui.ini
 .DS_Store
 sftp-config.json
 *.mp4
+genesis/assets/terrain/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -12,7 +13,13 @@ __pycache__/
 *$py.class
 
 # C extensions
+*.pyc
+*.pyd
 *.so
+*.o
+simplify.c
+_simplify.cpp
+_replay.cpp
 
 # Distribution / packaging
 .Python

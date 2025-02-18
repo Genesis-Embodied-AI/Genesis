@@ -14,7 +14,7 @@ def get_train_cfg(exp_name, max_iterations):
         "algorithm": {
             "clip_param": 0.2,
             "desired_kl": 0.01,
-            "entropy_coef": 0.002,
+            "entropy_coef": 0.004,
             "gamma": 0.99,
             "lam": 0.95,
             "learning_rate": 0.0003,
@@ -39,7 +39,7 @@ def get_train_cfg(exp_name, max_iterations):
             "load_run": -1,
             "log_interval": 1,
             "max_iterations": max_iterations,
-            "num_steps_per_env": 24,
+            "num_steps_per_env": 100,
             "policy_class_name": "ActorCritic",
             "record_interval": -1,
             "resume": False,
@@ -109,11 +109,12 @@ def get_cfgs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
+    parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-B", "--num_envs", type=int, default=8192)
-    parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("--max_iterations", type=int, default=300)
     args = parser.parse_args()
 
-    gs.init(logging_level="warning")
+    gs.init(logging_level="error")
 
     log_dir = f"logs/{args.exp_name}"
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
@@ -123,8 +124,16 @@ def main():
         shutil.rmtree(log_dir)
     os.makedirs(log_dir, exist_ok=True)
 
+    if args.vis:
+        env_cfg["visualize_target"] = True
+
     env = HoverEnv(
-        num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
+        num_envs=args.num_envs,
+        env_cfg=env_cfg,
+        obs_cfg=obs_cfg,
+        reward_cfg=reward_cfg,
+        command_cfg=command_cfg,
+        show_viewer=args.vis,
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")

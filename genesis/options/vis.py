@@ -57,9 +57,11 @@ class VisOptions(Options):
     show_cameras : bool
         Whether to render the cameras added to the scene, together with their frustums.
     shadow : bool
-        Whether to render shadow.
+        Whether to render shadow. Defaults to True.
     plane_reflection : bool
         Whether to render plane reflection. Defaults to False.
+    env_separate_rigid : bool
+        Whether to share rigid objects across environments. Disabled when shown by the viewer. Defaults to False.
     background_color : tuple of float, shape (3,)
         The color of the scene background.
     ambient_light : tuple of float, shape (3,)
@@ -70,7 +72,7 @@ class VisOptions(Options):
         Whether to visualize the boundary of the SPH Solver.
     visualize_pbd_boundary : bool
         Whether to visualize the boundary of the PBD Solver.
-    segmentation_level  : str
+    segmentation_level : str
         The segmentation level used for segmentation mask rendering. Should be one of ['entity', 'link', 'geom']. Defaults to 'link'.
     render_particle_as : str
         How particles in the scene should be rendered. Should be one of ['sphere', 'tet']. Defaults to 'sphere'.
@@ -93,6 +95,7 @@ class VisOptions(Options):
     show_cameras: bool = False
     shadow: bool = True
     plane_reflection: bool = False
+    env_separate_rigid: bool = False
     background_color: tuple = (0.04, 0.08, 0.12)
     ambient_light: tuple = (0.1, 0.1, 0.1)
     visualize_mpm_boundary: bool = False

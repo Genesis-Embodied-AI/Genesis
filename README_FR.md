@@ -6,6 +6,8 @@
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/genesis-world)](https://pypi.org/project/genesis-world/)
 [![GitHub Issues](https://img.shields.io/github/issues/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/issues)
 [![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/discussions)
+[![Discord](https://img.shields.io/discord/1322086972302430269?logo=discord)](https://discord.gg/nukCuhB47p)
+<a href="https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ"><img src="https://img.shields.io/badge/WeChat-07C160?style=for-the-badge&logo=wechat&logoColor=white" height="20" style="display:inline"></a>
 
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
 [![README en Français](https://img.shields.io/badge/Francais-d9d9d9)](./README_FR.md)
@@ -18,7 +20,7 @@
 ## 🔥 Nouveautés
 
 - [2024-12-25] Ajout d’un [docker](#docker) incluant la prise en charge du moteur de rendu par ray-tracing.
-- [2024-12-24] Ajout de directives pour [contribuer à Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md).
+- [2024-12-24] Ajout de directives pour [contribuer à Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md).
 
 ## Table des Matières
 
@@ -113,7 +115,7 @@ Le projet Genesis est un effort ouvert et collaboratif. Nous accueillons toutes 
 - **Rapports de bugs** via GitHub Issues.
 - **Suggestions** pour améliorer la convivialité de Genesis.
 
-Consultez notre [guide de contribution](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md) pour plus de détails.
+Consultez notre [guide de contribution](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) pour plus de détails.
 
 ## Support
 

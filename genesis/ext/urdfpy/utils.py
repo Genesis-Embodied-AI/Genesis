@@ -1,5 +1,4 @@
-"""Utilities for URDF parsing.
-"""
+"""Utilities for URDF parsing."""
 
 import os
 import genesis as gs

@@ -31,7 +31,7 @@ class Scene(object):
         The user-defined name of this object.
     """
 
-    def __init__(self, nodes=None, bg_color=None, ambient_light=None, name=None):
+    def __init__(self, nodes=None, bg_color=None, ambient_light=None, n_envs=None, name=None):
 
         if bg_color is None:
             bg_color = np.ones(4)
@@ -41,12 +41,16 @@ class Scene(object):
         if ambient_light is None:
             ambient_light = np.zeros(3)
 
+        if n_envs is None:
+            n_envs = 1
+
         if nodes is None:
             nodes = set()
         self._nodes = set()  # Will be added at the end of this function
 
         self.bg_color = bg_color
         self.ambient_light = ambient_light
+        self.n_envs = n_envs
         self.name = name
 
         self._name_to_nodes = {}

@@ -256,6 +256,7 @@ class Mesh(RBC):
             color_factor = (1.0, 1.0, 1.0, 1.0)
 
         color_texture = mu.create_texture(color_image, color_factor, "srgb")
+        opacity_texture = None
         if color_texture is not None:
             opacity_texture = color_texture.check_dim(3)
         roughness_texture = mu.create_texture(None, roughness_factor, "linear")

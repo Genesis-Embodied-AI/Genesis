@@ -1,5 +1,4 @@
-"""Trackball class for 3D manipulation of viewpoints.
-"""
+"""Trackball class for 3D manipulation of viewpoints."""
 
 import numpy as np
 
@@ -46,7 +45,7 @@ class Trackball(object):
 
         self._state = Trackball.STATE_ROTATE
 
-        self._pdown = None  # Initialize _pdown attribute to None
+        self._pdown = np.array([0.0, 0.0], dtype=np.float32)
 
     @property
     def pose(self):
@@ -88,7 +87,7 @@ class Trackball(object):
         self._target = self._n_target
 
     def drag(self, point):
-        """Update the tracball during a drag.
+        """Update the trackball during a drag.
 
         Parameters
         ----------
@@ -98,9 +97,7 @@ class Trackball(object):
             motion between this point and the one marked by down().
         """
         point = np.array(point, dtype=np.float32)
-        # get the "down" point defaulting to current point making
-        # this a no-op if the "down" event didn't trigger for some reason
-        dx, dy = point - getattr(self, "_pdown", point)
+        dx, dy = point - self._pdown
         mindim = 0.3 * np.min(self._size)
 
         target = self._target

@@ -182,7 +182,7 @@ vec3 get_normal()
 #ifdef NORMAL_LOC
     vec3 ng = normalize(frag_normal);
 #else
-    vec3 = cross(pos_dx, pos_dy);
+    vec3 ng = cross(pos_dx, pos_dy);
 #endif
 
     t = normalize(t - ng * dot(ng, t));

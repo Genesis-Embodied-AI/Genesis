@@ -6,6 +6,8 @@
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/genesis-world)](https://pypi.org/project/genesis-world/)
 [![GitHub Issues](https://img.shields.io/github/issues/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/issues)
 [![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/discussions)
+[![Discord](https://img.shields.io/discord/1322086972302430269?logo=discord)](https://discord.gg/nukCuhB47p)
+<a href="https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ"><img src="https://img.shields.io/badge/WeChat-07C160?style=for-the-badge&logo=wechat&logoColor=white" height="20" style="display:inline"></a>
 
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
 [![README en Français](https://img.shields.io/badge/Francais-d9d9d9)](./README_FR.md)
@@ -16,9 +18,11 @@
 # Genesis
 
 ## 🔥 News
-
+- [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
+- [2025-01-08] Released v0.2.1 🎊 🎉
+- [2025-01-08] Created [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group.
 - [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
-- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md)
+- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)
 
 ## Table of Contents
 
@@ -98,6 +102,7 @@ xhost +local:root # Allow the container to access the display
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
+-v /dev/dri:/dev/dri \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
 -v $PWD:/workspace \
 genesis
@@ -105,7 +110,7 @@ genesis
 
 ## Documentation
 
-Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html), [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html) and [Japanese](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
+Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html), [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html), and [Japanese](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
 
 ## Contributing to Genesis
 
@@ -115,7 +120,7 @@ The Genesis project is an open and collaborative effort. We welcome all forms of
 - **Bug reports** through GitHub Issues.
 - **Suggestions** to improve Genesis's usability.
 
-Refer to our [contribution guide](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/CONTRIBUTING.md) for more details.
+Refer to our [contribution guide](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) for more details.
 
 ## Support
 

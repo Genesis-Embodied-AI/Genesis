@@ -89,9 +89,18 @@ class Camera(RBC):
         self._aspect_ratio = self._res[0] / self._res[1]
         self._visualizer = visualizer
         self._is_built = False
+        self._attached_link = None
+        self._attached_offset_T = None
 
         self._in_recording = False
         self._recorded_imgs = []
+
+        self._init_pos = np.array(pos)
+
+        self._followed_entity = None
+        self._follow_fixed_axis = None
+        self._follow_smoothing = None
+        self._follow_fix_orientation = None
 
         if self._model not in ["pinhole", "thinlens"]:
             gs.raise_exception(f"Invalid camera model: {self._model}")
@@ -103,27 +112,53 @@ class Camera(RBC):
         self._rasterizer = self._visualizer.rasterizer
         self._raytracer = self._visualizer.raytracer
 
+        self._rgb_stacked = self._visualizer._context.env_separate_rigid
+        self._other_stacked = self._visualizer._context.env_separate_rigid
+
         if self._rasterizer is not None:
             self._rasterizer.add_camera(self)
         if self._raytracer is not None:
             self._raytracer.add_camera(self)
+            self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
 
         self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
 
+    def attach(self, rigid_link, offset_T):
+        self._attached_link = rigid_link
+        self._attached_offset_T = offset_T
+
+    def detach(self):
+        self._attached_link = None
+        self._attached_offset_T = None
+
+    @gs.assert_built
+    def move_to_attach(self):
+        if self._attached_link is None:
+            gs.raise_exception(f"The camera hasn't been mounted!")
+        if self._visualizer._scene.n_envs > 0:
+            gs.raise_exception(f"Mounted camera not supported in parallel simulation!")
+
+        link_pos = self._attached_link.get_pos().cpu().numpy()
+        link_quat = self._attached_link.get_quat().cpu().numpy()
+        link_T = gu.trans_quat_to_T(link_pos, link_quat)
+        transform = link_T @ self._attached_offset_T
+        self.set_pose(transform=transform)
+
     @gs.assert_built
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
         """
-        Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `vis_options.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
+        Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
+        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `n_rendered_envs`.
 
         Parameters
         ----------
         rgb : bool, optional
-            Whether to render an RGB image.
+            Whether to render RGB image(s).
         depth : bool, optional
-            Whether to render a depth image.
+            Whether to render depth image(s).
         segmentation : bool, optional
-            Whether to render the segmentation mask.
+            Whether to render the segmentation mask(s).
         colorize_seg : bool, optional
             If True, the segmentation mask will be colorized.
         normal : bool, optional
@@ -132,19 +167,22 @@ class Camera(RBC):
         Returns
         -------
         rgb_arr : np.ndarray
-            The rendered RGB image.
+            The rendered RGB image(s).
         depth_arr : np.ndarray
-            The rendered depth image.
+            The rendered depth image(s).
         seg_arr : np.ndarray
-            The rendered segmentation mask.
+            The rendered segmentation mask(s).
         normal_arr : np.ndarray
-            The rendered surface normal.
+            The rendered surface normal(s).
         """
 
         if (rgb or depth or segmentation or normal) is False:
             gs.raise_exception("Nothing to render.")
 
         rgb_arr, depth_arr, seg_idxc_arr, seg_arr, normal_arr = None, None, None, None, None
+
+        if self._followed_entity is not None:
+            self.update_following()
 
         if self._raytracer is not None:
             if rgb:
@@ -180,23 +218,41 @@ class Camera(RBC):
 
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
-            if rgb:
-                cv2.imshow(f"Genesis - Camera {self._idx} [RGB]", rgb_arr[..., [2, 1, 0]])
+            title = f"Genesis - Camera {self._idx}"
 
+            if rgb:
+                rgb_img = rgb_arr[..., [2, 1, 0]]
+                rgb_env = ""
+                if self._rgb_stacked:
+                    rgb_img = rgb_img[0]
+                    rgb_env = " Environment 0"
+                cv2.imshow(f"{title + rgb_env} [RGB]", rgb_img)
+
+            other_env = " Environment 0" if self._other_stacked else ""
             if depth:
                 depth_min = depth_arr.min()
                 depth_max = depth_arr.max()
                 depth_normalized = (depth_arr - depth_min) / (depth_max - depth_min)
-                # closer objects appear brighter
-                depth_normalized = 1 - depth_normalized
+                depth_normalized = 1 - depth_normalized  # closer objects appear brighter
                 depth_img = (depth_normalized * 255).astype(np.uint8)
-                cv2.imshow(f"Genesis - Camera {self._idx} [Depth]", depth_img)
+                if self._other_stacked:
+                    depth_img = depth_img[0]
+
+                cv2.imshow(f"{title + other_env} [Depth]", depth_img)
 
             if segmentation:
-                cv2.imshow(f"Genesis - Camera {self._idx} [Segmentation]", seg_color_arr[..., [2, 1, 0]])
+                seg_img = seg_color_arr[..., [2, 1, 0]]
+                if self._other_stacked:
+                    seg_img = seg_img[0]
+
+                cv2.imshow(f"{title + other_env} [Segmentation]", seg_img)
 
             if normal:
-                cv2.imshow(f"Genesis - Camera {self._idx} [Normal]", normal_arr[..., [2, 1, 0]])
+                normal_img = normal_arr[..., [2, 1, 0]]
+                if self._other_stacked:
+                    normal_img = normal_img[0]
+
+                cv2.imshow(f"{title + other_env} [Normal]", normal_img)
 
             cv2.waitKey(1)
 
@@ -245,8 +301,64 @@ class Camera(RBC):
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
 
+    def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
+        """
+        Set the camera to follow a specified entity.
+
+        Parameters
+        ----------
+        entity : genesis.Entity
+            The entity to follow.
+        fixed_axis : (float, float, float), optional
+            The fixed axis for the camera's movement. For each axis, if None, the camera will move freely. If a float, the viewer will be fixed on at that value.
+            For example, [None, None, None] will allow the camera to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.
+        smoothing : float, optional
+            The smoothing factor for the camera's movement. If None, no smoothing will be applied.
+        fix_orientation : bool, optional
+            If True, the camera will maintain its orientation relative to the world. If False, the camera will look at the base link of the entity.
+        """
+        self._followed_entity = entity
+        self._follow_fixed_axis = fixed_axis
+        self._follow_smoothing = smoothing
+        self._follow_fix_orientation = fix_orientation
+
     @gs.assert_built
-    def set_params(self, fov=None, aperture=None, focus_dist=None):
+    def update_following(self):
+        """
+        Update the camera position to follow the specified entity.
+        """
+
+        entity_pos = self._followed_entity.get_pos()[0].cpu().numpy()
+        if entity_pos.ndim > 1:  # check for multiple envs
+            entity_pos = entity_pos[0]
+        camera_pos = np.array(self._pos)
+        camera_pose = np.array(self._transform)
+        lookat_pos = np.array(self._lookat)
+
+        if self._follow_smoothing is not None:
+            # Smooth camera movement with a low-pass filter
+            camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (
+                entity_pos + self._init_pos
+            )
+            lookat_pos = self._follow_smoothing * lookat_pos + (1 - self._follow_smoothing) * entity_pos
+        else:
+            camera_pos = entity_pos + self._init_pos
+            lookat_pos = entity_pos
+
+        for i, fixed_axis in enumerate(self._follow_fixed_axis):
+            # Fix the camera's position along the specified axis
+            if fixed_axis is not None:
+                camera_pos[i] = fixed_axis
+
+        if self._follow_fix_orientation:
+            # Keep the camera orientation fixed by overriding the lookat point
+            camera_pose[:3, 3] = camera_pos
+            self.set_pose(transform=camera_pose)
+        else:
+            self.set_pose(pos=camera_pos, lookat=lookat_pos)
+
+    @gs.assert_built
+    def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
         """
         Update the camera parameters.
 
@@ -258,6 +370,8 @@ class Camera(RBC):
             The aperture of the camera. Only supports 'thinlens' camera model.
         focus_dist : float, optional
             The focus distance of the camera. Only supports 'thinlens' camera model.
+        intrinsics : np.ndarray, shape (3, 3), optional
+            The intrinsics matrix of the camera. If provided, it should be consistent with the specified 'fov'.
         """
         if self.model != "thinlens" and (aperture is not None or focus_dist is not None):
             gs.logger.warning("Only `thinlens` camera model supports parameter update.")
@@ -273,6 +387,14 @@ class Camera(RBC):
 
         if fov is not None:
             self._fov = fov
+
+        if intrinsics is not None:
+            intrinsics_fov = 2 * np.rad2deg(np.arctan(0.5 * self._res[1] / intrinsics[0, 0]))
+            if fov is not None:
+                if abs(intrinsics_fov - fov) > 1e-4:
+                    gs.raise_exception("The camera's intrinsic values and fov do not match.")
+            else:
+                self._fov = intrinsics_fov
 
         if self._rasterizer is not None:
             self._rasterizer.update_camera(self)
@@ -299,6 +421,7 @@ class Camera(RBC):
     def stop_recording(self, save_to_filename=None, fps=60):
         """
         Stop recording on the camera. Once this is called, all the rgb images stored so far will be saved to a video file. If `save_to_filename` is None, the video file will be saved with the name '{caller_file_name}_cam_{camera.idx}.mp4'.
+        If `env_separate_rigid` in `VisOptions` is set to True, each environment will record and save a video separately. The filenames will be identified by the indices of the environments.
 
         Parameters
         ----------
@@ -318,7 +441,14 @@ class Camera(RBC):
                 + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
             )
 
-        gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
+        if self._rgb_stacked:
+            for env_idx in range(self._visualizer._context.n_rendered_envs):
+                env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
+                env_name, env_ext = os.path.splitext(save_to_filename)
+                gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
+        else:
+            gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
+
         self._recorded_imgs.clear()
         self._in_recording = False
 

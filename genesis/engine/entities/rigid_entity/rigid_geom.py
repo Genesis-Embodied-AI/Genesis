@@ -29,6 +29,7 @@ class RigidGeom(RBC):
         vert_start,
         face_start,
         edge_start,
+        verts_state_start,
         mesh,
         type,
         friction,
@@ -56,6 +57,7 @@ class RigidGeom(RBC):
         self._vert_start = vert_start
         self._face_start = face_start
         self._edge_start = edge_start
+        self._verts_state_start = verts_state_start
 
         self._coup_softness = self._material.coup_softness
         self._coup_friction = self._material.coup_friction
@@ -454,20 +456,34 @@ class RigidGeom(RBC):
         """
         Get the vertices of the geom in world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_verts(tensor)
-        if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+        if self.is_free:
+            tensor = torch.empty(
+                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
+            )
+            self._kernel_get_free_verts(tensor)
+            if self._solver.n_envs == 0:
+                tensor = tensor.squeeze(0)
+        else:
+            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
+            self._kernel_get_fixed_verts(tensor)
         return tensor
 
     @ti.kernel
-    def _kernel_get_verts(self, tensor: ti.types.ndarray()):
+    def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
         for b in range(self._solver._B):
             self._solver._func_update_verts_for_geom(self._idx, b)
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._vert_start
-            tensor[b, i, j] = self._solver.verts_state[idx_vert, b].pos[j]
+            idx_vert = i + self._verts_state_start
+            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+
+    @ti.kernel
+    def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
+        self._solver._func_update_verts_for_geom(self._idx, 0)
+
+        for i, j in ti.ndrange(self.n_verts, 3):
+            idx_vert = i + self._verts_state_start
+            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
 
     @gs.assert_built
     def get_AABB(self):
@@ -798,6 +814,13 @@ class RigidGeom(RBC):
         return self._edge_start
 
     @property
+    def verts_state_start(self):
+        """
+        Get the starting index of the geom's vertices in the rigid solver.
+        """
+        return self._verts_state_start
+
+    @property
     def cell_end(self):
         """
         Get the ending index of the cells of the signed distance field (SDF) in the rigid solver.
@@ -810,6 +833,13 @@ class RigidGeom(RBC):
         Get the ending index of the geom's vertices in the rigid solver.
         """
         return self.n_verts + self.vert_start
+
+    @property
+    def verts_state_end(self):
+        """
+        Get the ending index of the geom's vertices in the rigid solver.
+        """
+        return self.n_verts + self.verts_state_start
 
     @property
     def face_end(self):
@@ -831,6 +861,13 @@ class RigidGeom(RBC):
         Whether the rigid entity the geom belongs to is built.
         """
         return self.entity.is_built
+
+    @property
+    def is_free(self):
+        """
+        Whether the rigid entity the vgeom belongs to is free.
+        """
+        return self.entity.is_free
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------
@@ -1034,6 +1071,13 @@ class RigidVisGeom(RBC):
         Whether the rigid entity the vgeom belongs to is built.
         """
         return self.entity.is_built
+
+    @property
+    def is_free(self):
+        """
+        Whether the rigid entity the vgeom belongs to is free.
+        """
+        return self.entity.is_free
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------
