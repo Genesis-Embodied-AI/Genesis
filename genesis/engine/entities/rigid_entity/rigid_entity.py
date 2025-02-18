@@ -792,9 +792,9 @@ class RigidEntity(Entity):
         (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
-        if self._solver.n_envs > 0:
-            envs_idx = self._solver._get_envs_idx(envs_idx)
+        envs_idx = self._solver._get_envs_idx(envs_idx)
 
+        if self._solver.n_envs > 0:
             if pos is not None:
                 if pos.shape[0] != len(envs_idx):
                     gs.raise_exception("First dimension of `pos` must be equal to `scene.n_envs`.")
@@ -894,7 +894,7 @@ class RigidEntity(Entity):
         (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
-        if self._solver.n_envs > 0:
+        if envs_idx is None:
             envs_idx = self._solver._get_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
