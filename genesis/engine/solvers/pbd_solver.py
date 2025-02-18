@@ -265,6 +265,8 @@ class PBDSolver(Solver):
                 particle_size=self._particle_size,
                 idx=idx,
                 particle_start=self.n_particles,
+                vvert_start=self.n_vverts,
+                vface_start=self.n_vfaces,
             )
 
         else:

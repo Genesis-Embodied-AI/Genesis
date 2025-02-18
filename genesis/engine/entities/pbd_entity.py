@@ -428,9 +428,19 @@ class PBDFreeParticleEntity(ParticleEntity):
     PBD-based entity represented by non-physics particles
     """
 
-    def __init__(self, scene, solver, material, morph, surface, particle_size, idx, particle_start):
+    def __init__(self, scene, solver, material, morph, surface, particle_size, idx, particle_start, vvert_start, vface_start):
+        if isinstance(morph, gs.morphs.Points) or isinstance(morph, gs.morphs.Nowhere):
+            need_skinning = False
+            vvert_start_setting = None
+            vface_start_setting = None
+        else:
+            need_skinning = True
+            vvert_start_setting = vvert_start
+            vface_start_setting = vface_start
+
         super().__init__(
-            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False
+            scene, solver, material, morph, surface, particle_size, idx, particle_start,
+            vvert_start=vvert_start_setting, vface_start=vface_start_setting, need_skinning=need_skinning
         )
 
     def process_input(self, in_backward=False):
