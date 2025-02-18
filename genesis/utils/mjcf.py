@@ -276,7 +276,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         face_start = int(mj_mesh.faceadr)
         face_num = int(mj_mesh.facenum)
         face_end = face_start + face_num
-        
+
         vertices = mj.mesh_vert[vert_start:vert_end]
         faces = mj.mesh_face[face_start:face_end]
         face_normals = mj.mesh_normal[vert_start:vert_end]
@@ -291,17 +291,17 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 mj_tex = mj.tex(tex_id)
                 tex_vert_start = int(mj.mesh_texcoordadr[mj_mesh.id])
                 num_tex_vert = int(mj.mesh_texcoordnum[mj_mesh.id])
-                
+
                 faces = mj.mesh_facetexcoord[face_start:face_end]
-                
+
                 vertices = np.zeros((num_tex_vert, 3))
                 for face_id in range(face_start, face_end):
                     for i in range(3):
                         mesh_vert_id = mj.mesh_face[face_id, i]
                         tex_vert_id = mj.mesh_facetexcoord[face_id, i]
                         vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
-                
-                uv = mj.mesh_texcoord[tex_vert_start:tex_vert_start + num_tex_vert]
+
+                uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
                 uv[:, 1] = 1 - uv[:, 1]
 
                 H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
