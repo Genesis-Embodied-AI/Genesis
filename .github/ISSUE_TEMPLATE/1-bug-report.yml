@@ -1,0 +1,101 @@
+name: "🐛 Bug report"
+description: Report errors or unexpected behavior
+title: "[Bug]: "
+labels: ["bug", "triage-needed"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report, please make sure to [search for existing issues](https://github.com/Genesis-Embodied-AI/Genesis/issues) before filing a new one!
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Bug Description
+      placeholder: |
+        A clear and concise description of what the bug is. 
+        Try to isolate the issue to help the community to reproduce it easily and increase chances for a fast fix.
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        If possible, provide a script triggering the bug, e.g.
+        ```python
+        # code snippet triggering the bug
+        import genesis as gs
+        gs.init()
+        scene = gs.Scene(show_viewer=False)
+        broken = scene.add_entity(
+            gs.morphs.MJCF(file='attachement.xml'),
+        )
+        scene.build()
+        ```
+        Make sure to attached any needed assets (here `attachement.xml`)!
+      value: |
+        If possible, provide a script triggering the bug, e.g.
+        ```python
+        # code snippet triggering the bug
+        import genesis as gs
+        gs.init()
+        scene = gs.Scene(show_viewer=False)
+        broken = scene.add_entity(
+            gs.morphs.MJCF(file='attachement.xml'),
+        )
+        scene.build()
+        ```
+        Make sure to attached any needed assets (here `attachement.xml`)!
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      placeholder: "A clear and concise description of what you expected to happen."
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots-videos
+    attributes:
+      label: Screenshots/Videos
+      placeholder: "If applicable, add screenshots and/or a video to help explain your problem."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      placeholder: |
+        Please copy and paste any relevant console output. 
+        This will be automatically formatted into code, so no need for backticks.
+      render: shell
+  - type: textarea
+    id: desktop-device
+    attributes:
+      label: Environment
+      placeholder: |
+        - OS: [e.g. Ubuntu 24.04, Windows 11 24H2]
+        - GPU/CPU [e.g. A100, RTX 4090, M3pr, Intel I9-9900k, Ryzen 5900x] (N/A if no GPU/CPU)
+        - GPU-driver version (N/A if no GPU)
+        - CUDA / CUDA-toolkit version (N/A if non-Nvidia)
+      value: |
+        - OS: [e.g. Ubuntu 24.04, Windows 11 24H2]
+        - GPU/CPU [e.g. A100, RTX 4090, M3pr, Intel I9-9900k, Ryzen 5900x] (N/A if no GPU/CPU)
+        - GPU-driver version (N/A if no GPU)
+        - CUDA / CUDA-toolkit version (N/A if non-Nvidia)
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Release version or Commit ID
+      placeholder: |
+        Please provide:
+         - a) **version numer** of the release causing the issue, OR
+         - b) **SHA/hash** of the latest commit if working from git. You can get this by running the `git rev-parse HEAD` command on your current branch.
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      placeholder: "Add any other context about the problem here."

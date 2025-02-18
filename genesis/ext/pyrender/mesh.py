@@ -115,13 +115,15 @@ class Mesh(object):
         return False
 
     @staticmethod
-    def from_points(points, colors=None, normals=None, is_visible=True, poses=None):
+    def from_points(points, name=None, colors=None, normals=None, is_visible=True, poses=None):
         """Create a Mesh from a set of points.
 
         Parameters
         ----------
         points : (n,3) float
             The point positions.
+        name : str
+            The user-defined name of this object.
         colors : (n,3) or (n,4) float, optional
             RGB or RGBA colors for each point.
         normals : (n,3) float, optionals
@@ -137,12 +139,13 @@ class Mesh(object):
             The created mesh.
         """
         primitive = Primitive(positions=points, normals=normals, color_0=colors, mode=GLTF.POINTS, poses=poses)
-        mesh = Mesh(primitives=[primitive], is_visible=is_visible)
+        mesh = Mesh(primitives=[primitive], name=name, is_visible=is_visible)
         return mesh
 
     @staticmethod
     def from_trimesh(
         mesh,
+        name=None,
         material=None,
         is_visible=True,
         poses=None,
@@ -150,6 +153,7 @@ class Mesh(object):
         smooth=False,
         double_sided=False,
         is_floor=False,
+        env_shared=True,
     ):
         """Create a Mesh from a :class:`~trimesh.base.Trimesh`.
 
@@ -157,12 +161,14 @@ class Mesh(object):
         ----------
         mesh : :class:`~trimesh.base.Trimesh` or list of them
             A triangular mesh or a list of meshes.
+        name : str
+            The user-defined name of this object.
         material : :class:`Material`
             The material of the object. Overrides any mesh material.
             If not specified and the mesh has no material, a default material
             will be used.
         is_visible : bool
-            If False, the mesh will not be rendered.
+            If `False`, the mesh will not be rendered.
         poses : (n,4,4) float
             Array of 4x4 transformation matrices for instancing this object.
         wireframe : bool
@@ -231,10 +237,11 @@ class Mesh(object):
                     vertex_mapping=vertex_mapping,
                     double_sided=double_sided,
                     is_floor=is_floor,
+                    env_shared=env_shared,
                 )
             )
 
-        return Mesh(primitives=primitives, is_visible=is_visible)
+        return Mesh(primitives=primitives, name=name, is_visible=is_visible)
 
     @staticmethod
     def _get_trimesh_props(mesh, smooth=False, material=None):

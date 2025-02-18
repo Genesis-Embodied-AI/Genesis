@@ -82,7 +82,6 @@ class Scene(RBC):
         show_viewer=True,
         show_FPS=True,
     ):
-
         self._uid = gs.UID()
         self._t = 0
         self._is_built = False
@@ -214,7 +213,7 @@ class Scene(RBC):
             gs.raise_exception("`viewer_options` should be an instance of `ViewerOptions`.")
 
         if not isinstance(renderer, Renderer):
-            gs.raise_exception("`viewer_options` should be an instance of `gs.renderers.Renderer`.")
+            gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
     @gs.assert_unbuilt
     def add_entity(
@@ -360,6 +359,49 @@ class Scene(RBC):
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
+
+    @gs.assert_unbuilt
+    def link_entities(
+        self,
+        parent_entity,
+        child_entity,
+        parent_link_name="",
+        child_link_name="",
+    ):
+        """
+        links two entities to act as single entity.
+
+        Parameters
+        ----------
+        parent_entity : genesis.Entity
+            The entity in the scene that will be a parent of kinematic tree.
+        child_entity : genesis.Entity
+            The entity in the scene that will be a child of kinematic tree.
+        parent_link_name : str
+            The name of the link in the parent entity to be linked.
+        child_link_name : str
+            The name of the link in the child entity to be linked.
+        """
+        if not isinstance(parent_entity, gs.engine.entities.RigidEntity):
+            gs.raise_exception("Currently only rigid entities are supported for merging.")
+        if not isinstance(child_entity, gs.engine.entities.RigidEntity):
+            gs.raise_exception("Currently only rigid entities are supported for merging.")
+
+        if not child_link_name:
+            for link in child_entity._links:
+                if link.parent_idx == -1:
+                    child_link = link
+                    break
+        else:
+            child_link = child_entity.get_link(child_link_name)
+        parent_link = parent_entity.get_link(parent_link_name)
+
+        if child_link._parent_idx != -1:
+            gs.logger.warning(
+                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure this operation is intended."
+            )
+        child_link._parent_idx = parent_link.idx
+        parent_link._child_idxs.append(child_link.idx)
 
     @gs.assert_unbuilt
     def add_light(
@@ -707,9 +749,14 @@ class Scene(RBC):
             The radius of the line (represented as a cylinder)
         color : array_like, shape (4,), optional
             The color of the line in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_line(start, end, radius, color)
+            return self._visualizer.context.draw_debug_line(start, end, radius, color)
 
     @gs.assert_built
     def draw_debug_arrow(self, pos, vec=(0, 0, 1), radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
@@ -726,10 +773,14 @@ class Scene(RBC):
             The radius of the arrow body (represented as a cylinder).
         color : array_like, shape (4,), optional
             The color of the arrow in RGBA format.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_arrow(pos, vec, radius, color)
+            return self._visualizer.context.draw_debug_arrow(pos, vec, radius, color)
 
     @gs.assert_built
     def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
@@ -746,10 +797,14 @@ class Scene(RBC):
             The size of the origin point (represented as a sphere).
         axis_radius : float, optional
             The radius of the axes (represented as cylinders).
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
+            return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
 
     @gs.assert_built
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
@@ -764,10 +819,14 @@ class Scene(RBC):
             The position of the mesh in the scene.
         T : array_like, shape (4, 4) | None, optional
             The transformation matrix of the mesh. If None, the mesh will be drawn at the position specified by `pos`. Otherwise, `T` has a higher priority than `pos`.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_mesh(mesh, pos, T)
+            return self._visualizer.context.draw_debug_mesh(mesh, pos, T)
 
     @gs.assert_built
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
@@ -782,9 +841,14 @@ class Scene(RBC):
             radius of the sphere.
         color : array_like, shape (4,), optional
             The color of the sphere in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_sphere(pos, radius, color)
+            return self._visualizer.context.draw_debug_sphere(pos, radius, color)
 
     @gs.assert_built
     def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
@@ -799,9 +863,14 @@ class Scene(RBC):
             The radius of the spheres.
         color : array_like, shape (4,), optional
             The color of the spheres in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_spheres(poss, radius, color)
+            return self._visualizer.context.draw_debug_spheres(poss, radius, color)
 
     @gs.assert_built
     def draw_debug_box(
@@ -824,10 +893,14 @@ class Scene(RBC):
             Whether to draw the box as a wireframe.
         wireframe_radius : float, optional
             The radius of the wireframe lines.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_box(
+            return self._visualizer.context.draw_debug_box(
                 bounds, color, wireframe=wireframe, wireframe_radius=wireframe_radius
             )
 
@@ -842,10 +915,22 @@ class Scene(RBC):
             The positions of the points.
         colors : array_like, shape (4,), optional
             The color of the points in RGBA format.
-        """
 
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.draw_debug_points(poss, colors)
+            return self._visualizer.context.draw_debug_points(poss, colors)
+
+    @gs.assert_built
+    def clear_debug_object(self, object):
+        """
+        Clears all the debug objects in the scene.
+        """
+        with self._visualizer.viewer_lock:
+            self._visualizer.context.clear_debug_object(object)
 
     @gs.assert_built
     def clear_debug_objects(self):

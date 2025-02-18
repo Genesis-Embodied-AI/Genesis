@@ -146,5 +146,6 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/locomotion/go2_eval.py -e go2-walking -v --ckpt 100
+python examples/locomotion/go2_backflip.py -e single
+python examples/locomotion/go2_backflip.py -e double
 """

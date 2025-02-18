@@ -1,5 +1,4 @@
-"""A pyglet-based interactive 3D scene viewer.
-"""
+"""A pyglet-based interactive 3D scene viewer."""
 
 import copy
 import os
@@ -14,15 +13,29 @@ import OpenGL
 
 import genesis as gs
 
-try:
-    from Tkinter import Tk
-    from Tkinter import tkFileDialog as filedialog
-except Exception:
+import sys
+
+if sys.platform.startswith("darwin"):
+    # Mac OS
+    from tkinter import Tk
+    from tkinter import filedialog
+else:
     try:
-        from tkinter import Tk
-        from tkinter import filedialog as filedialog
+        from Tkinter import Tk
+        from Tkinter import tkFileDialog as filedialog
     except Exception:
-        pass
+        try:
+            from tkinter import Tk
+            from tkinter import filedialog as filedialog
+        except Exception:
+            pass
+
+
+try:
+    root = Tk()
+    root.withdraw()
+except:
+    pass
 
 import pyglet
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
@@ -192,9 +205,9 @@ class Viewer(pyglet.window.Window):
         auto_start=True,
         shadow=False,
         plane_reflection=False,
+        env_separate_rigid=False,
         **kwargs,
     ):
-
         #######################################################################
         # Save attributes and flags
         #######################################################################
@@ -220,6 +233,7 @@ class Viewer(pyglet.window.Window):
             "all_solid": False,
             "shadows": shadow,
             "plane_reflection": plane_reflection,
+            "env_separate_rigid": env_separate_rigid,
             "vertex_normals": False,
             "face_normals": False,
             "cull_faces": True,
@@ -968,7 +982,6 @@ class Viewer(pyglet.window.Window):
         }
         filetypes = [file_types[x] for x in file_exts]
         try:
-            root = Tk()
             save_dir = self.viewer_flags["save_directory"]
             if save_dir is None:
                 save_dir = os.getcwd()
@@ -978,7 +991,6 @@ class Viewer(pyglet.window.Window):
         except Exception:
             return None
 
-        root.destroy()
         if filename == ():
             return None
         return filename
@@ -1031,36 +1043,6 @@ class Viewer(pyglet.window.Window):
         elif self.scene.has_node(self._direct_light):
             self.scene.remove_node(self._direct_light)
 
-        flags = RenderFlags.NONE
-        if self.render_flags["flip_wireframe"]:
-            flags |= RenderFlags.FLIP_WIREFRAME
-        elif self.render_flags["all_wireframe"]:
-            flags |= RenderFlags.ALL_WIREFRAME
-        elif self.render_flags["all_solid"]:
-            flags |= RenderFlags.ALL_SOLID
-
-        if self.render_flags["shadows"]:
-            flags |= RenderFlags.SHADOWS_ALL
-        if self.render_flags["plane_reflection"]:
-            flags |= RenderFlags.REFLECTIVE_FLOOR
-        if self.render_flags["vertex_normals"]:
-            flags |= RenderFlags.VERTEX_NORMALS
-        if self.render_flags["face_normals"]:
-            flags |= RenderFlags.FACE_NORMALS
-        if not self.render_flags["cull_faces"]:
-            flags |= RenderFlags.SKIP_CULL_FACES
-
-        if self.render_flags["offscreen"]:
-            flags |= RenderFlags.OFFSCREEN
-
-        seg_node_map = None
-        if self.render_flags["seg"]:
-            flags |= RenderFlags.SEG
-            seg_node_map = self._seg_node_map
-
-        if self.render_flags["depth"]:
-            flags |= RenderFlags.RET_DEPTH
-
         if normal:
 
             class CustomShaderCache:
@@ -1079,10 +1061,47 @@ class Viewer(pyglet.window.Window):
                     return self.program
 
             renderer._program_cache = CustomShaderCache()
-            # retval = renderer.render(scene, RenderFlags.FLAT|RenderFlags.OFFSCREEN)
-            retval = renderer.render(scene, RenderFlags.FLAT | RenderFlags.OFFSCREEN)
+
+            flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
+            if self.render_flags["env_separate_rigid"]:
+                flags |= RenderFlags.ENV_SEPARATE
+
+            retval = renderer.render(scene, flags)
             renderer._program_cache = ShaderProgramCache()
+
         else:
+            flags = RenderFlags.NONE
+            if self.render_flags["flip_wireframe"]:
+                flags |= RenderFlags.FLIP_WIREFRAME
+            elif self.render_flags["all_wireframe"]:
+                flags |= RenderFlags.ALL_WIREFRAME
+            elif self.render_flags["all_solid"]:
+                flags |= RenderFlags.ALL_SOLID
+
+            if self.render_flags["shadows"]:
+                flags |= RenderFlags.SHADOWS_ALL
+            if self.render_flags["plane_reflection"]:
+                flags |= RenderFlags.REFLECTIVE_FLOOR
+            if self.render_flags["env_separate_rigid"]:
+                flags |= RenderFlags.ENV_SEPARATE
+            if self.render_flags["vertex_normals"]:
+                flags |= RenderFlags.VERTEX_NORMALS
+            if self.render_flags["face_normals"]:
+                flags |= RenderFlags.FACE_NORMALS
+            if not self.render_flags["cull_faces"]:
+                flags |= RenderFlags.SKIP_CULL_FACES
+
+            if self.render_flags["offscreen"]:
+                flags |= RenderFlags.OFFSCREEN
+
+            seg_node_map = None
+            if self.render_flags["seg"]:
+                flags |= RenderFlags.SEG
+                seg_node_map = self._seg_node_map
+
+            if self.render_flags["depth"]:
+                flags |= RenderFlags.RET_DEPTH
+
             retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
 
         if camera_node is not None:
@@ -1147,7 +1166,14 @@ class Viewer(pyglet.window.Window):
                 # print('e1', time.time() - last_time); last_time = time.time()
 
             pyglet.clock.tick()
-            pyglet.app.platform_event_loop.step(0.0)
+
+            if gs.platform != "Windows":
+                pyglet.app.platform_event_loop.step(0.0)
+            else:
+                # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
+                # this is a workaround on Windows. not sure if it's correct
+                time.sleep(0.001)
+
             self.switch_to()
             self.dispatch_pending_events()
             if self.is_active:
