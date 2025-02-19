@@ -1057,6 +1057,9 @@ class RigidEntity(Entity):
         links_idx_by_dofs = self._get_ls_idx(links_idx_by_dofs)
         n_links_by_dofs = len(links_idx_by_dofs)
 
+        if envs_idx is None:
+            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+
         self._kernel_inverse_kinematics(
             links_idx,
             poss,
