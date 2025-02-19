@@ -32,7 +32,7 @@ class RasterizerContext:
         self.particle_size_scale = options.particle_size_scale
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
-        self.n_rendered_envs = options.n_rendered_envs
+        self.rendered_envs_idx = options.rendered_envs_idx
         self.env_separate_rigid = options.env_separate_rigid
 
         self.init_meshes()
@@ -62,14 +62,14 @@ class RasterizerContext:
         self.visualizer = scene.visualizer
         self.visualizer.update_visual_states()
 
-        if self.n_rendered_envs is None:
-            self.n_rendered_envs = self.sim._B
+        if self.rendered_envs_idx is None:
+            self.rendered_envs_idx = list(range(self.sim._B))
 
         # pyrender scene
         self._scene = pyrender.Scene(
             ambient_light=self.ambient_light,
             bg_color=self.background_color,
-            n_envs=self.n_rendered_envs,
+            n_envs=len(self.rendered_envs_idx),
         )
 
         if gs.platform != "Windows":
@@ -285,7 +285,7 @@ class RasterizerContext:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
-                    geom_T = geoms_T[geom.idx][: self.n_rendered_envs]
+                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     self.rigid_nodes[geom.uid] = self.add_node(
                         pyrender.Mesh.from_trimesh(
                             mesh=mesh,
@@ -312,7 +312,7 @@ class RasterizerContext:
                     geoms_T = self.sim.rigid_solver._geoms_render_T
 
                 for geom in geoms:
-                    geom_T = geoms_T[geom.idx][: self.n_rendered_envs]
+                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
                         [0, 2, 1]
                     )

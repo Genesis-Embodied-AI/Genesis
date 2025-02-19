@@ -132,7 +132,7 @@ class Raytracer:
         self.clamp_normal = options.normal_diff_clamp
 
         self.render_particle_as = vis_options.render_particle_as
-        self.n_rendered_envs = vis_options.n_rendered_envs
+        self.rendered_envs_idx = vis_options.rendered_envs_idx
 
         self._scene = None
         self._shapes = dict()
@@ -207,8 +207,8 @@ class Raytracer:
         self.scene = scene
         self.sim = scene.sim
         self.visualizer = scene.visualizer
-        if self.n_rendered_envs is None:
-            self.n_rendered_envs = self.sim._B
+        if self.rendered_envs_idx is None:
+            self.rendered_envs = list(range(self.sim._B))
 
         self._scene = LuisaRenderPy.create_scene()
         self._scene.init(
@@ -501,7 +501,7 @@ class Raytracer:
             )
 
     def add_rigid_batch(self, name, vertices, triangles, normals, uvs):
-        for batch_index in range(self.n_rendered_envs):
+        for batch_index in self.rendered_envs_idx:
             self.add_rigid(name, vertices, triangles, normals, uvs, batch_index)
 
     def update_rigid(self, name, matrix, batch_index=None):
@@ -519,7 +519,7 @@ class Raytracer:
             self._scene.update_shape(self._shapes[shape_name])
 
     def update_rigid_batch(self, name, matrices):
-        for batch_index in range(self.n_rendered_envs):
+        for batch_index in self.rendered_envs_idx:
             self.update_rigid(name, matrices[batch_index], batch_index)
 
     def add_deformable(self, name, batch_index=None):
