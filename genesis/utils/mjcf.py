@@ -293,23 +293,31 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         face_num = int(mj_mesh.facenum)
         face_end = face_start + face_num
 
+        vertices = mj.mesh_vert[vert_start:vert_end]
+        faces = mj.mesh_face[face_start:face_end]
+        face_normals = mj.mesh_normal[vert_start:vert_end]
+        visual = None
+
         if mj_geom.matid >= 0:
             mj_mat = mj.mat(mj_geom.matid)
-            tex_vert_start = int(mj_mesh.texcoordadr)
             tex_id_RGB = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGB]
             tex_id_RGBA = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGBA]
             tex_id = tex_id_RGB if tex_id_RGB >= 0 else tex_id_RGBA
             if tex_id >= 0:
                 mj_tex = mj.tex(tex_id)
+                tex_vert_start = int(mj.mesh_texcoordadr[mj_mesh.id])
+                num_tex_vert = int(mj.mesh_texcoordnum[mj_mesh.id])
 
-                # remap texture coordinates
-                uv = np.zeros((vert_num, 2))
+                faces = mj.mesh_facetexcoord[face_start:face_end]
+
+                vertices = np.zeros((num_tex_vert, 3))
                 for face_id in range(face_start, face_end):
                     for i in range(3):
-                        tex_face_id = mj.mesh_facetexcoord[face_id, i] + tex_vert_start
-                        uv[mj.mesh_face[face_id, i]] = mj.mesh_texcoord[
-                            tex_face_id
-                        ]  # this may overwrite the same vertex
+                        mesh_vert_id = mj.mesh_face[face_id, i]
+                        tex_vert_id = mj.mesh_facetexcoord[face_id, i]
+                        vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
+
+                uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
                 uv[:, 1] = 1 - uv[:, 1]
 
                 H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
@@ -318,14 +326,13 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
 
         tmesh = trimesh.Trimesh(
-            vertices=mj.mesh_vert[vert_start:vert_end],
-            faces=mj.mesh_face[face_start:face_end],
-            face_normals=mj.mesh_normal[vert_start:vert_end],
+            vertices=vertices,
+            faces=faces,
+            face_normals=face_normals,
             process=False,
             visual=visual,
         )
         gs_type = gs.GEOM_TYPE.MESH
-        # import ipdb; ipdb.set_trace()
 
     else:
         gs.logger.warning(f"Unsupported MJCF geom type: {mj_geom.type}")
