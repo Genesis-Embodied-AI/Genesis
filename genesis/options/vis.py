@@ -83,7 +83,7 @@ class VisOptions(Options):
     n_support_neighbors : int
         Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies. Defaults to 12.
     rendered_envs_idx : list, optional
-        index of environments with being rendered. If None, all environments will be rendered. Defaults to None.
+        index of environments being rendered. If None, all environments will be rendered. Defaults to None.
     lights  : list of dict.
         Lights added to the scene.
     """

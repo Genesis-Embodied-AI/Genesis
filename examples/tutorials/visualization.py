@@ -18,8 +18,7 @@ scene = gs.Scene(
         show_cameras=False,
         plane_reflection=True,
         ambient_light=(0.1, 0.1, 0.1),
-        
-        rendered_envs_idx=[10, 11, 12, 13, 14], # render the 11th to 15th environments
+        rendered_envs_idx=[10, 11, 12, 13, 14],  # render the 11th to 15th environments
         # rendered_envs_idx=list(range(5)), # render the first 5 environments
     ),
     # renderer=gs.renderers.RayTracer(),
