@@ -116,11 +116,13 @@ class RigidSolver(Solver):
         self._n_vfaces = self.n_vfaces
         self._n_vverts = self.n_vverts
         self._n_entities = self.n_entities
+        self._n_equalities = self.n_equalities
 
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
         self._links = self.links
         self._joints = self.joints
+        self._equalities = self.equalities
 
         # used for creating dummy fields for compilation to work
         self.n_qs_ = max(1, self.n_qs)
@@ -136,6 +138,7 @@ class RigidSolver(Solver):
         self.n_vfaces_ = max(1, self.n_vfaces)
         self.n_vverts_ = max(1, self.n_vverts)
         self.n_entities_ = max(1, self.n_entities)
+        self.n_equalities_ = max(1, self.n_equalities)
 
         if self.is_active():
             self._init_mass_mat()
@@ -146,6 +149,7 @@ class RigidSolver(Solver):
             self._init_vgeom_fields()
             self._init_link_fields()
             self._init_entity_fields()
+            self._init_equality_fields()
 
             self._init_envs_offset()
             self._init_sdf()
@@ -491,8 +495,11 @@ class RigidSolver(Solver):
         )
 
         self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
+        self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
-            self.qpos.from_numpy(self._batch_array(self.init_qpos.astype(gs.np_float)))
+            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            self.qpos.from_numpy(init_qpos)
+            self.qpos0.from_numpy(init_qpos)
 
         # This is for IK use only
         # TODO: support IK with parallel envs
@@ -608,10 +615,9 @@ class RigidSolver(Solver):
             self.free_verts_state = struct_vert_state.field(
                 shape=self._batch_shape(self.n_free_verts), needs_grad=False, layout=ti.Layout.SOA
             )
-        if self.n_fixed_verts > 0:
-            self.fixed_verts_state = struct_vert_state.field(
-                shape=(self.n_fixed_verts,), needs_grad=False, layout=ti.Layout.SOA
-            )
+        self.fixed_verts_state = struct_vert_state.field(
+            shape=(max(1, self.n_fixed_verts),), needs_grad=False, layout=ti.Layout.SOA
+        )
 
         if self.n_verts > 0:
             geoms = self.geoms
@@ -1051,6 +1057,62 @@ class RigidSolver(Solver):
             for b in range(self._B):
                 self.n_awake_entities[b] = self.n_entities
 
+    def _init_equality_fields(self):
+        struct_equality_info = ti.types.struct(
+            equality_type=gs.ti_int,
+            link1_idx=gs.ti_int,
+            link2_idx=gs.ti_int,
+            anchor1_pos=gs.ti_vec3,
+            anchor2_pos=gs.ti_vec3,
+            rel_pose=gs.ti_vec4,
+            torque_scale=gs.ti_float,
+            entity_idx=gs.ti_int,
+            sol_params=gs.ti_vec7,
+        )
+        self.equality_info = struct_equality_info.field(
+            shape=self.n_equalities_, needs_grad=False, layout=ti.Layout.SOA
+        )
+        if self.n_equalities > 0:
+            equalities = self.equalities
+            self._kernel_init_equality_fields(
+                equalities_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
+                equalities_link1_idx=np.array([equality.link1_idx for equality in equalities], dtype=gs.np_int),
+                equalities_link2_idx=np.array([equality.link2_idx for equality in equalities], dtype=gs.np_int),
+                equalities_anchor1_pos=np.array([equality.anchor1_pos for equality in equalities], dtype=gs.np_float),
+                equalities_anchor2_pos=np.array([equality.anchor2_pos for equality in equalities], dtype=gs.np_float),
+                equalities_rel_pose=np.array([equality.rel_pose for equality in equalities], dtype=gs.np_float),
+                equalities_torque_scale=np.array([equality.torque_scale for equality in equalities], dtype=gs.np_float),
+                equalities_sol_params=np.array([equality.sol_params for equality in equalities], dtype=gs.np_float),
+            )
+            if self._use_contact_island:
+                gs.logger.warn("contact island is not supported for equality constraints yet")
+
+    @ti.kernel
+    def _kernel_init_equality_fields(
+        self,
+        equalities_type: ti.types.ndarray(),
+        equalities_link1_idx: ti.types.ndarray(),
+        equalities_link2_idx: ti.types.ndarray(),
+        equalities_anchor1_pos: ti.types.ndarray(),
+        equalities_anchor2_pos: ti.types.ndarray(),
+        equalities_rel_pose: ti.types.ndarray(),
+        equalities_torque_scale: ti.types.ndarray(),
+        equalities_sol_params: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i in range(self.n_equalities):
+            self.equality_info[i].equality_type = equalities_type[i]
+            self.equality_info[i].link1_idx = equalities_link1_idx[i]
+            self.equality_info[i].link2_idx = equalities_link2_idx[i]
+            for j in ti.static(range(3)):
+                self.equality_info[i].anchor1_pos[j] = equalities_anchor1_pos[i, j]
+                self.equality_info[i].anchor2_pos[j] = equalities_anchor2_pos[i, j]
+            for j in ti.static(range(4)):
+                self.equality_info[i].rel_pose[j] = equalities_rel_pose[i, j]
+            self.equality_info[i].torque_scale = equalities_torque_scale[i]
+            for j in ti.static(range(7)):
+                self.equality_info[i].sol_params[j] = equalities_sol_params[i, j]
+
     def _init_envs_offset(self):
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
         self.envs_offset.from_numpy(self._scene.envs_offset.astype(gs.np_float))
@@ -1062,7 +1124,6 @@ class RigidSolver(Solver):
         self.collider = Collider(self)
 
         if self.collider._has_terrain:
-
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
 
@@ -1572,10 +1633,11 @@ class RigidSolver(Solver):
                     l = self.links_state[i_l, i_b]
                     l_info = self.links_info[I_l]
                     mass = l_info.inertial_mass + l.mass_shift
-                    self.links_state[i_l, i_b].i_pos, self.links_state[i_l, i_b].i_quat = (
-                        gu.ti_transform_pos_quat_by_trans_quat(
-                            l_info.inertial_pos + l.i_pos_shift, l_info.inertial_quat, l.pos, l.quat
-                        )
+                    (
+                        self.links_state[i_l, i_b].i_pos,
+                        self.links_state[i_l, i_b].i_quat,
+                    ) = gu.ti_transform_pos_quat_by_trans_quat(
+                        l_info.inertial_pos + l.i_pos_shift, l_info.inertial_quat, l.pos, l.quat
                     )
 
                     i_r = self.links_info[I_l].root_idx
@@ -1649,17 +1711,19 @@ class RigidSolver(Solver):
                         self.links_state[i_l, i_b].j_pos = self.links_state[i_l, i_b].pos
                         self.links_state[i_l, i_b].j_quat = self.links_state[i_l, i_b].quat
                     else:
-                        self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat = (
-                            gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
-                        )
+                        (
+                            self.links_state[i_l, i_b].j_pos,
+                            self.links_state[i_l, i_b].j_quat,
+                        ) = gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
 
-                        self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat = (
-                            gu.ti_transform_pos_quat_by_trans_quat(
-                                l_info.joint_pos,
-                                l_info.joint_quat,
-                                self.links_state[i_l, i_b].j_pos,
-                                self.links_state[i_l, i_b].j_quat,
-                            )
+                        (
+                            self.links_state[i_l, i_b].j_pos,
+                            self.links_state[i_l, i_b].j_quat,
+                        ) = gu.ti_transform_pos_quat_by_trans_quat(
+                            l_info.joint_pos,
+                            l_info.joint_quat,
+                            self.links_state[i_l, i_b].j_pos,
+                            self.links_state[i_l, i_b].j_quat,
                         )
 
             # cdof_fn
@@ -1680,13 +1744,14 @@ class RigidSolver(Solver):
                             )
 
                             offset_pos = self.links_state[i_l, i_b].COM - self.links_state[i_l, i_b].j_pos
-                            self.dofs_state[i_d, i_b].cdof_ang, self.dofs_state[i_d, i_b].cdof_vel = (
-                                gu.ti_transform_motion_by_trans_quat(
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                    offset_pos,
-                                    gu.ti_identity_quat(),
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                            ) = gu.ti_transform_motion_by_trans_quat(
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                                offset_pos,
+                                gu.ti_identity_quat(),
                             )
 
                             self.dofs_state[i_d, i_b].cdofvel_ang = (
@@ -1712,13 +1777,14 @@ class RigidSolver(Solver):
                             )
 
                             offset_pos = self.links_state[i_l, i_b].COM - self.links_state[i_l, i_b].j_pos
-                            self.dofs_state[i_d, i_b].cdof_ang, self.dofs_state[i_d, i_b].cdof_vel = (
-                                gu.ti_transform_motion_by_trans_quat(
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                    offset_pos,
-                                    gu.ti_identity_quat(),
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                            ) = gu.ti_transform_motion_by_trans_quat(
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                                offset_pos,
+                                gu.ti_identity_quat(),
                             )
 
                             self.dofs_state[i_d, i_b].cdofvel_ang = (
@@ -1731,7 +1797,6 @@ class RigidSolver(Solver):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self._B):
                 for i_l in range(self.n_links):
-
                     self.links_state[i_l, i_b].root_COM = ti.Vector.zero(gs.ti_float, 3)
                     self.links_state[i_l, i_b].mass_sum = 0.0
 
@@ -1743,10 +1808,11 @@ class RigidSolver(Solver):
                     l = self.links_state[i_l, i_b]
                     l_info = self.links_info[I_l]
                     mass = l_info.inertial_mass + l.mass_shift
-                    self.links_state[i_l, i_b].i_pos, self.links_state[i_l, i_b].i_quat = (
-                        gu.ti_transform_pos_quat_by_trans_quat(
-                            l_info.inertial_pos + l.i_pos_shift, l_info.inertial_quat, l.pos, l.quat
-                        )
+                    (
+                        self.links_state[i_l, i_b].i_pos,
+                        self.links_state[i_l, i_b].i_quat,
+                    ) = gu.ti_transform_pos_quat_by_trans_quat(
+                        l_info.inertial_pos + l.i_pos_shift, l_info.inertial_quat, l.pos, l.quat
                     )
 
                     i_r = self.links_info[I_l].root_idx
@@ -1816,17 +1882,19 @@ class RigidSolver(Solver):
                         self.links_state[i_l, i_b].j_pos = self.links_state[i_l, i_b].pos
                         self.links_state[i_l, i_b].j_quat = self.links_state[i_l, i_b].quat
                     else:
-                        self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat = (
-                            gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
-                        )
+                        (
+                            self.links_state[i_l, i_b].j_pos,
+                            self.links_state[i_l, i_b].j_quat,
+                        ) = gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
 
-                        self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat = (
-                            gu.ti_transform_pos_quat_by_trans_quat(
-                                l_info.joint_pos,
-                                l_info.joint_quat,
-                                self.links_state[i_l, i_b].j_pos,
-                                self.links_state[i_l, i_b].j_quat,
-                            )
+                        (
+                            self.links_state[i_l, i_b].j_pos,
+                            self.links_state[i_l, i_b].j_quat,
+                        ) = gu.ti_transform_pos_quat_by_trans_quat(
+                            l_info.joint_pos,
+                            l_info.joint_quat,
+                            self.links_state[i_l, i_b].j_pos,
+                            self.links_state[i_l, i_b].j_quat,
                         )
 
             # cdof_fn
@@ -1846,13 +1914,14 @@ class RigidSolver(Solver):
                             )
 
                             offset_pos = self.links_state[i_l, i_b].COM - self.links_state[i_l, i_b].j_pos
-                            self.dofs_state[i_d, i_b].cdof_ang, self.dofs_state[i_d, i_b].cdof_vel = (
-                                gu.ti_transform_motion_by_trans_quat(
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                    offset_pos,
-                                    gu.ti_identity_quat(),
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                            ) = gu.ti_transform_motion_by_trans_quat(
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                                offset_pos,
+                                gu.ti_identity_quat(),
                             )
 
                             self.dofs_state[i_d, i_b].cdofvel_ang = (
@@ -1879,13 +1948,14 @@ class RigidSolver(Solver):
                             )
 
                             offset_pos = self.links_state[i_l, i_b].COM - self.links_state[i_l, i_b].j_pos
-                            self.dofs_state[i_d, i_b].cdof_ang, self.dofs_state[i_d, i_b].cdof_vel = (
-                                gu.ti_transform_motion_by_trans_quat(
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                    offset_pos,
-                                    gu.ti_identity_quat(),
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                            ) = gu.ti_transform_motion_by_trans_quat(
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
+                                offset_pos,
+                                gu.ti_identity_quat(),
                             )
 
                             self.dofs_state[i_d, i_b].cdofvel_ang = (
@@ -1925,7 +1995,6 @@ class RigidSolver(Solver):
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
             for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-
                 e_info = self.entities_info[i_e]
                 for i_l in range(e_info.link_start, e_info.link_end):
                     I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
@@ -1971,13 +2040,14 @@ class RigidSolver(Solver):
                             self.dofs_state[i_d, i_b].cdofd_vel = ti.Vector.zero(gs.ti_float, 3)
 
                         for i_d in range(l_info.dof_start + 3, l_info.dof_start + 6):
-                            self.dofs_state[i_d, i_b].cdofd_ang, self.dofs_state[i_d, i_b].cdofd_vel = (
-                                gu.motion_cross_motion(
-                                    cd_ang,
-                                    cd_vel,
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdofd_ang,
+                                self.dofs_state[i_d, i_b].cdofd_vel,
+                            ) = gu.motion_cross_motion(
+                                cd_ang,
+                                cd_vel,
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
                             )
 
                     elif l_info.joint_type == gs.JOINT_TYPE.FIXED:
@@ -1985,13 +2055,14 @@ class RigidSolver(Solver):
 
                     else:
                         for i_d in range(l_info.dof_start, l_info.dof_end):
-                            self.dofs_state[i_d, i_b].cdofd_ang, self.dofs_state[i_d, i_b].cdofd_vel = (
-                                gu.motion_cross_motion(
-                                    self.links_state[i_l, i_b].cd_ang,
-                                    self.links_state[i_l, i_b].cd_vel,
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdofd_ang,
+                                self.dofs_state[i_d, i_b].cdofd_vel,
+                            ) = gu.motion_cross_motion(
+                                self.links_state[i_l, i_b].cd_ang,
+                                self.links_state[i_l, i_b].cd_vel,
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
                             )
 
         else:
@@ -2015,13 +2086,14 @@ class RigidSolver(Solver):
                             self.dofs_state[i_d, i_b].cdofd_vel = ti.Vector.zero(gs.ti_float, 3)
 
                         for i_d in range(l_info.dof_start + 3, l_info.dof_start + 6):
-                            self.dofs_state[i_d, i_b].cdofd_ang, self.dofs_state[i_d, i_b].cdofd_vel = (
-                                gu.motion_cross_motion(
-                                    cd_ang,
-                                    cd_vel,
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdofd_ang,
+                                self.dofs_state[i_d, i_b].cdofd_vel,
+                            ) = gu.motion_cross_motion(
+                                cd_ang,
+                                cd_vel,
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
                             )
 
                     elif l_info.joint_type == gs.JOINT_TYPE.FIXED:
@@ -2029,13 +2101,14 @@ class RigidSolver(Solver):
 
                     else:
                         for i_d in range(l_info.dof_start, l_info.dof_end):
-                            self.dofs_state[i_d, i_b].cdofd_ang, self.dofs_state[i_d, i_b].cdofd_vel = (
-                                gu.motion_cross_motion(
-                                    self.links_state[i_l, i_b].cd_ang,
-                                    self.links_state[i_l, i_b].cd_vel,
-                                    self.dofs_state[i_d, i_b].cdof_ang,
-                                    self.dofs_state[i_d, i_b].cdof_vel,
-                                )
+                            (
+                                self.dofs_state[i_d, i_b].cdofd_ang,
+                                self.dofs_state[i_d, i_b].cdofd_vel,
+                            ) = gu.motion_cross_motion(
+                                self.links_state[i_l, i_b].cd_ang,
+                                self.links_state[i_l, i_b].cd_vel,
+                                self.dofs_state[i_d, i_b].cdof_ang,
+                                self.dofs_state[i_d, i_b].cdof_vel,
                             )
 
     @ti.func
@@ -2066,7 +2139,6 @@ class RigidSolver(Solver):
             l_info = self.links_info[I_l]
 
             if l_info.joint_type == gs.JOINT_TYPE.FREE:
-
                 for i_q in ti.static(range(3)):
                     self.links_state[i_l, i_b].j_pos[i_q] = self.qpos[i_q + l_info.q_start, i_b]
                     self.links_state[i_l, i_b].j_ang[i_q] = self.dofs_state[i_q + 3 + l_info.dof_start, i_b].vel
@@ -2089,9 +2161,11 @@ class RigidSolver(Solver):
                 self.dofs_state[l_info.dof_start, i_b].pos = self.qpos[l_info.q_start, i_b]
                 I_dof_start = [l_info.dof_start, i_b] if ti.static(self._options.batch_dofs_info) else l_info.dof_start
                 dof_info = self.dofs_info[I_dof_start]
-                self.links_state[i_l, i_b].j_pos = dof_info.motion_vel * self.qpos[l_info.q_start, i_b]
+                self.links_state[i_l, i_b].j_pos = dof_info.motion_vel * (
+                    self.qpos[l_info.q_start, i_b] - self.qpos0[l_info.q_start, i_b]
+                )
                 self.links_state[i_l, i_b].j_quat = gu.ti_rotvec_to_quat(
-                    dof_info.motion_ang * self.qpos[l_info.q_start, i_b]
+                    dof_info.motion_ang * (self.qpos[l_info.q_start, i_b] - self.qpos0[l_info.q_start, i_b])
                 )
                 self.links_state[i_l, i_b].j_ang = dof_info.motion_ang * self.dofs_state[l_info.dof_start, i_b].vel
                 self.links_state[i_l, i_b].j_vel = dof_info.motion_vel * self.dofs_state[l_info.dof_start, i_b].vel
@@ -2104,10 +2178,11 @@ class RigidSolver(Solver):
                     ji_pos = dof_info.motion_vel * self.qpos[qi, i_b]
                     ji_quat = gu.ti_rotvec_to_quat(dof_info.motion_ang * self.qpos[qi, i_b])
 
-                    self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat = (
-                        gu.ti_transform_pos_quat_by_trans_quat(
-                            ji_pos, ji_quat, self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat
-                        )
+                    (
+                        self.links_state[i_l, i_b].j_pos,
+                        self.links_state[i_l, i_b].j_quat,
+                    ) = gu.ti_transform_pos_quat_by_trans_quat(
+                        ji_pos, ji_quat, self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat
                     )
 
                     ji_ang = dof_info.motion_ang * self.dofs_state[i_d, i_b].vel
@@ -2130,10 +2205,11 @@ class RigidSolver(Solver):
                 )
 
                 self.links_state[i_l, i_b].j_pos = self.links_state[i_l, i_b].j_pos + l_info.joint_pos - anchor_pos
-                self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat = (
-                    gu.ti_transform_pos_quat_by_trans_quat(
-                        self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat, l_info.pos, l_info.quat
-                    )
+                (
+                    self.links_state[i_l, i_b].j_pos,
+                    self.links_state[i_l, i_b].j_quat,
+                ) = gu.ti_transform_pos_quat_by_trans_quat(
+                    self.links_state[i_l, i_b].j_pos, self.links_state[i_l, i_b].j_quat, l_info.pos, l_info.quat
                 )
 
         # joint_to_world
@@ -2182,21 +2258,22 @@ class RigidSolver(Solver):
                         g_info = self.geoms_info[i_g]
 
                         l_state = self.links_state[g_info.link_idx, i_b]
-                        self.geoms_state[i_g, i_b].pos, self.geoms_state[i_g, i_b].quat = (
-                            gu.ti_transform_pos_quat_by_trans_quat(g_info.pos, g_info.quat, l_state.pos, l_state.quat)
-                        )
+                        (
+                            self.geoms_state[i_g, i_b].pos,
+                            self.geoms_state[i_g, i_b].quat,
+                        ) = gu.ti_transform_pos_quat_by_trans_quat(g_info.pos, g_info.quat, l_state.pos, l_state.quat)
 
                         self.geoms_state[i_g, i_b].verts_updated = 0
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
             for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
-
                 g_info = self.geoms_info[i_g]
 
                 l_state = self.links_state[g_info.link_idx, i_b]
-                self.geoms_state[i_g, i_b].pos, self.geoms_state[i_g, i_b].quat = (
-                    gu.ti_transform_pos_quat_by_trans_quat(g_info.pos, g_info.quat, l_state.pos, l_state.quat)
-                )
+                (
+                    self.geoms_state[i_g, i_b].pos,
+                    self.geoms_state[i_g, i_b].quat,
+                ) = gu.ti_transform_pos_quat_by_trans_quat(g_info.pos, g_info.quat, l_state.pos, l_state.quat)
 
                 self.geoms_state[i_g, i_b].verts_updated = 0
 
@@ -2216,7 +2293,7 @@ class RigidSolver(Solver):
                     self.fixed_verts_state[i_v].pos = gu.ti_transform_by_trans_quat(
                         self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
                     )
-                self.geoms_state[i_g].verts_updated = 1
+                self.geoms_state[i_g, 0].verts_updated = 1
 
     @ti.func
     def _func_update_all_verts(self):
@@ -2363,7 +2440,6 @@ class RigidSolver(Solver):
     @ti.func
     def _func_wakeup_entity(self, i_e, i_b):
         if self.entities_state[i_e, i_b].hibernated:
-
             self.entities_state[i_e, i_b].hibernated = False
             n_awake_entities = ti.atomic_add(self.n_awake_entities[i_b], 1)
             self.awake_entities[n_awake_entities, i_b] = i_e
@@ -2511,7 +2587,6 @@ class RigidSolver(Solver):
                     or self.dofs_state[ds + 4, i_b].ctrl_mode == gs.CTRL_MODE.POSITION
                     or self.dofs_state[ds + 5, i_b].ctrl_mode == gs.CTRL_MODE.POSITION
                 ):
-
                     xyz = ti.Vector(
                         [
                             self.dofs_state[0 + 3 + l_info.dof_start, i_b].pos,
@@ -3421,7 +3496,6 @@ class RigidSolver(Solver):
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             i_l = links_idx[i_l_]
@@ -4730,3 +4804,20 @@ class RigidSolver(Solver):
     @property
     def max_collision_pairs(self):
         return self._max_collision_pairs
+
+    @property
+    def n_equalities(self):
+        if self.is_built:
+            return self._n_equalities
+        else:
+            return sum([entity.n_equalities for entity in self._entities])
+
+    @property
+    def equalities(self):
+        if self.is_built:
+            return self._equalities
+        else:
+            equalities = gs.List()
+            for entity in self._entities:
+                equalities += entity.equalities
+            return equalities

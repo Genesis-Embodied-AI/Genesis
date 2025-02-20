@@ -1,5 +1,4 @@
 import os
-import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
@@ -10,40 +9,17 @@ from genesis.ext import trimesh
 from genesis.ext.trimesh.visual.texture import TextureVisuals
 
 from . import geom as gu
-from . import mesh as mu
 from .misc import get_assets_dir
-
-
-def extract_compiler_attributes(xml_path):
-    # Parse the XML file
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    # Find the <compiler> tag
-    compiler_tag = root.find(".//compiler")
-    # Check if the tag exists and has the desired attributes
-    res = {"meshdir": "", "texturedir": ""}
-    if compiler_tag is not None:
-        meshdir = compiler_tag.get("meshdir")
-        texturedir = compiler_tag.get("texturedir")
-        if meshdir:
-            res["meshdir"] = meshdir
-        if texturedir:
-            res["texturedir"] = texturedir
-    return res
 
 
 def parse_mjcf(path):
     path = os.path.join(get_assets_dir(), path)
     mj = mujoco.MjModel.from_xml_path(path)
-
-    # for trntype in mj.actuator_trntype:
-    #     if trntype != mujoco.mjtTrn.mjTRN_JOINT:
-    #         gs.logger.warning(f'Unsupported MJCF actuator type: {mujoco.mjtTrn(trntype)}')
-
     return mj
 
 
 def parse_link(mj, i_l, q_offset, dof_offset, scale):
+
     # mj.body
     l_info = dict()
 
@@ -232,16 +208,18 @@ def parse_link(mj, i_l, q_offset, dof_offset, scale):
 
 
 def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
-    mj_type = mj.geom_type[i_g]
-    is_col = bool(mj.geom_conaffinity[i_g] or mj.geom_contype[i_g])
-    dim_data = 7
-    data = np.zeros([dim_data])
-    for gi in range(min(dim_data, len(mj.geom_size[i_g, :]))):
-        data[gi] = mj.geom_size[i_g, gi]
+    mj_geom = mj.geom(i_g)
 
-    is_convex = True
+    is_col = bool(mj_geom.conaffinity or mj_geom.contype)
+    geom_size = mj_geom.size
+    if is_col:
+        gs.logger.warning(
+            f"Collision mesh in MJCF is not visualized by default. To visualize "
+            + "collision mesh, please use `vis_mode='collision'` when scene.add_entity."
+        )
+
     visual = None
-    if mj_type == mujoco.mjtGeom.mjGEOM_PLANE:
+    if mj_geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
         plan_size = 100.0
         r = plan_size / 2.0
         tmesh = trimesh.Trimesh(
@@ -258,100 +236,106 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         )
         gs_type = gs.GEOM_TYPE.PLANE
 
-    elif mj_type == mujoco.mjtGeom.mjGEOM_SPHERE:
+    elif mj_geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
+        radius = geom_size[0]
         if is_col:
-            tmesh = trimesh.creation.icosphere(radius=mj.geom_size[i_g, 0], subdivisions=2)
+            tmesh = trimesh.creation.icosphere(radius=radius, subdivisions=2)
         else:
-            tmesh = trimesh.creation.icosphere(radius=mj.geom_size[i_g, 0])
+            tmesh = trimesh.creation.icosphere(radius=radius)
         gs_type = gs.GEOM_TYPE.SPHERE
 
-    elif mj_type == mujoco.mjtGeom.mjGEOM_CAPSULE:
-        radius = mj.geom_size[i_g, 0]
-        halflength = mj.geom_size[i_g, 1]
+    elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CAPSULE:
+        radius = geom_size[0]
+        halflength = geom_size[1]
         if is_col:
             tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2, count=(8, 12))
         else:
             tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2)
-        data[1] *= 2
+        geom_size[1] *= 2
         gs_type = gs.GEOM_TYPE.CAPSULE
 
-    elif mj_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
-        radius = mj.geom_size[i_g, 0]
-        halflength = mj.geom_size[i_g, 1]
-        data[1] *= 2
+    elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CYLINDER:
+        radius = geom_size[0]
+        halflength = geom_size[1]
+        geom_size[1] *= 2
         tmesh = trimesh.creation.cylinder(radius=radius, height=halflength * 2)
         gs_type = gs.GEOM_TYPE.CYLINDER
 
-    elif mj_type == mujoco.mjtGeom.mjGEOM_BOX:
-        tmesh = trimesh.creation.box(extents=mj.geom_size[i_g, :3] * 2)
-        data *= 2
+    elif mj_geom.type == mujoco.mjtGeom.mjGEOM_BOX:
+        tmesh = trimesh.creation.box(extents=geom_size * 2)
+        geom_size *= 2
         gs_type = gs.GEOM_TYPE.BOX
-
-        # TODO: not sure if it is the right way to load texture for box
-        mat_id = mj.geom_matid[i_g]
-        if mat_id >= 0:
-            mat_id = mj.geom_matid[i_g]
-            tex_id = next((x for x in mj.mat_texid[mat_id] if x != -1), None)
-
-            if tex_id is not None:
-                tex_path = mj.paths[mj.tex_pathadr[tex_id] :].decode("utf-8").split("\x00")[0]
-                texturedir = extract_compiler_attributes(xml_path)["texturedir"]
-                assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
-
+        if mj_geom.matid >= 0:
+            mj_mat = mj.mat(mj_geom.matid)
+            tex_id_RGB = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGB]
+            tex_id_RGBA = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGBA]
+            tex_id = tex_id_RGB if tex_id_RGB >= 0 else tex_id_RGBA
+            if tex_id >= 0:
+                mj_tex = mj.tex(tex_id)
+                # assert mj_tex.type == mujoco.mjtTexture.mjTEXTURE_2D
                 uv_coordinates = tmesh.vertices[:, :2].copy()
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
-                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
-                image_array = np.array(image)
-                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
-                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
-                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array, mode="RGBA"))
+                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
+                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                uv_coordinates = uv_coordinates * mj_mat.texrepeat
+                visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
 
-    elif mj_type == mujoco.mjtGeom.mjGEOM_MESH:
-        i = mj.geom_dataid[i_g]
-        last = (i + 1) >= mj.nmesh
+    elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
+        mj_mesh = mj.mesh(mj_geom.dataid)
 
-        vert_start = mj.mesh_vertadr[i]
-        vert_end = mj.mesh_vertadr[i + 1] if not last else mj.mesh_vert.shape[0]
-        face_start = mj.mesh_faceadr[i]
-        face_end = mj.mesh_faceadr[i + 1] if not last else mj.mesh_face.shape[0]
-        tex_start = mj.mesh_texcoordadr[i]
+        vert_start = int(mj_mesh.vertadr)
+        vert_num = int(mj_mesh.vertnum)
+        vert_end = vert_start + vert_num
 
-        if tex_start >= 0:
-            tex_end = mj.mesh_texcoordadr[i + 1] if not last else mj.mesh_texcoord.shape[0]
-            if tex_end == -1:
-                tex_end = tex_start + (vert_end - vert_start)
-            assert tex_end - tex_start == vert_end - vert_start
+        face_start = int(mj_mesh.faceadr)
+        face_num = int(mj_mesh.facenum)
+        face_end = face_start + face_num
 
-            mat_id = mj.geom_matid[i_g]
-            tex_id = next((x for x in mj.mat_texid[mat_id] if x != -1), None)
-            if not tex_id is None:
-                tex_path = mj.paths[mj.tex_pathadr[tex_id] :].decode("utf-8").split("\x00")[0]
-                uv = mj.mesh_texcoord[tex_start:tex_end]
+        vertices = mj.mesh_vert[vert_start:vert_end]
+        faces = mj.mesh_face[face_start:face_end]
+        face_normals = mj.mesh_normal[vert_start:vert_end]
+        visual = None
+
+        if mj_geom.matid >= 0:
+            mj_mat = mj.mat(mj_geom.matid)
+            tex_id_RGB = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGB]
+            tex_id_RGBA = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGBA]
+            tex_id = tex_id_RGB if tex_id_RGB >= 0 else tex_id_RGBA
+            if tex_id >= 0:
+                mj_tex = mj.tex(tex_id)
+                tex_vert_start = int(mj.mesh_texcoordadr[mj_mesh.id])
+                num_tex_vert = int(mj.mesh_texcoordnum[mj_mesh.id])
+
+                faces = mj.mesh_facetexcoord[face_start:face_end]
+
+                vertices = np.zeros((num_tex_vert, 3))
+                for face_id in range(face_start, face_end):
+                    for i in range(3):
+                        mesh_vert_id = mj.mesh_face[face_id, i]
+                        tex_vert_id = mj.mesh_facetexcoord[face_id, i]
+                        vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
+
+                uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
                 uv[:, 1] = 1 - uv[:, 1]
 
-                # TODO: check if we can parse <compiler> tag with mj model
-                texturedir = extract_compiler_attributes(xml_path)["texturedir"]
-                assets_dir = os.path.join(get_assets_dir(), os.path.join(os.path.dirname(xml_path), texturedir))
-
-                image = Image.open(os.path.join(assets_dir, tex_path)).convert("RGBA")
-                image_array = np.array(image)
-                tex_repeat = np.ceil(mj.mat_texrepeat[mat_id]).astype(int)
-                image_array = np.tile(image_array, (tex_repeat[0], tex_repeat[1], 1))
-                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array, mode="RGBA"))
+                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
+                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                uv = uv * mj_mat.texrepeat
+                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
 
         tmesh = trimesh.Trimesh(
-            vertices=mj.mesh_vert[vert_start:vert_end],
-            faces=mj.mesh_face[face_start:face_end],
-            face_normals=mj.mesh_normal[vert_start:vert_end],
+            vertices=vertices,
+            faces=faces,
+            face_normals=face_normals,
             process=False,
             visual=visual,
         )
         gs_type = gs.GEOM_TYPE.MESH
 
     else:
-        gs.logger.warning(f"Unsupported MJCF geom type: {mj_type}")
+        gs.logger.warning(f"Unsupported MJCF geom type: {mj_geom.type}")
         return None
 
     mesh = gs.Mesh.from_trimesh(
@@ -362,31 +346,46 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
     )
 
     if surface.diffuse_texture is None and visual is None:  # user input will override mjcf color
-        if mj.geom_matid[i_g] >= 0:
-            mesh.set_color(mj.mat_rgba[mj.geom_matid[i_g]])
+        if mj_geom.matid >= 0:
+            mesh.set_color(mj.mat(mj_geom.matid).rgba)
         else:
-            mesh.set_color(mj.geom_rgba[i_g])
-
-    pos = mj.geom_pos[i_g]
-    quat = mj.geom_quat[i_g]
-
-    # apply scale
-    pos = np.copy(pos) * scale
-
-    # other params
-    friction = mj.geom_friction[i_g, 0]
-    sol_params = np.concatenate((mj.geom_solref[i_g], mj.geom_solimp[i_g]))
+            mesh.set_color(mj_geom.rgba)
 
     info = {
         "type": gs_type,
-        "pos": pos,
-        "quat": quat,
+        "pos": mj_geom.pos * scale,
+        "quat": mj_geom.quat,
         "mesh": mesh,
         "is_col": is_col,
-        "is_convex": is_convex,
-        "data": data,
-        "friction": friction,
-        "sol_params": sol_params,
+        "is_convex": True,
+        "data": geom_size,
+        "friction": mj_geom.friction[0],
+        "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
 
     return info
+
+
+def parse_equality(mj, i_e, scale, ordered_links_idx):
+    e_info = dict()
+    mj_equality = mj.equality(i_e)
+    e_info["name"] = mj_equality.name
+
+    if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
+        e_info["type"] = gs.EQUALITY_TYPE.CONNECT
+        e_info["link1_idx"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
+        e_info["link2_idx"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
+        e_info["anchor1_pos"] = mj.eq_data[i_e][0:3] * scale
+        e_info["anchor2_pos"] = mj.eq_data[i_e][3:6] * scale
+        e_info["rel_pose"] = mj.eq_data[i_e][6:10]
+        e_info["torque_scale"] = mj.eq_data[i_e][10]
+        e_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
+
+    elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+        e_info["type"] = gs.EQUALITY_TYPE.WELD
+    elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
+        e_info["type"] = gs.EQUALITY_TYPE.JOINT
+    else:
+        raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
+
+    return e_info

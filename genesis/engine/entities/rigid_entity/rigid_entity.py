@@ -14,6 +14,7 @@ from genesis.utils.misc import tensor_to_array
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
+from .rigid_equality import RigidEquality
 
 
 @ti.data_oriented
@@ -44,6 +45,7 @@ class RigidEntity(Entity):
         vgeom_start=0,
         vvert_start=0,
         vface_start=0,
+        equality_start=0,
         visualize_contact=False,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
@@ -62,6 +64,7 @@ class RigidEntity(Entity):
         self._vgeom_start = vgeom_start
         self._vvert_start = vvert_start
         self._vface_start = vface_start
+        self._equality_start = equality_start
 
         self._visualize_contact = visualize_contact
 
@@ -74,6 +77,7 @@ class RigidEntity(Entity):
     def _load_model(self):
         self._links = gs.List()
         self._joints = gs.List()
+        self._equalities = gs.List()
 
         if isinstance(self._morph, gs.morphs.Mesh):
             self._load_mesh(self._morph, self._surface)
@@ -362,7 +366,7 @@ class RigidEntity(Entity):
             q_offset += j_info["n_qs"]
             dof_offset += j_info["n_dofs"]
 
-        l_infos, j_infos, links_g_info = uu._order_links(l_infos, j_infos, links_g_info)
+        l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
         for i_l in range(len(l_infos)):
             l_info = l_infos[i_l]
             j_info = j_infos[i_l]
@@ -390,6 +394,21 @@ class RigidEntity(Entity):
                 l_world_info["quat"] = np.array(morph.quat)
                 gs.logger.warning("Overriding base link's quat with user provided value in morph.")
             self._add_by_info(l_world_info, j_world_info, world_g_info, morph, surface)
+
+        for i_e in range(mj.neq):
+            e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
+            if e_info["type"] == gs.EQUALITY_TYPE.CONNECT:  # only this type is supported right now
+                self._add_equality(
+                    name=e_info["name"],
+                    type=e_info["type"],
+                    link1_idx=e_info["link1_idx"],
+                    link2_idx=e_info["link2_idx"],
+                    anchor1_pos=e_info["anchor1_pos"],
+                    anchor2_pos=e_info["anchor2_pos"],
+                    rel_pose=e_info["rel_pose"],
+                    torque_scale=e_info["torque_scale"],
+                    sol_params=e_info["sol_params"],
+                )
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
@@ -590,6 +609,14 @@ class RigidEntity(Entity):
         dofs_force_range,
         init_qpos,
     ):
+        if (
+            len(np.array(dofs_sol_params).shape) == 2
+            and np.array(dofs_sol_params).shape[0] == 1
+            and (dofs_sol_params[0][3] >= 1.0 or dofs_sol_params[0][2] >= dofs_sol_params[0][3])
+        ):
+            gs.logger.warning(f"Joint {name}'s sol_params {dofs_sol_params[0]} look not right, change to default.")
+            dofs_sol_params = gu.default_solver_params(1)
+
         joint = RigidJoint(
             entity=self,
             name=name,
@@ -616,6 +643,25 @@ class RigidEntity(Entity):
         )
         self._joints.append(joint)
         return joint
+
+    def _add_equality(
+        self, name, type, link1_idx, link2_idx, anchor1_pos, anchor2_pos, rel_pose, torque_scale, sol_params
+    ):
+        equality = RigidEquality(
+            entity=self,
+            name=name,
+            idx=self.n_equalities + self._equality_start,
+            type=type,
+            link1_idx=link1_idx + self._link_start,
+            link2_idx=link2_idx + self._link_start,
+            anchor1_pos=anchor1_pos,
+            anchor2_pos=anchor2_pos,
+            rel_pose=rel_pose,
+            torque_scale=torque_scale,
+            sol_params=sol_params,
+        )
+        self._equalities.append(equality)
+        return equality
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Jacobian & IK ------------------------------------
@@ -745,6 +791,7 @@ class RigidEntity(Entity):
         max_step_size=0.5,
         dofs_idx_local=None,
         return_error=False,
+        envs_idx=None,
     ):
         """
         Compute inverse kinematics for a single target link.
@@ -781,20 +828,24 @@ class RigidEntity(Entity):
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
+        envs_idx: None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
 
         Returns
         -------
-        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs)
+        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs) or (len(envs_idx), n_dofs)
             Solver qpos (joint positions).
-        (optional) error_pose : array_like, shape (6,) or (n_envs, 6)
+        (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
+            envs_idx = self._solver._get_envs_idx(envs_idx)
+
             if pos is not None:
-                if pos.shape[0] != self._solver.n_envs:
+                if pos.shape[0] != len(envs_idx):
                     gs.raise_exception("First dimension of `pos` must be equal to `scene.n_envs`.")
             if quat is not None:
-                if quat.shape[0] != self._solver.n_envs:
+                if quat.shape[0] != len(envs_idx):
                     gs.raise_exception("First dimension of `quat` must be equal to `scene.n_envs`.")
 
         ret = self.inverse_kinematics_multilink(
@@ -813,6 +864,7 @@ class RigidEntity(Entity):
             max_step_size=max_step_size,
             dofs_idx_local=dofs_idx_local,
             return_error=return_error,
+            envs_idx=envs_idx,
         )
 
         if return_error:
@@ -841,6 +893,7 @@ class RigidEntity(Entity):
         max_step_size=0.5,
         dofs_idx_local=None,
         return_error=False,
+        envs_idx=None,
     ):
         """
         Compute inverse kinematics for  multiple target links.
@@ -877,15 +930,18 @@ class RigidEntity(Entity):
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
             Whether to return the final errorqpos. Defaults to False.
-
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
 
         Returns
         -------
-        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs)
+        qpos : array_like, shape (n_dofs,) or (n_envs, n_dofs) or (len(envs_idx), n_dofs)
             Solver qpos (joint positions).
-        (optional) error_pose : array_like, shape (6,) or (n_envs, 6)
+        (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
+        if self._solver.n_envs > 0:
+            envs_idx = self._solver._get_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
             gs.raise_exception(
@@ -919,7 +975,7 @@ class RigidEntity(Entity):
             if poss[i] is not None:
                 link_pos_mask.append(True)
                 if self._solver.n_envs > 0:
-                    if poss[i].shape[0] != self._solver.n_envs:
+                    if poss[i].shape[0] != len(envs_idx):
                         gs.raise_exception("First dimension of elements in `poss` must be equal to scene.n_envs.")
             else:
                 link_pos_mask.append(False)
@@ -930,7 +986,7 @@ class RigidEntity(Entity):
             if quats[i] is not None:
                 link_rot_mask.append(True)
                 if self._solver.n_envs > 0:
-                    if quats[i].shape[0] != self._solver.n_envs:
+                    if quats[i].shape[0] != len(envs_idx):
                         gs.raise_exception("First dimension of elements in `quats` must be equal to scene.n_envs.")
             else:
                 link_rot_mask.append(False)
@@ -971,10 +1027,16 @@ class RigidEntity(Entity):
 
         links_idx = torch.as_tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
         poss = torch.stack(
-            [self._solver._process_dim(torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)) for pos in poss]
+            [
+                self._solver._process_dim(torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
+                for pos in poss
+            ]
         )
         quats = torch.stack(
-            [self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device)) for quat in quats]
+            [
+                self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
+                for quat in quats
+            ]
         )
 
         dofs_idx = self._get_dofs_idx_local(dofs_idx_local)
@@ -994,6 +1056,9 @@ class RigidEntity(Entity):
                 links_idx_by_dofs.append(v.idx_local)  # converted to global later
         links_idx_by_dofs = self._get_ls_idx(links_idx_by_dofs)
         n_links_by_dofs = len(links_idx_by_dofs)
+
+        if envs_idx is None:
+            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
         self._kernel_inverse_kinematics(
             links_idx,
@@ -1017,10 +1082,12 @@ class RigidEntity(Entity):
             link_rot_mask,
             max_step_size,
             respect_joint_limit,
+            envs_idx,
         )
-        qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0)
-        if self._solver.n_envs == 0:
-            qpos = qpos.squeeze(0)
+        if self._solver.n_envs > 0:
+            qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0)[envs_idx]
+        else:
+            qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0).squeeze(0)
 
         if return_error:
             error_pose = (
@@ -1059,6 +1126,7 @@ class RigidEntity(Entity):
         link_rot_mask: ti.types.ndarray(),
         max_step_size: ti.f32,
         respect_joint_limit: ti.i32,
+        envs_idx: ti.types.ndarray(),
     ):
         # convert to ti Vector
         pos_mask = ti.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.ti_float)
@@ -1066,7 +1134,7 @@ class RigidEntity(Entity):
         n_error_dims = 6 * n_links
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
+        for i_b in envs_idx:
             # save original qpos
             for i_q in range(self.n_qs):
                 self._IK_qpos_orig[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
@@ -2282,15 +2350,15 @@ class RigidEntity(Entity):
             The contact information.
         """
 
-        scene_contact_info = self._solver.collider.contact_data.to_numpy()
-        n_contacts = self._solver.collider.n_contacts.to_numpy()
+        scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
+        n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        valid_mask = np.logical_or(
-            np.logical_and(
+        valid_mask = torch.logical_or(
+            torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
                 scene_contact_info["geom_a"] < self.geom_end,
             ),
-            np.logical_and(
+            torch.logical_and(
                 scene_contact_info["geom_b"] >= self.geom_start,
                 scene_contact_info["geom_b"] < self.geom_end,
             ),
@@ -2298,24 +2366,27 @@ class RigidEntity(Entity):
         if with_entity is not None:
             if self.idx == with_entity.idx:
                 gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
-
-            valid_mask = np.logical_and(
+            valid_mask = torch.logical_and(
                 valid_mask,
-                np.logical_or(
-                    np.logical_and(
+                torch.logical_or(
+                    torch.logical_and(
                         scene_contact_info["geom_a"] >= with_entity.geom_start,
                         scene_contact_info["geom_a"] < with_entity.geom_end,
                     ),
-                    np.logical_and(
+                    torch.logical_and(
                         scene_contact_info["geom_b"] >= with_entity.geom_start,
                         scene_contact_info["geom_b"] < with_entity.geom_end,
                     ),
                 ),
             )
-        valid_mask = np.logical_and(valid_mask, np.arange(valid_mask.shape[0])[:, None] < n_contacts)
+
+        # Create an index tensor for contacts and compare against per-env n_contacts.
+        # Assumes valid_mask.shape[0] corresponds to the maximum number of contacts.
+        contact_indices = torch.arange(valid_mask.shape[0], device=valid_mask.device).unsqueeze(1)
+        valid_mask = torch.logical_and(valid_mask, contact_indices < n_contacts)
 
         if self._solver.n_envs == 0:
-            valid_idx = np.where(valid_mask.squeeze())[0]
+            valid_idx = torch.nonzero(valid_mask.squeeze(), as_tuple=True)[0]
             contact_info = {
                 "geom_a": scene_contact_info["geom_a"][valid_idx, 0],
                 "geom_b": scene_contact_info["geom_b"][valid_idx, 0],
@@ -2326,16 +2397,16 @@ class RigidEntity(Entity):
                 "force_b": scene_contact_info["force"][valid_idx, 0],
             }
         else:
-            max_env_collisions = np.max(n_contacts)
+            max_env_collisions = int(torch.max(n_contacts).item())
             contact_info = {
-                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].T,
-                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].T,
-                "link_a": scene_contact_info["link_a"][:max_env_collisions].T,
-                "link_b": scene_contact_info["link_b"][:max_env_collisions].T,
-                "position": scene_contact_info["pos"][:max_env_collisions].transpose([1, 0, 2]),
-                "force_a": -scene_contact_info["force"][:max_env_collisions].transpose([1, 0, 2]),
-                "force_b": scene_contact_info["force"][:max_env_collisions].transpose([1, 0, 2]),
-                "valid_mask": valid_mask[:max_env_collisions].T,
+                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].t(),
+                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].t(),
+                "link_a": scene_contact_info["link_a"][:max_env_collisions].t(),
+                "link_b": scene_contact_info["link_b"][:max_env_collisions].t(),
+                "position": scene_contact_info["pos"][:max_env_collisions].permute(1, 0, 2),
+                "force_a": -scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "force_b": scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "valid_mask": valid_mask[:max_env_collisions].t(),
             }
         return contact_info
 
@@ -2664,6 +2735,26 @@ class RigidEntity(Entity):
     def base_joint(self):
         """The base joint of the entity"""
         return self._joints[0]
+
+    @property
+    def n_equalities(self):
+        """The number of equality constraints in the entity."""
+        return len(self._equalities)
+
+    @property
+    def equality_start(self):
+        """The index of the entity's first RigidEquality in the scene."""
+        return self._equality_start
+
+    @property
+    def equality_end(self):
+        """The index of the entity's last RigidEquality in the scene *plus one*."""
+        return self._equality_start + self.n_equalities
+
+    @property
+    def equalities(self):
+        """The list of equality constraints (`RigidEquality`) in the entity."""
+        return self._equalities
 
     @property
     def is_free(self):
