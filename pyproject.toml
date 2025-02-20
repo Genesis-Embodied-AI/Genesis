@@ -20,7 +20,7 @@ dependencies = [
     "PyOpenGL",
     "freetype-py",
     "pyglet",
-    "libigl==2.5.4.dev0",
+    "libigl",
     "pygltflib == 1.16.0",
     "mujoco == 3.2.5",
     "pycollada",
