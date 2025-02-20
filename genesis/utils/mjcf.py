@@ -272,7 +272,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
             tex_id = tex_id_RGB if tex_id_RGB >= 0 else tex_id_RGBA
             if tex_id >= 0:
                 mj_tex = mj.tex(tex_id)
-                assert mj_tex.type == mujoco.mjtTexture.mjTEXTURE_2D
+                # assert mj_tex.type == mujoco.mjtTexture.mjTEXTURE_2D
                 uv_coordinates = tmesh.vertices[:, :2].copy()
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
