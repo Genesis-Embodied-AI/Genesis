@@ -307,23 +307,22 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 mj_tex = mj.tex(tex_id)
                 tex_vert_start = int(mj.mesh_texcoordadr[mj_mesh.id])
                 num_tex_vert = int(mj.mesh_texcoordnum[mj_mesh.id])
+                if tex_vert_start != -1:  # -1 means no texcoord
+                    vertices = np.zeros((num_tex_vert, 3))
+                    faces = mj.mesh_facetexcoord[face_start:face_end]
+                    for face_id in range(face_start, face_end):
+                        for i in range(3):
+                            mesh_vert_id = mj.mesh_face[face_id, i]
+                            tex_vert_id = mj.mesh_facetexcoord[face_id, i]
+                            vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
 
-                faces = mj.mesh_facetexcoord[face_start:face_end]
+                    uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
+                    uv[:, 1] = 1 - uv[:, 1]
 
-                vertices = np.zeros((num_tex_vert, 3))
-                for face_id in range(face_start, face_end):
-                    for i in range(3):
-                        mesh_vert_id = mj.mesh_face[face_id, i]
-                        tex_vert_id = mj.mesh_facetexcoord[face_id, i]
-                        vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
-
-                uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
-                uv[:, 1] = 1 - uv[:, 1]
-
-                H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
-                uv = uv * mj_mat.texrepeat
-                visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
+                    H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
+                    image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                    uv = uv * mj_mat.texrepeat
+                    visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
 
         tmesh = trimesh.Trimesh(
             vertices=vertices,
