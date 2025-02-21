@@ -4,6 +4,9 @@ import torch
 
 import genesis as gs
 
+import os
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/bin/ffmpeg" 
+
 
 def main():
 
@@ -19,9 +22,11 @@ def main():
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3.5, 0.0, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
+            res = (2560,1664),
+            camera_pos=(3.5, 5.0, 2.5),  # Move the camera back further
+            camera_lookat=(0.0, 2.0, 1.5),
             camera_fov=40,
+           
         ),
         show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
