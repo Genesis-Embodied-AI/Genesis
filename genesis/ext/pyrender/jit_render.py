@@ -65,17 +65,17 @@ RenderFlags_FLAT = RenderFlags.FLAT
 
 
 @njit
-def str_to_ptr(s):
-    n = len(s)
+def get_uniform_location(pid, name, gl):
+    n = len(name)
     arr = np.zeros(n + 1, np.uint8)
     for i in range(n):
-        arr[i] = ord(s[i])
-    return address_to_ptr(arr.ctypes.data)
+        arr[i] = ord(name[i])
+    return gl.glGetUniformLocation(pid, arr.ctypes.data)
 
 
 @njit
 def set_uniform_matrix_4fv(pid, name, value, gl):
-    loc = gl.glGetUniformLocation(pid, str_to_ptr(name))
+    loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
         gl.glUniformMatrix4fv(loc, 1, GL_TRUE, address_to_ptr(value.ctypes.data))
     else:
@@ -84,7 +84,7 @@ def set_uniform_matrix_4fv(pid, name, value, gl):
 
 @njit
 def set_uniform_1i(pid, name, value, gl):
-    loc = gl.glGetUniformLocation(pid, str_to_ptr(name))
+    loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
         gl.glUniform1i(loc, value)
     else:
@@ -93,7 +93,7 @@ def set_uniform_1i(pid, name, value, gl):
 
 @njit
 def set_uniform_1f(pid, name, value, gl):
-    loc = gl.glGetUniformLocation(pid, str_to_ptr(name))
+    loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
         gl.glUniform1f(loc, value)
     else:
@@ -102,7 +102,7 @@ def set_uniform_1f(pid, name, value, gl):
 
 @njit
 def set_uniform_2f(pid, name, value1, value2, gl):
-    loc = gl.glGetUniformLocation(pid, str_to_ptr(name))
+    loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
         gl.glUniform2f(loc, value1, value2)
     else:
@@ -111,7 +111,7 @@ def set_uniform_2f(pid, name, value1, value2, gl):
 
 @njit
 def set_uniform_3fv(pid, name, value, gl):
-    loc = gl.glGetUniformLocation(pid, str_to_ptr(name))
+    loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
         gl.glUniform3fv(loc, 1, address_to_ptr(value.ctypes.data))
     else:
@@ -120,7 +120,7 @@ def set_uniform_3fv(pid, name, value, gl):
 
 @njit
 def set_uniform_4fv(pid, name, value, gl):
-    loc = gl.glGetUniformLocation(pid, str_to_ptr(name))
+    loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
         gl.glUniform4fv(loc, 1, address_to_ptr(value.ctypes.data))
     else:
