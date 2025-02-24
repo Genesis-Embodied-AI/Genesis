@@ -5,7 +5,6 @@ from genesis.repr_base import RBC
 
 from .camera import Camera
 from .rasterizer import Rasterizer
-from .rasterizer_context import RasterizerContext
 from .viewer import DummyViewerLock, Viewer
 
 
@@ -23,6 +22,11 @@ class Visualizer(RBC):
             gs.logger.warning(f"Headless rendering not yet supported on {gs.platform}.")
             self._context = None
         else:
+            try:
+                from .rasterizer_context import RasterizerContext
+
+            except Exception as e:
+                raise ImportError("Onscreen rendering not working on this machine.") from e
             self._context = RasterizerContext(vis_options)
 
         # try to connect to display
