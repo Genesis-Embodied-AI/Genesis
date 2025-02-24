@@ -13,13 +13,42 @@ from numba.extending import (
 from numba.core import cgutils
 from contextlib import ExitStack
 import OpenGL.GL as GL
+from OpenGL._bytes import as_8_bit
 from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
 
 
 class GLWrapper:
     def __init__(self):
         self.gl_funcs = {}
+        self._wrapper_type = None
+        self._wrapper_instance = None
 
+    def load_func(self, func_name, *signature):
+        try:
+            dll = GL.platform.PLATFORM.GL
+            func_ptr = GL.platform.ctypesloader.buildFunction(
+                GL.platform.PLATFORM.functionTypeFor(dll)(*signature),
+                func_name,
+                dll,
+            )
+        except AttributeError:
+            pointer = GL.platform.PLATFORM.getExtensionProcedure(as_8_bit(func_name))
+            func_ptr = GL.platform.PLATFORM.functionTypeFor(dll)(*signature)(pointer)
+        self.gl_funcs[func_name] = func_ptr
+
+    @property
+    def wrapper_type(self):
+        if self._wrapper_type is None:
+            self.build_wrapper()
+        return self._wrapper_type
+
+    @property
+    def wrapper_instance(self):
+        if self._wrapper_instance is None:
+            self.build_wrapper()
+        return self._wrapper_instance
+
+    def build_wrapper(self):
         load_func = self.load_func
         load_func("glGetUniformLocation", GLint, GLuint, GLvoidp)
         load_func("glUniformMatrix4fv", GLvoid, GLint, GLsizei, GLboolean, GLvoidp)
@@ -47,18 +76,6 @@ class GLWrapper:
         load_func("glBufferData", GLvoid, GLenum, GLsizeiptr, GLvoidp, GLenum)
         load_func("glBufferSubData", GLvoid, GLenum, GLintptr, GLsizeiptr, GLvoidp)
 
-        self.build_wrapper()
-
-    def load_func(self, func_name, *signature):
-        dll = GL.platform.PLATFORM.GL
-        func_ptr = GL.platform.ctypesloader.buildFunction(
-            GL.platform.PLATFORM.functionTypeFor(dll)(*signature),
-            func_name,
-            dll,
-        )
-        self.gl_funcs[func_name] = func_ptr
-
-    def build_wrapper(self):
         funcs = self.gl_funcs
         func_types = {}
         for func_name in funcs:
@@ -115,5 +132,5 @@ class GLWrapper:
         for func_name in funcs:
             make_attribute_wrapper(GLFuncType, func_name, func_name)
 
-        self.wrapper_type = glfunc_type
-        self.wrapper_instance = GLFunc()
+        self._wrapper_type = glfunc_type
+        self._wrapper_instance = GLFunc()

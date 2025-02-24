@@ -72,12 +72,7 @@ class RasterizerContext:
             n_envs=self.n_rendered_envs,
         )
 
-        if gs.platform != "Windows":
-            self.jit = JITRenderer(self._scene, [], [])
-        else:
-            from genesis.ext.pyrender.non_jit_renderer import SimpleNonJITRenderer
-
-            self.jit = SimpleNonJITRenderer(self._scene, [], [])
+        self.jit = JITRenderer(self._scene, [], [])
 
         # nodes
         self.world_frame_node = None
