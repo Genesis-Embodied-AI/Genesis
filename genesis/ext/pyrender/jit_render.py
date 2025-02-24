@@ -354,6 +354,9 @@ class JITRenderer:
     def gen_func_ptr(self):
         self.gl = GLWrapper()
 
+        IS_OPENGL_42_AVAILABLE = hasattr(self.gl, "glDrawElementsInstancedBaseInstance")
+        OPENGL_42_ERROR_MSG = "Seperated env rendering not supported because OpenGL 4.2 not available on this machine."
+
         @njit(
             none(
                 int32[:],
@@ -518,13 +521,15 @@ class JITRenderer:
                         )
                     else:
                         gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
-                else:
+                elif IS_OPENGL_42_AVAILABLE:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstancedBaseInstance(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1, env_idx
                         )
                     else:
                         gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
+                else:
+                    raise RuntimeError(OPENGL_42_ERROR_MSG)
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -580,13 +585,15 @@ class JITRenderer:
                         )
                     else:
                         gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
-                else:
+                elif IS_OPENGL_42_AVAILABLE:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstancedBaseInstance(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1, env_idx
                         )
                     else:
                         gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
+                else:
+                    raise RuntimeError(OPENGL_42_ERROR_MSG)
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -643,13 +650,15 @@ class JITRenderer:
                         )
                     else:
                         gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], n_instances[id])
-                else:
+                elif IS_OPENGL_42_AVAILABLE:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstancedBaseInstance(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1, env_idx
                         )
                     else:
                         gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
+                else:
+                    raise RuntimeError(OPENGL_42_ERROR_MSG)
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
