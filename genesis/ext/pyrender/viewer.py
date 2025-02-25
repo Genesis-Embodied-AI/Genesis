@@ -602,10 +602,14 @@ class Viewer(pyglet.window.Window):
         if depth:
             self.render_flags["depth"] = True
         self.pending_offscreen_camera = (camera_node, render_target, normal)
-        # send_offscreen_request
-        self._offscreen_event.set()
-        # wait_for_offscreen
-        self._offscreen_result_semaphore.acquire()
+        if self.run_in_thread:
+            # send_offscreen_request
+            self._offscreen_event.set()
+            # wait_for_offscreen
+            self._offscreen_result_semaphore.acquire()
+        else:
+            # Force offscreen rendering synchronously
+            self.draw_offscreen()
         if seg:
             self.render_flags["seg"] = False
         if depth:
