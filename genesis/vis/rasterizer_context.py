@@ -5,11 +5,8 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 
-try:
-    from genesis.ext import pyrender, trimesh
-    from genesis.ext.pyrender.jit_render import JITRenderer
-except Exception as e:
-    print(f"[Error]: {e}\n")
+from genesis.ext import pyrender, trimesh
+from genesis.ext.pyrender.jit_render import JITRenderer
 from genesis.utils.misc import tensor_to_array
 
 
