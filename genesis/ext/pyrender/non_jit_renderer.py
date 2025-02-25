@@ -244,7 +244,7 @@ class SimpleNonJITRenderer:
         primitive_list : list of Primitive
             List of primitives to render
         """
-        print(f"set_primitive: {len(primitive_list)}")
+        # print(f"set_primitive: {len(primitive_list)}")
         self.node_list = node_list
         self.primitive_list = primitive_list
 
@@ -257,8 +257,8 @@ class SimpleNonJITRenderer:
         self.pbr_mat = np.zeros((n, 9), np.float32)  # base_color(4), metallic(1), roughness(1), emissive(3)
         self.spec_mat = np.zeros((n, 11), np.float32)  # diffuse(4), specular(3), glossiness(1), emissive(3)
         self.render_flags = np.zeros(
-            (n, 6), np.int8
-        )  # blend, wireframe, double_sided, pbr_texture, reflective_floor, transparent
+            (n, 7), np.int8
+        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent, env shared)
         self.mode = np.zeros(n, np.int32)
         self.n_instances = np.zeros(n, np.int32)
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
@@ -310,6 +310,7 @@ class SimpleNonJITRenderer:
             self.render_flags[i, 3] = isinstance(material, MetallicRoughnessMaterial)
             self.render_flags[i, 4] = primitive.is_floor and not floor_existed
             self.render_flags[i, 5] = node_list[i].mesh.is_transparent
+            self.render_flags[i, 6] = primitive.env_shared
 
             if primitive.is_floor:
                 floor_existed = True
@@ -331,6 +332,7 @@ class SimpleNonJITRenderer:
         color_list=None,
         reflection_mat=None,
         floor_tex=0,
+        env_idx=-1,
     ):
         """Forward rendering pass implementation"""
         if reflection_mat is None:
@@ -455,10 +457,20 @@ class SimpleNonJITRenderer:
                 set_uniform_3fv(pid, "color", color_list[id])
 
             # Draw the geometry
-            if self.n_indices[id] > 0:
-                glDrawElementsInstanced(self.mode[id], self.n_indices[id], GL_UNSIGNED_INT, None, self.n_instances[id])
+            if self.render_flags[id, 6] or env_idx == -1:
+                if self.n_indices[id] > 0:
+                    glDrawElementsInstanced(
+                        self.mode[id], self.n_indices[id], GL_UNSIGNED_INT, None, self.n_instances[id]
+                    )
+                else:
+                    glDrawArraysInstanced(self.mode[id], 0, -self.n_indices[id], self.n_instances[id])
             else:
-                glDrawArraysInstanced(self.mode[id], 0, -self.n_indices[id], self.n_instances[id])
+                if self.n_indices[id] > 0:
+                    gl.glDrawElementsInstancedBaseInstance(
+                        self.mode[id], self.n_indices[id], GL_UNSIGNED_INT, None, 1, env_idx
+                    )
+                else:
+                    gl.glDrawArraysInstancedBaseInstance(self.mode[id], 0, -self.n_indices[id], 1, env_idx)
 
             glBindVertexArray(0)
 
@@ -466,7 +478,7 @@ class SimpleNonJITRenderer:
         glUseProgram(0)
         glFlush()
 
-    def shadow_mapping_pass(self, renderer, V, P, flags, program_flags):
+    def shadow_mapping_pass(self, renderer, V, P, flags, program_flags, env_idx):
         """Render shadow map for directional lights"""
         self.load_programs(renderer, flags, program_flags)
         last_pid = -1
@@ -506,7 +518,7 @@ class SimpleNonJITRenderer:
         glUseProgram(0)
         glFlush()
 
-    def point_shadow_mapping_pass(self, renderer, light_matrix, light_pos, flags, program_flags):
+    def point_shadow_mapping_pass(self, renderer, light_matrix, light_pos, flags, program_flags, env_idx=-1):
         """Render shadow maps for point lights"""
         self.load_programs(renderer, flags, program_flags)
         last_pid = -1
