@@ -388,16 +388,13 @@ class Viewer(pyglet.window.Window):
         self.auto_start = auto_start
         if self.run_in_thread:
             self._initialized_event.clear()
-            self._thread = Thread(target=self._init_and_start_app, daemon=True)
+            self._thread = Thread(target=self.start, daemon=True)
             self._thread.start()
             self._initialized_event.wait()
         else:
             self._thread = None
             if self.auto_start:
-                self._init_and_start_app()
-
-    def start(self):
-        self._init_and_start_app()
+                self.start()
 
     @property
     def scene(self):
@@ -557,9 +554,19 @@ class Viewer(pyglet.window.Window):
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
+        # Early return if already closed
+        if not self.is_active:
+            return
+
+        # Do not consider the viewer as active right away
+        self._is_active = False
+
         # Remove our camera and restore the prior one
-        if self._camera_node is not None:
-            self.scene.remove_node(self._camera_node)
+        try:
+            if self._camera_node is not None:
+                self.scene.remove_node(self._camera_node)
+        except Exception:
+            pass
         if self._prior_main_camera_node is not None:
             self.scene.main_camera_node = self._prior_main_camera_node
 
@@ -584,7 +591,6 @@ class Viewer(pyglet.window.Window):
         except Exception:
             pass
         finally:
-            self._is_active = False
             super(Viewer, self).on_close()
             pyglet.app.exit()
 
@@ -1109,7 +1115,7 @@ class Viewer(pyglet.window.Window):
 
         return retval
 
-    def _init_and_start_app(self):
+    def start(self, auto_refresh=True):
         # Try multiple configs starting with target OpenGL version
         # and multisampling and removing these options if exception
         # Note: multisampling not available on all hardware
@@ -1155,31 +1161,35 @@ class Viewer(pyglet.window.Window):
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
-        last_time = time.time()
+        self.refresh()
+        if auto_refresh:
+            while self.is_active and not self._should_close:
+                try:
+                    self.refresh()
+                except AttributeError:
+                    # The graphical window has been closed
+                    self.on_close()
 
-        while self.is_active:
-            time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
-            while self._offscreen_event.wait(time_next_frame - time.time()):
-                # print('e0', time.time() - last_time); last_time = time.time()
-                self.draw_offscreen()
-                self._offscreen_event.clear()
-                # print('e1', time.time() - last_time); last_time = time.time()
+    def refresh(self):
+        time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
+        while self._offscreen_event.wait(time_next_frame - time.time()):
+            self.draw_offscreen()
+            self._offscreen_event.clear()
 
-            pyglet.clock.tick()
+        pyglet.clock.tick()
 
-            if gs.platform != "Windows":
-                pyglet.app.platform_event_loop.step(0.0)
-            else:
-                # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
-                # this is a workaround on Windows. not sure if it's correct
-                time.sleep(0.001)
+        if gs.platform != "Windows":
+            pyglet.app.platform_event_loop.step(0.0)
+        else:
+            # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
+            # this is a workaround on Windows. not sure if it's correct
+            time.sleep(0.001)
 
-            self.switch_to()
-            self.dispatch_pending_events()
-            if self.is_active:
-                self.dispatch_events()
-                self.flip()
-            # print('e2', time.time() - last_time); last_time = time.time()
+        self.switch_to()
+        self.dispatch_pending_events()
+        if self.is_active:
+            self.dispatch_events()
+            self.flip()
 
     def _compute_initial_camera_pose(self):
         centroid = self.scene.centroid
