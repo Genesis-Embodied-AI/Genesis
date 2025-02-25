@@ -196,9 +196,16 @@ def address_to_ptr(typingctx, src):
 
 class JITRenderer:
     def __init__(self, scene, node_list, primitive_list):
+        self._forward_pass = None
+        self._shadow_mapping_pass = None
+        self._point_shadow_mapping_pass = None
+        self._read_depth_buf = None
+        self._read_color_buf = None
+        self._update_normal_flat = None
+        self._update_normal_smooth = None
+        self._update_buffer = None
         self.set_primitive(scene, node_list, primitive_list)
         self.set_light(scene, scene.light_nodes, scene.ambient_light)
-        self.gen_func_ptr()
         self.reflection_mat = np.identity(4, np.float32)
 
     def update(self, scene):
@@ -747,10 +754,11 @@ class JITRenderer:
         env_idx=-1,
     ):
         self.load_programs(renderer, flags, program_flags)
-        func = self._forward_pass
+        if self._forward_pass is None:
+            self.gen_func_ptr()
         # timer = time()
         if flags & RenderFlags.SEG:
-            func(
+            self._forward_pass(
                 self.vao_id,
                 self.program_id[(flags, program_flags)],
                 self.pose,
@@ -777,7 +785,7 @@ class JITRenderer:
                 self.gl.wrapper_instance,
             )
         else:
-            func(
+            self._forward_pass(
                 self.vao_id,
                 self.program_id[(flags, program_flags)],
                 self.pose,
@@ -807,8 +815,9 @@ class JITRenderer:
 
     def shadow_mapping_pass(self, renderer, V, P, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
-        func = self._shadow_mapping_pass
-        func(
+        if self._shadow_mapping_pass is None:
+            self.gen_func_ptr()
+        self._shadow_mapping_pass(
             self.vao_id,
             self.program_id[(flags, program_flags)],
             self.pose,
@@ -824,8 +833,9 @@ class JITRenderer:
 
     def point_shadow_mapping_pass(self, renderer, light_matrix, light_pos, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
-        func = self._point_shadow_mapping_pass
-        func(
+        if self._point_shadow_mapping_pass is None:
+            self.gen_func_ptr()
+        self._point_shadow_mapping_pass(
             self.vao_id,
             self.program_id[(flags, program_flags)],
             self.pose,
@@ -844,8 +854,12 @@ class JITRenderer:
         if primitive.normals is None:
             return None
         if primitive.indices is not None:
+            if self._update_normal_smooth is None:
+                self.gen_func_ptr()
             return self._update_normal_smooth(vertices, primitive.indices)
         else:
+            if self._update_normal_flat is None:
+                self.gen_func_ptr()
             return self._update_normal_flat(vertices.reshape((-1, 3, 3)))
 
     def update_buffer(self, buffer_updates):
@@ -859,10 +873,16 @@ class JITRenderer:
             updates[idx, 1] = 4 * len(flattened)
             updates[idx, 2] = flattened.ctypes.data
 
+        if self._update_buffer is None:
+            self.gen_func_ptr()
         self._update_buffer(updates, self.gl.wrapper_instance)
 
     def read_depth_buf(self, weight, height, z_near, z_far):
+        if self._read_depth_buf is None:
+            self.gen_func_ptr()
         return self._read_depth_buf(weight, height, z_near, z_far, self.gl.wrapper_instance)
 
     def read_color_buf(self, weight, height, rgba):
+        if self._read_color_buf is None:
+            self.gen_func_ptr()
         return self._read_color_buf(weight, height, rgba, self.gl.wrapper_instance)
