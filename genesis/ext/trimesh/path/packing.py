@@ -206,7 +206,7 @@ def rectangles_single(extents, size=None, shuffle=False, rotate=True):
         # if no bounds are passed start it with the size of a large
         # rectangle exactly which will require re-rooting for
         # subsequent insertions
-        root_bounds = [[0.0] * dimension, extents[extents.ptp(axis=1).argmax()]]
+        root_bounds = [[0.0] * dimension, extents[np.ptp(extents, axis=1).argmax()]]
     else:
         # restrict the bounds to passed size and disallow re-rooting
         root_bounds = [[0.0] * dimension, size]
@@ -226,7 +226,7 @@ def rectangles_single(extents, size=None, shuffle=False, rotate=True):
             # get the size of the current root node
             bounds = root.bounds
             # current extents
-            current = bounds.ptp(axis=0)
+            current = np.ptp(bounds, axis=0)
 
             # pick the direction which has the least hyper-volume.
             best = np.inf
@@ -276,7 +276,7 @@ def rectangles_single(extents, size=None, shuffle=False, rotate=True):
             new_root.child = [RectangleBin(bounds_ori), RectangleBin(bounds_ins)]
 
             # insert the original sheet into the new tree
-            root_offset = new_root.child[0].insert(bounds.ptp(axis=0), rotate=rotate)
+            root_offset = new_root.child[0].insert(np.ptp(bounds, axis=0), rotate=rotate)
             # we sized the cells so original tree would fit
             assert root_offset is not None
 
@@ -450,7 +450,7 @@ def rectangles(extents, size=None, density_escape=0.99, spacing=0.0, iterations=
         bounds, insert = rectangles_single(extents=extents, size=size, shuffle=(i != 0))
 
         count = insert.sum()
-        extents_all = bounds.reshape((-1, dim)).ptp(axis=0)
+        extents_all = np.ptp(bounds.reshape((-1, dim)), axis=0)
 
         if quanta is not None:
             # compute the density using an upsized quanta
@@ -508,7 +508,7 @@ def images(images, power_resize=False):
 
     # offsets should be integer multiple of pizels
     offset = bounds[:, 0].round().astype(int)
-    extents = bounds.reshape((-1, 2)).ptp(axis=0)
+    extents = np.ptp(bounds.reshape((-1, 2)), axis=0)
     size = extents.round().astype(int)
     if power_resize:
         # round up all dimensions to powers of 2
@@ -629,7 +629,7 @@ def roll_transform(bounds, extents):
         return []
 
     # find the size of the AABB of the passed bounds
-    passed = bounds.ptp(axis=1)
+    passed = np.ptp(bounds, axis=1)
     # zeroth index is 2D, `1` is 3D
     dimension = passed.shape[1]
 
@@ -657,7 +657,7 @@ def roll_transform(bounds, extents):
         rolled = np.roll(extents, roll, axis=1)
         # check to see if the rolled original extents
         # match the requested bounding box
-        ok = (passed - rolled).ptp(axis=1) < _TOL_ZERO
+        ok = np.ptp((passed - rolled), axis=1) < _TOL_ZERO
         if not ok.any():
             continue
 

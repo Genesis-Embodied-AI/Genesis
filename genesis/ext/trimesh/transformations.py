@@ -2225,13 +2225,13 @@ def is_rigid(matrix, epsilon=1e-8):
         return False
 
     # make sure last row has no scaling
-    if (matrix[-1] - [0, 0, 0, 1]).ptp() > epsilon:
+    if np.ptp((matrix[-1] - [0, 0, 0, 1])) > epsilon:
         return False
 
     # check dot product of rotation against transpose
     check = np.dot(matrix[:3, :3], matrix[:3, :3].T) - _IDENTITY[:3, :3]
 
-    return check.ptp() < epsilon
+    return np.ptp(check) < epsilon
 
 
 def scale_and_translate(scale=None, translate=None):

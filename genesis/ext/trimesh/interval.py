@@ -111,7 +111,7 @@ def intersection(a, b, digits=8):
     overlap[current] = np.column_stack([a[current][:, 0], b[current][:, 1]])
 
     # is range overlapping at all
-    intersects = overlap.ptp(axis=1) > 10**-digits
+    intersects = np.ptp(overlap, axis=1) > 10**-digits
 
     if is_1D:
         return intersects[0], overlap[0]

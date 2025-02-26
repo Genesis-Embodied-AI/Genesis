@@ -510,7 +510,7 @@ def split_traversal(traversal, edges, edges_hash=None):
     # hash each edge so we can compare to edge set
     trav_hash = grouping.hashable_rows(np.sort(trav_edge, axis=1))
     # check if each edge is contained in edge set
-    contained = np.in1d(trav_hash, edges_hash)
+    contained = np.isin(trav_hash, edges_hash)
 
     # exit early if every edge of traversal exists
     if contained.all():
@@ -532,7 +532,7 @@ def split_traversal(traversal, edges, edges_hash=None):
             continue
         # make sure it's not already closed
         edge = np.sort([t[0], t[-1]])
-        if edge.ptp() == 0:
+        if np.ptp(edge) == 0:
             continue
         close = grouping.hashable_rows(edge.reshape((1, 2)))[0]
         # if we need the edge add it
