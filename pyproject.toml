@@ -15,7 +15,7 @@ dependencies = [
     "scikit-image",
     "taichi == 1.7.3",
     "pydantic == 2.7.1",
-    "numpy >= 1.26.4",
+    "numpy == 1.26.4",
     "six",
     "PyOpenGL>=3.1.4",
     "freetype-py",
