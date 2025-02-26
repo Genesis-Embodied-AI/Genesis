@@ -3,6 +3,7 @@ import gc
 import numpy as np
 
 import genesis as gs
+import os
 
 try:
     from genesis.ext import pyrender
@@ -25,7 +26,8 @@ class Rasterizer(RBC):
             return
 
         if self._offscreen:
-            platform = "egl"
+            # if environment variable is set, use the platform specified, otherwise egl
+            platform = "egl" if "PYOPENGL_PLATFORM" not in os.environ else os.environ["PYOPENGL_PLATFORM"]
             if gs.platform == "macOS":
                 platform = "pyglet"
             self._renderer = pyrender.OffscreenRenderer(
