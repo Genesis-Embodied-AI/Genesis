@@ -800,7 +800,7 @@ class Viewer(pyglet.window.Window):
                 self._message_text = "Fullscreen Off"
 
         # H toggles shadows
-        elif symbol == pyglet.window.key.H and sys.platform != "darwin":
+        elif symbol == pyglet.window.key.H:
             self.render_flags["shadows"] = not self.render_flags["shadows"]
             if self.render_flags["shadows"]:
                 self._message_text = "Shadows On"
