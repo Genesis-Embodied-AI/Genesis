@@ -92,7 +92,7 @@ class Viewer(RBC):
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
     def stop(self):
-        self._pyrender_viewer.close_external()
+        self._pyrender_viewer.close()
 
     def is_alive(self):
         return self._pyrender_viewer.is_active

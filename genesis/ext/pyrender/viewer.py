@@ -221,7 +221,6 @@ class Viewer(pyglet.window.Window):
         self._offscreen_event = Event()
         self._initialized_event = Event()
         self._is_active = False
-        self._should_close = False
         self._run_in_thread = run_in_thread
         self._seg_node_map = context.seg_node_map
 
@@ -521,15 +520,16 @@ class Viewer(pyglet.window.Window):
     def registered_keys(self, value):
         self._registered_keys = value
 
-    def close_external(self):
-        """Close the viewer from another thread.
+    def close(self):
+        """Close the viewer.
 
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
-        self._should_close = True
-        while self.is_active:
-            time.sleep(1.0 / self.viewer_flags["refresh_rate"])
+        self.on_close()
+        if self.run_in_thread:
+            while self._is_active:
+                time.sleep(1.0 / self.viewer_flags["refresh_rate"])
 
     def save_video(self, filename=None):
         """Save the stored frames to a video file.
@@ -555,7 +555,7 @@ class Viewer(pyglet.window.Window):
     def on_close(self):
         """Exit the event loop when the window is closed."""
         # Early return if already closed
-        if not self.is_active:
+        if not self._is_active:
             return
 
         # Do not consider the viewer as active right away
@@ -587,11 +587,11 @@ class Viewer(pyglet.window.Window):
         # Force clean-up of OpenGL context data
         try:
             OpenGL.contextdata.cleanupContext()
-            self.close()
+            super().close()
         except Exception:
             pass
         finally:
-            super(Viewer, self).on_close()
+            super().on_close()
             pyglet.app.exit()
 
         self._offscreen_result_semaphore.release()
@@ -962,10 +962,7 @@ class Viewer(pyglet.window.Window):
                 self._message_opac = self.viewer_flags["refresh_rate"] * 2
                 self._video_saver = None
 
-        if self._should_close:
-            self.on_close()
-        else:
-            self.on_draw()
+        self.on_draw()
 
     def _reset_view(self):
         """Reset the view to a good initial state.
@@ -1170,7 +1167,7 @@ class Viewer(pyglet.window.Window):
 
         self.refresh()
         if auto_refresh:
-            while self.is_active and not self._should_close:
+            while self._is_active:
                 try:
                     self.refresh()
                 except AttributeError:
@@ -1194,8 +1191,9 @@ class Viewer(pyglet.window.Window):
 
         self.switch_to()
         self.dispatch_pending_events()
-        if self.is_active:
+        if self._is_active:
             self.dispatch_events()
+        if self._is_active:
             self.flip()
 
     def _compute_initial_camera_pose(self):
