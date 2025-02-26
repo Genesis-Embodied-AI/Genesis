@@ -168,11 +168,7 @@ class Renderer(object):
                             self._point_shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
                         else:
                             self._shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
-                        # FIXME: Resizing window causes segfault if shadow framebuffer is not unbound beforehand.
-                        # Since there is no way to catch this even soon enough, the only alternative is to unbind the
-                        # shadow buffer after use systematically... Even though it is clearly sub-optimal, it is not a
-                        # big deal in practice since it takes about 10us to create + delete a framebuffer.
-                        self._delete_shadow_framebuffer()
+                        glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
             # Make forward pass
             # forward_pass_start = time()
@@ -1297,13 +1293,15 @@ class Renderer(object):
     def _delete_floor_framebuffer(self):
         if self._floor_fb is not None:
             glDeleteFramebuffers(1, [self._floor_fb])
-            self._shadow_fb = None
+            self._floor_fb = None
 
         if self._floor_texture_color is not None:
             self._floor_texture_color.delete()
+            self._floor_texture_color = None
 
         if self._floor_texture_depth is not None:
             self._floor_texture_depth.delete()
+            self._floor_texture_depth = None
 
     def _configure_shadow_framebuffer(self):
         if self._shadow_fb is None:

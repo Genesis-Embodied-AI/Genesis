@@ -72,12 +72,6 @@ class Visualizer(RBC):
         self._cameras = gs.List()
 
     def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise):
-        if gs.platform == "Windows":
-            # gs.raise_exception("Camera not yet supported on Windows but is supposed to. Can anyone help?")
-            gs.logger.warning("Camera may have some issues on Windows.")
-
-        # if self._viewer is None and gs.platform == 'macOS':
-        #     gs.raise_exception(f'Headless rendering not yet supported on {gs.platform}.')
         camera = Camera(
             self, len(self._cameras), model, res, pos, lookat, up, fov, aperture, focus_dist, GUI, spp, denoise
         )
