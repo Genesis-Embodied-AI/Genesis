@@ -866,7 +866,7 @@ class JITRenderer:
         updates = np.zeros((len(buffer_updates), 3), dtype=np.int64)
         flattened_list = []
         for idx, (id, data) in enumerate(buffer_updates.items()):
-            flattened = np.ascontiguousarray(data.flatten().astype(np.float32))
+            flattened = data.astype(np.float32, order="C", copy=False).reshape((-1,))
             flattened_list.append(flattened)
 
             updates[idx, 0] = id

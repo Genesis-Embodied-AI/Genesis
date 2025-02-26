@@ -27,9 +27,9 @@ class Mesh:
     def load_file(self):
         # mesh
         self.process_mesh()
-        self.raw_vertices = np.ascontiguousarray(np.array(self.mesh.vertices, dtype=np.float32))
-        self.raw_vertex_normals_np = np.ascontiguousarray(np.array(self.mesh.vertex_normals, dtype=np.float32))
-        self.faces_np = np.ascontiguousarray(np.array(self.mesh.faces, dtype=np.int32)).flatten()
+        self.raw_vertices = np.asarray(self.mesh.vertices, dtype=np.float32, order="C")
+        self.raw_vertex_normals_np = np.asarray(self.mesh.vertex_normals, dtype=np.float32, order="C")
+        self.faces_np = np.asarray(self.mesh.faces, dtype=np.int32, order="C").reshape((-1))
 
         self.n_vertices = len(self.raw_vertices)
         self.n_faces = len(self.faces_np)
@@ -45,18 +45,18 @@ class Mesh:
             raw_mesh = load_mesh(self.raw_file)
             sdf_data = compute_sdf_data(cleanup_mesh(normalize_mesh(raw_mesh)), self.sdf_res)
             self.friction = self.material.friction
-            self.sdf_voxels_np = sdf_data["voxels"].astype(gs.np_float)
+            self.sdf_voxels_np = sdf_data["voxels"].astype(gs.np_float, order="C", copy=False)
             self.sdf_res = self.sdf_voxels_np.shape[0]
-            self.T_mesh_to_sdf_np = sdf_data["T_mesh_to_sdf"].astype(gs.np_float)
+            self.T_mesh_to_sdf_np = sdf_data["T_mesh_to_sdf"].astype(gs.np_float, order="C", copy=False)
 
     def init_transform(self):
         scale = np.array(self.scale, dtype=gs.np_float)
 
         # apply initial transforms (scale then quat then pos)
         T_init = gu.scale_to_T(scale)
-        self.init_vertices_np = np.ascontiguousarray(gu.transform_by_T(self.raw_vertices, T_init).astype(np.float32))
+        self.init_vertices_np = gu.transform_by_T(self.raw_vertices, T_init).astype(np.float32, order="C", copy=False)
 
-        self.init_vertex_normals_np = self.raw_vertex_normals_np.astype(np.float32)
+        self.init_vertex_normals_np = self.raw_vertex_normals_np.astype(np.float32, order="C", copy=False)
 
         # init ti fields
         self.init_vertices = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
