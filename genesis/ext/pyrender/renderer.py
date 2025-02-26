@@ -52,9 +52,6 @@ class Renderer(object):
 
     def __init__(self, viewport_width, viewport_height, jit, point_size=1.0):
         self.dpscale = 1
-        # Scaling needed on retina displays
-        if sys.platform == "darwin":
-            self.dpscale = 2
 
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
