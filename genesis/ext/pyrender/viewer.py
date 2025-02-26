@@ -715,6 +715,9 @@ class Viewer(pyglet.window.Window):
         if self._renderer is None:
             return
 
+        self._renderer._delete_shadow_framebuffer()
+        self._renderer._delete_floor_framebuffer()
+
         self._viewport_size = (width, height)
         self._trackball.resize(self._viewport_size)
         self._renderer.viewport_width = self._viewport_size[0]
