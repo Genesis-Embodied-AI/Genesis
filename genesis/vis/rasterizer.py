@@ -25,8 +25,9 @@ class Rasterizer(RBC):
             return
 
         if self._offscreen:
-            platform = "egl"
-            if gs.platform == "macOS":
+            if gs.platform == "Linux":
+                platform = "egl"
+            else:
                 platform = "pyglet"
             self._renderer = pyrender.OffscreenRenderer(
                 pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
