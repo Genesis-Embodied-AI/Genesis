@@ -18,7 +18,7 @@ def parse_mjcf(path):
     return mj
 
 
-def parse_link(mj, i_l, q_offset, dof_offset, scale):
+def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
 
     # mj.body
     l_info = dict()
@@ -67,11 +67,17 @@ def parse_link(mj, i_l, q_offset, dof_offset, scale):
     def add_more_joint_info(j_info, jnt_offset=0):
         d_off = dof_offset + jnt_offset
         q_off = q_offset + jnt_offset
+        qpos0_off = qpos0_offset + jnt_offset
 
         j_info["dofs_damping"] = np.array(mj.dof_damping[d_off : d_off + j_info["n_dofs"]])
         j_info["dofs_invweight"] = np.array(mj.dof_invweight0[d_off : d_off + j_info["n_dofs"]])
         j_info["dofs_armature"] = np.array(mj.dof_armature[d_off : d_off + j_info["n_dofs"]])
-        j_info["init_qpos"] = np.array(mj.qpos0[q_off : q_off + j_info["n_qs"]])
+
+        if j_info["type"] == gs.JOINT_TYPE.SPHERICAL:
+            init_qpos = gu.quat_to_xyz(np.array(mj.qpos0[qpos0_off : qpos0_off + 4]))
+        else:
+            init_qpos = np.array(mj.qpos0[qpos0_off : qpos0_off + j_info["n_qs"]])
+        j_info["init_qpos"] = init_qpos
 
         # apply scale
         j_info["pos"] *= scale

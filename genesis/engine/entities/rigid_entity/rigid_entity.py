@@ -355,16 +355,18 @@ class RigidEntity(Entity):
         l_infos = []
         j_infos = []
 
-        q_offset, dof_offset = 0, 0
+        q_offset, dof_offset, qpos0_offset = 0, 0, 0
 
         for i_l in range(n_links):
-            l_info, j_info = mju.parse_link(mj, i_l + 1, q_offset, dof_offset, morph.scale)
+            l_info, j_info = mju.parse_link(mj, i_l + 1, q_offset, dof_offset, qpos0_offset, morph.scale)
 
             l_infos.append(l_info)
             j_infos.append(j_info)
 
             q_offset += j_info["n_qs"]
             dof_offset += j_info["n_dofs"]
+            qpos0_offset += j_info["n_qs"]
+            qpos0_offset += 1 if j_info["type"] == gs.JOINT_TYPE.SPHERICAL else 0
 
         l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
         for i_l in range(len(l_infos)):
