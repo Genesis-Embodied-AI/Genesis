@@ -1529,6 +1529,12 @@ class RigidEntity(Entity):
             for joint in self._joints:
                 if joint.name == name:
                     return joint
+            for joint in self._joints:
+                if f"{name}," in joint.name or f",{name}" in joint.name:
+                    gs.logger.warning(
+                        f"we only found {joint.name}. It's probably due to we merge joints under the same link."
+                    )
+                    return joint
             gs.raise_exception(f"Joint not found for name: {name}.")
 
         elif uid is not None:

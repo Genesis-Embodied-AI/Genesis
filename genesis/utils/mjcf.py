@@ -198,7 +198,7 @@ def parse_link(mj, i_l, q_offset, dof_offset, scale):
 
         j_info["quat"] = j_info_list[0]["quat"]
         j_info["pos"] = j_info_list[0]["pos"]
-        j_info["name"] = j_info_list[0]["name"]
+        j_info["name"] = ",".join([j["name"] for j in j_info_list])
 
         final_joint_list.append(j_info)
 
