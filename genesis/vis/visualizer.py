@@ -17,17 +17,13 @@ class Visualizer(RBC):
         self._t = -1
         self._scene = scene
 
-        # Rasterizer context is shared by viewer and rasterizer.
-        if not show_viewer and gs.platform not in ["Linux", "macOS"]:
-            gs.logger.warning(f"Headless rendering not yet supported on {gs.platform}.")
-            self._context = None
-        else:
-            try:
-                from .rasterizer_context import RasterizerContext
+        # Rasterizer context is shared by viewer and rasterizer
+        try:
+            from .rasterizer_context import RasterizerContext
 
-            except Exception as e:
-                raise ImportError("Onscreen rendering not working on this machine.") from e
-            self._context = RasterizerContext(vis_options)
+        except Exception as e:
+            raise ImportError("Offscreen rendering not working on this machine.") from e
+        self._context = RasterizerContext(vis_options)
 
         # try to connect to display
         try:
