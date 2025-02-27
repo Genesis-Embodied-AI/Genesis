@@ -4,6 +4,7 @@ import builtins
 from io import open as io_open
 import os
 import sys
+import numpy as np
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext as _build_ext
 
@@ -53,6 +54,7 @@ setup(
         Extension(
             "genesis.ext.fast_simplification._simplify",
             ["genesis/ext/fast_simplification/_simplify.pyx"],
+            include_dirs=[np.get_include()],
             language="c++",
             extra_compile_args=extra_compile_args,
             define_macros=macros,
@@ -60,6 +62,7 @@ setup(
         Extension(
             "genesis.ext.fast_simplification._replay",
             ["genesis/ext/fast_simplification/_replay.pyx"],
+            include_dirs=[np.get_include()],
             language="c++",
             extra_compile_args=extra_compile_args,
             define_macros=macros,

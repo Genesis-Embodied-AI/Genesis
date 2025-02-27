@@ -17,17 +17,13 @@ class Visualizer(RBC):
         self._t = -1
         self._scene = scene
 
-        # Rasterizer context is shared by viewer and rasterizer.
-        if not show_viewer and gs.platform not in ["Linux", "macOS"]:
-            gs.logger.warning(f"Headless rendering not yet supported on {gs.platform}.")
-            self._context = None
-        else:
-            try:
-                from .rasterizer_context import RasterizerContext
+        # Rasterizer context is shared by viewer and rasterizer
+        try:
+            from .rasterizer_context import RasterizerContext
 
-            except Exception as e:
-                raise ImportError("Onscreen rendering not working on this machine.") from e
-            self._context = RasterizerContext(vis_options)
+        except Exception as e:
+            raise ImportError("Offscreen rendering not working on this machine.") from e
+        self._context = RasterizerContext(vis_options)
 
         # try to connect to display
         try:
@@ -72,12 +68,6 @@ class Visualizer(RBC):
         self._cameras = gs.List()
 
     def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise):
-        if gs.platform == "Windows":
-            # gs.raise_exception("Camera not yet supported on Windows but is supposed to. Can anyone help?")
-            gs.logger.warning("Camera may have some issues on Windows.")
-
-        # if self._viewer is None and gs.platform == 'macOS':
-        #     gs.raise_exception(f'Headless rendering not yet supported on {gs.platform}.')
         camera = Camera(
             self, len(self._cameras), model, res, pos, lookat, up, fov, aperture, focus_dist, GUI, spp, denoise
         )
@@ -119,15 +109,13 @@ class Visualizer(RBC):
         for camera in self._cameras:
             camera._build()
 
-        if (
-            len(self._cameras) > 0 and gs.platform == "Linux"
-        ):  # Non-linux system uses main thread for viewer, which hasn't been started yet here.
-            # need to update viewer once here, because otherwise camera will update scene if render is called right after build, which will lead to segfault.
+        if self._cameras:
+            # need to update viewer once here, because otherwise camera will update scene if render is called right
+            # after build, which will lead to segfault.
             if self._viewer is not None:
                 self._viewer.update()
             else:
-                # viewer creation will compile rendering kernels
-                # if viewer is not created, render here once to compile
+                # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
                 if self._rasterizer is not None:
                     self._rasterizer.render_camera(self._cameras[0])
 

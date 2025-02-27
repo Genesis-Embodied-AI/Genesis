@@ -1,9 +1,9 @@
+import os
 import gc
 
 import numpy as np
 
 import genesis as gs
-import os
 
 try:
     from genesis.ext import pyrender

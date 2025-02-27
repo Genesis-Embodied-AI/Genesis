@@ -60,23 +60,19 @@ class Viewer(RBC):
         # viewer
         if gs.platform == "Linux":
             run_in_thread = True
-            auto_start = True
         elif gs.platform == "macOS":
             run_in_thread = False
-            auto_start = False
             gs.logger.warning(
-                "Non-linux system detected. In order to use the interactive viewer, you need to manually run simulation in a separate thread and then start viewer. See `examples/render_on_macos.py`."
+                "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
             )
         elif gs.platform == "Windows":
             run_in_thread = True
-            auto_start = True
-            gs.logger.warning("Windows system detected. Viewer may have some issues.")
 
         self._pyrender_viewer = pyrender.Viewer(
             context=self.context,
             viewport_size=self._res,
             run_in_thread=run_in_thread,
-            auto_start=auto_start,
+            auto_start=run_in_thread,
             view_center=self._camera_init_lookat,
             shadow=self.context.shadow,
             plane_reflection=self.context.plane_reflection,
@@ -86,20 +82,17 @@ class Viewer(RBC):
                 "refresh_rate": self._refresh_rate,
             },
         )
-        if auto_start:
-            self._pyrender_viewer.wait_until_initialized()
+
+        if not run_in_thread:
+            self._pyrender_viewer.start(auto_refresh=False)
+        self._pyrender_viewer.wait_until_initialized()
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
-    def start(self):
-        # used for starting viewer thread in non-linux OS
-        self._pyrender_viewer.start()
-
     def stop(self):
-        # used for closing viewer thread in non-linux OS
-        self._pyrender_viewer.close_external()
+        self._pyrender_viewer.close()
 
     def is_alive(self):
         return self._pyrender_viewer.is_active
@@ -123,6 +116,9 @@ class Viewer(RBC):
             buffer_updates = self.context.update()
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
+
+            if not self._pyrender_viewer.run_in_thread:
+                self._pyrender_viewer.refresh()
 
         # lock FPS
         if self._max_FPS is not None:
