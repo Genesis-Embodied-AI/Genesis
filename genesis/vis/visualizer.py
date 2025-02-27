@@ -5,7 +5,14 @@ from genesis.repr_base import RBC
 
 from .camera import Camera
 from .rasterizer import Rasterizer
-from .viewer import DummyViewerLock, Viewer
+
+
+class DummyViewerLock:
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
 
 
 class Visualizer(RBC):
@@ -19,10 +26,11 @@ class Visualizer(RBC):
 
         # Rasterizer context is shared by viewer and rasterizer
         try:
+            from .viewer import Viewer
             from .rasterizer_context import RasterizerContext
 
         except Exception as e:
-            raise ImportError("Offscreen rendering not working on this machine.") from e
+            raise ImportError("Rendering not working on this machine.") from e
         self._context = RasterizerContext(vis_options)
 
         # try to connect to display
@@ -50,11 +58,7 @@ class Visualizer(RBC):
             self._viewer = None
 
         # Rasterizer is always needed for depth and segmentation mask rendering.
-        if self._context is not None:
-            self._rasterizer = Rasterizer(self._viewer, self._context)
-
-        else:
-            self._rasterizer = None
+        self._rasterizer = Rasterizer(self._viewer, self._context)
 
         if isinstance(renderer, gs.renderers.RayTracer):
             from .raytracer import Raytracer
@@ -77,8 +81,7 @@ class Visualizer(RBC):
     def reset(self):
         self._t = -1
 
-        if self._context is not None:
-            self._context.reset()
+        self._context.reset()
 
         # temp fix for cam.render() segfault
         if self._viewer is not None:
@@ -92,8 +95,7 @@ class Visualizer(RBC):
             self._raytracer.reset()
 
     def build(self):
-        if self._context is not None:
-            self._context.build(self._scene)
+        self._context.build(self._scene)
 
         if self._viewer is not None:
             self._viewer.build(self._scene)
@@ -101,8 +103,7 @@ class Visualizer(RBC):
         else:
             self.viewer_lock = DummyViewerLock()
 
-        if self._rasterizer is not None:
-            self._rasterizer.build()
+        self._rasterizer.build()
         if self._raytracer is not None:
             self._raytracer.build(self._scene)
 
@@ -116,8 +117,7 @@ class Visualizer(RBC):
                 self._viewer.update()
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
-                if self._rasterizer is not None:
-                    self._rasterizer.render_camera(self._cameras[0])
+                self._rasterizer.render_camera(self._cameras[0])
 
     def update(self, force=True):
         if force:  # force update
