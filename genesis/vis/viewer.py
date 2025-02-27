@@ -3,10 +3,7 @@ import numpy as np
 import genesis as gs
 import genesis.utils.geom as gu
 
-try:
-    from genesis.ext import pyrender
-except:
-    print("Failed to import pyrender. Rendering will not work.")
+from genesis.ext import pyrender
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
 
@@ -20,14 +17,6 @@ class ViewerLock:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self._pyrender_viewer.render_lock.release()
-
-
-class DummyViewerLock:
-    def __enter__(self):
-        pass
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass
 
 
 class Viewer(RBC):
