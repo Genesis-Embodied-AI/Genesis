@@ -1,5 +1,4 @@
-import screeninfo
-
+import pyglet
 import genesis as gs
 from genesis.repr_base import RBC
 
@@ -35,21 +34,21 @@ class Visualizer(RBC):
 
         # try to connect to display
         try:
-            monitor = screeninfo.get_monitors()[0]
+            display = pyglet.display.get_display()
+            screen = display.get_default_screen()
             self._connected_to_display = True
         except Exception:
             self._connected_to_display = False
 
         if show_viewer:
-            if not self.connected_to_display:
+            if not self._connected_to_display:
                 gs.raise_exception("No display detected. Use `show_viewer=False` for headless mode.")
-                self._connected_to_display = False
 
             if viewer_options.res is None:
-                viewer_size_ratio = 0.5
+                viewer_size_ratio = screen.get_scale() * 0.5
                 viewer_options.res = (
-                    int(monitor.height * viewer_size_ratio / 0.75),
-                    int(monitor.height * viewer_size_ratio),
+                    int(screen.height * viewer_size_ratio / 0.75),
+                    int(screen.height * viewer_size_ratio),
                 )
 
             self._viewer = Viewer(viewer_options, self._context)
