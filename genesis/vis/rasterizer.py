@@ -1,3 +1,4 @@
+import os
 import gc
 
 import numpy as np
@@ -25,10 +26,8 @@ class Rasterizer(RBC):
             return
 
         if self._offscreen:
-            if gs.platform == "Linux":
-                platform = "egl"
-            else:
-                platform = "pyglet"
+            # if environment variable is set, use the platform specified, otherwise some platform-specific default
+            platform = os.environ.get("PYOPENGL_PLATFORM", "egl" if gs.platform == "Linux" else "pyglet")
             self._renderer = pyrender.OffscreenRenderer(
                 pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
             )
