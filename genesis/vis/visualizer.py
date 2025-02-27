@@ -113,15 +113,13 @@ class Visualizer(RBC):
         for camera in self._cameras:
             camera._build()
 
-        if (
-            len(self._cameras) > 0 and gs.platform == "Linux"
-        ):  # Non-linux system uses main thread for viewer, which hasn't been started yet here.
-            # need to update viewer once here, because otherwise camera will update scene if render is called right after build, which will lead to segfault.
+        if self._cameras:
+            # need to update viewer once here, because otherwise camera will update scene if render is called right
+            # after build, which will lead to segfault.
             if self._viewer is not None:
                 self._viewer.update()
             else:
-                # viewer creation will compile rendering kernels
-                # if viewer is not created, render here once to compile
+                # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
                 if self._rasterizer is not None:
                     self._rasterizer.render_camera(self._cameras[0])
 
