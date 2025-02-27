@@ -175,9 +175,21 @@ def convex_decompose(mesh, morph):
         if mesh.vertices.shape[0] > 3:
             mesh = mesh.simplify_quadric_decimation(morph.decimate_face_num)
 
+    # compute file name via hashing for caching
     cvx_path = get_cvx_path(mesh.vertices, mesh.faces, morph.coacd_options)
 
-    if not os.path.exists(cvx_path):
+    # loading pre-computed cache if available
+    is_cached_loaded = False
+    if os.path.exists(cvx_path):
+        gs.logger.debug("Convex decomposition file (.cvx) found in cache.")
+        try:
+            with open(cvx_path, "rb") as file:
+                mesh_parts = pkl.load(file)
+            is_cached_loaded = True
+        except (EOFError, pkl.UnpicklingError):
+            gs.logger.info("Ignoring corrupted cache.")
+
+    if not is_cached_loaded:
         with gs.logger.timer("Running convex decomposition."):
             mesh = coacd.Mesh(mesh.vertices, mesh.faces)
             args = morph.coacd_options
@@ -203,13 +215,10 @@ def convex_decompose(mesh, morph):
             mesh_parts = []
             for vs, fs in result:
                 mesh_parts.append(trimesh.Trimesh(vs, fs))
+
             os.makedirs(os.path.dirname(cvx_path), exist_ok=True)
             with open(cvx_path, "wb") as file:
                 pkl.dump(mesh_parts, file)
-
-    else:
-        with open(cvx_path, "rb") as file:
-            mesh_parts = pkl.load(file)
 
     return mesh_parts
 

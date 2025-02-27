@@ -1,7 +1,6 @@
-import contextlib
 import os
 import pickle as pkl
-from io import StringIO
+from contextlib import redirect_stdout
 
 import numpy as np
 import pyvista as pv
@@ -96,9 +95,19 @@ class Mesh(RBC):
         """
         rm_file_path = mu.get_remesh_path(self.verts, self.faces, edge_len_abs, edge_len_ratio, fix)
 
-        if not os.path.exists(rm_file_path):
+        is_cached_loaded = False
+        if os.path.exists(rm_file_path):
+            gs.logger.debug("Remeshed file (`.rm`) found in cache.")
+            try:
+                with open(rm_file_path, "rb") as file:
+                    verts, faces = pkl.load(file)
+                is_cached_loaded = True
+            except (EOFError, pkl.UnpicklingError):
+                gs.logger.info("Ignoring corrupted cache.")
+
+        if not is_cached_loaded:
             gs.logger.info("Remeshing for tetrahedralization...")
-            with contextlib.redirect_stdout(StringIO()):
+            with open(os.devnull, "w") as stdout, redirect_stdout(stdout):
                 import pymeshlab
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(vertex_matrix=self.verts, face_matrix=self.faces))
@@ -112,10 +121,8 @@ class Mesh(RBC):
             # if fix:
             #     verts, faces = pymeshfix.clean_from_arrays(verts, faces)
             os.makedirs(os.path.dirname(rm_file_path), exist_ok=True)
-            pkl.dump([verts, faces], open(rm_file_path, "wb"))
-        else:
-            gs.logger.debug("Remeshed file (`.rm`) found in cache.")
-            verts, faces = pkl.load(open(rm_file_path, "rb"))
+            with open(rm_file_path, "wb") as file:
+                pkl.dump((verts, faces), file)
 
         self._mesh = trimesh.Trimesh(
             vertices=verts,
