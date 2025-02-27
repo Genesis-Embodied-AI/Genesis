@@ -66,18 +66,16 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
 
     def add_more_joint_info(j_info, jnt_offset=0):
         d_off = dof_offset + jnt_offset
-        q_off = q_offset + jnt_offset
         qpos0_off = qpos0_offset + jnt_offset
 
         j_info["dofs_damping"] = np.array(mj.dof_damping[d_off : d_off + j_info["n_dofs"]])
         j_info["dofs_invweight"] = np.array(mj.dof_invweight0[d_off : d_off + j_info["n_dofs"]])
         j_info["dofs_armature"] = np.array(mj.dof_armature[d_off : d_off + j_info["n_dofs"]])
-
-        if j_info["type"] == gs.JOINT_TYPE.SPHERICAL:
-            init_qpos = gu.quat_to_xyz(np.array(mj.qpos0[qpos0_off : qpos0_off + 4]))
+        if j_info["n_qpos0"] == 4 and j_info["type"] == gs.JOINT_TYPE.SPHERICAL:
+            # this is a real mujoco ball joint
+            j_info["init_qpos"] = gu.quat_to_xyz(mj.qpos0[qpos0_off : qpos0_off + 4])
         else:
-            init_qpos = np.array(mj.qpos0[qpos0_off : qpos0_off + j_info["n_qs"]])
-        j_info["init_qpos"] = init_qpos
+            j_info["init_qpos"] = np.array(mj.qpos0[qpos0_off : qpos0_off + j_info["n_qpos0"]])
 
         # apply scale
         j_info["pos"] *= scale
@@ -101,6 +99,8 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
         j_info["n_qs"] = 0
         j_info["n_dofs"] = 0
+        j_info["n_qpos0"] = 0
+
         j_info = add_more_joint_info(add_actuator(j_info))
         final_joint_list.append(j_info)
     else:
@@ -201,6 +201,13 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
             j_info["type"] = gs.JOINT_TYPE.SPHERICAL
         elif j_info["n_dofs"] == 6:
             j_info["type"] = gs.JOINT_TYPE.FREE
+
+        j_info["n_qpos0"] = j_info["n_qs"]
+        if j_info["type"] == gs.JOINT_TYPE.SPHERICAL and len(j_info_list) == 1:
+            # for real ball joint, mujoco uses quaternion for qpos0
+            # however, we could merge multiple hinge joints into a single ball joint
+            # in this case, we need to use xyz for qpos0
+            j_info["n_qpos0"] = 4
 
         j_info["quat"] = j_info_list[0]["quat"]
         j_info["pos"] = j_info_list[0]["pos"]
