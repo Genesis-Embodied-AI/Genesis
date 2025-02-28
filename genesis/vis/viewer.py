@@ -1,4 +1,9 @@
+import os
+import importlib
+
 import numpy as np
+import OpenGL.error
+import OpenGL.platform
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -57,24 +62,46 @@ class Viewer(RBC):
         elif gs.platform == "Windows":
             run_in_thread = True
 
-        self._pyrender_viewer = pyrender.Viewer(
-            context=self.context,
-            viewport_size=self._res,
-            run_in_thread=run_in_thread,
-            auto_start=run_in_thread,
-            view_center=self._camera_init_lookat,
-            shadow=self.context.shadow,
-            plane_reflection=self.context.plane_reflection,
-            env_separate_rigid=self.context.env_separate_rigid,
-            viewer_flags={
-                "window_title": f"Genesis {gs.__version__}",
-                "refresh_rate": self._refresh_rate,
-            },
-        )
+        # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
+        opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
+        if opengl_platform_orig is None:
+            if gs.platform == "Windows":
+                all_opengl_platforms = ("wgl",)  # same as "native"
+            else:
+                all_opengl_platforms = ("native", "egl", "glx")  # "native" is platform-specific ("egl" or "glx")
+        else:
+            all_opengl_platforms = (opengl_platform_orig,)
 
-        if not run_in_thread:
-            self._pyrender_viewer.start(auto_refresh=False)
-        self._pyrender_viewer.wait_until_initialized()
+        for i, platform in enumerate(all_opengl_platforms):
+            # Force re-import OpenGL platform
+            os.environ["PYOPENGL_PLATFORM"] = platform
+            importlib.reload(OpenGL.platform)
+
+            try:
+                gs.logger.debug(f"Trying to create OpenGL Context for PYOPENGL_PLATFORM='{platform}'...")
+                self._pyrender_viewer = pyrender.Viewer(
+                    context=self.context,
+                    viewport_size=self._res,
+                    run_in_thread=run_in_thread,
+                    auto_start=False,
+                    view_center=self._camera_init_lookat,
+                    shadow=self.context.shadow,
+                    plane_reflection=self.context.plane_reflection,
+                    env_separate_rigid=self.context.env_separate_rigid,
+                    viewer_flags={
+                        "window_title": f"Genesis {gs.__version__}",
+                        "refresh_rate": self._refresh_rate,
+                    },
+                )
+                if not run_in_thread:
+                    self._pyrender_viewer.start(auto_refresh=False)
+                self._pyrender_viewer.wait_until_initialized()
+                break
+            except OpenGL.error.Error:
+                # Invalid OpenGL context. Trying another platform if any...
+                gs.logger.debug(f"Invalid OpenGL context.")
+                if i == len(all_opengl_platforms) - 1:
+                    raise
 
         self.lock = ViewerLock(self._pyrender_viewer)
 

@@ -384,12 +384,20 @@ class Viewer(pyglet.window.Window):
 
         self.pending_buffer_updates = {}
 
+        # Starting the viewer would raise an exception if the OpenGL context is invalid for some reason. This exception
+        # must be caught in order to implement some fallback mechanism. One may want to start the viewer from the main
+        # thread while the running loop would be running on a background thread. However, this approach is not possible
+        # because all access to the OpenGL context must be done from the thread that created it in the first place. As
+        # a result, the logic for catching an invalid OpenGL context must be implemented at the thread-level.
         self.auto_start = auto_start
         if self.run_in_thread:
             self._initialized_event.clear()
             self._thread = Thread(target=self.start, daemon=True)
             self._thread.start()
             self._initialized_event.wait()
+            if not self._is_active:
+                # TODO: For simplicity, the actual exception is not reported for now
+                raise OpenGL.error.Error("Invalid OpenGL context.")
         else:
             self._thread = None
             if self.auto_start:
@@ -554,6 +562,10 @@ class Viewer(pyglet.window.Window):
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
+        # Always consider the viewer initialized at this point to avoid being stuck if starting fails
+        if not self._initialized_event.is_set():
+            self._initialized_event.set()
+
         # Early return if already closed
         if not self._is_active:
             return
@@ -1151,9 +1163,16 @@ class Viewer(pyglet.window.Window):
             Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
         ]
         for conf in confs:
+            # Keep the window invisible for now. It will be displayed only if everything is working fine.
+            # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
+            # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
             try:
                 super(Viewer, self).__init__(
-                    config=conf, resizable=True, width=self._viewport_size[0], height=self._viewport_size[1]
+                    config=conf,
+                    visible=False,
+                    resizable=True,
+                    width=self._viewport_size[0],
+                    height=self._viewport_size[1],
                 )
                 break
             except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException):
@@ -1165,7 +1184,18 @@ class Viewer(pyglet.window.Window):
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
-        self.refresh()
+        # Model the complete scene once, to make sure that everything is fine.
+        try:
+            self.refresh()
+        except OpenGL.error.Error:
+            # Invalid OpenGL context. Closing before raising.
+            self.close()
+            return
+
+        # At this point, we are all set to display the graphical window, finally!
+        self.set_visible(True)
+        self.activate()
+
         if auto_refresh:
             while self._is_active:
                 try:
@@ -1173,6 +1203,16 @@ class Viewer(pyglet.window.Window):
                 except AttributeError:
                     # The graphical window has been closed
                     self.on_close()
+        else:
+            self.refresh()
+
+    def _run(self):
+        while self._is_active:
+            try:
+                self.refresh()
+            except AttributeError:
+                # The graphical window has been closed
+                self.on_close()
 
     def refresh(self):
         time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
