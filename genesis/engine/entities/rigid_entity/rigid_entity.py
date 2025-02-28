@@ -1331,7 +1331,7 @@ class RigidEntity(Entity):
     @gs.assert_built
     def forward_kinematics(self, qpos, qs_idx_local=None, ls_idx_local=None, envs_idx=None):
         """
-        Compute inverse kinematics for a single target link.
+        Compute forward kinematics for a single target link.
 
         Parameters
         ----------
