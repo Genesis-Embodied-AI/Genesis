@@ -209,9 +209,20 @@ class EGLPlatform(Platform):
             if orig_dpy is not None:
                 os.environ["DISPLAY"] = orig_dpy
 
-            # Initialize EGL
             try:
+                # Initialize EGL
                 assert eglInitialize(egl_display, major, minor)
+
+                # Configure EGL
+                assert eglChooseConfig(egl_display, config_attributes, configs, 1, num_configs)
+
+                # Bind EGL to the OpenGL API
+                assert eglBindAPI(EGL_OPENGL_API)
+
+                # Create an EGL context
+                egl_context = eglCreateContext(egl_display, configs[0], EGL_NO_CONTEXT, context_attributes)
+
+                break
             except EGLError:
                 # Ignore the error unless there is no device left to check
                 if i == len(devices) - 1:
@@ -220,15 +231,7 @@ class EGLPlatform(Platform):
         # Backup the device and display that will be used
         self._egl_device = device
         self._egl_display = egl_display
-
-        # Configure EGL
-        assert eglChooseConfig(self._egl_display, config_attributes, configs, 1, num_configs)
-
-        # Bind EGL to the OpenGL API
-        assert eglBindAPI(EGL_OPENGL_API)
-
-        # Create an EGL context
-        self._egl_context = eglCreateContext(self._egl_display, configs[0], EGL_NO_CONTEXT, context_attributes)
+        self._egl_context = egl_context
 
         # Make it current
         self.make_current()
