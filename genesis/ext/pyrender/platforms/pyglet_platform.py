@@ -58,7 +58,7 @@ class PygletPlatform(Platform):
             try:
                 self._window = pyglet.window.Window(config=conf, visible=False, resizable=False, width=1, height=1)
                 break
-            except pyglet.window.NoSuchConfigException as e:
+            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException):
                 pass
 
         if not self._window:
