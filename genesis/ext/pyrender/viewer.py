@@ -1156,7 +1156,7 @@ class Viewer(pyglet.window.Window):
                     config=conf, resizable=True, width=self._viewport_size[0], height=self._viewport_size[1]
                 )
                 break
-            except pyglet.window.NoSuchConfigException:
+            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException):
                 pass
 
         if not self.context:
