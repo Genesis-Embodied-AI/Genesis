@@ -33,7 +33,7 @@ def parse_terrain(morph: Terrain, surface):
     """
 
     if morph.from_stored is not None:
-        terrain_dir = os.path.join(get_assets_dir(), f"terrain/{morph.name}")
+        terrain_dir = os.path.join(os.path.join(get_assets_dir(), f"terrain/{morph.name}"), morph.from_stored)
         os.makedirs(terrain_dir, exist_ok=True)
 
         tmesh = trimesh.load(os.path.join(terrain_dir, "tmesh.stl"))
