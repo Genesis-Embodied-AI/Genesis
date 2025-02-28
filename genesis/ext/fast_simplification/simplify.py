@@ -110,9 +110,7 @@ def simplify(
 
     """
 
-    if not isinstance(points, np.ndarray):
-        points = np.array(points, dtype=np.float64)
-    points = points.astype(np.float64, copy=False)
+    points = np.asarray(points, dtype=np.float64)
     if not isinstance(triangles, np.ndarray):
         triangles = np.array(triangles, dtype=np.int32)
 
@@ -128,8 +126,7 @@ def simplify(
 
     n_faces = triangles.shape[0]
 
-    if not triangles.flags.c_contiguous:
-        triangles = np.ascontiguousarray(triangles)
+    triangles = np.ascontiguousarray(triangles)
 
     if triangles.dtype == np.int32:
         load = _simplify.load_int32
@@ -203,8 +200,8 @@ def simplify_mesh(mesh, target_reduction=None, target_count=None, agg=7, verbose
     n_faces = mesh.n_cells
     _simplify.load_from_vtk(
         mesh.n_points,
-        mesh.points.astype(np.float64, copy=False),
-        mesh.faces.astype(np.int32, copy=False),
+        mesh.points.astype(np.float64, order="C", copy=False),
+        mesh.faces.astype(np.int32, order="C", copy=False),
         n_faces,
     )
 

@@ -632,7 +632,7 @@ class SimpleNonJITRenderer:
         for buffer_id, data in buffer_updates.items():
             if buffer_id >= 0:  # Valid buffer ID check
                 # Flatten and ensure data is contiguous
-                flattened = np.ascontiguousarray(data.flatten().astype(np.float32))
+                flattened = data.astype(np.float32, order="C", copy=False).reshape((-1,))
                 buffer_size = 4 * len(flattened)  # 4 bytes per float32
 
                 # Bind buffer and update its data
