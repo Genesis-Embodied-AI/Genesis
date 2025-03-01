@@ -18,8 +18,6 @@ scene = gs.Scene(
         show_cameras=False,
         plane_reflection=True,
         ambient_light=(0.1, 0.1, 0.1),
-        rendered_envs_idx=[10, 11, 12, 13, 14],  # render the 11th to 15th environments
-        # rendered_envs_idx=list(range(5)), # render the first 5 environments
     ),
     # renderer=gs.renderers.RayTracer(),
     renderer=gs.renderers.Rasterizer(),
@@ -40,7 +38,7 @@ cam = scene.add_camera(
     GUI=True,
 )
 
-scene.build(n_envs=20, env_spacing=(1.0, 1.0))
+scene.build()
 
 # render rgb, depth, segmentation, normal
 rgb, depth, segmentation, normal = cam.render(rgb=True, depth=True, segmentation=True, normal=True)

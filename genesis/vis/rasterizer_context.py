@@ -64,6 +64,7 @@ class RasterizerContext:
 
         if self.rendered_envs_idx is None:
             self.rendered_envs_idx = list(range(self.sim._B))
+        self.rendered_envs_idx_slice = slice(self.rendered_envs_idx[0], self.rendered_envs_idx[-1] + 1)
 
         # pyrender scene
         self._scene = pyrender.Scene(
@@ -285,7 +286,7 @@ class RasterizerContext:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
-                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
+                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx_slice]
                     self.rigid_nodes[geom.uid] = self.add_node(
                         pyrender.Mesh.from_trimesh(
                             mesh=mesh,
@@ -312,7 +313,7 @@ class RasterizerContext:
                     geoms_T = self.sim.rigid_solver._geoms_render_T
 
                 for geom in geoms:
-                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
+                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx_slice]
                     buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
                         [0, 2, 1]
                     )
