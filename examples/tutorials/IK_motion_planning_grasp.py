@@ -1,11 +1,8 @@
-import os
-
-os.environ["PYOPENGL_PLATFORM"] = "glx"  # Set OpenGL platform before importing genesis
 import genesis as gs
 import numpy as np
 
 ########################## init ##########################
-gs.init(backend=gs.cpu)
+gs.init(backend=gs.gpu)
 
 ########################## create a scene ##########################
 scene = gs.Scene(
