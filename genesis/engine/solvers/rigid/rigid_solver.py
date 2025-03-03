@@ -654,6 +654,8 @@ class RigidSolver(Solver):
             edge_end=gs.ti_int,
             is_convex=gs.ti_int,
             needs_coup=gs.ti_int,
+            contype=ti.i32,
+            conaffinity=ti.i32,
             coup_friction=gs.ti_float,
             coup_softness=gs.ti_float,
             coup_restitution=gs.ti_float,
@@ -696,6 +698,8 @@ class RigidSolver(Solver):
                 geoms_data=np.array([geom.data for geom in geoms], dtype=gs.np_float),
                 geoms_is_convex=np.array([geom.is_convex for geom in geoms], dtype=gs.np_int),
                 geoms_needs_coup=np.array([geom.needs_coup for geom in geoms], dtype=gs.np_int),
+                geoms_contype=np.array([geom.contype for geom in geoms], dtype=np.int32),
+                geoms_conaffinity=np.array([geom.conaffinity for geom in geoms], dtype=np.int32),
                 geoms_coup_softness=np.array([geom.coup_softness for geom in geoms], dtype=gs.np_float),
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
@@ -719,6 +723,8 @@ class RigidSolver(Solver):
         geoms_data: ti.types.ndarray(),
         geoms_is_convex: ti.types.ndarray(),
         geoms_needs_coup: ti.types.ndarray(),
+        geoms_contype: ti.types.ndarray(),
+        geoms_conaffinity: ti.types.ndarray(),
         geoms_coup_softness: ti.types.ndarray(),
         geoms_coup_friction: ti.types.ndarray(),
         geoms_coup_restitution: ti.types.ndarray(),
@@ -755,6 +761,8 @@ class RigidSolver(Solver):
 
             self.geoms_info[i].is_convex = geoms_is_convex[i]
             self.geoms_info[i].needs_coup = geoms_needs_coup[i]
+            self.geoms_info[i].contype = geoms_contype[i]
+            self.geoms_info[i].conaffinity = geoms_conaffinity[i]
 
             self.geoms_info[i].coup_softness = geoms_coup_softness[i]
             self.geoms_info[i].coup_friction = geoms_coup_friction[i]
