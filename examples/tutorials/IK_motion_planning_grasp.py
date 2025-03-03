@@ -1,8 +1,11 @@
+import os
+
+os.environ["PYOPENGL_PLATFORM"] = "glx"  # Set OpenGL platform before importing genesis
 import genesis as gs
 import numpy as np
 
 ########################## init ##########################
-gs.init(backend=gs.gpu)
+gs.init(backend=gs.cpu)
 
 ########################## create a scene ##########################
 scene = gs.Scene(
@@ -63,10 +66,16 @@ path = franka.plan_path(
     qpos_goal=qpos,
     num_waypoints=200,  # 2s duration
 )
+# draw the planned path
+path_debug = scene.draw_debug_path(path, franka)
+
 # execute the planned path
 for waypoint in path:
     franka.control_dofs_position(waypoint)
     scene.step()
+
+# remove the drawn path
+scene.clear_debug_object(path_debug)
 
 # allow robot to reach the last waypoint
 for i in range(100):
