@@ -925,6 +925,34 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_points(poss, colors)
 
     @gs.assert_built
+    def draw_debug_path(self, qposs, entity, colors=(1.0, 0.0, 0.0, 0.5)):
+        """
+        Draws a planned trajectory in the scene for visualization.
+
+        Parameters
+        ----------
+        qposs : array_like, shape (N, M)
+            The joint positions of the planned points.
+            N is the number of configurations (i.e., trajectory points).
+            M is the number of degrees of freedom for the entity (i.e., joint dimensions).
+        entity : gs.engine.entities.RigidEntity
+            The rigid entity whose forward kinematics are used to compute the trajectory path.
+        colors : array_like, shape (4,), optional
+            The color of the points in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
+        with self._visualizer.viewer_lock:
+            poss = torch.zeros(len(qposs), 3)
+            for i, qpos in enumerate(qposs):
+                pos, _ = entity.forward_kinematics(qpos)
+                poss[i] = pos[-1]
+            return self._visualizer.context.draw_debug_points(poss, colors)
+
+    @gs.assert_built
     def clear_debug_object(self, object):
         """
         Clears all the debug objects in the scene.
