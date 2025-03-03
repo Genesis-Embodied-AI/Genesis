@@ -149,7 +149,7 @@ class Camera(RBC):
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
         """
         Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
-        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `n_rendered_envs`.
+        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `len(rendered_envs_idx)`.
 
         Parameters
         ----------
@@ -442,7 +442,7 @@ class Camera(RBC):
             )
 
         if self._rgb_stacked:
-            for env_idx in range(self._visualizer._context.n_rendered_envs):
+            for env_idx in self._visualizer._context.rendered_envs_idx:
                 env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
                 env_name, env_ext = os.path.splitext(save_to_filename)
                 gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
