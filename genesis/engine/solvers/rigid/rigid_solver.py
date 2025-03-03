@@ -26,6 +26,7 @@ class RigidSolver(Solver):
         self._enable_collision = options.enable_collision
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
+        self._enable_adjacent_collision = options.enable_adjacent_collision
         self._max_collision_pairs = options.max_collision_pairs
         self._integrator = options.integrator
 

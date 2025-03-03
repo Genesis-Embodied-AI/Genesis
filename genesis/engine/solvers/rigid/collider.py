@@ -65,7 +65,9 @@ class Collider:
                     continue
 
                 # adjacent links
-                if links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la:
+                if not self._solver._enable_adjacent_collision and (
+                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                ):
                     continue
 
                 # contype and conaffinity
@@ -524,7 +526,9 @@ class Collider:
             is_valid = False
 
         # adjacent links
-        if self._solver.links_info[i_la].parent_idx == i_lb or self._solver.links_info[i_lb].parent_idx == i_la:
+        if ti.static(not self._solver._enable_adjacent_collision) and (
+            self._solver.links_info[i_la].parent_idx == i_lb or self._solver.links_info[i_lb].parent_idx == i_la
+        ):
             is_valid = False
 
         # contype and conaffinity
