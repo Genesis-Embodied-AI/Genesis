@@ -362,7 +362,7 @@ class JITRenderer:
         self.gl = GLWrapper()
         self.gl.build_wrapper()
 
-        IS_OPENGL_42_AVAILABLE = "glDrawElementsInstancedBaseInstance" in self.gl.gl_funcs.keys()
+        IS_OPENGL_42_AVAILABLE = "glDrawElementsInstancedBaseInstance" in self.gl.gl_funcs
         OPENGL_42_ERROR_MSG = "Seperated env rendering not supported because OpenGL 4.2 not available on this machine."
 
         @njit(
