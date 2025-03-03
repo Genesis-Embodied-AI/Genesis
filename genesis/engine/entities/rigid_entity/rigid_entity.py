@@ -364,6 +364,21 @@ class RigidEntity(Entity):
                 "when calling `scene.add_entity`."
             )
 
+        # Duplicating collision geometries as visual for bodies not having dedicated visual geometries
+        for link_g_info in links_g_info:
+            is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
+            if is_all_col:
+                for g_info in link_g_info.copy():
+                    mesh = g_info["mesh"]
+                    vmesh = gs.Mesh(
+                        mesh=mesh.trimesh,
+                        surface=surface,
+                        uvs=mesh.uvs,
+                        metadata=mesh.metadata,
+                    )
+                    g_info = {**g_info, "mesh": mesh, "contype": 0, "conaffinity": 0}
+                    link_g_info.append(g_info)
+
         l_infos = []
         j_infos = []
 
