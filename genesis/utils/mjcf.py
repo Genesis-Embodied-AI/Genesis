@@ -19,7 +19,6 @@ def parse_mjcf(path):
 
 
 def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
-
     # mj.body
     l_info = dict()
 
@@ -48,18 +47,45 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
     # mj.jnt =================================
     def add_actuator(j_info, i_j=None):
         # mj.actuator
-        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
-        j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
+        n_dofs = j_info["n_dofs"]
+        j_info["dofs_kp"] = gu.default_dofs_kp(n_dofs)
+        j_info["dofs_kv"] = gu.default_dofs_kv(n_dofs)
+        j_info["dofs_force_range"] = gu.default_dofs_force_range(n_dofs)
 
         if i_j is not None:
             for i_a in range(len(mj.actuator_trnid)):
-                if mj.actuator_trnid[i_a, 0] == i_j and mj.actuator_trntype[i_a] == mujoco.mjtTrn.mjTRN_JOINT:
-                    if mj.actuator_gainprm[i_a, 0] != -mj.actuator_biasprm[i_a, 1]:
-                        gs.logger.warning("`kp` in `gainprm` doesn't match `-kp` in `biasprm`.")
-                    j_info["dofs_kp"] = np.tile(mj.actuator_gainprm[i_a, 0], j_info["n_dofs"])
-                    j_info["dofs_kv"] = np.tile(-mj.actuator_biasprm[i_a, 2], j_info["n_dofs"])
-                    j_info["dofs_force_range"] = np.tile(mj.actuator_forcerange[i_a], (j_info["n_dofs"], 1))
+                if mj.actuator_trnid[i_a, 0] == i_j:
+                    trntype = mujoco.mjtTrn(mj.actuator_trntype[i_a])
+                    if trntype != mujoco.mjtTrn.mjTRN_JOINT:
+                        gs.logger.warning(f"(MJCF) Actuator type '{trntype}' not supported")
+                        break
+                    if mj.actuator_dyntype[i_a] != mujoco.mjtDyn.mjDYN_NONE:
+                        gs.logger.warning(f"(MJCF) Actuator internal dynamics not supported")
+                        break
+                    gaintype = mujoco.mjtGain(mj.actuator_gaintype[i_a])
+                    if gaintype != mujoco.mjtGain.mjGAIN_FIXED:
+                        gs.logger.warning(f"(MJCF) Actuator control gain of type '{gaintype}' not supported")
+                        break
+                    biastype = mujoco.mjtBias(mj.actuator_biastype[i_a])
+                    if biastype not in (mujoco.mjtBias.mjBIAS_NONE, mujoco.mjtBias.mjBIAS_AFFINE):
+                        gs.logger.warning(f"(MJCF) Actuator control bias of type '{biastype}' not supported")
+                        break
+                    gainpr = mj.actuator_gainprm[i_a]
+                    biasprm = mj.actuator_biasprm[i_a]
+                    if gainpr[0] != -biasprm[1]:
+                        gs.logger.warning("(MJCF) Actuator gain and bias cannot be reduced to PD control")
+                        break
+                    if n_dofs > 1 and not (mj.actuator_gear[i_a, :n_dofs] == 1.0).all():
+                        gs.logger.warning("(MJCF) Actuator transmission gear is only supported of 1DoF joints")
+                        break
+                    gear = mj.actuator_gear[i_a, 0]
+                    j_info["dofs_kp"] = np.tile(-gear * biasprm[1], (n_dofs,))
+                    j_info["dofs_kv"] = np.tile(-gear * biasprm[2], (n_dofs,))
+                    if mj.actuator_forcelimited[i_a] or mj.actuator_ctrllimited[i_a]:
+                        j_info["dofs_force_range"] = np.tile(
+                            np.minimum(np.tile(mj.actuator_forcerange[i_a], n_dofs), gear * mj.actuator_ctrlrange[i_a]),
+                            (n_dofs, 1),
+                        )
                     break
 
         return j_info
@@ -68,14 +94,19 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
         d_off = dof_offset + jnt_offset
         qpos0_off = qpos0_offset + jnt_offset
 
-        j_info["dofs_damping"] = np.array(mj.dof_damping[d_off : d_off + j_info["n_dofs"]])
-        j_info["dofs_invweight"] = np.array(mj.dof_invweight0[d_off : d_off + j_info["n_dofs"]])
-        j_info["dofs_armature"] = np.array(mj.dof_armature[d_off : d_off + j_info["n_dofs"]])
+        n_dofs = j_info["n_dofs"]
+        j_info["dofs_damping"] = mj.dof_damping[d_off : (d_off + n_dofs)]
+        j_info["dofs_invweight"] = mj.dof_invweight0[d_off : (d_off + n_dofs)]
+        j_info["dofs_armature"] = mj.dof_armature[d_off : (d_off + n_dofs)]
+
+        if (mj.dof_frictionloss[d_off : (d_off + n_dofs)] > 0.0).any():
+            gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
+
         if j_info["n_qpos0"] == 4 and j_info["type"] == gs.JOINT_TYPE.SPHERICAL:
             # this is a real mujoco ball joint
-            j_info["init_qpos"] = gu.quat_to_xyz(mj.qpos0[qpos0_off : qpos0_off + 4])
+            j_info["init_qpos"] = gu.quat_to_xyz(mj.qpos0[qpos0_off : (qpos0_off + 4)])
         else:
-            j_info["init_qpos"] = np.array(mj.qpos0[qpos0_off : qpos0_off + j_info["n_qpos0"]])
+            j_info["init_qpos"] = mj.qpos0[qpos0_off : (qpos0_off + j_info["n_qpos0"])]
 
         # apply scale
         j_info["pos"] *= scale
@@ -114,7 +145,7 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
             else:
                 name_end = mj.name_geomadr[0]
             j_info["name"] = mj.names[name_start:name_end].decode("utf-8").replace("\x00", "")
-            j_info["pos"] = np.array(mj.jnt_pos[i_j])
+            j_info["pos"] = mj.jnt_pos[i_j]
 
             if len(j_info["name"]) == 0:
                 j_info["name"] = f'{l_info["name"]}_joint'
@@ -148,8 +179,8 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
                 j_info["n_dofs"] = 1
 
             elif mj_type == mujoco.mjtJoint.mjJNT_BALL:
-                if np.any(~np.isinf(mj_limit)):
-                    gs.logger.warning("joint limit is ignored for ball joints")
+                if not np.all(np.isinf(mj_limit)):
+                    gs.logger.warning("(MJCF) Joint limit ignored for ball joints")
 
                 j_info["dofs_motion_ang"] = np.eye(3)
                 j_info["dofs_motion_vel"] = np.zeros((3, 3))
@@ -163,7 +194,7 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
 
             elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
                 if mj_stiffness > 0:
-                    raise gs.raise_exception("does not support stiffness for free joints")
+                    raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
 
                 j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
                 j_info["dofs_motion_vel"] = np.eye(6, 3)
@@ -223,13 +254,8 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
 def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
     mj_geom = mj.geom(i_g)
 
-    is_col = bool(mj_geom.conaffinity or mj_geom.contype)
     geom_size = mj_geom.size
-    if is_col:
-        gs.logger.warning(
-            f"Collision mesh in MJCF is not visualized by default. To visualize "
-            + "collision mesh, please use `vis_mode='collision'` when scene.add_entity."
-        )
+    is_col = mj_geom.contype or mj_geom.conaffinity
 
     visual = None
     if mj_geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
@@ -290,7 +316,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
                 H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                image_array = mj.tex_data[mj_tex.adr[0] : (mj_tex.adr[0] + H * W * C)].reshape(H, W, C)
                 uv_coordinates = uv_coordinates * mj_mat.texrepeat
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
@@ -329,11 +355,11 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                             tex_vert_id = mj.mesh_facetexcoord[face_id, i]
                             vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
 
-                    uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
+                    uv = mj.mesh_texcoord[tex_vert_start : (tex_vert_start + num_tex_vert)]
                     uv[:, 1] = 1 - uv[:, 1]
 
                     H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                    image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                    image_array = mj.tex_data[mj_tex.adr[0] : (mj_tex.adr[0] + H * W * C)].reshape(H, W, C)
                     uv = uv * mj_mat.texrepeat
                     visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
 
@@ -347,7 +373,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         gs_type = gs.GEOM_TYPE.MESH
 
     else:
-        gs.logger.warning(f"Unsupported MJCF geom type: {mj_geom.type}")
+        gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
     mesh = gs.Mesh.from_trimesh(

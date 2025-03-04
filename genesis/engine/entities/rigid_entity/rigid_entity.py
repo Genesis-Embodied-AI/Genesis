@@ -332,10 +332,15 @@ class RigidEntity(Entity):
         n_geoms = mj.ngeom
         n_links = mj.nbody - 1  # link 0 in mj is world
 
+        # Check if there is any tendon. Report a warning if so.
+        if mj.ntendon:
+            gs.logger.warning("(MJCF) Tendon not supported")
+
         links_g_info = [list() for _ in range(n_links)]
         world_g_info = []
 
         # assign geoms to link
+        is_any_col = False
         for i_g in range(n_geoms):
             if mj.geom_bodyid[i_g] < 0:
                 continue
@@ -351,6 +356,13 @@ class RigidEntity(Entity):
                 if g_info is not None:
                     link_idx = mj.geom_bodyid[i_g] - 1
                     links_g_info[link_idx].append(g_info)
+                    is_any_col |= g_info["contype"] or g_info["conaffinity"]
+
+        if is_any_col and surface.vis_mode != "collision":
+            gs.logger.info(
+                "Collision meshes are not visualized by default. To visualize them, please use `vis_mode='collision'` "
+                "when calling `scene.add_entity`."
+            )
 
         l_infos = []
         j_infos = []
@@ -410,6 +422,8 @@ class RigidEntity(Entity):
                     torque_scale=e_info["torque_scale"],
                     sol_params=e_info["sol_params"],
                 )
+            else:
+                gs.logger.warning(f"(MJCF) Equality type '{e_info["type"]}' not supported for now.")
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
