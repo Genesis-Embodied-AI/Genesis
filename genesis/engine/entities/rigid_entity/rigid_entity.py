@@ -336,70 +336,17 @@ class RigidEntity(Entity):
         if mj.ntendon:
             gs.logger.warning("(MJCF) Tendon not supported")
 
-        links_g_info = [list() for _ in range(n_links)]
-        world_g_info = []
+        # Parse all geometries grouped by parent joint (or world)
+        world_g_info, *links_g_info = mju.parse_geoms(mj, morph.scale, morph.convexify, surface, morph.file)
 
-        # assign geoms to link
-        is_any_col = False
-        for i_g in range(n_geoms):
-            if mj.geom_bodyid[i_g] < 0:
-                continue
-
-            # address geoms directly attached to worldbody (0)
-            elif mj.geom_bodyid[i_g] == 0:
-                g_info = mju.parse_geom(mj, i_g, morph.scale, morph.convexify, surface, morph.file)
-                if g_info is not None:
-                    world_g_info.append(g_info)
-
-            else:
-                g_info = mju.parse_geom(mj, i_g, morph.scale, morph.convexify, surface, morph.file)
-                if g_info is not None:
-                    link_idx = mj.geom_bodyid[i_g] - 1
-                    links_g_info[link_idx].append(g_info)
-                    is_any_col |= g_info["contype"] or g_info["conaffinity"]
-
-        if is_any_col and surface.vis_mode != "collision":
-            gs.logger.info(
-                "Collision meshes are not visualized by default. To visualize them, please use `vis_mode='collision'` "
-                "when calling `scene.add_entity`."
-            )
-
-        # Duplicating collision geometries as visual for bodies not having dedicated visual geometries
-        for link_g_info in links_g_info:
-            is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
-            if is_all_col:
-                for g_info in link_g_info.copy():
-                    mesh = g_info["mesh"]
-                    vmesh = gs.Mesh(
-                        mesh=mesh.trimesh,
-                        surface=surface,
-                        uvs=mesh.uvs,
-                        metadata=mesh.metadata,
-                    )
-                    g_info = {**g_info, "mesh": mesh, "contype": 0, "conaffinity": 0}
-                    link_g_info.append(g_info)
-
-        l_infos = []
-        j_infos = []
-
-        q_offset, dof_offset, qpos0_offset = 0, 0, 0
-
-        for i_l in range(n_links):
-            l_info, j_info = mju.parse_link(mj, i_l + 1, q_offset, dof_offset, qpos0_offset, morph.scale)
-
-            l_infos.append(l_info)
-            j_infos.append(j_info)
-
-            q_offset += j_info["n_qs"]
-            dof_offset += j_info["n_dofs"]
-            qpos0_offset += j_info["n_qpos0"]
+        # Parse all bodies (links and joints)
+        (l_world_info, *l_infos), (j_world_info, *j_infos) = mju.parse_links(mj, morph.scale)
 
         l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
-        for i_l in range(len(l_infos)):
-            l_info = l_infos[i_l]
-            j_info = j_infos[i_l]
-
-            if l_info["parent_idx"] < 0:  # base link
+        for l_info, j_info, link_g_info in zip(
+            (*l_infos, l_world_info), (*j_infos, j_world_info), (*links_g_info, world_g_info)
+        ):
+            if l_info["parent_idx"] < 0 and j_info["type"] != gs.JOINT_TYPE.FIXED:  # base link
                 if morph.pos is not None:
                     l_info["pos"] = np.array(morph.pos)
                     gs.logger.warning("Overriding base link's pos with user provided value in morph.")
@@ -408,20 +355,11 @@ class RigidEntity(Entity):
                     gs.logger.warning("Overriding base link's quat with user provided value in morph.")
 
                 if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial value will be reflected
+                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial
+                    # value will be reflected
                     j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
 
-            self._add_by_info(l_info, j_info, links_g_info[i_l], morph, surface)
-
-        if world_g_info:
-            l_world_info, j_world_info = mju.parse_link(mj, 0, q_offset, dof_offset, qpos0_offset, morph.scale)
-            if morph.pos is not None:
-                l_world_info["pos"] = np.array(morph.pos)
-                gs.logger.warning("Overriding base link's pos with user provided value in morph.")
-            if morph.quat is not None:
-                l_world_info["quat"] = np.array(morph.quat)
-                gs.logger.warning("Overriding base link's quat with user provided value in morph.")
-            self._add_by_info(l_world_info, j_world_info, world_g_info, morph, surface)
+            self._add_by_info(l_info, j_info, link_g_info, morph, surface)
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
@@ -438,7 +376,7 @@ class RigidEntity(Entity):
                     sol_params=e_info["sol_params"],
                 )
             else:
-                gs.logger.warning(f"(MJCF) Equality type '{e_info["type"]}' not supported for now.")
+                gs.logger.warning(f"(MJCF) Equality type '{e_info['type']}' not supported for now.")
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
@@ -704,6 +642,8 @@ class RigidEntity(Entity):
     def get_jacobian(self, link):
         """
         Get the Jacobian matrix for a target link.
+
+        FIXME: Which jacobian are we talking about ? Presumably {w}_J_{O_i}
 
         Parameters
         ----------
