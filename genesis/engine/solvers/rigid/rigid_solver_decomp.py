@@ -4061,7 +4061,6 @@ class RigidSolver(Solver):
 
     def get_links_acc(self, links_idx, envs_idx=None):
         tensor, links_idx, envs_idx = self._validate_2D_io_variables(None, links_idx, 3, envs_idx, idx_name="links_idx")
-        print("_kernel_inverse_dynamics_for_sensors")
         self._kernel_inverse_dynamics_for_sensors()
         self._kernel_get_links_acc(tensor, links_idx, envs_idx)
 
