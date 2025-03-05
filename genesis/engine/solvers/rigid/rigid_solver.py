@@ -2672,21 +2672,22 @@ class RigidSolver(Solver):
         dofs_vel: ti.types.ndarray(),
         links_pos: ti.types.ndarray(),
         links_quat: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_q, i_b in ti.ndrange(self.n_qs, self._B):
-            self.qpos[i_q, i_b] = qpos[i_b, i_q]
+        for i_q, i_b_ in ti.ndrange(self.n_qs, envs_idx.shape[0]):
+            self.qpos[i_q, envs_idx[i_b_]] = qpos[envs_idx[i_b_], i_q]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-            self.dofs_state[i_d, i_b].vel = dofs_vel[i_b, i_d]
+        for i_d, i_b_ in ti.ndrange(self.n_dofs, envs_idx.shape[0]):
+            self.dofs_state[i_d, envs_idx[i_b_]].vel = dofs_vel[envs_idx[i_b_], i_d]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_l, i_b in ti.ndrange(self.n_links, self._B):
+        for i_l, i_b_ in ti.ndrange(self.n_links, envs_idx.shape[0]):
             for i in ti.static(range(3)):
-                self.links_state[i_l, i_b].pos[i] = links_pos[i_b, i_l, i]
+                self.links_state[i_l, envs_idx[i_b_]].pos[i] = links_pos[envs_idx[i_b_], i_l, i]
             for i in ti.static(range(4)):
-                self.links_state[i_l, i_b].quat[i] = links_quat[i_b, i_l, i]
+                self.links_state[i_l, envs_idx[i_b_]].quat[i] = links_quat[envs_idx[i_b_], i_l, i]
 
     def get_state(self, f):
         if self.is_active():
@@ -2696,13 +2697,15 @@ class RigidSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         if self.is_active():
+            envs_idx = self._get_envs_idx(envs_idx)
             self._kernel_set_state(state.qpos, state.dofs_vel, state.links_pos, state.links_quat)
+            # TODO: add envs_idx to FK links?
             self._kernel_forward_kinematics_links_geoms()
-            self.collider.reset()
+            self.collider.reset(envs_idx)
             if self.constraint_solver is not None:
-                self.constraint_solver.reset()
+                self.constraint_solver.reset(envs_idx)
             self._cur_step = -1
 
     def process_input(self, in_backward=False):

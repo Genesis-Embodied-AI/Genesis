@@ -61,7 +61,7 @@ class ToolSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         if state is not None:
             assert len(state) == len(self._entities)
             for i, entity in enumerate(self._entities):
