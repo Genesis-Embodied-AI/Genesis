@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.engine.entities import Emitter
 from genesis.engine.simulator import Simulator
 from genesis.options import (
@@ -970,11 +971,13 @@ class Scene(RBC):
             The created debug object.
         """
         with self._visualizer.viewer_lock:
-            poss = torch.zeros(len(qposs), 3)
+            Ts = torch.zeros((len(qposs), 4, 4))
             for i, qpos in enumerate(qposs):
-                pos, _ = entity.forward_kinematics(qpos)
-                poss[i] = pos[-1]
-            return self._visualizer.context.draw_debug_points(poss, colors)
+                pos, quat = entity.forward_kinematics(qpos)
+                T = gu.quat_to_T(quat[-1])
+                T[:3, 3] = pos[-1]
+                Ts[i] = T
+            return self._visualizer.context.draw_debug_frames(Ts)
 
     @gs.assert_built
     def clear_debug_object(self, object):
