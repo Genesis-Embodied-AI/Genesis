@@ -807,6 +807,30 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
 
     @gs.assert_built
+    def draw_debug_frames(self, Ts, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+        """
+        Draws 3-axis coordinate frames in the scene for visualization.
+
+        Parameters
+        ----------
+        Ts : array_like, shape (n, 4, 4)
+            The transformation matrices of frames.
+        axis_length : float, optional
+            The length of the axes.
+        origin_size : float, optional
+            The size of the origin point (represented as a sphere).
+        axis_radius : float, optional
+            The radius of the axes (represented as cylinders).
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
+        with self._visualizer.viewer_lock:
+            return self._visualizer.context.draw_debug_frames(Ts, axis_length, origin_size, axis_radius)
+
+    @gs.assert_built
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
         """
         Draws a mesh in the scene for visualization.
