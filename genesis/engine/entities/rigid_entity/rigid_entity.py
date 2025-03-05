@@ -2599,6 +2599,24 @@ class RigidEntity(Entity):
         self._solver.set_links_invweight(invweight, self._get_ls_idx(ls_idx_local), envs_idx)
 
     @gs.assert_built
+    def set_mass(self, mass):
+        """
+        Set the mass of the entity.
+
+        Parameters
+        ----------
+        mass : float
+            The mass to set.
+        """
+        original_mass_distribution = []
+        for link in self.links:
+            original_mass_distribution.append(link.get_mass())
+        original_mass_distribution = np.array(original_mass_distribution)
+        original_mass_distribution /= np.sum(original_mass_distribution)
+        for link, mass_ratio in zip(self.links, original_mass_distribution):
+            link.set_mass(mass * mass_ratio)
+
+    @gs.assert_built
     def get_mass(self):
         """
         Get the total mass of the entity in kg.
