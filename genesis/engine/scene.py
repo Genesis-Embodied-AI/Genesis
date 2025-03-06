@@ -950,9 +950,9 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_points(poss, colors)
 
     @gs.assert_built
-    def draw_debug_path(self, qposs, entity, colors=(1.0, 0.0, 0.0, 0.5)):
+    def draw_debug_path(self, qposs, entity, density=0.3, frame_scaling=1.0):
         """
-        Draws a planned trajectory in the scene for visualization.
+        Draws a planned joint trajectory in the scene for visualization.
 
         Parameters
         ----------
@@ -962,22 +962,38 @@ class Scene(RBC):
             M is the number of degrees of freedom for the entity (i.e., joint dimensions).
         entity : gs.engine.entities.RigidEntity
             The rigid entity whose forward kinematics are used to compute the trajectory path.
-        colors : array_like, shape (4,), optional
-            The color of the points in RGBA format.
+        density : float, optional
+            Controls the sampling density of the trajectory points to visualize. Default is 0.3.
+        frame_scaling : float, optional
+            Scaling factor for the visualization frames' size. Affects the length and thickness of the debug frames. Default is 1.0.
 
         Returns
         -------
         node : genesis.ext.pyrender.mesh.Mesh
-            The created debug object.
+            The created debug object representing the visualized trajectory.
+
+        Notes
+        -----
+        The function uses forward kinematics (FK) to convert joint positions to Cartesian space and render debug frames.
+        The density parameter reduces FK computational load by sampling fewer points, with 1.0 representing the whole trajectory.
         """
         with self._visualizer.viewer_lock:
-            Ts = torch.zeros((len(qposs), 4, 4))
-            for i, qpos in enumerate(qposs):
-                pos, quat = entity.forward_kinematics(qpos)
+            N = len(qposs)
+            density = np.clip(density, 0.0, 1.0)
+            N_new = int(N * density)
+            indices = torch.linspace(0, N - 2, N_new, dtype=int)
+
+            Ts = np.zeros((N_new, 4, 4))
+
+            for i in range(N_new):
+                pos, quat = entity.forward_kinematics(qposs[indices[i]])
                 T = gu.quat_to_T(quat[-1])
                 T[:3, 3] = pos[-1]
                 Ts[i] = T
-            return self._visualizer.context.draw_debug_frames(Ts)
+
+            return self._visualizer.context.draw_debug_frames(
+                Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
+            )
 
     @gs.assert_built
     def clear_debug_object(self, object):
