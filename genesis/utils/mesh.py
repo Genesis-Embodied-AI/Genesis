@@ -552,14 +552,15 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[pbr_texture.metallicRoughnessTexture.index]
                     uvs_used = pbr_texture.metallicRoughnessTexture.texCoord
                     image_index = texture.source
-                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    bands = image.split()
-                    if len(bands) == 1:
-                        roughness_image = np.array(bands[0])
-                    else:
-                        roughness_image = np.array(bands[1])  # G for roughness
-                        metallic_image = np.array(bands[2])  # B for metallic
-                        # metallic_image = np.array(bands[0])     # R for metallic????
+                    if image_index is not None:
+                        image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                        bands = image.split()
+                        if len(bands) == 1:
+                            roughness_image = np.array(bands[0])
+                        else:
+                            roughness_image = np.array(bands[1])  # G for roughness
+                            metallic_image = np.array(bands[2])  # B for metallic
+                            # metallic_image = np.array(bands[0])     # R for metallic????
 
                 metallic_factor = None
                 if pbr_texture.metallicFactor is not None:
@@ -578,8 +579,9 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[pbr_texture.baseColorTexture.index]
                     uvs_used = pbr_texture.baseColorTexture.texCoord
                     image_index = texture.source
-                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    color_image = np.array(image.convert("RGBA"))
+                    if image_index is not None:
+                        image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                        color_image = np.array(image.convert("RGBA"))
 
                 # parse color
                 color_factor = None
