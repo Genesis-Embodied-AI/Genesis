@@ -132,7 +132,7 @@ class RigidSolver(Solver):
             self._init_constraint_solver()
 
             # run complete FK once to update geoms state and mass matrix
-            self._kernel_forward_kinematics_links_geoms()
+            self._kernel_forward_kinematics_links_geoms(self._scene._envs_idx)
 
             self._init_invweight()
 
@@ -1255,9 +1255,9 @@ class RigidSolver(Solver):
 
         self._func_integrate()
 
-        self._func_forward_kinematics()
-        self._func_transform_COM()
-        self._func_update_geoms()
+        self._func_forward_kinematics(self._scene.envs_idx)
+        self._func_transform_COM(self._scene.envs_idx)
+        self._func_update_geoms(self._scene.envs_idx)
 
         if ti.static(self._use_hibernation):
             self._func_hibernate()
@@ -1278,10 +1278,10 @@ class RigidSolver(Solver):
         return collision_pairs
 
     @ti.kernel
-    def _kernel_forward_kinematics_links_geoms(self):
-        self._func_forward_kinematics()
-        self._func_transform_COM()
-        self._func_update_geoms()
+    def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
+        self._func_forward_kinematics(envs_idx)
+        self._func_transform_COM(envs_idx)
+        self._func_update_geoms(envs_idx)
 
     @ti.func
     def _func_constraint_force(self):
@@ -1332,10 +1332,11 @@ class RigidSolver(Solver):
         return tensor
 
     @ti.func
-    def _func_COM_links(self):
+    def _func_COM_links(self, envs_idx: ti.types.ndarray()):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1343,7 +1344,8 @@ class RigidSolver(Solver):
                     self.links_state[i_l, i_b].mass_sum = 0.0
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1361,7 +1363,8 @@ class RigidSolver(Solver):
                     ti.atomic_add(self.links_state[i_r, i_b].root_COM, COM)
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1372,7 +1375,8 @@ class RigidSolver(Solver):
                         )
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1380,7 +1384,8 @@ class RigidSolver(Solver):
                     self.links_state[i_l, i_b].root_COM = self.links_state[i_r, i_b].root_COM
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1402,7 +1407,8 @@ class RigidSolver(Solver):
                     )
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1435,7 +1441,8 @@ class RigidSolver(Solver):
 
             # cdof_fn
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1499,14 +1506,16 @@ class RigidSolver(Solver):
                         )
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     self.links_state[i_l, i_b].root_COM = ti.Vector.zero(gs.ti_float, 3)
                     self.links_state[i_l, i_b].mass_sum = 0.0
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     l = self.links_state[i_l, i_b]
@@ -1523,7 +1532,8 @@ class RigidSolver(Solver):
                     ti.atomic_add(self.links_state[i_r, i_b].root_COM, COM)
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     i_r = self.links_info[i_l].root_idx
@@ -1533,14 +1543,16 @@ class RigidSolver(Solver):
                         )
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     i_r = self.links_info[i_l].root_idx
                     self.links_state[i_l, i_b].root_COM = self.links_state[i_r, i_b].root_COM
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     l_info = self.links_info[i_l]
@@ -1561,7 +1573,8 @@ class RigidSolver(Solver):
                     )
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     l_info = self.links_info[i_l]
@@ -1593,7 +1606,8 @@ class RigidSolver(Solver):
 
             # cdof_fn
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     l_info = self.links_info[i_l]
@@ -1656,10 +1670,11 @@ class RigidSolver(Solver):
                         )
 
     @ti.func
-    def _func_COM_cd(self):
+    def _func_COM_cd(self, envs_idx: ti.types.ndarray()):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_e_ in range(self.n_awake_entities[i_b]):
                     i_e = self.awake_entities[i_e_, i_b]
 
@@ -1684,8 +1699,8 @@ class RigidSolver(Solver):
                         self.links_state[i_l, i_b].cd_ang = cd_ang
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-
+            for i_e, i_b_ in ti.ndrange(self.n_entities, envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 e_info = self.entities_info[i_e]
                 for i_l in range(e_info.link_start, e_info.link_end):
                     l_info = self.links_info[i_l]
@@ -1707,10 +1722,11 @@ class RigidSolver(Solver):
                     self.links_state[i_l, i_b].cd_ang = cd_ang
 
     @ti.func
-    def _func_COM_cdofd(self):
+    def _func_COM_cdofd(self, envs_idx: ti.types.ndarray()):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
 
@@ -1756,7 +1772,8 @@ class RigidSolver(Solver):
 
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_l in range(self.n_links):
 
                     l_info = self.links_info[i_l]
@@ -1800,22 +1817,24 @@ class RigidSolver(Solver):
                         )
 
     @ti.func
-    def _func_transform_COM(self):
-        self._func_COM_links()
-        self._func_COM_cd()
-        self._func_COM_cdofd()
+    def _func_transform_COM(self, envs_idx: ti.types.ndarray()):
+        self._func_COM_links(envs_idx)
+        self._func_COM_cd(envs_idx)
+        self._func_COM_cdofd(envs_idx)
 
     @ti.func
-    def _func_forward_kinematics(self):
+    def _func_forward_kinematics(self, envs_idx: ti.types.ndarray()):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_e_ in range(self.n_awake_entities[i_b]):
                     i_e = self.awake_entities[i_e_, i_b]
                     self._func_forward_kinematics_entity(i_e, i_b)
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_e in range(self.n_entities):
                     self._func_forward_kinematics_entity(i_e, i_b)
 
@@ -1903,13 +1922,14 @@ class RigidSolver(Solver):
                 )
 
     @ti.func
-    def _func_update_geoms(self):
+    def _func_update_geoms(self, envs_idx: ti.types.ndarray()):
         """
         NOTE: this only update geom pose, not its verts and else.
         """
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
+            for i_b_ in range(envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 for i_e_ in range(self.n_awake_entities[i_b]):
                     i_e = self.awake_entities[i_e_, i_b]
                     e_info = self.entities_info[i_e]
@@ -1924,8 +1944,8 @@ class RigidSolver(Solver):
                         self.geoms_state[i_g, i_b].verts_updated = 0
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
-
+            for i_g, i_b_ in ti.ndrange(self.n_geoms, envs_idx.shape[0]):
+                i_b = envs_idx[i_b_]
                 g_info = self.geoms_info[i_g]
 
                 l_state = self.links_state[g_info.link_idx, i_b]
@@ -2853,7 +2873,7 @@ class RigidSolver(Solver):
             links_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_links_pos(
@@ -2885,7 +2905,7 @@ class RigidSolver(Solver):
             links_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_links_quat(
@@ -2915,7 +2935,7 @@ class RigidSolver(Solver):
             qs_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_qpos(
@@ -2984,7 +3004,7 @@ class RigidSolver(Solver):
             dofs_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_velocity(
@@ -3004,7 +3024,7 @@ class RigidSolver(Solver):
             dofs_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_position(

@@ -46,15 +46,15 @@ class AvatarSolver(RigidSolver):
     @ti.kernel
     def _kernel_step(self):
         self._func_integrate()
-        self._func_forward_kinematics()
-        self._func_update_geoms()
+        self._func_forward_kinematics(self._scene.envs_idx)
+        self._func_update_geoms(self._scene.envs_idx)
         if self._enable_collision:
             self._func_detect_collision()
 
     @ti.kernel
-    def _kernel_forward_kinematics_links_geoms(self):
-        self._func_forward_kinematics()
-        self._func_update_geoms()
+    def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
+        self._func_forward_kinematics(envs_idx)
+        self._func_update_geoms(envs_idx)
 
     @ti.func
     def _func_detect_collision(self):
