@@ -184,12 +184,14 @@ class Simulator(RBC):
             if isinstance(entity, HybridEntity):
                 entity.build()
 
-    def reset(self, state):
+    def reset(self, state, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):
-            solver.set_state(0, solver_state)
+            solver.set_state(0, solver_state, envs_idx)
 
+        # TODO: keeping as is for now, since coupler is currently for non-batched scenes
         self.coupler.reset()
 
+        # TODO: keeping as is for now
         self.reset_grad()
         self._cur_substep_global = 0
 
