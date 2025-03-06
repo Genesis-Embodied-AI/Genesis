@@ -629,7 +629,7 @@ class RigidSolver(Solver):
                 verts_geom_idx=np.concatenate([np.full(geom.n_verts, geom.idx) for geom in geoms], dtype=gs.np_int),
                 init_center_pos=np.concatenate([geom.init_center_pos for geom in geoms], dtype=gs.np_float),
                 verts_state_idx=np.concatenate(
-                    [np.arange(geom.verts_state_start, geom.verts_state_start + geom.n_verts + 1) for geom in geoms],
+                    [np.arange(geom.verts_state_start, geom.verts_state_start + geom.n_verts) for geom in geoms],
                     dtype=gs.np_int,
                 ),
                 is_free=np.concatenate([np.full(geom.n_verts, geom.is_free) for geom in geoms], dtype=gs.np_int),
@@ -2284,13 +2284,15 @@ class RigidSolver(Solver):
             g_info = self.geoms_info[i_g]
             if g_info.is_free:
                 for i_v in range(g_info.vert_start, g_info.vert_end):
-                    self.free_verts_state[i_v, i_b].pos = gu.ti_transform_by_trans_quat(
+                    verts_state_idx = self.verts_info[i_v].verts_state_idx
+                    self.free_verts_state[verts_state_idx, i_b].pos = gu.ti_transform_by_trans_quat(
                         self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
                     )
                 self.geoms_state[i_g, i_b].verts_updated = 1
             elif i_b == 0:
                 for i_v in range(g_info.vert_start, g_info.vert_end):
-                    self.fixed_verts_state[i_v].pos = gu.ti_transform_by_trans_quat(
+                    verts_state_idx = self.verts_info[i_v].verts_state_idx
+                    self.fixed_verts_state[verts_state_idx].pos = gu.ti_transform_by_trans_quat(
                         self.verts_info[i_v].init_pos, g_state.pos, g_state.quat
                     )
                 self.geoms_state[i_g, 0].verts_updated = 1
