@@ -987,9 +987,7 @@ class Scene(RBC):
 
             for i in range(N_new):
                 pos, quat = entity.forward_kinematics(qposs[indices[i]])
-                T = gu.quat_to_T(quat[-1])
-                T[:3, 3] = pos[-1]
-                Ts[i] = T
+                Ts[i] = gu.trans_quat_to_T(pos[-1], quat[-1])
 
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
