@@ -347,6 +347,8 @@ class RigidLink(RBC):
         Set the mass of the link.
         """
         if mass <= 0:
+            if mass < 0:
+                gs.raise_exception(f"Attempt to set mass of {mass} to {self.name} link. Mass must be positive.")
             gs.logger.warning(f"Attempt to set mass of {mass} to {self.name} link. Mass must be positive, skipping.")
             return
 
