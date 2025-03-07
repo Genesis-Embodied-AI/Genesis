@@ -347,7 +347,10 @@ class RigidLink(RBC):
         Set the mass of the link.
         """
         if mass <= 0:
-            raise ValueError("mass must be positive")
+            if mass < 0:
+                gs.raise_exception(f"Attempt to set mass of {mass} to {self.name} link. Mass must be positive.")
+            gs.logger.warning(f"Attempt to set mass of {mass} to {self.name} link. Mass must be positive, skipping.")
+            return
 
         ratio = mass / self._inertial_mass
         assert ratio > 0
