@@ -1,4 +1,9 @@
 import pyglet
+
+BACKWARD_COMPATIBLE = False
+if int(pyglet.version.split(".")[0]) < 2:
+    BACKWARD_COMPATIBLE = True
+    import screeninfo
 import genesis as gs
 from genesis.repr_base import RBC
 
@@ -34,8 +39,11 @@ class Visualizer(RBC):
 
         # try to connect to display
         try:
-            display = pyglet.display.get_display()
-            screen = display.get_default_screen()
+            if BACKWARD_COMPATIBLE:
+                screen = screeninfo.get_monitors()[0]
+            else:
+                display = pyglet.display.get_display()
+                screen = display.get_default_screen()
             self._connected_to_display = True
         except Exception:
             self._connected_to_display = False
@@ -45,11 +53,18 @@ class Visualizer(RBC):
                 gs.raise_exception("No display detected. Use `show_viewer=False` for headless mode.")
 
             if viewer_options.res is None:
-                viewer_size_ratio = screen.get_scale() * 0.5
-                viewer_options.res = (
-                    int(screen.height * viewer_size_ratio / 0.75),
-                    int(screen.height * viewer_size_ratio),
-                )
+                if BACKWARD_COMPATIBLE:
+                    viewer_size_ratio = 0.5
+                    viewer_options.res = (
+                        int(screen.height * viewer_size_ratio / 0.75),
+                        int(screen.height * viewer_size_ratio),
+                    )
+                else:
+                    viewer_size_ratio = screen.get_scale() * 0.5
+                    viewer_options.res = (
+                        int(screen.height * viewer_size_ratio / 0.75),
+                        int(screen.height * viewer_size_ratio),
+                    )
 
             self._viewer = Viewer(viewer_options, self._context)
 
