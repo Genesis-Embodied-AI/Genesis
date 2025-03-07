@@ -445,6 +445,53 @@ def quat_to_R(quat):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
+def R_to_quat(R):
+    if isinstance(R, torch.Tensor):
+        batch = R.shape[:-2]  # Support batch dimension
+        quat_xyzw = torch.zeros((*batch, 4), dtype=R.dtype, device=R.device)
+
+        trace = R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]
+
+        # Compute quaternion based on the trace of the matrix
+        mask1 = trace > 0
+        mask2 = ~mask1 & (R[..., 0, 0] >= R[..., 1, 1]) & (R[..., 0, 0] >= R[..., 2, 2])
+        mask3 = ~mask1 & ~mask2 & (R[..., 1, 1] >= R[..., 2, 2])
+        mask4 = ~mask1 & ~mask2 & ~mask3
+
+        S = torch.zeros_like(trace)
+
+        S[mask1] = torch.sqrt(trace[mask1] + 1.0) * 2
+        quat_xyzw[mask1, 0] = (R[mask1, 2, 1] - R[mask1, 1, 2]) / S[mask1]
+        quat_xyzw[mask1, 1] = (R[mask1, 0, 2] - R[mask1, 2, 0]) / S[mask1]
+        quat_xyzw[mask1, 2] = (R[mask1, 1, 0] - R[mask1, 0, 1]) / S[mask1]
+        quat_xyzw[mask1, 3] = 0.25 * S[mask1]
+
+        S[mask2] = torch.sqrt(1.0 + R[mask2, 0, 0] - R[mask2, 1, 1] - R[mask2, 2, 2]) * 2
+        quat_xyzw[mask2, 0] = 0.25 * S[mask2]
+        quat_xyzw[mask2, 1] = (R[mask2, 0, 1] + R[mask2, 1, 0]) / S[mask2]
+        quat_xyzw[mask2, 2] = (R[mask2, 0, 2] + R[mask2, 2, 0]) / S[mask2]
+        quat_xyzw[mask2, 3] = (R[mask2, 2, 1] - R[mask2, 1, 2]) / S[mask2]
+
+        S[mask3] = torch.sqrt(1.0 + R[mask3, 1, 1] - R[mask3, 0, 0] - R[mask3, 2, 2]) * 2
+        quat_xyzw[mask3, 0] = (R[mask3, 0, 1] + R[mask3, 1, 0]) / S[mask3]
+        quat_xyzw[mask3, 1] = 0.25 * S[mask3]
+        quat_xyzw[mask3, 2] = (R[mask3, 1, 2] + R[mask3, 2, 1]) / S[mask3]
+        quat_xyzw[mask3, 3] = (R[mask3, 0, 2] - R[mask3, 2, 0]) / S[mask3]
+
+        S[mask4] = torch.sqrt(1.0 + R[mask4, 2, 2] - R[mask4, 0, 0] - R[mask4, 1, 1]) * 2
+        quat_xyzw[mask4, 0] = (R[mask4, 0, 2] + R[mask4, 2, 0]) / S[mask4]
+        quat_xyzw[mask4, 1] = (R[mask4, 1, 2] + R[mask4, 2, 1]) / S[mask4]
+        quat_xyzw[mask4, 2] = 0.25 * S[mask4]
+        quat_xyzw[mask4, 3] = (R[mask4, 1, 0] - R[mask4, 0, 1]) / S[mask4]
+
+        return xyzw_to_wxyz(quat_xyzw)
+    elif isinstance(R, np.ndarray):
+        quat_xyzw = Rotation.from_matrix(R).as_quat().astype(R.dtype)
+        return xyzw_to_wxyz(quat_xyzw)
+    else:
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(R)=}")
+
+
 def trans_to_T(trans):
     if isinstance(trans, torch.Tensor):
         T = torch.eye(4, dtype=trans.dtype, device=trans.device)
@@ -703,11 +750,6 @@ def scale_to_T(scale):
 
 def euler_to_R(euler_xyz):
     return Rotation.from_euler("xyz", euler_xyz, degrees=True).as_matrix()
-
-
-def R_to_quat(R):
-    quat_xyzw = Rotation.from_matrix(R).as_quat().astype(R.dtype)
-    return xyzw_to_wxyz(quat_xyzw)
 
 
 def z_up_to_R(z, up=np.array([0, 0, 1])):
