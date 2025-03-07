@@ -522,16 +522,18 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 texture = glb.textures[material.normalTexture.index]
                 uvs_used = material.normalTexture.texCoord
                 image_index = texture.source
-                image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                normal_texture = create_texture(np.array(image), None, "linear")
+                if image_index is not None:
+                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                    normal_texture = create_texture(np.array(image), None, "linear")
 
             # TODO: Parse occlusion
             if material.occlusionTexture is not None:
                 texture = glb.textures[material.normalTexture.index]
                 uvs_used = material.normalTexture.texCoord
                 image_index = texture.source
-                image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                occlusion_texture = create_texture(np.array(image), None, "linear")
+                if image_index is not None:
+                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                    occlusion_texture = create_texture(np.array(image), None, "linear")
 
             # parse alpha mode
             if material.alphaMode == "OPAQUE":
@@ -636,10 +638,11 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[material.emissiveTexture.index]
                     uvs_used = material.emissiveTexture.texCoord
                     image_index = texture.source
-                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    if image.mode != "RGB":
-                        image = image.convert("RGB")
-                    emissive_image = np.array(image)
+                    if image_index is not None:
+                        image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                        if image.mode != "RGB":
+                            image = image.convert("RGB")
+                        emissive_image = np.array(image)
 
                 emissive_factor = None
                 if material.emissiveFactor is not None:
