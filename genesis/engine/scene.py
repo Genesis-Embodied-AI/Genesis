@@ -950,7 +950,7 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_points(poss, colors)
 
     @gs.assert_built
-    def draw_debug_path(self, qposs, entity, density=0.3, frame_scaling=1.0):
+    def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
         """
         Draws a planned joint trajectory in the scene for visualization.
 
@@ -962,6 +962,8 @@ class Scene(RBC):
             M is the number of degrees of freedom for the entity (i.e., joint dimensions).
         entity : gs.engine.entities.RigidEntity
             The rigid entity whose forward kinematics are used to compute the trajectory path.
+        link_idx : int, optional
+            The link id of the rigid entity to visualize. Defeault is -1.
         density : float, optional
             Controls the sampling density of the trajectory points to visualize. Default is 0.3.
         frame_scaling : float, optional
@@ -987,7 +989,7 @@ class Scene(RBC):
 
             for i in range(N_new):
                 pos, quat = entity.forward_kinematics(qposs[indices[i]])
-                Ts[i] = gu.trans_quat_to_T(pos[-1], quat[-1])
+                Ts[i] = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
 
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
