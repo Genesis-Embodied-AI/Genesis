@@ -128,7 +128,8 @@ def parse_urdf(morph, surface):
                         "pos": geom.origin[:3, 3].copy(),
                         "quat": gu.R_to_quat(geom.origin[:3, :3]),
                         "mesh": mesh,
-                        "is_col": geom_is_col,
+                        "contype": geom_is_col,
+                        "conaffinity": geom_is_col,
                     }
                     l_info["g_infos"].append(g_info)
             else:
@@ -170,7 +171,8 @@ def parse_urdf(morph, surface):
                     "pos": geom.origin[:3, 3],
                     "quat": gu.R_to_quat(geom.origin[:3, :3]),
                     "mesh": mesh,
-                    "is_col": geom_is_col,
+                    "contype": geom_is_col,
+                    "conaffinity": geom_is_col,
                 }
                 l_info["g_infos"].append(g_info)
 

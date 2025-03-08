@@ -170,7 +170,18 @@ class RigidLink(RBC):
             return trimesh.Trimesh(init_verts, init_faces)
 
     def _add_geom(
-        self, mesh, init_pos, init_quat, type, friction, sol_params, center_init=None, needs_coup=False, data=None
+        self,
+        mesh,
+        init_pos,
+        init_quat,
+        type,
+        friction,
+        sol_params,
+        center_init=None,
+        needs_coup=False,
+        contype=0xFFFFFFFF,
+        conaffinity=0xFFFFFFFF,
+        data=None,
     ):
         geom = RigidGeom(
             link=self,
@@ -188,6 +199,8 @@ class RigidLink(RBC):
             sol_params=sol_params,
             center_init=center_init,
             needs_coup=needs_coup,
+            contype=contype,
+            conaffinity=conaffinity,
             data=data,
         )
         self._geoms.append(geom)

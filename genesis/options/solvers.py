@@ -142,6 +142,8 @@ class RigidOptions(Options):
         Whether to enable joint limit. Defaults to True.
     enable_self_collision : bool, optional
         Whether to enable self collision within each entity. Defaults to False.
+    enable_adjacent_collision : bool, optional
+        Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
     max_collision_pairs : int, optional
         Maximum number of collision pairs. Defaults to 100.
     integrator : gs.integrator, optional
@@ -181,6 +183,7 @@ class RigidOptions(Options):
     enable_collision: bool = True
     enable_joint_limit: bool = True
     enable_self_collision: bool = False
+    enable_adjacent_collision: bool = False
     max_collision_pairs: int = 100
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
@@ -223,6 +226,8 @@ class AvatarOptions(Options):
         Whether to enable collision detection. Defaults to False.
     enable_self_collision : float, optional
         Whether to enable self collision within each entity. Defaults to False.
+    enable_adjacent_collision : bool, optional
+        Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
     max_collision_pairs : int, optional
         Maximum number of collision pairs. Defaults to 100.
     IK_max_targets : int, optional
@@ -232,6 +237,7 @@ class AvatarOptions(Options):
     dt: Optional[float] = None
     enable_collision: bool = False
     enable_self_collision: bool = False
+    enable_adjacent_collision: bool = False
     max_collision_pairs: int = 100
     IK_max_targets: int = 6  # Increasing this doesn't affect IK solving speed, but will increase memory usage
 

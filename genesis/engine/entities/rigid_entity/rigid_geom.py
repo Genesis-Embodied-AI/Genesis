@@ -37,6 +37,8 @@ class RigidGeom(RBC):
         init_pos,
         init_quat,
         needs_coup,
+        contype,
+        conaffinity,
         center_init=None,
         data=None,
     ):
@@ -52,6 +54,8 @@ class RigidGeom(RBC):
         self._friction = friction
         self._sol_params = sol_params
         self._needs_coup = needs_coup
+        self._contype = contype
+        self._conaffinity = conaffinity
         self._is_convex = mesh.is_convex
         self._cell_start = cell_start
         self._vert_start = vert_start
@@ -599,6 +603,27 @@ class RigidGeom(RBC):
         Get whether the geom needs coupling with other non-rigid entities.
         """
         return self._needs_coup
+
+    @property
+    def contype(self):
+        """
+        Get the contact type of the geometry for collision pair filtering.
+
+        The two geoms are deemed "compatible" (i.e. collisions between them is allowed) if the 'contype' of one geom
+        and the 'conaffinity' of the other geom have a common bit set to 1, i.e.
+        `(geom1.contype & geom2.conaffinity) || (geom2.contype & geom1.conaffinity) == True`. This is a powerful
+        mechanism borrowed from Open Dynamics Engine.
+        """
+        return self._contype
+
+    @property
+    def conaffinity(self):
+        """
+        Get the contact affinity of the geometry for collision pair filtering.
+
+        See `contype` documentation for details.
+        """
+        return self._conaffinity
 
     @property
     def coup_softness(self):
