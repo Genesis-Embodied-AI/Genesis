@@ -5,7 +5,7 @@ from genesis.engine.entities import AvatarEntity
 from genesis.engine.states.solvers import AvatarSolverState
 
 from .base_solver import Solver
-from .rigid.rigid_solver import RigidSolver
+from .rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
