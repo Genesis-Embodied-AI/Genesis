@@ -893,7 +893,7 @@ class MPMSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         if self.is_active():
             self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
 

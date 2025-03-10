@@ -837,7 +837,7 @@ class PBDSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         if self.is_active():
             self._kernel_set_frame(f, state.pos, state.vel, state.free)
 

@@ -486,13 +486,24 @@ class ConstraintSolverIsland:
 
                 self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
 
-    def reset(self):
-        self.jac.fill(0)
-        self.qacc_ws.fill(0)
-        self.meaninertia.fill(1.0)  # TODO: this is not used
+    def reset(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_reset(envs_idx)
 
-        if self.sparse_solve:
-            self.jac_n_relevant_dofs.fill(0)
+    @ti.kernel
+    def _kernel_reset(self, envs_idx: ti.types.ndarray()):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            self.meaninertia[i_b] = 1.0  # TODO: this is not used
+            for i_d in range(self._solver.n_dofs_):
+                self.qacc_ws[i_d, i_b] = 0
+                for i_c in range(self.len_constraints_):
+                    self.jac[i_c, i_d, i_b] = 0
+            if ti.static(self.sparse_solve):
+                for i_c in range(self.len_constraints_):
+                    self.jac_n_relevant_dofs[i_c, i_b] = 0
 
     # def resolve(self):
     #     from genesis.utils.tools import create_timer
