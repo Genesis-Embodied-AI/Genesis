@@ -56,9 +56,12 @@ class Visualizer(RBC):
                 gs.raise_exception("No display detected. Use `show_viewer=False` for headless mode.")
 
             if viewer_options.res is None:
-                viewer_size_ratio = 0.5
+                if BACKWARD_COMPATIBLE:
+                    viewer_size_ratio = 0.5
+                else:
+                    viewer_size_ratio = screen.get_scale() * 0.5
                 viewer_options.res = (
-                    int(screen.width * viewer_size_ratio),
+                    int(screen.height * viewer_size_ratio / 0.75),
                     int(screen.height * viewer_size_ratio),
                 )
 
