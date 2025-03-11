@@ -376,7 +376,7 @@ class RigidEntity(Entity):
                     sol_params=e_info["sol_params"],
                 )
             else:
-                gs.logger.warning(f"(MJCF) Equality type '{e_info["type"]}' not supported for now.")
+                gs.logger.warning(f"(MJCF) Equality type '{e_info['type']}' not supported for now.")
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
