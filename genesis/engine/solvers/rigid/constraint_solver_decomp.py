@@ -296,41 +296,46 @@ class ConstraintSolver:
             for i_l in range(self._solver.n_links):
                 I_l = [i_l, i_b] if ti.static(self._solver._options.batch_links_info) else i_l
                 l_info = self._solver.links_info[I_l]
-                if l_info.joint_type == gs.JOINT_TYPE.REVOLUTE or l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
-                    i_q = l_info.q_start
-                    i_d = l_info.dof_start
-                    I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
-                    pos_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
-                    pos_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
-                    pos = min(min(pos_min, pos_max), 0)
 
-                    side = ((pos_min < pos_max) * 2 - 1) * (pos < 0)
+                for i_j in range(l_info.joint_start, l_info.joint_end):
+                    I_j = [i_j, i_b] if ti.static(self._solver._options.batch_joints_info) else i_j
+                    j_info = self._solver.joints_info[I_j]
 
-                    jac = side
-                    jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
-                    imp, aref = gu.imp_aref(self._solver.dofs_info[I_d].sol_params, pos, jac_qvel, pos)
-                    diag = self._solver.dofs_info[I_d].invweight * (pos < 0) * (1 - imp) / (imp + gs.EPS)
-                    aref = aref * (pos < 0)
-                    if pos < 0:
-                        n_con = self.n_constraints[i_b]
-                        self.n_constraints[i_b] = n_con + 1
-                        self.diag[n_con, i_b] = diag
-                        self.aref[n_con, i_b] = aref
+                    if j_info.type == gs.JOINT_TYPE.REVOLUTE or j_info.type == gs.JOINT_TYPE.PRISMATIC:
+                        i_q = j_info.q_start
+                        i_d = j_info.dof_start
+                        I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
+                        pos_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
+                        pos_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
+                        pos = min(min(pos_min, pos_max), 0)
 
-                        if ti.static(self.sparse_solve):
-                            for i_d2_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
-                                i_d2 = self.jac_relevant_dofs[n_con, i_d2_, i_b]
-                                self.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
-                        else:
-                            for i_d2 in range(self._solver.n_dofs):
-                                self.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
-                        self.jac[n_con, i_d, i_b] = jac
+                        side = ((pos_min < pos_max) * 2 - 1) * (pos < 0)
 
-                        if ti.static(self.sparse_solve):
-                            self.jac_n_relevant_dofs[n_con, i_b] = 1
-                            self.jac_relevant_dofs[n_con, 0, i_b] = i_d
+                        jac = side
+                        jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
+                        imp, aref = gu.imp_aref(self._solver.dofs_info[I_d].sol_params, pos, jac_qvel, pos)
+                        diag = self._solver.dofs_info[I_d].invweight * (pos < 0) * (1 - imp) / (imp + gs.EPS)
+                        aref = aref * (pos < 0)
+                        if pos < 0:
+                            n_con = self.n_constraints[i_b]
+                            self.n_constraints[i_b] = n_con + 1
+                            self.diag[n_con, i_b] = diag
+                            self.aref[n_con, i_b] = aref
 
-                        self.efc_D[n_con, i_b] = 1 / ti.max(gs.EPS, diag)
+                            if ti.static(self.sparse_solve):
+                                for i_d2_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
+                                    i_d2 = self.jac_relevant_dofs[n_con, i_d2_, i_b]
+                                    self.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
+                            else:
+                                for i_d2 in range(self._solver.n_dofs):
+                                    self.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
+                            self.jac[n_con, i_d, i_b] = jac
+
+                            if ti.static(self.sparse_solve):
+                                self.jac_n_relevant_dofs[n_con, i_b] = 1
+                                self.jac_relevant_dofs[n_con, 0, i_b] = i_d
+
+                            self.efc_D[n_con, i_b] = 1 / ti.max(gs.EPS, diag)
 
     @ti.func
     def _func_nt_hessian_incremental(self, i_b):

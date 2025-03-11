@@ -190,6 +190,7 @@ class RigidOptions(Options):
 
     # batching info
     batch_links_info: Optional[bool] = False
+    batch_joints_info: Optional[bool] = False
     batch_dofs_info: Optional[bool] = False
 
     # constraint solver

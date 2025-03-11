@@ -88,7 +88,6 @@ class RigidJoint(RBC):
 
     @ti.kernel
     def _kernel_get_pos(self, tensor: ti.types.ndarray()):
-
         for i_b in range(self._solver._B):
             I_l = [self._idx, i_b] if ti.static(self._solver._options.batch_links_info) else self._idx
             l_info = self._solver.links_info[I_l]
@@ -96,16 +95,19 @@ class RigidJoint(RBC):
 
             p_pos = ti.Vector.zero(gs.ti_float, 3)
             p_quat = gu.ti_identity_quat()
-
             if i_p != -1:
                 p_pos = self._solver.links_state[i_p, i_b].pos
                 p_quat = self._solver.links_state[i_p, i_b].quat
 
             tmp_pos, tmp_quat = gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
 
-            joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
-                l_info.joint_pos, l_info.joint_quat, tmp_pos, tmp_quat
-            )
+            for i_j in range(l_info.joint_start, l_info.joint_start + self._idx + 1):
+                I_j = [i_j, i_b] if ti.static(self._solver._options.batch_joints_info) else i_j
+                j_info = self._solver.joints_info[I_j]
+
+                joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
+                    j_info.pos, j_info.quat, tmp_pos, tmp_quat
+                )
 
             for i in ti.static(range(3)):
                 tensor[i_b, i] = joint_pos[i]
@@ -138,9 +140,13 @@ class RigidJoint(RBC):
 
             tmp_pos, tmp_quat = gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
 
-            joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
-                l_info.joint_pos, l_info.joint_quat, tmp_pos, tmp_quat
-            )
+            for i_j in range(l_info.joint_start, l_info.joint_start + self._idx + 1):
+                I_j = [i_j, i_b] if ti.static(self._solver._options.batch_joints_info) else i_j
+                j_info = self._solver.joints_info[I_j]
+
+                joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
+                    j_info.pos, j_info.quat, tmp_pos, tmp_quat
+                )
 
             for i in ti.static(range(4)):
                 tensor[i_b, i] = joint_quat[i]
