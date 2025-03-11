@@ -682,6 +682,19 @@ class RasterizerContext:
         self.add_external_node(node, pose=T)
         return node
 
+    def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+        node = pyrender.Mesh.from_trimesh(
+            trimesh.creation.axis(
+                origin_size=origin_size,
+                axis_radius=axis_radius,
+                axis_length=axis_length,
+            ),
+            name=f"debug_frame_{gs.UID()}",
+            poses=poses,
+        )
+        self.add_external_node(node)
+        return node
+
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
         if T is None:
             T = gu.trans_to_T(tensor_to_array(pos))
