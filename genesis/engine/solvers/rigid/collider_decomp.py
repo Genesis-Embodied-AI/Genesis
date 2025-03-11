@@ -66,6 +66,8 @@ class Collider:
         # compute collision pairs
         # convert to numpy array for faster retrieval
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
+        geoms_contype = self._solver.geoms_info.contype.to_numpy()
+        geoms_conaffinity = self._solver.geoms_info.conaffinity.to_numpy()
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
@@ -88,7 +90,13 @@ class Collider:
                     continue
 
                 # adjacent links
-                if links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la:
+                if not self._solver._enable_adjacent_collision and (
+                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                ):
+                    continue
+
+                # contype and conaffinity
+                if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
                     continue
 
                 # pair of fixed base links
@@ -617,7 +625,16 @@ class Collider:
             is_valid = False
 
         # adjacent links
-        if self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la:
+        if ti.static(not self._solver._enable_adjacent_collision) and (
+            self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
+        ):
+            is_valid = False
+
+        # contype and conaffinity
+        if not (
+            (self._solver.geoms_info[i_ga].contype & self._solver.geoms_info[i_gb].conaffinity)
+            or (self._solver.geoms_info[i_gb].contype & self._solver.geoms_info[i_ga].conaffinity)
+        ):
             is_valid = False
 
         # pair of fixed links

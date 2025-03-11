@@ -5,7 +5,7 @@ from genesis.engine.entities import AvatarEntity
 from genesis.engine.states.solvers import AvatarSolverState
 
 from .base_solver import Solver
-from .rigid.rigid_solver import RigidSolver
+from .rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
@@ -24,6 +24,7 @@ class AvatarSolver(RigidSolver):
         # options
         self._enable_collision = options.enable_collision
         self._enable_self_collision = options.enable_self_collision
+        self._enable_adjacent_collision = options.enable_adjacent_collision
         self._max_collision_pairs = options.max_collision_pairs
         self._options = options
 
