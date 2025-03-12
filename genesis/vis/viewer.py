@@ -107,6 +107,9 @@ class Viewer(RBC):
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
+    def run(self):
+        self._pyrender_viewer.run()
+
     def stop(self):
         self._pyrender_viewer.close()
 
@@ -124,7 +127,7 @@ class Viewer(RBC):
         pose = gu.trans_R_to_T(pos, R)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self):
+    def update(self, auto_refresh=True):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -133,7 +136,7 @@ class Viewer(RBC):
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
 
-            if not self._pyrender_viewer.run_in_thread:
+            if auto_refresh and not self._pyrender_viewer.run_in_thread:
                 self._pyrender_viewer.refresh()
 
         # lock FPS

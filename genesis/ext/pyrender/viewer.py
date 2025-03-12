@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import time
+import threading
 from threading import Event, RLock, Semaphore, Thread
 
 import imageio
@@ -534,6 +535,10 @@ class Viewer(pyglet.window.Window):
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
+        viewer_thread = self._thread if self.run_in_thread else threading.main_thread()
+        if viewer_thread != threading.current_thread():
+            gs.raise_exception("This method can only be called from the thread that started the viewer.")
+
         self.on_close()
         if self.run_in_thread:
             while self._is_active:
@@ -1182,7 +1187,7 @@ class Viewer(pyglet.window.Window):
                 pass
 
         if not self.context:
-            raise ValueError("Unable to initialize an OpenGL 3+ context")
+            gs.raise_exception("Unable to initialize an OpenGL 3+ context")
         clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
@@ -1209,9 +1214,12 @@ class Viewer(pyglet.window.Window):
         else:
             self.refresh()
 
-    def _run(self):
-        if self._run_in_thread:
-            gs.raise_exception("Viewer already running in thread. Impossible to call this method manually.")
+    def run(self):
+        if self.run_in_thread:
+            gs.raise_exception("This method can only be called manually if the viewer is already running in thread.")
+        elif threading.main_thread() != threading.current_thread():
+            gs.raise_exception("This method can only be called manually from main thread on MacOS.")
+
         while self._is_active:
             try:
                 self.refresh()

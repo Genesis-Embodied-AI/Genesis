@@ -701,7 +701,7 @@ class Scene(RBC):
         return self._get_state()
 
     @gs.assert_built
-    def step(self, update_visualizer=True):
+    def step(self, update_visualizer=True, refresh_visualizer=True):
         """
         Runs a simulation step forward in time.
         """
@@ -713,7 +713,7 @@ class Scene(RBC):
         self._t += 1
 
         if update_visualizer:
-            self._visualizer.update(force=False)
+            self._visualizer.update(force=False, auto=refresh_visualizer)
 
         if self._show_FPS:
             self.FPS_tracker.step()

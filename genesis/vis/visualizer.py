@@ -92,9 +92,11 @@ class Visualizer(RBC):
 
         # temp fix for cam.render() segfault
         if self._viewer is not None:
-            # need to update viewer once here, because otherwise camera will update scene if render is called right after build, which will lead to segfault. TODO: this slows down visualizer.update(). Needs to remove this once the bug is fixed.
+            # need to update viewer once here, because otherwise camera will update scene if render is called right
+            # after build, which will lead to segfault.
+            # TODO: this slows down visualizer.update(). Needs to remove this once the bug is fixed.
             try:
-                self._viewer.update()
+                self._viewer.update(auto_refresh=True)
             except:
                 pass
 
@@ -121,18 +123,18 @@ class Visualizer(RBC):
             # need to update viewer once here, because otherwise camera will update scene if render is called right
             # after build, which will lead to segfault.
             if self._viewer is not None:
-                self._viewer.update()
+                self._viewer.update(auto_refresh=True)
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
                 self._rasterizer.render_camera(self._cameras[0])
 
-    def update(self, force=True):
+    def update(self, force=True, auto=True):
         if force:  # force update
             self.reset()
 
         if self._viewer is not None:
             if self._viewer.is_alive():
-                self._viewer.update()
+                self._viewer.update(auto_refresh=auto)
             else:
                 gs.raise_exception("Viewer closed.")
 
