@@ -179,8 +179,8 @@ class RigidLink(RBC):
         sol_params,
         center_init=None,
         needs_coup=False,
-        contype=0xFFFFFFFF,
-        conaffinity=0xFFFFFFFF,
+        contype=1,
+        conaffinity=1,
         data=None,
     ):
         geom = RigidGeom(
