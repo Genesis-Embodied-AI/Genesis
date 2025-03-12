@@ -450,7 +450,6 @@ class RigidSolver(Solver):
             dof_end=gs.ti_int,
             n_dofs=gs.ti_int,
             pos=gs.ti_vec3,
-            quat=gs.ti_vec4,
         )
 
         struct_link_state = ti.types.struct(
@@ -532,7 +531,6 @@ class RigidSolver(Solver):
             joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
             joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
             joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
-            joints_quat=np.array([joint.quat for joint in joints], dtype=gs.np_float),
         )
 
         self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
@@ -632,7 +630,6 @@ class RigidSolver(Solver):
         joints_q_end: ti.types.ndarray(),
         joints_dof_end: ti.types.ndarray(),
         joints_pos: ti.types.ndarray(),
-        joints_quat: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.joints_info):
@@ -644,9 +641,6 @@ class RigidSolver(Solver):
             self.joints_info[I].q_end = joints_q_end[i]
             self.joints_info[I].dof_end = joints_dof_end[i]
             self.joints_info[I].n_dofs = joints_dof_end[i] - joints_dof_start[i]
-
-            for j in ti.static(range(4)):
-                self.joints_info[I].quat[j] = joints_quat[i, j]
 
             for j in ti.static(range(3)):
                 self.joints_info[I].pos[j] = joints_pos[i, j]
@@ -1800,7 +1794,7 @@ class RigidSolver(Solver):
                             self.links_state[i_l, i_b].j_quat,
                         ) = gu.ti_transform_pos_quat_by_trans_quat(
                             j_info.pos,
-                            j_info.quat,
+                            gu.ti_identity_quat(),
                             self.links_state[i_l, i_b].j_pos,
                             self.links_state[i_l, i_b].j_quat,
                         )
@@ -1974,7 +1968,7 @@ class RigidSolver(Solver):
                             self.links_state[i_l, i_b].j_quat,
                         ) = gu.ti_transform_pos_quat_by_trans_quat(
                             j_info.pos,
-                            j_info.quat,
+                            gu.ti_identity_quat(),
                             self.links_state[i_l, i_b].j_pos,
                             self.links_state[i_l, i_b].j_quat,
                         )
@@ -2294,7 +2288,7 @@ class RigidSolver(Solver):
 
                     anchor_pos, anchor_quat = gu.ti_transform_pos_quat_by_trans_quat(
                         j_info.pos,
-                        j_info.quat,
+                        gu.ti_identity_quat(),
                         ti.Vector.zero(gs.ti_float, 3),
                         self.links_state[i_l, i_b].j_quat,
                     )

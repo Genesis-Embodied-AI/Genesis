@@ -106,7 +106,7 @@ class RigidJoint(RBC):
                 j_info = self._solver.joints_info[I_j]
 
                 joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
-                    j_info.pos, j_info.quat, tmp_pos, tmp_quat
+                    j_info.pos, gu.ti_identity_quat(), tmp_pos, tmp_quat
                 )
 
             for i in ti.static(range(3)):
@@ -145,7 +145,7 @@ class RigidJoint(RBC):
                 j_info = self._solver.joints_info[I_j]
 
                 joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
-                    j_info.pos, j_info.quat, tmp_pos, tmp_quat
+                    j_info.pos, gu.ti_identity_quat(), tmp_pos, tmp_quat
                 )
 
             for i in ti.static(range(4)):
