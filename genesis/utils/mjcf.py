@@ -296,7 +296,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 tmesh.visual = visual
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
-        mj_mesh = mj.mesh(mj_geom.dataid)
+        mj_mesh = mj.mesh(int(mj_geom.dataid))
 
         vert_start = int(mj_mesh.vertadr)
         vert_num = int(mj_mesh.vertnum)
