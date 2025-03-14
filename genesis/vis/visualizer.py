@@ -1,16 +1,14 @@
 import pyglet
 
-# NOTE: check pyglet version for display compatibility
-if int(pyglet.version.split(".")[0]) >= 2 and int(pyglet.version.split(".")[1]) >= 1:
-    BACKWARD_COMPATIBLE = False
-else:
-    BACKWARD_COMPATIBLE = True
-
 import genesis as gs
 from genesis.repr_base import RBC
 
 from .camera import Camera
 from .rasterizer import Rasterizer
+
+
+VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
+VIEWER_DEFAULT_ASPECT_RATIO = 0.75
 
 
 class DummyViewerLock:
@@ -41,11 +39,14 @@ class Visualizer(RBC):
 
         # try to connect to display
         try:
-            if BACKWARD_COMPATIBLE:
+            if pyglet.version < "2.0":
                 display = pyglet.canvas.Display()
+                screen = display.get_default_screen()
+                scale = 1.0
             else:
                 display = pyglet.display.get_display()
-            screen = display.get_default_screen()
+                screen = display.get_default_screen()
+                scale = screen.get_scale()
             self._connected_to_display = True
         except Exception as e:
             if show_viewer:
@@ -54,14 +55,9 @@ class Visualizer(RBC):
 
         if show_viewer:
             if viewer_options.res is None:
-                if BACKWARD_COMPATIBLE:
-                    viewer_size_ratio = 0.5
-                else:
-                    viewer_size_ratio = screen.get_scale() * 0.5
-                viewer_options.res = (
-                    int(screen.height * viewer_size_ratio / 0.75),
-                    int(screen.height * viewer_size_ratio),
-                )
+                viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
+                viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
+                viewer_options.res = (int(viewer_width), int(viewer_height))
 
             self._viewer = Viewer(viewer_options, self._context)
 
