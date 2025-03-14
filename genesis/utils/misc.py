@@ -19,6 +19,11 @@ def raise_exception(msg="Something went wrong."):
     raise gs.GenesisException(msg)
 
 
+def raise_exception_from(msg="Something went wrong.", cause=None):
+    gs.logger._error_msg = msg
+    raise gs.GenesisException(msg) from cause
+
+
 def assert_initialized(cls):
     original_init = cls.__init__
 
