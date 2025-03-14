@@ -68,7 +68,6 @@ class ConstraintSolverIsland:
 
         ## line search
         self.gtol = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-        self.meaninertia = ti.field(gs.ti_float, shape=self._solver._batch_shape())
 
         self.mv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
         self.jv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
@@ -496,7 +495,6 @@ class ConstraintSolverIsland:
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            self.meaninertia[i_b] = 1.0  # TODO: this is not used
             for i_d in range(self._solver.n_dofs_):
                 self.qacc_ws[i_d, i_b] = 0
                 for i_c in range(self.len_constraints_):
@@ -568,6 +566,7 @@ class ConstraintSolverIsland:
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
         if self.n_constraints[i_b] > 0:
+            tol_scaled = (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs)) * self.tolerance
             for it in range(self.iterations):
                 self._func_solve_body(island, i_b)
                 if self.improved[i_b] < 1:
@@ -584,9 +583,9 @@ class ConstraintSolverIsland:
                     for i_d in range(e_info.dof_start, e_info.dof_end):
                         gradient += self.grad[i_d, i_b] * self.grad[i_d, i_b]
 
-                gradient = ti.sqrt(gradient / n_dof)
+                gradient = ti.sqrt(gradient)
                 improvement = self.prev_cost[i_b] - self.cost[i_b]
-                if gradient < self.tolerance or improvement < self.tolerance:
+                if gradient < tol_scaled or improvement < tol_scaled:
                     break
 
     @ti.func
@@ -674,8 +673,7 @@ class ConstraintSolverIsland:
             e_info = self.entities_info[i_e]
             for i_d in range(e_info.dof_start, e_info.dof_end):
                 snorm += self.search[i_d, i_b] ** 2
-        self.meaninertia[i_b] = 1.0
-        snorm = ti.sqrt(snorm / self._solver.n_dofs_) * self.meaninertia[i_b] * self._solver.n_dofs
+        snorm = ti.sqrt(snorm / self._solver.n_dofs_) * self._solver.meaninertia[i_b] * self._solver.n_dofs
         self.gtol[i_b] = self.tolerance * self.ls_tolerance * snorm
         gtol = self.tolerance * self.ls_tolerance * snorm
         ## use adaptive linesearch tolerance
@@ -691,7 +689,7 @@ class ConstraintSolverIsland:
             self.ls_result[i_b] = 1
             res_alpha = 0.0
         else:
-            scale = 1 / (self.meaninertia[i_b] * ti.max(1, self._solver.n_dofs))
+            scale = 1 / (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs))
             gtol = self.tolerance * self.ls_tolerance * snorm
             slopescl = scale / snorm
 

@@ -161,6 +161,7 @@ class RigidSolver(Solver):
             self._kernel_forward_kinematics_links_geoms(self._scene._envs_idx)
 
             self._init_invweight()
+            self._kernel_init_meaninertia()
 
     def _init_invweight(self):
         self._kernel_forward_dynamics()
@@ -232,6 +233,18 @@ class RigidSolver(Solver):
             if self.links_info[I].invweight < 0:
                 self.links_info[I].invweight = invweight[I[0]]
 
+    @ti.kernel
+    def _kernel_init_meaninertia(self):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_e in range(self.n_entities):
+            e_info = self.entities_info[i_e]
+            for i_b in range(self._B):
+                self.meaninertia[i_b] = 0.0
+                for i_d in range(e_info.dof_start, e_info.dof_end):
+                    for j_d in range(e_info.dof_start, e_info.dof_end):
+                        self.meaninertia[i_b] += self.mass_mat[i_d, j_d, i_b]
+                self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
+
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
             B = self._B
@@ -252,6 +265,8 @@ class RigidSolver(Solver):
         self.mass_mat_y = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
         self.mass_mat_inv = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
 
+        self.meaninertia = ti.field(dtype=gs.ti_float, shape=self._batch_shape())
+
         # tree structure information
         mass_parent_mask = np.zeros((self.n_dofs_, self.n_dofs_), dtype=gs.np_float)
 
@@ -271,6 +286,7 @@ class RigidSolver(Solver):
         self.mass_mat_U.fill(0)
         self.mass_mat_y.fill(0)
         self.mass_mat_inv.fill(0)
+        self.meaninertia.fill(0)
 
     def _init_dof_fields(self):
         if self._use_hibernation:
