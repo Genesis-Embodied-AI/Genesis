@@ -518,8 +518,8 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
 
             # TODO: Parse occlusion
             if material.occlusionTexture is not None:
-                texture = glb.textures[material.normalTexture.index]
-                uvs_used = material.normalTexture.texCoord
+                texture = glb.textures[material.occlusionTexture.index]
+                uvs_used = material.occlusionTexture.texCoord
                 image_index = texture.source
                 image = Image.open(uri_to_PIL(glb.images[image_index].uri))
                 occlusion_texture = create_texture(np.array(image), None, "linear")
