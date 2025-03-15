@@ -241,8 +241,7 @@ class RigidSolver(Solver):
             for i_b in range(self._B):
                 self.meaninertia[i_b] = 0.0
                 for i_d in range(e_info.dof_start, e_info.dof_end):
-                    for j_d in range(e_info.dof_start, e_info.dof_end):
-                        self.meaninertia[i_b] += self.mass_mat[i_d, j_d, i_b]
+                    self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
                 self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
