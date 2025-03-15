@@ -6,18 +6,6 @@ import torch
 
 import genesis as gs
 
-seed = 0
-torch.manual_seed(seed)
-
-# If using CUDA
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # For multi-GPU
-
-# Set seed for other libraries like numpy and random
-np.random.seed(seed)
-random.seed(seed)
-
 
 class TestRigidSpeed(unittest.TestCase):
     def test_speed(self):
@@ -25,7 +13,7 @@ class TestRigidSpeed(unittest.TestCase):
         n_frame_fps = 10
 
         def run_anymal_c(solver):
-            gs.init(backend=gs.gpu, logging_level="warning", precision="32", seed=0)
+            gs.init(backend=gs.gpu, logging_level="warning", precision="32", seed=0, debug=False)
 
             scene = gs.Scene(
                 show_viewer=False,
