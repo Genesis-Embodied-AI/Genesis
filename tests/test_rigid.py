@@ -32,9 +32,14 @@ def mj_get_mass_matrix_from_sparse(mj_model, mj_data):
 
 class TestRigid(unittest.TestCase):
     def setUp(self):
+        self.gs_scene = None
+
         gs.init(backend=gs.cpu, precision="64", logging_level="warning", seed=0, debug=True)
 
     def tearDown(self):
+        if self.gs_scene is not None and self.gs_scene.viewer is not None:
+            self.gs_scene.viewer.stop()
+
         gs.destroy()
 
     def _build_engines(self, xml_path):
@@ -243,16 +248,17 @@ class TestRigid(unittest.TestCase):
                 self.gs_scene.visualizer.update()
 
     def test_box_plan_dynamics(self):
+        # TODO: Check Newton contact solver algorithm in addition to CG
+
         mjcf = ET.Element("mujoco", model="one_box")
-        option = ET.SubElement(mjcf, "option", timestep="0.01")
+        ET.SubElement(mjcf, "option", timestep="0.01")
         default = ET.SubElement(mjcf, "default")
         ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
         worldbody = ET.SubElement(mjcf, "worldbody")
         ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
-        box_body = ET.SubElement(worldbody, "body", name="box", pos="0. 0. 0.3")
+        box_body = ET.SubElement(worldbody, "body", pos="0. 0. 0.3")
         ET.SubElement(box_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
         ET.SubElement(box_body, "joint", type="free")
-
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".xml", delete=True) as file:
             xml_tree = ET.ElementTree(mjcf)
             xml_tree.write(file.name, encoding="utf-8", xml_declaration=True)
@@ -263,5 +269,27 @@ class TestRigid(unittest.TestCase):
         cube_quat /= np.linalg.norm(cube_quat)
         qpos = np.concatenate((cube_pos, cube_quat))
         qvel = np.zeros((self.gs_robot.n_dofs,))
+        self._simulate_and_check_mujoco_consistency(qpos, qvel)
 
+    def test_single_joint_1dof_chain(self):
+        mjcf = ET.Element("mujoco", model="two_stick_robot")
+        ET.SubElement(mjcf, "option", timestep="0.002")
+        default = ET.SubElement(mjcf, "default")
+        ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3")
+        worldbody = ET.SubElement(mjcf, "worldbody")
+        link0 = ET.SubElement(worldbody, "body", pos="0.1 0.2 0.0", quat="0.707 0 0.707 0")
+        ET.SubElement(link0, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+        link1 = ET.SubElement(link0, "body", pos="0.5 0.2 0.0", quat="0.92388 0 0 0.38268")
+        ET.SubElement(link1, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+        ET.SubElement(link1, "joint", type="hinge", axis="0 0 1", pos="0.0 0.0 0.0")
+        link2 = ET.SubElement(link1, "body", pos="0.5 0.2 0.0", quat="0.92388 0 0.38268 0.0")
+        ET.SubElement(link2, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+        ET.SubElement(link2, "joint", type="hinge", axis="0 1 0")
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".xml", delete=True) as file:
+            xml_tree = ET.ElementTree(mjcf)
+            xml_tree.write(file.name, encoding="utf-8", xml_declaration=True)
+            self._build_engines(file.name)
+
+        qpos = np.zeros((self.gs_robot.n_dofs,))
+        qvel = np.zeros((self.gs_robot.n_dofs,))
         self._simulate_and_check_mujoco_consistency(qpos, qvel)
