@@ -74,19 +74,18 @@ def parse_link(mj, i_l, scale):
                         gs.logger.warning("(MJCF) Actuator transmission gear is only supported of 1DoF joints")
                         break
 
-                    if mujoco.mjtBias.mjBIAS_NONE:
+                    if biastype == mujoco.mjtBias.mjBIAS_NONE:
                         # Direct-drive
                         actuator_kp = 0.0
                         actuator_kv = 0.0
-                    else:
+                    else: # this must be affine
                         # PD control
                         gainprm = mj.actuator_gainprm[i_a]
                         biasprm = mj.actuator_biasprm[i_a]
-                        if gainpr[0] != -biasprm[1] or gainpr[1:].any() or biasprm[0]:
-                            breakpoint()
+                        if gainprm[0] != -biasprm[1] or gainprm[1:].any() or biasprm[0]:
                             gs.logger.warning("(MJCF) Actuator gain and bias cannot be reduced to PD control")
                             break
-                        actuator_kp, actuator_kv = biasprm[1:]
+                        actuator_kp, actuator_kv = biasprm[1:3]
 
                     gear = mj.actuator_gear[i_a, 0]
                     j_info["dofs_kp"] = np.tile(-gear * actuator_kp, (n_dofs,))
