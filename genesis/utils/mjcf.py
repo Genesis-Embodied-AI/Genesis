@@ -252,7 +252,10 @@ def parse_link(mj, i_l, scale):
 
         final_joint_list.append(j_info)
 
-    j_info = add_more_joint_info(final_joint_list[0], mj.jnt_qposadr[jnt_adr], mj.jnt_dofadr[jnt_adr])
+    if len(mj.jnt_qposadr) == 0:
+        j_info = add_more_joint_info(final_joint_list[0], 0, 0)
+    else:
+        j_info = add_more_joint_info(final_joint_list[0], mj.jnt_qposadr[jnt_adr], mj.jnt_dofadr[jnt_adr])
 
     return l_info, j_info
 
