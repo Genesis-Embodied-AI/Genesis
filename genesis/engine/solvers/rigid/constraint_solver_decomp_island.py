@@ -95,11 +95,17 @@ class ConstraintSolverIsland:
 
         self.reset()
 
+    def clear(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_clear(envs_idx)
+
     @ti.kernel
-    def clear(self):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for b in range(self._B):
-            self.n_constraints[b] = 0
+    def _kernel_clear(self, envs_idx: ti.types.ndarray()):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            self.n_constraints[i_b] = 0
 
     @ti.kernel
     def resolve(self):

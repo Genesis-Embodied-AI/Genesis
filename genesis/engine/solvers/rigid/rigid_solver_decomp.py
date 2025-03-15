@@ -3275,8 +3275,10 @@ class RigidSolver(Solver):
             )
             self._kernel_forward_kinematics_links_geoms(envs_idx)
             self.collider.reset(envs_idx)
+            self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
+                self.constraint_solver.clear(envs_idx)
             self._cur_step = -1
 
     @ti.kernel
@@ -3633,6 +3635,11 @@ class RigidSolver(Solver):
             qs_idx,
             envs_idx,
         )
+        self.collider.reset(envs_idx)
+        self.collider.clear(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+            self.constraint_solver.clear(envs_idx)
         self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
@@ -3880,6 +3887,11 @@ class RigidSolver(Solver):
             dofs_idx,
             envs_idx,
         )
+        self.collider.reset(envs_idx)
+        self.collider.clear(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+            self.constraint_solver.clear(envs_idx)
         self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel

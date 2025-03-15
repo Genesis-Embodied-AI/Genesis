@@ -604,7 +604,10 @@ class Viewer(pyglet.window.Window):
             pass
         finally:
             super().on_close()
-            pyglet.app.exit()
+            try:
+                pyglet.app.exit()
+            except:
+                pass
 
         self._offscreen_result_semaphore.release()
 
