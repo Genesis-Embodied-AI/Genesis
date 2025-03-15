@@ -643,8 +643,6 @@ class RigidEntity(Entity):
         """
         Get the Jacobian matrix for a target link.
 
-        FIXME: Which jacobian are we talking about ? Presumably {w}_J_{O_i}
-
         Parameters
         ----------
         link : RigidLink

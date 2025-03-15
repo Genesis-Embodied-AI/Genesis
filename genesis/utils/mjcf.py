@@ -195,7 +195,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_sol_params"] = np.repeat(mj_sol_params[None], 3, axis=0)
 
                 j_info["type"] = gs.JOINT_TYPE.SPHERICAL
-                j_info["n_qs"] = 4
+                j_info["n_qs"] = 3
                 j_info["n_dofs"] = 3
 
             elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
@@ -292,6 +292,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 ]
             ),
         )
+        geom_size = np.array([0.0, 0.0, 1.0])
         gs_type = gs.GEOM_TYPE.PLANE
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -462,7 +463,7 @@ def parse_geoms(mj, scale, convexify, surface, xml_path):
         )
 
     # Duplicating collision geometries as visual for bodies not having dedicated visual geometries
-    for link_g_info in links_g_info[1:]:
+    for link_g_info in links_g_info:
         is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
         if is_all_col:
             for g_info in link_g_info.copy():
