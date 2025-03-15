@@ -127,10 +127,13 @@ def parse_urdf(morph, surface):
                         "data": None,
                         "pos": geom.origin[:3, 3].copy(),
                         "quat": gu.R_to_quat(geom.origin[:3, :3]),
-                        "mesh": mesh,
                         "contype": geom_is_col,
                         "conaffinity": geom_is_col,
                     }
+                    if geom_is_col:
+                        g_info["mesh"] = mesh
+                    else:
+                        g_info["vmesh"] = mesh
                     l_info["g_infos"].append(g_info)
             else:
                 # Each geometry primitive is one RigidGeom in genesis.
@@ -170,10 +173,13 @@ def parse_urdf(morph, surface):
                     "data": geom_data,
                     "pos": geom.origin[:3, 3],
                     "quat": gu.R_to_quat(geom.origin[:3, :3]),
-                    "mesh": mesh,
                     "contype": geom_is_col,
                     "conaffinity": geom_is_col,
                 }
+                if geom_is_col:
+                    g_info["mesh"] = mesh
+                else:
+                    g_info["vmesh"] = mesh
                 l_info["g_infos"].append(g_info)
 
     #########################  non-base joints and links #########################

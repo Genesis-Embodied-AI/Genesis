@@ -18,8 +18,7 @@ def parse_mjcf(path):
     return mj
 
 
-def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
-
+def parse_link(mj, i_l, scale):
     # mj.body
     l_info = dict()
 
@@ -39,85 +38,37 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
     l_info["parent_idx"] = int(mj.body_parentid[i_l] - 1)
     l_info["invweight"] = float(mj.body_invweight0[i_l, 0])
 
-    l_info["pos"] *= scale
-    l_info["inertial_pos"] *= scale
-    l_info["inertial_mass"] *= scale**3
-    l_info["inertial_i"] *= scale**5
-    l_info["invweight"] /= scale**3
-
-    # mj.jnt =================================
-    def add_actuator(j_info, i_j=None):
-        # mj.actuator
-        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
-        j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
-
-        if i_j is not None:
-            for i_a in range(len(mj.actuator_trnid)):
-                if mj.actuator_trnid[i_a, 0] == i_j and mj.actuator_trntype[i_a] == mujoco.mjtTrn.mjTRN_JOINT:
-                    if mj.actuator_gainprm[i_a, 0] != -mj.actuator_biasprm[i_a, 1]:
-                        gs.logger.warning("`kp` in `gainprm` doesn't match `-kp` in `biasprm`.")
-                    j_info["dofs_kp"] = np.tile(mj.actuator_gainprm[i_a, 0], j_info["n_dofs"])
-                    j_info["dofs_kv"] = np.tile(-mj.actuator_biasprm[i_a, 2], j_info["n_dofs"])
-                    j_info["dofs_force_range"] = np.tile(mj.actuator_forcerange[i_a], (j_info["n_dofs"], 1))
-                    break
-
-        return j_info
-
-    def add_more_joint_info(j_info, jnt_offset=0):
-        d_off = dof_offset + jnt_offset
-        qpos0_off = qpos0_offset + jnt_offset
-
-        j_info["dofs_damping"] = np.array(mj.dof_damping[d_off : d_off + j_info["n_dofs"]])
-        j_info["dofs_invweight"] = np.array(mj.dof_invweight0[d_off : d_off + j_info["n_dofs"]])
-        j_info["dofs_armature"] = np.array(mj.dof_armature[d_off : d_off + j_info["n_dofs"]])
-        if j_info["n_qpos0"] == 4 and j_info["type"] == gs.JOINT_TYPE.SPHERICAL:
-            # this is a real mujoco ball joint
-            j_info["init_qpos"] = gu.quat_to_xyz(mj.qpos0[qpos0_off : qpos0_off + 4])
-        else:
-            j_info["init_qpos"] = np.array(mj.qpos0[qpos0_off : qpos0_off + j_info["n_qpos0"]])
-
-        # apply scale
-        j_info["pos"] *= scale
-        return j_info
-
     jnt_adr = mj.body_jntadr[i_l]
     jnt_num = mj.body_jntnum[i_l]
 
-    final_joint_list = []
-    if jnt_adr == -1:  # fixed joint
+    j_infos = []
+    for i_j in range(jnt_adr, jnt_adr + max(jnt_num, 1)):
         j_info = dict()
-        j_info["dofs_motion_ang"] = np.zeros((0, 3))
-        j_info["dofs_motion_vel"] = np.zeros((0, 3))
-        j_info["dofs_limit"] = np.zeros((0, 2))
-        j_info["dofs_stiffness"] = np.zeros((0))
-        j_info["dofs_sol_params"] = np.zeros((0, 7))
 
-        j_info["name"] = f'{l_info["name"]}_joint'
-        j_info["type"] = gs.JOINT_TYPE.FIXED
-        j_info["pos"] = np.array([0.0, 0.0, 0.0])
-        j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
-        j_info["n_qs"] = 0
-        j_info["n_dofs"] = 0
-        j_info["n_qpos0"] = 0
+        # Parsing joint parameters that are type-specific
+        if i_j == -1:
+            j_info["dofs_motion_ang"] = np.zeros((0, 3))
+            j_info["dofs_motion_vel"] = np.zeros((0, 3))
+            j_info["dofs_limit"] = np.zeros((0, 2))
+            j_info["dofs_stiffness"] = np.zeros((0))
+            j_info["dofs_sol_params"] = np.zeros((0, 7))
 
-        j_info = add_more_joint_info(add_actuator(j_info))
-        final_joint_list.append(j_info)
-    else:
-        j_info_list = []
-        for i_j in range(jnt_adr, jnt_adr + jnt_num):
-            j_info = dict()
-            j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
+            j_info["name"] = f'{l_info["name"]}_joint'
+            j_info["type"] = gs.JOINT_TYPE.FIXED
+            j_info["pos"] = np.array([0.0, 0.0, 0.0])
+            j_info["n_qs"] = 0
+            j_info["n_dofs"] = 0
+        else:
             name_start = mj.name_jntadr[i_j]
             if i_j + 1 < mj.njnt:
                 name_end = mj.name_jntadr[i_j + 1]
             else:
                 name_end = mj.name_geomadr[0]
             j_info["name"] = mj.names[name_start:name_end].decode("utf-8").replace("\x00", "")
-            j_info["pos"] = np.array(mj.jnt_pos[i_j])
-
             if len(j_info["name"]) == 0:
                 j_info["name"] = f'{l_info["name"]}_joint'
+
+            j_info["pos"] = mj.jnt_pos[i_j]
 
             mj_type = mj.jnt_type[i_j]
             mj_stiffness = mj.jnt_stiffness[i_j]
@@ -148,8 +99,8 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
                 j_info["n_dofs"] = 1
 
             elif mj_type == mujoco.mjtJoint.mjJNT_BALL:
-                if np.any(~np.isinf(mj_limit)):
-                    gs.logger.warning("joint limit is ignored for ball joints")
+                if not np.all(np.isinf(mj_limit)):
+                    gs.logger.warning("(MJCF) Joint limit ignored for ball joints")
 
                 j_info["dofs_motion_ang"] = np.eye(3)
                 j_info["dofs_motion_vel"] = np.zeros((3, 3))
@@ -163,7 +114,7 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
 
             elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
                 if mj_stiffness > 0:
-                    raise gs.raise_exception("does not support stiffness for free joints")
+                    raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
 
                 j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
                 j_info["dofs_motion_vel"] = np.eye(6, 3)
@@ -178,58 +129,103 @@ def parse_link(mj, i_l, q_offset, dof_offset, qpos0_offset, scale):
             else:
                 gs.raise_exception(f"Unsupported MJCF joint type: {mj_type}")
 
-            j_info_list.append(add_actuator(j_info, i_j))
+        # Parsing joint parameters that are type-agnostic
+        mj_dof_offset = mj.jnt_dofadr[jnt_adr] if jnt_adr != -1 else 0
+        mj_qpos_offset = mj.jnt_qposadr[jnt_adr] if jnt_adr != -1 else 0
+        n_dofs = j_info["n_dofs"]
+        j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
+        if j_info["type"] == gs.JOINT_TYPE.SPHERICAL:
+            j_info["init_qpos"] = gu.quat_to_xyz(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + 4)])
+        else:
+            j_info["init_qpos"] = np.array(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + n_dofs)])
+        j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
+        j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
+        j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
 
-        j_info = dict()
-        j_info["n_qs"] = sum([j["n_qs"] for j in j_info_list])
-        j_info["n_dofs"] = sum([j["n_dofs"] for j in j_info_list])
-        j_info["dofs_motion_ang"] = np.concatenate([j["dofs_motion_ang"] for j in j_info_list], axis=0)
-        j_info["dofs_motion_vel"] = np.concatenate([j["dofs_motion_vel"] for j in j_info_list], axis=0)
-        j_info["dofs_limit"] = np.concatenate([j["dofs_limit"] for j in j_info_list], axis=0)
-        j_info["dofs_stiffness"] = np.concatenate([j["dofs_stiffness"] for j in j_info_list], axis=0)
-        j_info["dofs_sol_params"] = np.concatenate([j["dofs_sol_params"] for j in j_info_list], axis=0)
+        if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
+            gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
 
-        j_info["dofs_kp"] = np.concatenate([j["dofs_kp"] for j in j_info_list], axis=0)
-        j_info["dofs_kv"] = np.concatenate([j["dofs_kv"] for j in j_info_list], axis=0)
-        j_info["dofs_force_range"] = np.concatenate([j["dofs_force_range"] for j in j_info_list], axis=0)
+        # Parsing actuator parameters
+        j_info["dofs_kp"] = gu.default_dofs_kp(n_dofs)
+        j_info["dofs_kv"] = gu.default_dofs_kv(n_dofs)
+        j_info["dofs_force_range"] = gu.default_dofs_force_range(n_dofs)
 
-        if j_info["n_dofs"] == 1:
-            j_info["type"] = j_info_list[0]["type"]
-        elif j_info["n_dofs"] == 2:
-            j_info["type"] = gs.JOINT_TYPE.PLANAR
-        elif j_info["n_dofs"] == 3:
-            j_info["type"] = gs.JOINT_TYPE.SPHERICAL
-        elif j_info["n_dofs"] == 6:
-            j_info["type"] = gs.JOINT_TYPE.FREE
+        for i_a in range(len(mj.actuator_trnid)):
+            if mj.actuator_trnid[i_a, 0] == i_j:
+                trntype = mujoco.mjtTrn(mj.actuator_trntype[i_a])
+                if trntype != mujoco.mjtTrn.mjTRN_JOINT:
+                    gs.logger.warning(f"(MJCF) Actuator type '{trntype}' not supported")
+                    break
+                if mj.actuator_dyntype[i_a] != mujoco.mjtDyn.mjDYN_NONE:
+                    gs.logger.warning(f"(MJCF) Actuator internal dynamics not supported")
+                    break
+                gaintype = mujoco.mjtGain(mj.actuator_gaintype[i_a])
+                if gaintype != mujoco.mjtGain.mjGAIN_FIXED:
+                    gs.logger.warning(f"(MJCF) Actuator control gain of type '{gaintype}' not supported")
+                    break
+                biastype = mujoco.mjtBias(mj.actuator_biastype[i_a])
+                if biastype not in (mujoco.mjtBias.mjBIAS_NONE, mujoco.mjtBias.mjBIAS_AFFINE):
+                    gs.logger.warning(f"(MJCF) Actuator control bias of type '{biastype}' not supported")
+                    break
+                if n_dofs > 1 and not (mj.actuator_gear[i_a, :n_dofs] == 1.0).all():
+                    gs.logger.warning("(MJCF) Actuator transmission gear is only supported of 1DoF joints")
+                    break
 
-        j_info["n_qpos0"] = j_info["n_qs"]
-        if j_info["type"] == gs.JOINT_TYPE.SPHERICAL and len(j_info_list) == 1:
-            # for real ball joint, mujoco uses quaternion for qpos0
-            # however, we could merge multiple hinge joints into a single ball joint
-            # in this case, we need to use xyz for qpos0
-            j_info["n_qpos0"] = 4
+                if mujoco.mjtBias.mjBIAS_NONE:
+                    # Direct-drive
+                    actuator_kp = 0.0
+                    actuator_kv = 0.0
+                else:
+                    # PD control
+                    gainprm = mj.actuator_gainprm[i_a]
+                    biasprm = mj.actuator_biasprm[i_a]
+                    if gainpr[0] != -biasprm[1] or gainpr[1:].any() or biasprm[0]:
+                        gs.logger.warning("(MJCF) Actuator gain and bias cannot be reduced to PD control")
+                        break
+                    actuator_kp, actuator_kv = biasprm[1:]
 
-        j_info["quat"] = j_info_list[0]["quat"]
-        j_info["pos"] = j_info_list[0]["pos"]
-        j_info["name"] = j_info_list[0]["name"]
+                gear = mj.actuator_gear[i_a, 0]
+                j_info["dofs_kp"] = np.tile(-gear * actuator_kp, (n_dofs,))
+                j_info["dofs_kv"] = np.tile(-gear * actuator_kv, (n_dofs,))
+                if mj.actuator_forcelimited[i_a] or mj.actuator_ctrllimited[i_a]:
+                    j_info["dofs_force_range"] = np.tile(
+                        np.minimum(np.tile(mj.actuator_forcerange[i_a], n_dofs), gear * mj.actuator_ctrlrange[i_a]),
+                        (n_dofs, 1),
+                    )
+                break
 
-        final_joint_list.append(j_info)
+        j_infos.append(j_info)
 
-    j_info = add_more_joint_info(final_joint_list[0])
+    # Applying scale
+    l_info["pos"] *= scale
+    l_info["inertial_pos"] *= scale
+    l_info["inertial_mass"] *= scale**3
+    l_info["inertial_i"] *= scale**5
+    l_info["invweight"] /= scale**3
+    for j_info in j_infos:
+        j_info["pos"] *= scale
 
-    return l_info, j_info
+    return l_info, j_infos
+
+
+def parse_links(mj, scale):
+    l_infos = []
+    j_infos = []
+
+    for i_l in range(mj.nbody):
+        l_info, j_info = parse_link(mj, i_l, scale)
+
+        l_infos.append(l_info)
+        j_infos.append(j_info)
+
+    return l_infos, j_infos
 
 
 def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
     mj_geom = mj.geom(i_g)
 
-    is_col = bool(mj_geom.conaffinity or mj_geom.contype)
     geom_size = mj_geom.size
-    if is_col:
-        gs.logger.warning(
-            f"Collision mesh in MJCF is not visualized by default. To visualize "
-            + "collision mesh, please use `vis_mode='collision'` when scene.add_entity."
-        )
+    is_col = mj_geom.contype or mj_geom.conaffinity
 
     visual = None
     if mj_geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
@@ -247,6 +243,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 ]
             ),
         )
+        geom_size = np.array([0.0, 0.0, 1.0])
         gs_type = gs.GEOM_TYPE.PLANE
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -298,7 +295,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                 uv_coordinates -= uv_coordinates.min(axis=0)
                 uv_coordinates /= uv_coordinates.max(axis=0)
                 H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                image_array = mj.tex_data[mj_tex.adr[0] : (mj_tex.adr[0] + H * W * C)].reshape(H, W, C)
                 uv_coordinates = uv_coordinates * mj_mat.texrepeat
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
@@ -337,11 +334,11 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
                             tex_vert_id = mj.mesh_facetexcoord[face_id, i]
                             vertices[tex_vert_id] = mj.mesh_vert[mesh_vert_id + vert_start]
 
-                    uv = mj.mesh_texcoord[tex_vert_start : tex_vert_start + num_tex_vert]
+                    uv = mj.mesh_texcoord[tex_vert_start : (tex_vert_start + num_tex_vert)]
                     uv[:, 1] = 1 - uv[:, 1]
 
                     H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
-                    image_array = mj.tex_data[mj_tex.adr[0] : mj_tex.adr[0] + H * W * C].reshape(H, W, C)
+                    image_array = mj.tex_data[mj_tex.adr[0] : (mj_tex.adr[0] + H * W * C)].reshape(H, W, C)
                     uv = uv * mj_mat.texrepeat
                     visual = TextureVisuals(uv=uv, image=Image.fromarray(image_array))
 
@@ -355,7 +352,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         gs_type = gs.GEOM_TYPE.MESH
 
     else:
-        gs.logger.warning(f"Unsupported MJCF geom type: {mj_geom.type}")
+        gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
     mesh = gs.Mesh.from_trimesh(
@@ -375,7 +372,6 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         "type": gs_type,
         "pos": mj_geom.pos * scale,
         "quat": mj_geom.quat,
-        "mesh": mesh,
         "contype": mj_geom.contype[0],
         "conaffinity": mj_geom.conaffinity[0],
         "is_convex": True,
@@ -383,8 +379,60 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         "friction": mj_geom.friction[0],
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
+    if is_col:
+        info["mesh"] = mesh
+    else:
+        info["vmesh"] = mesh
 
     return info
+
+
+def parse_geoms(mj, scale, convexify, surface, xml_path):
+    links_g_info = [[] for _ in range(mj.nbody)]
+
+    # Loop over all geometries sequentially
+    is_any_col = False
+    for i_g in range(mj.ngeom):
+        if mj.geom_bodyid[i_g] < 0:
+            continue
+
+        # try parsing a given geometry
+        g_info = parse_geom(mj, i_g, scale, convexify, surface, xml_path)
+        if g_info is None:
+            continue
+
+        # Ignore world when looking for collision geometries
+        if mj.geom_bodyid[i_g] == 0:
+            is_any_col |= g_info["contype"] or g_info["conaffinity"]
+
+        # assign geoms to link
+        link_idx = mj.geom_bodyid[i_g]
+        links_g_info[link_idx].append(g_info)
+
+    # Inform the user that collision geometries are not displayed by default
+    if is_any_col and surface.vis_mode != "collision":
+        gs.logger.info(
+            "Collision meshes are not visualized by default. To visualize them, please use `vis_mode='collision'` "
+            "when calling `scene.add_entity`."
+        )
+
+    # Duplicating collision geometries as visual for bodies not having dedicated visual geometries
+    for link_g_info in links_g_info:
+        is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
+        if is_all_col:
+            for g_info in link_g_info.copy():
+                g_info = g_info.copy()
+                mesh = g_info.pop("mesh")
+                vmesh = gs.Mesh(
+                    mesh=mesh.trimesh,
+                    surface=surface,
+                    uvs=mesh.uvs,
+                    metadata=mesh.metadata,
+                )
+                g_info = {**g_info, "vmesh": vmesh, "contype": 0, "conaffinity": 0}
+                link_g_info.append(g_info)
+
+    return links_g_info
 
 
 def parse_equality(mj, i_e, scale, ordered_links_idx):
