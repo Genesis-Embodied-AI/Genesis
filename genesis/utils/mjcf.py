@@ -78,7 +78,7 @@ def parse_link(mj, i_l, scale):
                         # Direct-drive
                         actuator_kp = 0.0
                         actuator_kv = 0.0
-                    else: # this must be affine
+                    else:  # this must be affine
                         # PD control
                         gainprm = mj.actuator_gainprm[i_a]
                         biasprm = mj.actuator_biasprm[i_a]
