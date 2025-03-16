@@ -343,13 +343,17 @@ class RigidSolver(Solver):
         joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
+            # use default contact resolve time if and only if solref is not set
+            dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
+            dofs_sol_params[dofs_sol_params[:, 0] == 0.0, 0] = self._sol_contact_resolve_time
+
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                dofs_sol_params=np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float),
+                dofs_sol_params=dofs_sol_params,
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
@@ -389,8 +393,6 @@ class RigidSolver(Solver):
 
             for j in ti.static(range(7)):
                 self.dofs_info[I].sol_params[j] = dofs_sol_params[i, j]
-
-            self.dofs_info[I].sol_params[0] = self._sol_contact_resolve_time
 
             self.dofs_info[I].armature = dofs_armature[i]
             self.dofs_info[I].invweight = dofs_invweight[i]
