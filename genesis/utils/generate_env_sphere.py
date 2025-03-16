@@ -1,6 +1,7 @@
 import trimesh
 import numpy as np
 from PIL import Image
+import argparse
 
 
 def compute_uv_from_vertex(vertex):
@@ -30,7 +31,7 @@ def compute_uv_from_vertex(vertex):
     return u, v, vertex_new
 
 
-def main():
+def generate_env_sphere(image_path, out_path="env_sphere.obj"):
     # Create a sphere mesh
     phi = np.linspace(0, np.pi * 2, 65)[:-1]
     phi = np.concatenate([phi[:33], [np.pi + 0.01], phi[33:]])
@@ -51,12 +52,16 @@ def main():
     sphere = trimesh.Trimesh(vertices, faces, normals, process=False)
 
     # Add UV coordinates to the sphere's visual attribute
-    sphere.visual = trimesh.visual.TextureVisuals(
-        uv=uv_coords, image=Image.open("/home/zhouxian/Downloads/env_maps/bathroom_01.jpg")
-    )
+    sphere.visual = trimesh.visual.TextureVisuals(uv=uv_coords, image=Image.open(image_path))
     # Export the mesh with the texture mapped
-    sphere.export("env_sphere.obj")
+    sphere.export(out_path)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Genesis CLI")
+    parser.add_argument("image_path", type=str, help="path to image")
+    parser.add_argument("out_path", type=str, help="output path")
+    args = parser.parse_args()
+
+    if args.command == "generate":
+        generate_env_sphere(args.image_path, args.out_path)

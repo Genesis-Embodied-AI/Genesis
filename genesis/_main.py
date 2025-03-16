@@ -11,6 +11,7 @@ from taichi._lib import core as _ti_core
 from taichi.lang import impl
 
 import genesis as gs
+from genesis.utils.generate_env_sphere import generate_env_sphere
 
 
 class JointControlGUI:
@@ -244,6 +245,12 @@ def main():
     parser_animate.add_argument("filename_pattern", type=str, help="Image files, via glob pattern")
     parser_animate.add_argument("--fps", type=int, default=30, help="FPS of the output video")
 
+    parser_env_sphere = subparsers.add_parser("env_sphere", help="Generate env sphere from the given image")
+    parser_animate.add_argument("image_path", type=str, help="Path of the image to use to generate the env sphere")
+    parser_animate.add_argument(
+        "-o", "--output", type=str, default="env_sphere.obj", help="output path of the generated env sphere"
+    )
+
     args = parser.parse_args()
 
     if args.command == "clean":
@@ -252,6 +259,8 @@ def main():
         view(args.filename, args.collision, args.rotate, args.scale)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
+    elif args.command == "env_sphere":
+        generate_env_sphere(args.image_path, args.output)
     elif args.command == None:
         parser.print_help()
 
