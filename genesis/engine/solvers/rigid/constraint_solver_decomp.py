@@ -68,7 +68,6 @@ class ConstraintSolver:
 
         ## line search
         self.gtol = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-        self.meaninertia = ti.field(gs.ti_float, shape=self._solver._batch_shape())
 
         self.mv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
         self.jv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
@@ -93,12 +92,18 @@ class ConstraintSolver:
 
         self.reset()
 
+    def clear(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_clear(envs_idx)
+
     @ti.kernel
-    def clear(self):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for b in range(self._B):
-            self.n_constraints[b] = 0
-            self.n_constraints_equality[b] = 0
+    def _kernel_clear(self, envs_idx: ti.types.ndarray()):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            self.n_constraints[i_b] = 0
+            self.n_constraints_equality[i_b] = 0
 
     @ti.kernel
     def add_collision_constraints(self):
@@ -492,13 +497,23 @@ class ConstraintSolver:
 
             self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
 
-    def reset(self):
-        self.jac.fill(0)
-        self.qacc_ws.fill(0)
-        self.meaninertia.fill(1.0)  # TODO: this is not used
+    def reset(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_reset(envs_idx)
 
-        if self.sparse_solve:
-            self.jac_n_relevant_dofs.fill(0)
+    @ti.kernel
+    def _kernel_reset(self, envs_idx: ti.types.ndarray()):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            for i_d in range(self._solver.n_dofs_):
+                self.qacc_ws[i_d, i_b] = 0
+                for i_c in range(self.len_constraints_):
+                    self.jac[i_c, i_d, i_b] = 0
+            if ti.static(self.sparse_solve):
+                for i_c in range(self.len_constraints_):
+                    self.jac_n_relevant_dofs[i_c, i_b] = 0
 
     def handle_constraints(self):
         self.add_equality_constraints()
@@ -575,6 +590,7 @@ class ConstraintSolver:
             # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
             if self.n_constraints[i_b] > 0:
                 # cnt = 0
+                tol_scaled = (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs)) * self.tolerance
                 for it in range(self.iterations):
                     # cnt += 1
                     self._func_solve_body(i_b)
@@ -582,13 +598,12 @@ class ConstraintSolver:
                         break
 
                     gradient = gs.ti_float(0.0)
-
                     for i_d in range(self._solver.n_dofs):
                         gradient += self.grad[i_d, i_b] * self.grad[i_d, i_b]
 
-                    gradient = ti.sqrt(gradient / self._solver.n_dofs_)
+                    gradient = ti.sqrt(gradient)
                     improvement = self.prev_cost[i_b] - self.cost[i_b]
-                    if gradient < self.tolerance or improvement < self.tolerance:
+                    if gradient < tol_scaled or improvement < tol_scaled:
                         break
                 # print(cnt)
 
@@ -679,8 +694,7 @@ class ConstraintSolver:
         snorm = gs.ti_float(0.0)
         for jd in range(self._solver.n_dofs):
             snorm += self.search[jd, i_b] ** 2
-        self.meaninertia[i_b] = 1.0
-        snorm = ti.sqrt(snorm / self._solver.n_dofs_) * self.meaninertia[i_b] * self._solver.n_dofs
+        snorm = ti.sqrt(snorm / self._solver.n_dofs_) * self._solver.meaninertia[i_b] * self._solver.n_dofs
         self.gtol[i_b] = self.tolerance * self.ls_tolerance * snorm
         gtol = self.tolerance * self.ls_tolerance * snorm
         ## use adaptive linesearch tolerance
@@ -696,7 +710,7 @@ class ConstraintSolver:
             self.ls_result[i_b] = 1
             res_alpha = 0.0
         else:
-            scale = 1 / (self.meaninertia[i_b] * ti.max(1, self._solver.n_dofs))
+            scale = 1 / (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs))
             gtol = self.tolerance * self.ls_tolerance * snorm
             slopescl = scale / snorm
 

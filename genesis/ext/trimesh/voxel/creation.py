@@ -147,7 +147,7 @@ def local_voxelize(mesh, point, pitch, radius, fill=True, **kwargs):
 
         where = np.where(contains)[0] + 1
         # use in1d vs isin for older numpy versions
-        internal = np.in1d(regions.flatten(), where).reshape(regions.shape)
+        internal = np.isin(regions.flatten(), where).reshape(regions.shape)
 
         voxels = np.logical_or(voxels, internal)
 

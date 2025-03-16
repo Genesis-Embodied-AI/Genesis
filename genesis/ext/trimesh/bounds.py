@@ -272,7 +272,7 @@ def oriented_bounds(obj, angle_digits=1, ordered=True, normal=None, coplanar_tol
         area = ((x.max(axis=1) - x.min(axis=1)) * (y.max(axis=1) - y.min(axis=1))).min()
 
         # the volume is 2D area plus the projected height
-        volume = area * projected[:, 2].ptp()
+        volume = area * np.ptp(projected[:, 2])
 
         # store this transform if it's better than one we've seen
         if volume < min_volume:
@@ -283,7 +283,7 @@ def oriented_bounds(obj, angle_digits=1, ordered=True, normal=None, coplanar_tol
     # part so now we need to do the bookkeeping to find the box
     vert_ones = np.column_stack((vertices, np.ones(len(vertices)))).T
     projected = np.dot(min_2D, vert_ones).T[:, :3]
-    height = projected[:, 2].ptp()
+    height = np.ptp(projected[:, 2])
     rotation_2D, box = oriented_bounds_2D(projected[:, :2])
     min_extents = np.append(box, height)
     rotation_2D[:2, 2] = 0.0
@@ -294,7 +294,7 @@ def oriented_bounds(obj, angle_digits=1, ordered=True, normal=None, coplanar_tol
 
     # transform points using our matrix to find the translation
     transformed = transformations.transform_points(vertices, to_origin)
-    box_center = transformed.min(axis=0) + transformed.ptp(axis=0) * 0.5
+    box_center = transformed.min(axis=0) + np.ptp(transformed, axis=0) * 0.5
     to_origin[:3, 3] = -box_center
 
     # return ordered 3D extents
@@ -374,7 +374,7 @@ def minimum_cylinder(obj, sample_count=6, angle_tol=0.001):
         """
         to_2D = transformations.spherical_matrix(*spherical, axes="rxyz")
         projected = transformations.transform_points(hull, matrix=to_2D)
-        height = projected[:, 2].ptp()
+        height = np.ptp(projected[:, 2])
 
         try:
             center_2D, radius = nsphere.minimum_nsphere(projected[:, :2])
@@ -403,7 +403,7 @@ def minimum_cylinder(obj, sample_count=6, angle_tol=0.001):
         # transform vertices to plane to check
         on_plane = transformations.transform_points(obj.vertices, to_2D)
         # cylinder height is overall Z span
-        height = on_plane[:, 2].ptp()
+        height = np.ptp(on_plane[:, 2])
         # center mass is correct on plane, but position
         # along symmetry axis may be wrong so slide it
         slide = transformations.translation_matrix([0, 0, (height / 2.0) - on_plane[:, 2].max()])
@@ -473,7 +473,7 @@ def to_extents(bounds):
     if bounds.shape != (2, 3):
         raise ValueError("bounds must be (2, 3)")
 
-    extents = bounds.ptp(axis=0)
+    extents = np.ptp(bounds, axis=0)
     transform = np.eye(4)
     transform[:3, 3] = bounds.mean(axis=0)
 

@@ -221,7 +221,6 @@ class Viewer(pyglet.window.Window):
         self._offscreen_event = Event()
         self._initialized_event = Event()
         self._is_active = False
-        self._should_close = False
         self._run_in_thread = run_in_thread
         self._seg_node_map = context.seg_node_map
 
@@ -385,19 +384,24 @@ class Viewer(pyglet.window.Window):
 
         self.pending_buffer_updates = {}
 
+        # Starting the viewer would raise an exception if the OpenGL context is invalid for some reason. This exception
+        # must be caught in order to implement some fallback mechanism. One may want to start the viewer from the main
+        # thread while the running loop would be running on a background thread. However, this approach is not possible
+        # because all access to the OpenGL context must be done from the thread that created it in the first place. As
+        # a result, the logic for catching an invalid OpenGL context must be implemented at the thread-level.
         self.auto_start = auto_start
         if self.run_in_thread:
             self._initialized_event.clear()
-            self._thread = Thread(target=self._init_and_start_app, daemon=True)
+            self._thread = Thread(target=self.start, daemon=True)
             self._thread.start()
             self._initialized_event.wait()
+            if not self._is_active:
+                # TODO: For simplicity, the actual exception is not reported for now
+                raise OpenGL.error.Error("Invalid OpenGL context.")
         else:
             self._thread = None
             if self.auto_start:
-                self._init_and_start_app()
-
-    def start(self):
-        self._init_and_start_app()
+                self.start()
 
     @property
     def scene(self):
@@ -524,15 +528,16 @@ class Viewer(pyglet.window.Window):
     def registered_keys(self, value):
         self._registered_keys = value
 
-    def close_external(self):
-        """Close the viewer from another thread.
+    def close(self):
+        """Close the viewer.
 
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
-        self._should_close = True
-        while self.is_active:
-            time.sleep(1.0 / self.viewer_flags["refresh_rate"])
+        self.on_close()
+        if self.run_in_thread:
+            while self._is_active:
+                time.sleep(1.0 / self.viewer_flags["refresh_rate"])
 
     def save_video(self, filename=None):
         """Save the stored frames to a video file.
@@ -557,9 +562,23 @@ class Viewer(pyglet.window.Window):
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
+        # Always consider the viewer initialized at this point to avoid being stuck if starting fails
+        if not self._initialized_event.is_set():
+            self._initialized_event.set()
+
+        # Early return if already closed
+        if not self._is_active:
+            return
+
+        # Do not consider the viewer as active right away
+        self._is_active = False
+
         # Remove our camera and restore the prior one
-        if self._camera_node is not None:
-            self.scene.remove_node(self._camera_node)
+        try:
+            if self._camera_node is not None:
+                self.scene.remove_node(self._camera_node)
+        except Exception:
+            pass
         if self._prior_main_camera_node is not None:
             self.scene.main_camera_node = self._prior_main_camera_node
 
@@ -580,13 +599,15 @@ class Viewer(pyglet.window.Window):
         # Force clean-up of OpenGL context data
         try:
             OpenGL.contextdata.cleanupContext()
-            self.close()
+            super().close()
         except Exception:
             pass
         finally:
-            self._is_active = False
-            super(Viewer, self).on_close()
-            pyglet.app.exit()
+            super().on_close()
+            try:
+                pyglet.app.exit()
+            except:
+                pass
 
         self._offscreen_result_semaphore.release()
 
@@ -596,10 +617,14 @@ class Viewer(pyglet.window.Window):
         if depth:
             self.render_flags["depth"] = True
         self.pending_offscreen_camera = (camera_node, render_target, normal)
-        # send_offscreen_request
-        self._offscreen_event.set()
-        # wait_for_offscreen
-        self._offscreen_result_semaphore.acquire()
+        if self.run_in_thread:
+            # send_offscreen_request
+            self._offscreen_event.set()
+            # wait_for_offscreen
+            self._offscreen_result_semaphore.acquire()
+        else:
+            # Force offscreen rendering synchronously
+            self.draw_offscreen()
         if seg:
             self.render_flags["seg"] = False
         if depth:
@@ -705,6 +730,9 @@ class Viewer(pyglet.window.Window):
         if self._renderer is None:
             return
 
+        self._renderer._delete_shadow_framebuffer()
+        self._renderer._delete_floor_framebuffer()
+
         self._viewport_size = (width, height)
         self._trackball.resize(self._viewport_size)
         self._renderer.viewport_width = self._viewport_size[0]
@@ -800,7 +828,7 @@ class Viewer(pyglet.window.Window):
                 self._message_text = "Fullscreen Off"
 
         # H toggles shadows
-        elif symbol == pyglet.window.key.H and sys.platform != "darwin":
+        elif symbol == pyglet.window.key.H:
             self.render_flags["shadows"] = not self.render_flags["shadows"]
             if self.render_flags["shadows"]:
                 self._message_text = "Shadows On"
@@ -949,10 +977,7 @@ class Viewer(pyglet.window.Window):
                 self._message_opac = self.viewer_flags["refresh_rate"] * 2
                 self._video_saver = None
 
-        if self._should_close:
-            self.on_close()
-        else:
-            self.on_draw()
+        self.on_draw()
 
     def _reset_view(self):
         """Reset the view to a good initial state.
@@ -1109,7 +1134,7 @@ class Viewer(pyglet.window.Window):
 
         return retval
 
-    def _init_and_start_app(self):
+    def start(self, auto_refresh=True):
         # Try multiple configs starting with target OpenGL version
         # and multisampling and removing these options if exception
         # Note: multisampling not available on all hardware
@@ -1141,12 +1166,19 @@ class Viewer(pyglet.window.Window):
             Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
         ]
         for conf in confs:
+            # Keep the window invisible for now. It will be displayed only if everything is working fine.
+            # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
+            # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
             try:
                 super(Viewer, self).__init__(
-                    config=conf, resizable=True, width=self._viewport_size[0], height=self._viewport_size[1]
+                    config=conf,
+                    visible=False,
+                    resizable=True,
+                    width=self._viewport_size[0],
+                    height=self._viewport_size[1],
                 )
                 break
-            except pyglet.window.NoSuchConfigException:
+            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException):
                 pass
 
         if not self.context:
@@ -1155,31 +1187,57 @@ class Viewer(pyglet.window.Window):
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
-        last_time = time.time()
+        # Model the complete scene once, to make sure that everything is fine.
+        try:
+            self.refresh()
+        except OpenGL.error.Error:
+            # Invalid OpenGL context. Closing before raising.
+            self.close()
+            return
 
-        while self.is_active:
-            time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
-            while self._offscreen_event.wait(time_next_frame - time.time()):
-                # print('e0', time.time() - last_time); last_time = time.time()
-                self.draw_offscreen()
-                self._offscreen_event.clear()
-                # print('e1', time.time() - last_time); last_time = time.time()
+        # At this point, we are all set to display the graphical window, finally!
+        self.set_visible(True)
+        self.activate()
 
-            pyglet.clock.tick()
+        if auto_refresh:
+            while self._is_active:
+                try:
+                    self.refresh()
+                except AttributeError:
+                    # The graphical window has been closed
+                    self.on_close()
+        else:
+            self.refresh()
 
-            if gs.platform != "Windows":
-                pyglet.app.platform_event_loop.step(0.0)
-            else:
-                # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
-                # this is a workaround on Windows. not sure if it's correct
-                time.sleep(0.001)
+    def _run(self):
+        while self._is_active:
+            try:
+                self.refresh()
+            except AttributeError:
+                # The graphical window has been closed
+                self.on_close()
 
-            self.switch_to()
-            self.dispatch_pending_events()
-            if self.is_active:
-                self.dispatch_events()
-                self.flip()
-            # print('e2', time.time() - last_time); last_time = time.time()
+    def refresh(self):
+        time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
+        while self._offscreen_event.wait(time_next_frame - time.time()):
+            self.draw_offscreen()
+            self._offscreen_event.clear()
+
+        pyglet.clock.tick()
+
+        if gs.platform != "Windows":
+            pyglet.app.platform_event_loop.step(0.0)
+        else:
+            # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
+            # this is a workaround on Windows. not sure if it's correct
+            time.sleep(0.001)
+
+        self.switch_to()
+        self.dispatch_pending_events()
+        if self._is_active:
+            self.dispatch_events()
+        if self._is_active:
+            self.flip()
 
     def _compute_initial_camera_pose(self):
         centroid = self.scene.centroid

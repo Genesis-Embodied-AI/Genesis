@@ -342,8 +342,7 @@ def rle_to_rle(rle, dtype=np.int64):
 
 
 def _unsorted_gatherer(indices, sorted_gather_fn):
-    if not isinstance(indices, np.ndarray):
-        indices = np.array(indices, copy=False)
+    indices = np.asarray(indices)
     order = np.argsort(indices)
     ordered_indices = indices[order]
 
@@ -590,8 +589,7 @@ def brle_reverse(brle_data):
 
 def rle_reverse(rle_data):
     """Get the rle encoding of the reversed dense array."""
-    if not isinstance(rle_data, np.ndarray):
-        rle_data = np.array(rle_data, copy=False)
+    rle_data = np.asarray(rle_data)
     rle_data = np.reshape(rle_data, (-1, 2))
     rle_data = rle_data[-1::-1]
     return np.reshape(rle_data, (-1,))

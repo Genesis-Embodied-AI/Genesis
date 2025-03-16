@@ -189,8 +189,11 @@ class OffscreenRenderer(object):
         elif platform == "egl":
             from .platforms import egl
 
-            device_id = int(os.environ.get("EGL_DEVICE_ID", "0"))
-            egl_device = egl.get_device_by_index(device_id)
+            if "EGL_DEVICE_ID" in os.environ:
+                device_id = int(os.environ["EGL_DEVICE_ID"])
+                egl_device = egl.get_device_by_index(device_id)
+            else:
+                egl_device = None
             self._platform = egl.EGLPlatform(self.viewport_width, self.viewport_height, device=egl_device)
         elif platform == "osmesa":
             from .platforms.osmesa import OSMesaPlatform

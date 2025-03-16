@@ -175,9 +175,21 @@ def convex_decompose(mesh, morph):
         if mesh.vertices.shape[0] > 3:
             mesh = mesh.simplify_quadric_decimation(morph.decimate_face_num)
 
+    # compute file name via hashing for caching
     cvx_path = get_cvx_path(mesh.vertices, mesh.faces, morph.coacd_options)
 
-    if not os.path.exists(cvx_path):
+    # loading pre-computed cache if available
+    is_cached_loaded = False
+    if os.path.exists(cvx_path):
+        gs.logger.debug("Convex decomposition file (.cvx) found in cache.")
+        try:
+            with open(cvx_path, "rb") as file:
+                mesh_parts = pkl.load(file)
+            is_cached_loaded = True
+        except (EOFError, pkl.UnpicklingError):
+            gs.logger.info("Ignoring corrupted cache.")
+
+    if not is_cached_loaded:
         with gs.logger.timer("Running convex decomposition."):
             mesh = coacd.Mesh(mesh.vertices, mesh.faces)
             args = morph.coacd_options
@@ -203,13 +215,10 @@ def convex_decompose(mesh, morph):
             mesh_parts = []
             for vs, fs in result:
                 mesh_parts.append(trimesh.Trimesh(vs, fs))
+
             os.makedirs(os.path.dirname(cvx_path), exist_ok=True)
             with open(cvx_path, "wb") as file:
                 pkl.dump(mesh_parts, file)
-
-    else:
-        with open(cvx_path, "rb") as file:
-            mesh_parts = pkl.load(file)
 
     return mesh_parts
 
@@ -513,16 +522,18 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 texture = glb.textures[material.normalTexture.index]
                 uvs_used = material.normalTexture.texCoord
                 image_index = texture.source
-                image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                normal_texture = create_texture(np.array(image), None, "linear")
+                if image_index is not None:
+                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                    normal_texture = create_texture(np.array(image), None, "linear")
 
             # TODO: Parse occlusion
             if material.occlusionTexture is not None:
                 texture = glb.textures[material.occlusionTexture.index]
                 uvs_used = material.occlusionTexture.texCoord
                 image_index = texture.source
-                image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                occlusion_texture = create_texture(np.array(image), None, "linear")
+                if image_index is not None:
+                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                    occlusion_texture = create_texture(np.array(image), None, "linear")
 
             # parse alpha mode
             if material.alphaMode == "OPAQUE":
@@ -543,14 +554,15 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[pbr_texture.metallicRoughnessTexture.index]
                     uvs_used = pbr_texture.metallicRoughnessTexture.texCoord
                     image_index = texture.source
-                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    bands = image.split()
-                    if len(bands) == 1:
-                        roughness_image = np.array(bands[0])
-                    else:
-                        roughness_image = np.array(bands[1])  # G for roughness
-                        metallic_image = np.array(bands[2])  # B for metallic
-                        # metallic_image = np.array(bands[0])     # R for metallic????
+                    if image_index is not None:
+                        image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                        bands = image.split()
+                        if len(bands) == 1:
+                            roughness_image = np.array(bands[0])
+                        else:
+                            roughness_image = np.array(bands[1])  # G for roughness
+                            metallic_image = np.array(bands[2])  # B for metallic
+                            # metallic_image = np.array(bands[0])     # R for metallic????
 
                 metallic_factor = None
                 if pbr_texture.metallicFactor is not None:
@@ -569,8 +581,9 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[pbr_texture.baseColorTexture.index]
                     uvs_used = pbr_texture.baseColorTexture.texCoord
                     image_index = texture.source
-                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    color_image = np.array(image.convert("RGBA"))
+                    if image_index is not None:
+                        image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                        color_image = np.array(image.convert("RGBA"))
 
                 # parse color
                 color_factor = None
@@ -625,10 +638,11 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[material.emissiveTexture.index]
                     uvs_used = material.emissiveTexture.texCoord
                     image_index = texture.source
-                    image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    if image.mode != "RGB":
-                        image = image.convert("RGB")
-                    emissive_image = np.array(image)
+                    if image_index is not None:
+                        image = Image.open(uri_to_PIL(glb.images[image_index].uri))
+                        if image.mode != "RGB":
+                            image = image.convert("RGB")
+                        emissive_image = np.array(image)
 
                 emissive_factor = None
                 if material.emissiveFactor is not None:

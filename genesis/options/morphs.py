@@ -642,6 +642,10 @@ class Terrain(Morph):
         The types of subterrains to generate. If a string, it will be repeated for all subterrains. If a 2D list, it should have the same shape as `n_subterrains`.
     height_field : array-like, optional
         The height field to generate the terrain. If specified, all other configurations will be ignored. Defaults to None.
+    name : str, optional
+        The name of the terrain to save
+    from_stored : str, optional
+        The path of the stored terrain to load
     """
 
     is_free: bool = False

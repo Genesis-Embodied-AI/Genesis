@@ -35,16 +35,27 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
     mesh = mu.load_mesh(file)
     mesh.vertices = mesh.vertices * scale
 
+    # compute file name via hashing for caching
     tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
-    if not os.path.exists(tet_file_path):
+
+    # loading pre-computed cache if available
+    is_cached_loaded = False
+    if os.path.exists(tet_file_path):
+        gs.logger.debug("Tetrahedra file (`.tet`) found in cache.")
+        try:
+            with open(tet_file_path, "rb") as file:
+                verts, elems = pkl.load(file)
+            is_cached_loaded = True
+        except (EOFError, pkl.UnpicklingError):
+            gs.logger.info("Ignoring corrupted cache.")
+
+    if not is_cached_loaded:
         with gs.logger.timer(f"Tetrahedralization with configuration {tet_cfg} and generating `.tet` file:"):
             verts, elems = mu.tetrahedralize_mesh(mesh, tet_cfg)
 
             os.makedirs(os.path.dirname(tet_file_path), exist_ok=True)
-            pkl.dump((verts, elems), open(tet_file_path, "wb"))
-    else:
-        gs.logger.debug("Tetrahedra (`.tet`) found in cache.")
-        verts, elems = pkl.load(open(tet_file_path, "rb"))
+            with open(tet_file_path, "wb") as file:
+                pkl.dump((verts, elems), file)
 
     verts += np.array(pos)
 

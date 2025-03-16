@@ -198,7 +198,7 @@ def hashable_rows(data, digits=None):
     # reshape array into magical data type that is weird but hashable
     dtype = np.dtype((np.void, as_int.dtype.itemsize * as_int.shape[1]))
     # make sure result is contiguous and flat
-    hashable = np.ascontiguousarray(as_int).view(dtype).reshape(-1)
+    hashable = np.ascontiguousarray(as_int).view(dtype).reshape((-1,))
     return hashable
 
 

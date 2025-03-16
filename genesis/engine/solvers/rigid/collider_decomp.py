@@ -66,6 +66,8 @@ class Collider:
         # compute collision pairs
         # convert to numpy array for faster retrieval
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
+        geoms_contype = self._solver.geoms_info.contype.to_numpy()
+        geoms_conaffinity = self._solver.geoms_info.conaffinity.to_numpy()
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
@@ -88,7 +90,13 @@ class Collider:
                     continue
 
                 # adjacent links
-                if links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la:
+                if not self._solver._enable_adjacent_collision and (
+                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                ):
+                    continue
+
+                # contype and conaffinity
+                if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
                     continue
 
                 # pair of fixed base links
@@ -181,16 +189,38 @@ class Collider:
 
         self.reset()
 
-    def reset(self):
-        self.first_time.fill(1)
-        self.contact_cache.i_va_0.fill(-1)
-        self.contact_cache.penetration.fill(0)
-        self.contact_cache.normal.fill(0)
+    def reset(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_reset(envs_idx)
 
     @ti.kernel
-    def clear(self):
+    def _kernel_reset(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
+        for i_b_ in range(envs_idx.shape[0]):
+            b = envs_idx[i_b_]
+            self.first_time[b] = 1
+            for i in range(self._solver.n_geoms):
+                self.contact_cache.i_va_0[i, i, b] = -1
+                self.contact_cache.penetration[i, i, b] = 0
+                self.contact_cache.normal[i, i, b] = 0
+
+    def clear(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_clear(envs_idx)
+
+    @ti.kernel
+    def _kernel_clear(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
 
             if ti.static(self._solver._use_hibernation):
                 self.n_contacts_hibernated[i_b] = 0
@@ -604,7 +634,16 @@ class Collider:
             is_valid = False
 
         # adjacent links
-        if self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la:
+        if ti.static(not self._solver._enable_adjacent_collision) and (
+            self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
+        ):
+            is_valid = False
+
+        # contype and conaffinity
+        if not (
+            (self._solver.geoms_info[i_ga].contype & self._solver.geoms_info[i_gb].conaffinity)
+            or (self._solver.geoms_info[i_gb].contype & self._solver.geoms_info[i_ga].conaffinity)
+        ):
             is_valid = False
 
         # pair of fixed links

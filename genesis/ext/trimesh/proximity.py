@@ -183,7 +183,7 @@ def closest_point(mesh, points):
 
     # however: same closest point on two different faces
     # find the best one and correct triangle ids if necessary
-    check_distance = two_dists.ptp(axis=1) < tol.merge
+    check_distance = np.ptp(two_dists, axis=1) < tol.merge
     check_magnitude = np.all(np.abs(two_dists) > tol.merge, axis=1)
 
     # mask results where corrections may be apply

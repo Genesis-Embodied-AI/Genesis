@@ -1,14 +1,9 @@
+import os
 import gc
 
 import numpy as np
 
 import genesis as gs
-
-try:
-    from genesis.ext import pyrender
-    from genesis.ext.pyrender.constants import RenderFlags
-except:
-    pass
 from genesis.repr_base import RBC
 
 
@@ -25,9 +20,10 @@ class Rasterizer(RBC):
             return
 
         if self._offscreen:
-            platform = "egl"
-            if gs.platform == "macOS":
-                platform = "pyglet"
+            from genesis.ext import pyrender
+
+            # if environment variable is set, use the platform specified, otherwise some platform-specific default
+            platform = os.environ.get("PYOPENGL_PLATFORM", "egl" if gs.platform == "Linux" else "pyglet")
             self._renderer = pyrender.OffscreenRenderer(
                 pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
             )
@@ -35,6 +31,8 @@ class Rasterizer(RBC):
         self.visualizer = self._context.visualizer
 
     def add_camera(self, camera):
+        from genesis.ext import pyrender
+
         self._camera_nodes[camera.uid] = self._context.add_node(
             pyrender.PerspectiveCamera(
                 yfov=np.deg2rad(camera.fov),

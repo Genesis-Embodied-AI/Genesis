@@ -359,7 +359,7 @@ class Trimesh(Geometry3D):
             return
         # check if any values are larger than tol.merge
         # don't set the normals if they are all zero
-        ptp = values.ptp()
+        ptp = np.ptp(values)
         if not np.isfinite(ptp):
             log.debug("face_normals contain NaN, ignoring!")
             return
@@ -446,7 +446,7 @@ class Trimesh(Geometry3D):
             values = np.asanyarray(values, order="C", dtype=np.float64)
             if values.shape == self.vertices.shape:
                 # check to see if they assigned all zeros
-                if values.ptp() < tol.merge:
+                if np.ptp(values) < tol.merge:
                     log.debug("vertex_normals are all zero!")
                 self._cache["vertex_normals"] = values
 
@@ -501,7 +501,7 @@ class Trimesh(Geometry3D):
         # if mesh is empty return None
         if self.bounds is None:
             return None
-        extents = self.bounds.ptp(axis=0)
+        extents = np.ptp(self.bounds, axis=0)
 
         return extents
 

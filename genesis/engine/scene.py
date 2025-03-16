@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.engine.entities import Emitter
 from genesis.engine.simulator import Simulator
 from genesis.options import (
@@ -662,7 +663,7 @@ class Scene(RBC):
             self._para_level = gs.PARA_LEVEL.ALL
 
     @gs.assert_built
-    def reset(self, state=None):
+    def reset(self, state=None, envs_idx=None):
         """
         Resets the scene to its initial state.
 
@@ -672,15 +673,15 @@ class Scene(RBC):
             The state to reset the scene to. If None, the scene will be reset to its initial state. If this is given, the scene's registerered initial state will be updated to this state.
         """
         gs.logger.info(f"Resetting Scene ~~~<{self._uid}>~~~.")
-        self._reset(state)
+        self._reset(state, envs_idx)
 
-    def _reset(self, state=None):
+    def _reset(self, state=None, envs_idx=None):
         if self._is_built:
             if state is None:
                 state = self._init_state
             else:
                 self._init_state = state
-            self._sim.reset(state)
+            self._sim.reset(state, envs_idx)
         else:
             self._init_state = self._get_state()
 
@@ -688,8 +689,10 @@ class Scene(RBC):
         self._forward_ready = True
         self._reset_grad()
 
+        # TODO: sets _t = -1; not sure this is env isolation safe
         self._visualizer.reset()
 
+        # TODO: sets _next_particle = 0; not sure this is env isolation safe
         for emitter in self._emitters:
             emitter.reset()
 
@@ -805,6 +808,30 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
+
+    @gs.assert_built
+    def draw_debug_frames(self, Ts, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+        """
+        Draws 3-axis coordinate frames in the scene for visualization.
+
+        Parameters
+        ----------
+        Ts : array_like, shape (n, 4, 4)
+            The transformation matrices of frames.
+        axis_length : float, optional
+            The length of the axes.
+        origin_size : float, optional
+            The size of the origin point (represented as a sphere).
+        axis_radius : float, optional
+            The radius of the axes (represented as cylinders).
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
+        with self._visualizer.viewer_lock:
+            return self._visualizer.context.draw_debug_frames(Ts, axis_length, origin_size, axis_radius)
 
     @gs.assert_built
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
@@ -923,6 +950,52 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_points(poss, colors)
+
+    @gs.assert_built
+    def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
+        """
+        Draws a planned joint trajectory in the scene for visualization.
+
+        Parameters
+        ----------
+        qposs : array_like, shape (N, M)
+            The joint positions of the planned points.
+            N is the number of configurations (i.e., trajectory points).
+            M is the number of degrees of freedom for the entity (i.e., joint dimensions).
+        entity : gs.engine.entities.RigidEntity
+            The rigid entity whose forward kinematics are used to compute the trajectory path.
+        link_idx : int, optional
+            The link id of the rigid entity to visualize. Defeault is -1.
+        density : float, optional
+            Controls the sampling density of the trajectory points to visualize. Default is 0.3.
+        frame_scaling : float, optional
+            Scaling factor for the visualization frames' size. Affects the length and thickness of the debug frames. Default is 1.0.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object representing the visualized trajectory.
+
+        Notes
+        -----
+        The function uses forward kinematics (FK) to convert joint positions to Cartesian space and render debug frames.
+        The density parameter reduces FK computational load by sampling fewer points, with 1.0 representing the whole trajectory.
+        """
+        with self._visualizer.viewer_lock:
+            N = len(qposs)
+            density = np.clip(density, 0.0, 1.0)
+            N_new = int(N * density)
+            indices = torch.linspace(0, N - 2, N_new, dtype=int)
+
+            Ts = np.zeros((N_new, 4, 4))
+
+            for i in range(N_new):
+                pos, quat = entity.forward_kinematics(qposs[indices[i]])
+                Ts[i] = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
+
+            return self._visualizer.context.draw_debug_frames(
+                Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
+            )
 
     @gs.assert_built
     def clear_debug_object(self, object):

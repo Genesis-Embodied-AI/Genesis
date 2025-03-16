@@ -332,46 +332,21 @@ class RigidEntity(Entity):
         n_geoms = mj.ngeom
         n_links = mj.nbody - 1  # link 0 in mj is world
 
-        links_g_info = [list() for _ in range(n_links)]
-        world_g_info = []
+        # Check if there is any tendon. Report a warning if so.
+        if mj.ntendon:
+            gs.logger.warning("(MJCF) Tendon not supported")
 
-        # assign geoms to link
-        for i_g in range(n_geoms):
-            if mj.geom_bodyid[i_g] < 0:
-                continue
+        # Parse all geometries grouped by parent joint (or world)
+        world_g_info, *links_g_info = mju.parse_geoms(mj, morph.scale, morph.convexify, surface, morph.file)
 
-            # address geoms directly attached to worldbody (0)
-            elif mj.geom_bodyid[i_g] == 0:
-                g_info = mju.parse_geom(mj, i_g, morph.scale, morph.convexify, surface, morph.file)
-                if g_info is not None:
-                    world_g_info.append(g_info)
-
-            else:
-                g_info = mju.parse_geom(mj, i_g, morph.scale, morph.convexify, surface, morph.file)
-                if g_info is not None:
-                    link_idx = mj.geom_bodyid[i_g] - 1
-                    links_g_info[link_idx].append(g_info)
-
-        l_infos = []
-        j_infos = []
-
-        q_offset, dof_offset = 0, 0
-
-        for i_l in range(n_links):
-            l_info, j_info = mju.parse_link(mj, i_l + 1, q_offset, dof_offset, morph.scale)
-
-            l_infos.append(l_info)
-            j_infos.append(j_info)
-
-            q_offset += j_info["n_qs"]
-            dof_offset += j_info["n_dofs"]
+        # Parse all bodies (links and joints)
+        (l_world_info, *l_infos), (j_world_info, *j_infos) = mju.parse_links(mj, morph.scale)
 
         l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
-        for i_l in range(len(l_infos)):
-            l_info = l_infos[i_l]
-            j_info = j_infos[i_l]
-
-            if l_info["parent_idx"] < 0:  # base link
+        for l_info, j_info, link_g_info in zip(
+            (*l_infos, l_world_info), (*j_infos, j_world_info), (*links_g_info, world_g_info)
+        ):
+            if l_info["parent_idx"] < 0 and j_info["type"] != gs.JOINT_TYPE.FIXED:  # base link
                 if morph.pos is not None:
                     l_info["pos"] = np.array(morph.pos)
                     gs.logger.warning("Overriding base link's pos with user provided value in morph.")
@@ -380,20 +355,11 @@ class RigidEntity(Entity):
                     gs.logger.warning("Overriding base link's quat with user provided value in morph.")
 
                 if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial value will be reflected
+                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial
+                    # value will be reflected
                     j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
 
-            self._add_by_info(l_info, j_info, links_g_info[i_l], morph, surface)
-
-        if world_g_info:
-            l_world_info, j_world_info = mju.parse_link(mj, 0, q_offset, dof_offset, morph.scale)
-            if morph.pos is not None:
-                l_world_info["pos"] = np.array(morph.pos)
-                gs.logger.warning("Overriding base link's pos with user provided value in morph.")
-            if morph.quat is not None:
-                l_world_info["quat"] = np.array(morph.quat)
-                gs.logger.warning("Overriding base link's quat with user provided value in morph.")
-            self._add_by_info(l_world_info, j_world_info, world_g_info, morph, surface)
+            self._add_by_info(l_info, j_info, link_g_info, morph, surface)
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
@@ -409,6 +375,8 @@ class RigidEntity(Entity):
                     torque_scale=e_info["torque_scale"],
                     sol_params=e_info["sol_params"],
                 )
+            else:
+                gs.logger.warning(f"(MJCF) Equality type '{e_info['type']}' not supported for now.")
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
@@ -462,7 +430,8 @@ class RigidEntity(Entity):
 
         # geoms
         for g_info in g_infos:
-            if g_info["is_col"] and morph.collision:
+            is_col = bool(g_info["contype"] or g_info["conaffinity"])
+            if is_col and morph.collision:
                 link._add_geom(
                     mesh=g_info["mesh"],
                     init_pos=g_info["pos"],
@@ -472,8 +441,10 @@ class RigidEntity(Entity):
                     sol_params=g_info["sol_params"],
                     data=g_info["data"],
                     needs_coup=self.material.needs_coup,
+                    contype=g_info["contype"],
+                    conaffinity=g_info["conaffinity"],
                 )
-            if not g_info["is_col"] and morph.visualization:
+            if not is_col and morph.visualization:
                 link._add_vgeom(
                     vmesh=g_info["mesh"],
                     init_pos=g_info["pos"],
@@ -1328,6 +1299,89 @@ class RigidEntity(Entity):
                 self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
 
+    @gs.assert_built
+    def forward_kinematics(self, qpos, qs_idx_local=None, ls_idx_local=None, envs_idx=None):
+        """
+        Compute forward kinematics for a single target link.
+
+        Parameters
+        ----------
+        qpos : array_like, shape (n_qs,) or (n_envs, n_qs) or (len(envs_idx), n_qs)
+            The joint positions.
+        qs_idx_local : None | array_like, optional
+            The indices of the qpos to set. If None, all qpos will be set. Defaults to None.
+        ls_idx_local : None | array_like, optional
+            The indices of the links to get. If None, all links will be returned. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+
+        Returns
+        -------
+        links_pos : array_like, shape (n_links, 3) or (n_envs, n_links, 3) or (len(envs_idx), n_links, 3)
+            The positions of the links (link frame origins).
+        links_quat : array_like, shape (n_links, 4) or (n_envs, n_links, 4) or (len(envs_idx), n_links, 4)
+            The orientations of the links.
+        """
+
+        if self._solver.n_envs == 0:
+            qpos = qpos.unsqueeze(0)
+            envs_idx = torch.zeros(1, dtype=gs.tc_int)
+        else:
+            envs_idx = self._solver._get_envs_idx(envs_idx)
+
+        links_idx = self._get_ls_idx(ls_idx_local)
+        links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
+        links_quat = torch.empty((len(envs_idx), len(links_idx), 4), dtype=gs.tc_float, device=gs.device)
+
+        self._kernel_forward_kinematics(
+            links_pos,
+            links_quat,
+            qpos,
+            self._get_qs_idx(qs_idx_local),
+            links_idx,
+            envs_idx,
+        )
+
+        if self._solver.n_envs == 0:
+            links_pos = links_pos.squeeze(0)
+            links_quat = links_quat.squeeze(0)
+        return links_pos, links_quat
+
+    @ti.kernel
+    def _kernel_forward_kinematics(
+        self,
+        links_pos: ti.types.ndarray(),
+        links_quat: ti.types.ndarray(),
+        qpos: ti.types.ndarray(),
+        qs_idx: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+            # save original qpos
+            # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
+            self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]]
+            # set new qpos
+            self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
+            # run FK
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in ti.static(range(3)):
+                links_pos[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].pos[i]
+            for i in ti.static(range(4)):
+                links_quat[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].quat[i]
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+            # restore original qpos
+            self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
+            # run FK
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -1379,9 +1433,11 @@ class RigidEntity(Entity):
             from ompl import util as ou
 
             ou.setLogLevel(ou.LOG_ERROR)
-        except:
-            gs.raise_exception(
-                "Failed to import OMPL. Did you install? (For installation instructions, see https://genesis-world.readthedocs.io/en/latest/user_guide/overview/installation.html#optional-motion-planning)"
+        except Exception as e:
+            gs.raise_exception_from(
+                "Failed to import OMPL. Did you install? (For installation instructions, see "
+                "https://genesis-world.readthedocs.io/en/latest/user_guide/overview/installation.html#optional-motion-planning)",
+                e,
             )
 
         supported_planners = [
@@ -2513,6 +2569,24 @@ class RigidEntity(Entity):
     @gs.assert_built
     def set_links_invweight(self, invweight, ls_idx_local=None, envs_idx=None):
         self._solver.set_links_invweight(invweight, self._get_ls_idx(ls_idx_local), envs_idx)
+
+    @gs.assert_built
+    def set_mass(self, mass):
+        """
+        Set the mass of the entity.
+
+        Parameters
+        ----------
+        mass : float
+            The mass to set.
+        """
+        original_mass_distribution = []
+        for link in self.links:
+            original_mass_distribution.append(link.get_mass())
+        original_mass_distribution = np.array(original_mass_distribution)
+        original_mass_distribution /= np.sum(original_mass_distribution)
+        for link, mass_ratio in zip(self.links, original_mass_distribution):
+            link.set_mass(mass * mass_ratio)
 
     @gs.assert_built
     def get_mass(self):

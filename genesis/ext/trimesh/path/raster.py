@@ -57,7 +57,7 @@ def rasterize(path, pitch=None, origin=None, resolution=None, fill=True, width=N
 
     # if resolution is None make it larger than path
     if resolution is None:
-        span = np.vstack((path.bounds, origin)).ptp(axis=0)
+        span = np.ptp(np.vstack((path.bounds, origin)), axis=0)
         resolution = np.ceil(span / pitch) + 2
     # get resolution as a (2,) int tuple
     resolution = np.asanyarray(resolution, dtype=np.int64)

@@ -170,7 +170,18 @@ class RigidLink(RBC):
             return trimesh.Trimesh(init_verts, init_faces)
 
     def _add_geom(
-        self, mesh, init_pos, init_quat, type, friction, sol_params, center_init=None, needs_coup=False, data=None
+        self,
+        mesh,
+        init_pos,
+        init_quat,
+        type,
+        friction,
+        sol_params,
+        center_init=None,
+        needs_coup=False,
+        contype=1,
+        conaffinity=1,
+        data=None,
     ):
         geom = RigidGeom(
             link=self,
@@ -188,6 +199,8 @@ class RigidLink(RBC):
             sol_params=sol_params,
             center_init=center_init,
             needs_coup=needs_coup,
+            contype=contype,
+            conaffinity=conaffinity,
             data=data,
         )
         self._geoms.append(geom)
@@ -347,7 +360,10 @@ class RigidLink(RBC):
         Set the mass of the link.
         """
         if mass <= 0:
-            raise ValueError("mass must be positive")
+            if mass < 0:
+                gs.raise_exception(f"Attempt to set mass of {mass} to {self.name} link. Mass must be positive.")
+            gs.logger.warning(f"Attempt to set mass of {mass} to {self.name} link. Mass must be positive, skipping.")
+            return
 
         ratio = mass / self._inertial_mass
         assert ratio > 0
