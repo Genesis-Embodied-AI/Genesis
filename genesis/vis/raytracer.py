@@ -791,10 +791,15 @@ class Raytracer:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
                     vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                    triangles = triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)] - fem_entity.v_start
-                    
+                    triangles = (
+                        triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
+                        - fem_entity.v_start
+                    )
+
                     self.update_deformable(
-                        str(fem_entity.uid), vertices, triangles,
+                        str(fem_entity.uid),
+                        vertices,
+                        triangles,
                         trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals,
                         np.array([]),
                     )
