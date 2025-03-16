@@ -106,7 +106,7 @@ def _start_gui_mac(motor_names, dof_pos_limits, gui_joint_positions, stop_event)
     root.mainloop()
 
 
-def view(filename, collision, rotate, scale=1.0):
+def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
     gs.init(backend=gs.cpu)
     FPS = 60
     dt = 1 / FPS
@@ -116,6 +116,9 @@ def view(filename, collision, rotate, scale=1.0):
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
             max_FPS=FPS,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_link_frame=show_link_frame,
         ),
         sim_options=gs.options.SimOptions(
             gravity=(0, 0, 0),
@@ -239,6 +242,7 @@ def main():
     )
     parser_view.add_argument("-r", "--rotate", action="store_true", default=False, help="Whether to rotate the entity")
     parser_view.add_argument("-s", "--scale", type=float, default=1.0, help="Scale of the entity")
+    parser_view.add_argument("-l", "--link_frame", action="store_true", default=False, help="Show link frame")
 
     parser_animate = subparsers.add_parser("animate", help="Compile a list of image files into a video")
     parser_animate.add_argument("filename_pattern", type=str, help="Image files, via glob pattern")
@@ -249,7 +253,7 @@ def main():
     if args.command == "clean":
         clean()
     elif args.command == "view":
-        view(args.filename, args.collision, args.rotate, args.scale)
+        view(args.filename, args.collision, args.rotate, args.scale, args.link_frame)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
     elif args.command == None:
