@@ -25,9 +25,9 @@ def box_plan():
     ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
     worldbody = ET.SubElement(mjcf, "worldbody")
     ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
-    box_body = ET.SubElement(worldbody, "body", pos="0. 0. 0.3")
+    box_body = ET.SubElement(worldbody, "body", name="box", pos="0. 0. 0.3")
     ET.SubElement(box_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(box_body, "joint", type="free")
+    ET.SubElement(box_body, "joint", name="root", type="free")
     return mjcf
 
 
