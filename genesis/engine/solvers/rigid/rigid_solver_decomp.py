@@ -236,13 +236,13 @@ class RigidSolver(Solver):
     @ti.kernel
     def _kernel_init_meaninertia(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_e in range(self.n_entities):
-            e_info = self.entities_info[i_e]
-            for i_b in range(self._B):
-                self.meaninertia[i_b] = 0.0
+        for i_b in range(self._B):
+            self.meaninertia[i_b] = 0.0
+            for i_e in range(self.n_entities):
+                e_info = self.entities_info[i_e]
                 for i_d in range(e_info.dof_start, e_info.dof_end):
                     self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
-                self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
+            self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
