@@ -670,27 +670,57 @@ class RasterizerContext:
             self.add_external_node(node, pose=pose)
             return node
 
-    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frame(
+        self,
+        T,
+        axis_length=1.0,
+        origin_size=0.015,
+        axis_radius=0.01,
+        head_radius=0.0,
+        head_length=0.0,
+        sections=12,
+        color_alpha=0.99,
+    ):
         node = pyrender.Mesh.from_trimesh(
-            trimesh.creation.axis(
-                origin_size=origin_size,
+            mu.create_frame(
+                origin_radius=origin_size,
                 axis_radius=axis_radius,
                 axis_length=axis_length,
+                head_radius=head_radius,
+                head_length=head_length,
+                sections=sections,
+                color_alpha=color_alpha,
             ),
             name=f"debug_frame_{gs.UID()}",
+            smooth=True,
         )
         self.add_external_node(node, pose=T)
         return node
 
-    def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frames(
+        self,
+        Ts,
+        axis_length=1.0,
+        origin_size=0.015,
+        axis_radius=0.01,
+        head_radius=0.0,
+        head_length=0.0,
+        sections=12,
+        color_alpha=0.99,
+    ):
         node = pyrender.Mesh.from_trimesh(
-            trimesh.creation.axis(
-                origin_size=origin_size,
+            mu.create_rame(
+                origin_radius=origin_size,
                 axis_radius=axis_radius,
                 axis_length=axis_length,
+                head_radius=head_radius,
+                head_length=head_length,
+                sections=sections,
+                color_alpha=color_alpha,
             ),
             name=f"debug_frame_{gs.UID()}",
-            poses=poses,
+            poses=Ts,
+            smooth=True,
         )
         self.add_external_node(node)
         return node
