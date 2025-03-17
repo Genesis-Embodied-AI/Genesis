@@ -224,6 +224,12 @@ def destroy():
                 scene._visualizer._rasterizer.destroy()
     global_scene_list.clear()
 
+    global logger
+    logger.removeHandler(logger.handler)
+    logger = None
+
+    atexit.unregister(_gs_exit)
+
 
 def _globalize_backend(_backend):
     global backend
