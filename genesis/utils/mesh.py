@@ -736,17 +736,17 @@ def apply_transform(matrix, positions, normals=None):
 
 
 def create_frame(
-    origin_radius=0.012, axis_radius=0.005, axis_length=1.0, head_radius=0.01, head_length=0.03, sections=12
+    origin_radius=0.012, axis_radius=0.005, axis_length=1.0, head_radius=0.01, head_length=0.03, sections=12, color_alpha=1.0
 ):
-    origin = create_sphere(radius=origin_radius, subdivisions=2)
+    origin = create_sphere(radius=origin_radius, subdivisions=2, color=(1.0, 1.0, 1.0, color_alpha))
 
     x = create_arrow(
         length=axis_length,
         radius=axis_radius,
         l_ratio=head_length / axis_length,
         r_ratio=head_radius / axis_radius,
-        body_color=(0.7, 0.0, 0.0, 1.0),
-        head_color=(0.7, 0.7, 0.7, 1.0),
+        body_color=(1.0, 0.0, 0.0, color_alpha),
+        head_color=(0.7, 0.7, 0.7, color_alpha),
         sections=sections,
     )
     y = create_arrow(
@@ -754,8 +754,8 @@ def create_frame(
         radius=axis_radius,
         l_ratio=head_length / axis_length,
         r_ratio=head_radius / axis_radius,
-        body_color=(0.0, 0.7, 0.0, 1.0),
-        head_color=(0.7, 0.7, 0.7, 1.0),
+        body_color=(0.0, 1.0, 0.0, color_alpha),
+        head_color=(0.7, 0.7, 0.7, color_alpha),
         sections=sections,
     )
     z = create_arrow(
@@ -763,8 +763,8 @@ def create_frame(
         radius=axis_radius,
         l_ratio=head_length / axis_length,
         r_ratio=head_radius / axis_radius,
-        body_color=(0.0, 0.0, 0.7, 1.0),
-        head_color=(0.7, 0.7, 0.7, 1.0),
+        body_color=(0.0, 0.0, 1.0, color_alpha),
+        head_color=(0.7, 0.7, 0.7, color_alpha),
         sections=sections,
     )
 
