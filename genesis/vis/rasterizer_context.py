@@ -709,7 +709,7 @@ class RasterizerContext:
         color_alpha=0.99,
     ):
         node = pyrender.Mesh.from_trimesh(
-            mu.create_rame(
+            mu.create_frame(
                 origin_radius=origin_size,
                 axis_radius=axis_radius,
                 axis_length=axis_length,
