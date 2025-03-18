@@ -74,19 +74,18 @@ def parse_link(mj, i_l, scale):
                         gs.logger.warning("(MJCF) Actuator transmission gear is only supported of 1DoF joints")
                         break
 
-                    if mujoco.mjtBias.mjBIAS_NONE:
+                    if biastype == mujoco.mjtBias.mjBIAS_NONE:
                         # Direct-drive
                         actuator_kp = 0.0
                         actuator_kv = 0.0
-                    else:
+                    else:  # this must be affine
                         # PD control
                         gainprm = mj.actuator_gainprm[i_a]
                         biasprm = mj.actuator_biasprm[i_a]
-                        if gainpr[0] != -biasprm[1] or gainpr[1:].any() or biasprm[0]:
-                            breakpoint()
+                        if gainprm[0] != -biasprm[1] or gainprm[1:].any() or biasprm[0]:
                             gs.logger.warning("(MJCF) Actuator gain and bias cannot be reduced to PD control")
                             break
-                        actuator_kp, actuator_kv = biasprm[1:]
+                        actuator_kp, actuator_kv = biasprm[1:3]
 
                     gear = mj.actuator_gear[i_a, 0]
                     j_info["dofs_kp"] = np.tile(-gear * actuator_kp, (n_dofs,))
@@ -131,7 +130,7 @@ def parse_link(mj, i_l, scale):
         j_info["dofs_stiffness"] = np.zeros((0))
         j_info["dofs_sol_params"] = np.zeros((0, 7))
 
-        j_info["name"] = f'{l_info["name"]}_joint'
+        j_info["name"] = l_info["name"]
         j_info["type"] = gs.JOINT_TYPE.FIXED
         j_info["pos"] = np.array([0.0, 0.0, 0.0])
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
@@ -152,9 +151,6 @@ def parse_link(mj, i_l, scale):
                 name_end = mj.name_geomadr[0]
             j_info["name"] = mj.names[name_start:name_end].decode("utf-8").replace("\x00", "")
             j_info["pos"] = mj.jnt_pos[i_j]
-
-            if len(j_info["name"]) == 0:
-                j_info["name"] = f'{l_info["name"]}_joint'
 
             mj_type = mj.jnt_type[i_j]
             mj_stiffness = mj.jnt_stiffness[i_j]
@@ -206,7 +202,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_motion_vel"] = np.eye(6, 3)
                 j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
                 j_info["dofs_stiffness"] = np.zeros(6)
-                j_info["dofs_sol_params"] = np.zeros((6, 7))
+                j_info["dofs_sol_params"] = np.repeat(mj_sol_params[None], 6, axis=0)
 
                 j_info["type"] = gs.JOINT_TYPE.FREE
                 j_info["n_qs"] = 7

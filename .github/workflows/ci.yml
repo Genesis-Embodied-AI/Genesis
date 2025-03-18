@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -39,7 +39,7 @@ jobs:
           bash -c "cd /app && \
           sudo bash ./.github/workflows/setup_env.sh && \
           pip install -e . && \
-          python -m unittest discover tests"
+          pytest -v tests"
 
       - name: Display Speed Test
         run: cat speed_test.txt

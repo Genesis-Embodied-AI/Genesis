@@ -81,6 +81,9 @@ class Logger:
 
         self.timer_lock = threading.Lock()
 
+    def removeHandler(self, handler):
+        self._logger.removeHandler(handler)
+
     @property
     def INFO_length(self):
         return self._formatter.INFO_length
