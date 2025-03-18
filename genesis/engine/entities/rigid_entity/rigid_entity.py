@@ -2466,7 +2466,7 @@ class RigidEntity(Entity):
             }
         return contact_info
 
-    def get_links_net_contact_force(self):
+    def get_links_net_contact_force(self, envs_idx=None):
         """
         Returns net force applied on each links due to direct external contacts.
 
@@ -2482,7 +2482,8 @@ class RigidEntity(Entity):
 
         if self._solver.n_envs == 0:
             entity_links_force = entity_links_force.squeeze(0)
-
+        elif not envs_idx is None:
+            entity_links_force = entity_links_force[envs_idx]
         return entity_links_force
 
     def set_friction_ratio(self, friction_ratio, ls_idx_local, envs_idx=None):
