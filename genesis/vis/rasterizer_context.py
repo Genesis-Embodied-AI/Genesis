@@ -676,8 +676,8 @@ class RasterizerContext:
         axis_length=1.0,
         origin_size=0.015,
         axis_radius=0.01,
-        head_radius=1e-8,
-        head_length=1e-8,
+        head_radius=0.0,
+        head_length=0.0,
         sections=12,
         color_alpha=0.99,
     ):
@@ -703,8 +703,8 @@ class RasterizerContext:
         axis_length=1.0,
         origin_size=0.015,
         axis_radius=0.01,
-        head_radius=1e-8,
-        head_length=1e-8,
+        head_radius=0.0,
+        head_length=0.0,
         sections=12,
         color_alpha=0.99,
     ):
