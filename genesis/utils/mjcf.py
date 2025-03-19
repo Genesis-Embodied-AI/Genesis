@@ -403,10 +403,18 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
+    # Turn on convexify for all primitive shapes
+    if mj_geom.type != mujoco.mjtGeom.mjGEOM_MESH:
+        convexify = True
+
+    # Disable convexify for visual geometries
+    if not is_col:
+        convexify = False
+
     mesh = gs.Mesh.from_trimesh(
         tmesh,
         scale=scale,
-        convexify=is_col and convexify,
+        convexify=convexify,
         surface=gs.surfaces.Collision() if is_col else surface,
     )
 
@@ -423,7 +431,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         "mesh": mesh,
         "contype": mj_geom.contype[0],
         "conaffinity": mj_geom.conaffinity[0],
-        "is_convex": True,
+        "is_convex": convexify,
         "data": geom_size,
         "friction": mj_geom.friction[0],
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),

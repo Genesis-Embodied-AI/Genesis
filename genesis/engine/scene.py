@@ -343,20 +343,6 @@ class Scene(RBC):
         else:
             gs.raise_exception()
 
-        # Rigid entities will convexify geom by default
-        if hasattr(morph, "convexify") and morph.convexify is None:
-            if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar)):
-                morph.convexify = True
-            else:
-                morph.convexify = False
-
-        # Rigid entities will decompose nonconvex geom by default
-        if hasattr(morph, "decompose_nonconvex") and morph.decompose_nonconvex is None:
-            if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar)):
-                morph.decompose_nonconvex = True
-            else:
-                morph.decompose_nonconvex = False
-
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
