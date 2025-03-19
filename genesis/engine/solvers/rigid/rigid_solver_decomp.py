@@ -158,7 +158,7 @@ class RigidSolver(Solver):
             self._init_constraint_solver()
 
             # run complete FK once to update geoms state and mass matrix
-            self._kernel_forward_kinematics_links_geoms()
+            self._kernel_forward_kinematics_links_geoms(self._scene._envs_idx)
 
             self._init_invweight()
 
@@ -1532,7 +1532,9 @@ class RigidSolver(Solver):
 
         self._func_forward_kinematics()
         self._func_transform_COM()
-        self._func_update_geoms()
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b in range(self._B):
+            self._func_update_geoms(i_b)
 
         if ti.static(self._use_hibernation):
             self._func_hibernate()
@@ -1554,10 +1556,12 @@ class RigidSolver(Solver):
         return collision_pairs
 
     @ti.kernel
-    def _kernel_forward_kinematics_links_geoms(self):
+    def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
         self._func_forward_kinematics()
         self._func_transform_COM()
-        self._func_update_geoms()
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b in envs_idx:
+            self._func_update_geoms(i_b)
 
     def _func_constraint_force(self):
         from genesis.utils.tools import create_timer
@@ -2253,29 +2257,28 @@ class RigidSolver(Solver):
                 )
 
     @ti.func
-    def _func_update_geoms(self):
+    def _func_update_geoms(self, i_b):
         """
         NOTE: this only update geom pose, not its verts and else.
         """
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
-                for i_e_ in range(self.n_awake_entities[i_b]):
-                    i_e = self.awake_entities[i_e_, i_b]
-                    e_info = self.entities_info[i_e]
-                    for i_g in range(e_info.geom_start, e_info.geom_end):
-                        g_info = self.geoms_info[i_g]
+            for i_e_ in range(self.n_awake_entities[i_b]):
+                i_e = self.awake_entities[i_e_, i_b]
+                e_info = self.entities_info[i_e]
+                for i_g in range(e_info.geom_start, e_info.geom_end):
+                    g_info = self.geoms_info[i_g]
 
-                        l_state = self.links_state[g_info.link_idx, i_b]
-                        (
-                            self.geoms_state[i_g, i_b].pos,
-                            self.geoms_state[i_g, i_b].quat,
-                        ) = gu.ti_transform_pos_quat_by_trans_quat(g_info.pos, g_info.quat, l_state.pos, l_state.quat)
+                    l_state = self.links_state[g_info.link_idx, i_b]
+                    (
+                        self.geoms_state[i_g, i_b].pos,
+                        self.geoms_state[i_g, i_b].quat,
+                    ) = gu.ti_transform_pos_quat_by_trans_quat(g_info.pos, g_info.quat, l_state.pos, l_state.quat)
 
-                        self.geoms_state[i_g, i_b].verts_updated = 0
+                    self.geoms_state[i_g, i_b].verts_updated = 0
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
+            for i_g in range(self.n_geoms):
                 g_info = self.geoms_info[i_g]
 
                 l_state = self.links_state[g_info.link_idx, i_b]
@@ -3307,7 +3310,7 @@ class RigidSolver(Solver):
                 state.friction_ratio,
                 envs_idx
             )
-            self._kernel_forward_kinematics_links_geoms()
+            self._kernel_forward_kinematics_links_geoms(envs_idx)
             self.collider.reset(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
@@ -3468,7 +3471,7 @@ class RigidSolver(Solver):
             links_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_links_pos(
@@ -3501,7 +3504,7 @@ class RigidSolver(Solver):
             links_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_links_quat(
@@ -3634,7 +3637,7 @@ class RigidSolver(Solver):
             qs_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_qpos(
@@ -3861,7 +3864,7 @@ class RigidSolver(Solver):
             dofs_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_velocity(
@@ -3881,7 +3884,7 @@ class RigidSolver(Solver):
             dofs_idx,
             envs_idx,
         )
-        self._kernel_forward_kinematics_links_geoms()
+        self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_position(
