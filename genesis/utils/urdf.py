@@ -331,7 +331,6 @@ def parse_urdf(morph, surface):
     j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
     j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
 
-    # from IPython import embed; embed()
     # apply scale
     for l_info in l_infos:
         l_info["pos"] *= morph.scale

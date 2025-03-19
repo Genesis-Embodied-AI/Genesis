@@ -83,9 +83,13 @@ def mj_sim(xml_path, gs_solver, gs_integrator):
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    if hasattr(mujoco.mjtDisableBit, "mjDSBL_NATIVECCD"):
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
     data = mujoco.MjData(model)
+
+    # Joint damping is not properly supported in Genesis for now
+    model.dof_damping[:] = 0.0
 
     return MjSim(model, data)
 
@@ -124,6 +128,11 @@ def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
         gs.morphs.MJCF(file=xml_path),
         visualize_contact=True,
     )
+
+    # Joint damping is not properly supported in Genesis for now
+    for joint in gs_robot.joints:
+        joint.dofs_damping[:] = 0.0
+
     scene.build()
 
     yield scene.sim

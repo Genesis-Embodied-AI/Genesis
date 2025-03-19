@@ -51,7 +51,6 @@ class EQUALITY_TYPE(IntEnum):
     JOINT = 2
 
 
-# joint type in rigid solver, ranked by number of dofs
 class CTRL_MODE(IntEnum):
     FORCE = 0
     VELOCITY = 1
