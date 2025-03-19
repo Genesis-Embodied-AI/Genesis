@@ -6,8 +6,9 @@ Author: Matthew Matl
 import sys
 from time import time
 
-import numpy as np
 import PIL
+import pyglet
+import numpy as np
 from OpenGL.GL import *
 import matplotlib.pyplot as plt
 
@@ -52,6 +53,10 @@ class Renderer(object):
 
     def __init__(self, viewport_width, viewport_height, jit, point_size=1.0):
         self.dpscale = 1
+
+        # Scaling needed on retina displays for old pyglet releases
+        if sys.platform == "darwin" and pyglet.version < "2.0":
+            self.dpscale = 2
 
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height

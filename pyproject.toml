@@ -13,13 +13,13 @@ requires-python = ">=3.9"
 dependencies = [
     "psutil",
     "scikit-image",
-    "taichi == 1.7.3",
+    "taichi >= 1.7.2",
     "pydantic == 2.7.1",
     "numpy == 1.26.4",
     "six",
     "PyOpenGL>=3.1.4",
     "freetype-py",
-    "pyglet>=2.1",
+    "pyglet>=1.5",
     "libigl",
     "pygltflib == 1.16.0",
     "mujoco == 3.2.5",
@@ -27,14 +27,15 @@ dependencies = [
     "opencv-python",
     "lxml",
     "tetgen >= 0.6.4",
-    "PyGEL3D", # might need to use PyGEL3D == 0.1.0 for MacOS (M1)
+    "PyGEL3D",
     "moviepy >= 2.0.0",
     "numba",
     "pymeshlab",
     "coacd",
     "OpenEXR",
     "black",
-    "scipy == 1.15.1",
+    "pytest",
+    "scipy >= 1.14",
 ]
 
 [tool.setuptools.packages.find]
@@ -51,6 +52,12 @@ genesis = [
 
 [tool.black]
 line-length = 120
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]
+log_cli_level = "WARNING"
 
 [project.scripts]
 gs = "genesis._main:main"

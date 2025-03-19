@@ -209,10 +209,19 @@ class Collider:
                     self.contact_cache.penetration[i, j, b] = 0
                     self.contact_cache.normal[i, j, b] = 0
 
+    def clear(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_clear(envs_idx)
+
     @ti.kernel
-    def clear(self):
+    def _kernel_clear(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
 
             if ti.static(self._solver._use_hibernation):
                 self.n_contacts_hibernated[i_b] = 0

@@ -161,6 +161,7 @@ class RigidSolver(Solver):
             self._kernel_forward_kinematics_links_geoms(self._scene._envs_idx)
 
             self._init_invweight()
+            self._kernel_init_meaninertia()
 
     def _init_invweight(self):
         self._kernel_forward_dynamics()
@@ -232,6 +233,18 @@ class RigidSolver(Solver):
             if self.links_info[I].invweight < 0:
                 self.links_info[I].invweight = invweight[I[0]]
 
+    @ti.kernel
+    def _kernel_init_meaninertia(self):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b in range(self._B):
+            self.meaninertia[i_b] = 0.0
+            for i_e in range(self.n_entities):
+                e_info = self.entities_info[i_e]
+                for i_d in range(e_info.dof_start, e_info.dof_end):
+                    self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
+            if self.n_dofs > 0:
+                self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
+
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
             B = self._B
@@ -252,6 +265,8 @@ class RigidSolver(Solver):
         self.mass_mat_y = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
         self.mass_mat_inv = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
 
+        self.meaninertia = ti.field(dtype=gs.ti_float, shape=self._batch_shape())
+
         # tree structure information
         mass_parent_mask = np.zeros((self.n_dofs_, self.n_dofs_), dtype=gs.np_float)
 
@@ -271,6 +286,7 @@ class RigidSolver(Solver):
         self.mass_mat_U.fill(0)
         self.mass_mat_y.fill(0)
         self.mass_mat_inv.fill(0)
+        self.meaninertia.fill(0)
 
     def _init_dof_fields(self):
         if self._use_hibernation:
@@ -328,13 +344,17 @@ class RigidSolver(Solver):
         joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
+            # use default contact resolve time if and only if solref is not set
+            dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
+            dofs_sol_params[dofs_sol_params[:, 0] == 0.0, 0] = self._sol_contact_resolve_time
+
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                dofs_sol_params=np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float),
+                dofs_sol_params=dofs_sol_params,
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
@@ -374,8 +394,6 @@ class RigidSolver(Solver):
 
             for j in ti.static(range(7)):
                 self.dofs_info[I].sol_params[j] = dofs_sol_params[i, j]
-
-            self.dofs_info[I].sol_params[0] = self._sol_contact_resolve_time
 
             self.dofs_info[I].armature = dofs_armature[i]
             self.dofs_info[I].invweight = dofs_invweight[i]
@@ -3199,6 +3217,22 @@ class RigidSolver(Solver):
     def update_vgeoms_render_T(self):
         self._kernel_update_vgeoms_render_T(self._vgeoms_render_T)
 
+    def get_state(self, f):
+        if self.is_active():
+            state = RigidSolverState(self._scene)
+            self._kernel_get_state(
+                state.qpos,
+                state.dofs_vel,
+                state.links_pos,
+                state.links_quat,
+                state.i_pos_shift,
+                state.mass_shift,
+                state.friction_ratio,
+            )
+        else:
+            state = None
+        return state
+
     @ti.kernel
     def _kernel_get_state(
         self,
@@ -3230,6 +3264,27 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_l, i_b in ti.ndrange(self.n_geoms, self._B):
             friction_ratio[i_b, i_l] = self.geoms_state[i_l, i_b].friction_ratio
+
+    def set_state(self, f, state, envs_idx=None):
+        if self.is_active():
+            envs_idx = self._get_envs_idx(envs_idx)
+            self._kernel_set_state(
+                state.qpos,
+                state.dofs_vel,
+                state.links_pos,
+                state.links_quat,
+                state.i_pos_shift,
+                state.mass_shift,
+                state.friction_ratio,
+                envs_idx,
+            )
+            self._kernel_forward_kinematics_links_geoms(envs_idx)
+            self.collider.reset(envs_idx)
+            self.collider.clear(envs_idx)
+            if self.constraint_solver is not None:
+                self.constraint_solver.reset(envs_idx)
+                self.constraint_solver.clear(envs_idx)
+            self._cur_step = -1
 
     @ti.kernel
     def _kernel_set_state(
