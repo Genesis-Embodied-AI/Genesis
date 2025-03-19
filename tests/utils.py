@@ -207,8 +207,9 @@ def check_mujoco_model_consistency(
     assert mj_sim.model.opt.tolerance == gs_sim.rigid_solver._options.tolerance
     assert mj_sim.model.opt.iterations == gs_sim.rigid_solver._options.iterations
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
-    if hasattr(mujoco.mjtDisableBit, "mjDSBL_NATIVECCD"):
-        assert mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_REFSAFE)
+    assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_GRAVITY)
+    assert mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     assert mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_MULTICCD
     assert not (mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_FWDINV)
 
@@ -282,13 +283,27 @@ def check_mujoco_model_consistency(
     mj_dof_invweight0 = mj_sim.model.dof_invweight0
     np.testing.assert_allclose(gs_dof_invweight0[gs_dof_idcs], mj_dof_invweight0[mj_dof_idcs], atol=atol)
 
-    gs_solparams = gs_sim.rigid_solver.dofs_info.sol_params.to_numpy()
-    gs_solref = gs_solparams[:, :2]
-    mj_solref = mj_sim.model.dof_solref
-    np.testing.assert_allclose(gs_solref[gs_dof_idcs], mj_solref[mj_dof_idcs], atol=atol)
-    gs_solimp = gs_solparams[:, 2:]
-    mj_solimp = mj_sim.model.dof_solimp
-    np.testing.assert_allclose(gs_solimp[gs_dof_idcs], mj_solimp[mj_dof_idcs], atol=atol)
+    gs_jnt_solparams = np.concatenate([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
+    gs_jnt_solref = gs_jnt_solparams[:, :2]
+    mj_jnt_solref = mj_sim.model.jnt_solref
+    np.testing.assert_allclose(gs_jnt_solref[gs_jnt_idcs], mj_jnt_solref[mj_jnt_idcs], atol=atol)
+    gs_jnt_solimp = gs_jnt_solparams[:, 2:]
+    mj_jnt_solimp = mj_sim.model.jnt_solimp
+    np.testing.assert_allclose(gs_jnt_solimp[gs_jnt_idcs], mj_jnt_solimp[mj_jnt_idcs], atol=atol)
+    gs_dof_solparams = np.concatenate([joint.dofs_sol_params for entity in gs_sim.entities for joint in entity.joints])
+    gs_dof_solref = gs_dof_solparams[:, :2]
+    mj_dof_solref = mj_sim.model.dof_solref
+    np.testing.assert_allclose(gs_dof_solref[gs_dof_idcs], mj_dof_solref[mj_dof_idcs], atol=atol)
+    gs_dof_solimp = gs_dof_solparams[:, 2:]
+    mj_dof_solimp = mj_sim.model.dof_solimp
+    np.testing.assert_allclose(gs_dof_solimp[gs_dof_idcs], mj_dof_solimp[mj_dof_idcs], atol=atol)
+
+    np.testing.assert_allclose(mj_sim.model.jnt_margin, 0, atol=atol)
+    gs_dof_range = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    mj_jnt_range = mj_sim.model.jnt_range
+    mj_jnt_range[mj_sim.model.jnt_limited == 0, 0] = float("-inf")
+    mj_jnt_range[mj_sim.model.jnt_limited == 0, 1] = float("+inf")
+    np.testing.assert_allclose(gs_dof_range[gs_dof_idcs], mj_jnt_range[mj_jnt_idcs], atol=atol)
 
     np.testing.assert_allclose(mj_sim.model.jnt_margin, 0, atol=atol)
     gs_jnt_range = np.stack(

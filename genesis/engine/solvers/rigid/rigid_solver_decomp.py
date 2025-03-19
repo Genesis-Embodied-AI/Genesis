@@ -14,6 +14,12 @@ from .constraint_solver_decomp_island import ConstraintSolverIsland
 from .sdf_decomp import SDF
 
 
+# minimum constraint impedance
+IMP_MIN = 0.0001
+# maximum constraint impedance
+IMP_MAX = 0.9999
+
+
 @ti.data_oriented
 class RigidSolver(Solver):
     # ------------------------------------------------------------------------------------
@@ -345,9 +351,17 @@ class RigidSolver(Solver):
         joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
-            # use default contact resolve time if and only if solref is not set
+            # Make sure that the constraints parameters are valid.
+            # Use default contact resolve time if and only if solref is not set.
             dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
-            dofs_sol_params[dofs_sol_params[:, 0] == 0.0, 0] = self._sol_contact_resolve_time
+            timeconst, dampratio, dmin, dmax, width, mid, power = dofs_sol_params.T
+            timeconst[timeconst == 0.0] = self._sol_contact_resolve_time
+            timeconst = np.maximum(timeconst, 2 * self._substep_dt)
+            dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
+            dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
+            mid = np.clip(mid, IMP_MIN, IMP_MAX)
+            width = np.maximum(0, width)
+            power = np.maximum(1, power)
 
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
@@ -355,7 +369,7 @@ class RigidSolver(Solver):
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                dofs_sol_params=dofs_sol_params,
+                dofs_sol_params=np.stack([timeconst, dampratio, dmin, dmax, width, mid, power], axis=1),
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
@@ -859,7 +873,7 @@ class RigidSolver(Solver):
                 self.geoms_info[i].sol_params[j] = geoms_sol_params[i, j]
             self.geoms_info[i].sol_params[0] = self._sol_contact_resolve_time
 
-            self.geoms_info[i].sol_params[0] = ti.max(self.geoms_info[i].sol_params[0], self._substep_dt * 2)
+            self.geoms_info[i].sol_params[0] = ti.max(self.geoms_info[i].sol_params[0], 2 * self._substep_dt)
 
             self.geoms_info[i].vert_start = geoms_vert_start[i]
             self.geoms_info[i].vert_end = geoms_vert_end[i]
@@ -3672,13 +3686,15 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.geoms_info[i].sol_params[j] = sol_params[j]
 
+            self.geoms_info[I].sol_params[0] = ti.max(self.geoms_info[I].sol_params[0], 2 * self._substep_dt)
+
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_dofs, self._B):
             I = [i, b] if ti.static(self._options.batch_dofs_info) else i
             for j in ti.static(range(7)):
                 self.dofs_info[I].sol_params[j] = sol_params[j]
 
-            self.dofs_info[I].sol_params[0] = self._substep_dt * 2
+            self.dofs_info[I].sol_params[0] = ti.max(self.dofs_info[I].sol_params[0], 2 * self._substep_dt)
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         if self._options.batch_dofs_info:

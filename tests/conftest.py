@@ -81,9 +81,10 @@ def mj_sim(xml_path, gs_solver, gs_integrator):
     model.opt.integrator = mj_integrator
     model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
-    if hasattr(mujoco.mjtDisableBit, "mjDSBL_NATIVECCD"):
-        model.opt.disableflags |= np.uint32(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
-    model.opt.enableflags |= np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
     data = mujoco.MjData(model)
 
     return MjSim(model, data)
