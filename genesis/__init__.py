@@ -197,6 +197,7 @@ def init(
 
     for ti_output in _ti_outputs:
         logger.debug(ti_output)
+    _ti_outputs.clear()
 
     global exit_callbacks
     exit_callbacks = []
