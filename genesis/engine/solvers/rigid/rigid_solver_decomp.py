@@ -3319,41 +3319,6 @@ class RigidSolver(Solver):
         for i_l, i_b_ in ti.ndrange(self.n_geoms, envs_idx.shape[0]):
             self.geoms_state[i_l, envs_idx[i_b_]].friction_ratio = friction_ratio[envs_idx[i_b_], i_l]
 
-    def get_state(self, f):
-        if self.is_active():
-            state = RigidSolverState(self._scene)
-            self._kernel_get_state(
-                state.qpos,
-                state.dofs_vel,
-                state.links_pos,
-                state.links_quat,
-                state.i_pos_shift,
-                state.mass_shift,
-                state.friction_ratio,
-            )
-        else:
-            state = None
-        return state
-
-    def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
-            envs_idx = self._get_envs_idx(envs_idx)
-            self._kernel_set_state(
-                state.qpos,
-                state.dofs_vel,
-                state.links_pos,
-                state.links_quat,
-                state.i_pos_shift,
-                state.mass_shift,
-                state.friction_ratio,
-                envs_idx
-            )
-            self._kernel_forward_kinematics_links_geoms(envs_idx)
-            self.collider.reset(envs_idx)
-            if self.constraint_solver is not None:
-                self.constraint_solver.reset(envs_idx)
-            self._cur_step = -1
-
     def process_input(self, in_backward=False):
         pass
 
@@ -3675,6 +3640,11 @@ class RigidSolver(Solver):
             qs_idx,
             envs_idx,
         )
+        self.collider.reset(envs_idx)
+        self.collider.clear(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+            self.constraint_solver.clear(envs_idx)
         self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
@@ -3922,6 +3892,11 @@ class RigidSolver(Solver):
             dofs_idx,
             envs_idx,
         )
+        self.collider.reset(envs_idx)
+        self.collider.clear(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+            self.constraint_solver.clear(envs_idx)
         self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
