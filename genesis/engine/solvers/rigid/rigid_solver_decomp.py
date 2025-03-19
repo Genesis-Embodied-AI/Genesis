@@ -3296,6 +3296,7 @@ class RigidSolver(Solver):
 
     def set_state(self, f, state, envs_idx=None):
         if self.is_active():
+            envs_idx = self._get_envs_idx(envs_idx)
             self._kernel_set_state(
                 state.qpos,
                 state.dofs_vel,
