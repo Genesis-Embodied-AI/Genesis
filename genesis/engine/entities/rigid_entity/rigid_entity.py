@@ -341,11 +341,14 @@ class RigidEntity(Entity):
 
         # Parse all bodies (links and joints)
         (l_world_info, *l_infos), (j_world_info, *j_infos) = mju.parse_links(mj, morph.scale)
-
         l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
-        for l_info, j_info, link_g_info in zip(
-            (*l_infos, l_world_info), (*j_infos, j_world_info), (*links_g_info, world_g_info)
-        ):
+
+        # Add all bodies to this entity
+        all_infos = list(zip(l_infos, j_infos, links_g_info))
+        if world_g_info:
+            # Only take into account the world if it features at least one geometry
+            all_infos.append((l_world_info, j_world_info, world_g_info))
+        for l_info, j_info, link_g_info in all_infos:
             if l_info["parent_idx"] < 0 and j_info["type"] != gs.JOINT_TYPE.FIXED:  # base link
                 if morph.pos is not None:
                     l_info["pos"] = np.array(morph.pos)
