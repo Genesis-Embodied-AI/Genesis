@@ -189,11 +189,25 @@ class Collider:
 
         self.reset()
 
-    def reset(self):
-        self.first_time.fill(1)
-        self.contact_cache.i_va_0.fill(-1)
-        self.contact_cache.penetration.fill(0)
-        self.contact_cache.normal.fill(0)
+    def reset(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_reset(envs_idx)
+
+    @ti.kernel
+    def _kernel_reset(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            b = envs_idx[i_b_]
+            self.first_time[b] = 1
+            for i in range(self._solver.n_geoms):
+                for j in range(self._solver.n_geoms):
+                    self.contact_cache.i_va_0[i, j, b] = -1
+                    self.contact_cache.penetration[i, j, b] = 0
+                    self.contact_cache.normal[i, j, b] = 0
 
     @ti.kernel
     def clear(self):

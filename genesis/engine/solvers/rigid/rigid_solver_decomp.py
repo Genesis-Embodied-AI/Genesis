@@ -3293,7 +3293,7 @@ class RigidSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         if self.is_active():
             self._kernel_set_state(
                 state.qpos,

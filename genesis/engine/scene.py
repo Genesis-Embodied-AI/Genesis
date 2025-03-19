@@ -663,7 +663,7 @@ class Scene(RBC):
             self._para_level = gs.PARA_LEVEL.ALL
 
     @gs.assert_built
-    def reset(self, state=None):
+    def reset(self, state=None, envs_idx=None):
         """
         Resets the scene to its initial state.
 
@@ -673,15 +673,15 @@ class Scene(RBC):
             The state to reset the scene to. If None, the scene will be reset to its initial state. If this is given, the scene's registerered initial state will be updated to this state.
         """
         gs.logger.info(f"Resetting Scene ~~~<{self._uid}>~~~.")
-        self._reset(state)
+        self._reset(state, envs_idx)
 
-    def _reset(self, state=None):
+    def _reset(self, state=None, envs_idx=None):
         if self._is_built:
             if state is None:
                 state = self._init_state
             else:
                 self._init_state = state
-            self._sim.reset(state)
+            self._sim.reset(state, envs_idx)
         else:
             self._init_state = self._get_state()
 
@@ -689,8 +689,10 @@ class Scene(RBC):
         self._forward_ready = True
         self._reset_grad()
 
+        # TODO: sets _t = -1; not sure this is env isolation safe
         self._visualizer.reset()
 
+        # TODO: sets _next_particle = 0; not sure this is env isolation safe
         for emitter in self._emitters:
             emitter.reset()
 

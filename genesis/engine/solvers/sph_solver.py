@@ -811,7 +811,7 @@ class SPHSolver(Solver):
                 self.particles[i].vel[j] = vel[i, j]
             self.particles_ng[i].active = active[i]
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         if self.is_active():
             self.set_frame(f, state.pos, state.vel, state.active)
 
