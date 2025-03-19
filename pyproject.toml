@@ -24,7 +24,7 @@ dependencies = [
     "pygltflib == 1.16.0",
     # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
-    "mujoco >= 3.2.5, < 3.4.0",
+    "mujoco >= 3.3.0, < 3.4.0",
     "pycollada",
     "opencv-python",
     "lxml",

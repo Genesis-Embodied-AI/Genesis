@@ -167,7 +167,7 @@ def init(
     elif gs.logger.level == _logging.INFO:
         taichi_kwargs.update(log_level=ti.INFO)
     elif gs.logger.level == _logging.DEBUG:
-        taichi_kwargs.update(log_level=ti.TRACE if debug else ti.DEBUG)
+        taichi_kwargs.update(log_level=ti.INFO)
     if debug:
         if backend == gs_backend.cpu:
             taichi_kwargs.update(cpu_max_num_threads=1)

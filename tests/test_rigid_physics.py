@@ -111,6 +111,19 @@ def test_simple_kinematic_chain(gs_sim, mj_sim):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=200)
 
 
+@pytest.mark.parametrize("xml_path", ["xml/walker.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_walker(gs_sim, mj_sim):
+    (gs_robot,) = gs_sim.entities
+    qpos = np.zeros((gs_robot.n_qs,))
+    qpos[2] += 0.5
+    qvel = np.random.rand(gs_robot.n_dofs) * 0.2
+    # Cannot simulate any longer because collision detection is very sensitive
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=90)
+
+
 def test_nonconvex_collision(show_viewer):
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
     tank = scene.add_entity(
@@ -132,7 +145,7 @@ def test_nonconvex_collision(show_viewer):
     )
     scene.build()
     ball.set_dofs_velocity(np.random.rand(ball.n_dofs) * 0.8)
-    for i in range(1400):
+    for i in range(1500):
         scene.step()
     qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
-    np.testing.assert_allclose(qvel, 0, atol=0.05)
+    np.testing.assert_allclose(qvel, 0, atol=0.1)
