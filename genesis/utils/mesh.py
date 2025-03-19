@@ -243,6 +243,18 @@ def parse_visual_and_col_mesh(morph, surface):
             tmeshes.append(vm.trimesh)
         tmesh = trimesh.util.concatenate(tmeshes)
 
+        num_vertices = len(tmesh.vertices)
+        if num_vertices > 5000:
+            gs.logger.warning(
+                f"Mesh '{morph.file}' contains many vertices ({num_vertices}). Consider setting "
+                "'morph.decimate=True' to speed up collision detection."
+            )
+        if not tmesh.is_convex and not (morph.convexify or morph.decompose_nonconvex):
+            gs.logger.warning(
+                f"Mesh '{morph.file}' is non-convex. Consider setting 'morph.decompose_nonconvex=True' "
+                "or 'morph.convexify=True' to speed up collision detection."
+            )
+
         if morph.convexify or tmesh.is_convex or not morph.decompose_nonconvex:
             ms.append(
                 gs.Mesh.from_trimesh(

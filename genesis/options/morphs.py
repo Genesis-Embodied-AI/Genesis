@@ -299,7 +299,7 @@ class FileMorph(Morph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to a convex hull. If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to a convex hull. False by default.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     collision : bool, optional
@@ -310,7 +310,7 @@ class FileMorph(Morph):
 
     file: Any = ""
     scale: Union[float, tuple] = 1.0
-    convexify: Optional[bool] = None
+    convexify: bool = False
     recompute_inertia: bool = False
 
     def __init__(self, **data):
@@ -359,9 +359,9 @@ class Mesh(FileMorph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will be converted to a convex hull. If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will be converted to a convex hull. False by default.
     decompose_nonconvex : bool, optional
-        Whether to decompose meshes into convex components, if input mesh is nonconvex and `convexify=False`. We use coacd for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+        Whether to decompose meshes into convex components, if input mesh is nonconvex and `convexify=False`. We use coacd for this decomposition process. False by default.
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -405,9 +405,9 @@ class Mesh(FileMorph):
     fixed: bool = False
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
-    decimate: bool = True
+    decimate: bool = False
     decimate_face_num: int = 500
-    decompose_nonconvex: Optional[bool] = None
+    decompose_nonconvex: bool = False
     coacd_options: Optional[CoacdOptions] = None
 
     # FEM specific
