@@ -242,6 +242,7 @@ class RigidSolver(Solver):
                 e_info = self.entities_info[i_e]
                 for i_d in range(e_info.dof_start, e_info.dof_end):
                     self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
+                    self.meaninertia[i_b] -= self.dofs_info[i_d].damping * self._substep_dt
             if self.n_dofs > 0:
                 self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
 
