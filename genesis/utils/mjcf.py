@@ -277,10 +277,14 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
 
     visual = None
     if mj_geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
-        plan_size = 100.0
-        r = plan_size / 2.0
+        length, width, _ = geom_size
+        length = length or 1e3
+        width = width or 1e3
+
         tmesh = trimesh.Trimesh(
-            vertices=np.array([[-r, r, 0.0], [r, r, 0.0], [-r, -r, 0.0], [r, -r, 0.0]]),
+            vertices=np.array(
+                [[-length, width, 0.0], [length, width, 0.0], [-length, -width, 0.0], [length, -width, 0.0]]
+            ),
             faces=np.array([[0, 2, 3], [0, 3, 1]]),
             face_normals=np.array(
                 [
