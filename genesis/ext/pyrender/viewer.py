@@ -1210,6 +1210,8 @@ class Viewer(pyglet.window.Window):
             self.refresh()
 
     def _run(self):
+        if self._run_in_thread:
+            gs.raise_exception("Viewer already running in thread. Impossible to call this method manually.")
         while self._is_active:
             try:
                 self.refresh()
