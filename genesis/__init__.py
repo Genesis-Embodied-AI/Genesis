@@ -19,6 +19,7 @@ if sys.platform == "darwin":
     libc = ctypes.CDLL(None)
     devnull = open(os.devnull, "w")
     stderr_fileno = sys.stderr.fileno()
+    original_stderr_fileno = os.dup(stderr_fileno)
     sys.stderr.flush()
     libc.fflush(None)
     libc.dup2(devnull.fileno(), stderr_fileno)
@@ -29,7 +30,8 @@ with patch("builtins.print", fake_print):
 if sys.platform == "darwin":
     sys.stderr.flush()
     libc.fflush(None)
-    libc.dup2(sys.__stderr__.fileno(), stderr_fileno)
+    libc.dup2(original_stderr_fileno, stderr_fileno)
+    os.close(original_stderr_fileno)
     devnull.close()
 
 import torch
@@ -196,7 +198,8 @@ def init(
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             force_scalarize_matrix=not debug,
-            advanced_optimization=not debug,
+            # Turning off advanced optimization is causin issues on MacOS
+            advanced_optimization=True,
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
