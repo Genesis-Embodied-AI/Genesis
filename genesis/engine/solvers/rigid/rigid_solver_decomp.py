@@ -2783,11 +2783,11 @@ class RigidSolver(Solver):
                     q_diff = gu.ti_transform_quat_by_quat(ctrl_quat, gu.ti_inv_quat(quat))
                     rotvec = gu.ti_quat_to_rotvec(q_diff)
 
-                    for i_d in range(dof_start + 3, l_info.dof_end):
+                    for j in ti.static(range(3)):
+                        i_d = dof_start + 3 + j
                         I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
                         force = (
-                            self.dofs_info[I_d].kp * rotvec[i_d - dof_start - 3]
-                            - self.dofs_info[I_d].kv * self.dofs_state[i_d, i_b].vel
+                            self.dofs_info[I_d].kp * rotvec[j] - self.dofs_info[I_d].kv * self.dofs_state[i_d, i_b].vel
                         )
 
                         self.dofs_state[i_d, i_b].qf_applied = ti.math.clamp(

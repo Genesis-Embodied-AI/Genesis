@@ -15,26 +15,8 @@ def fake_print(*args, **kwargs):
     _ti_outputs.append(output)
 
 
-if sys.platform == "darwin":
-    libc = ctypes.CDLL(None)
-    devnull = open(os.devnull, "w")
-    stderr_fileno = sys.stderr.fileno()
-    original_stderr_fileno = os.dup(stderr_fileno)
-    sys.stderr.flush()
-    libc.fflush(None)
-    libc.dup2(devnull.fileno(), stderr_fileno)
-
-
 with patch("builtins.print", fake_print):
-    import pygel3d
     import taichi as ti
-
-if sys.platform == "darwin":
-    sys.stderr.flush()
-    libc.fflush(None)
-    libc.dup2(original_stderr_fileno, stderr_fileno)
-    os.close(original_stderr_fileno)
-    devnull.close()
 
 import torch
 import numpy as np
@@ -312,6 +294,16 @@ def _gs_exit():
 
 
 ########################## shortcut imports for users ##########################
+
+if sys.platform == "darwin":
+    libc = ctypes.CDLL(None)
+    devnull = open(os.devnull, "w")
+    stderr_fileno = sys.stderr.fileno()
+    original_stderr_fileno = os.dup(stderr_fileno)
+    sys.stderr.flush()
+    libc.fflush(None)
+    libc.dup2(devnull.fileno(), stderr_fileno)
+
 from .constants import (
     IntEnum,
     JOINT_TYPE,
@@ -342,6 +334,13 @@ from .engine import states, materials, force_fields
 from .engine.scene import Scene
 from .engine.mesh import Mesh
 from .engine.entities.emitter import Emitter
+
+if sys.platform == "darwin":
+    sys.stderr.flush()
+    libc.fflush(None)
+    libc.dup2(original_stderr_fileno, stderr_fileno)
+    os.close(original_stderr_fileno)
+    devnull.close()
 
 for name, member in gs_backend.__members__.items():
     globals()[name] = member
