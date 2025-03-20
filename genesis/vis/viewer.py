@@ -27,6 +27,7 @@ class ViewerLock:
 class Viewer(RBC):
     def __init__(self, options, context):
         self._res = options.res
+        self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
         self._max_FPS = options.max_FPS
         self._camera_init_pos = options.camera_pos
@@ -51,17 +52,6 @@ class Viewer(RBC):
         # set viewer camera
         self.setup_camera()
 
-        # viewer
-        if gs.platform == "Linux":
-            run_in_thread = True
-        elif gs.platform == "macOS":
-            run_in_thread = False
-            gs.logger.warning(
-                "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
-            )
-        elif gs.platform == "Windows":
-            run_in_thread = True
-
         # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
         opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
         if opengl_platform_orig is None:
@@ -82,7 +72,7 @@ class Viewer(RBC):
                 self._pyrender_viewer = pyrender.Viewer(
                     context=self.context,
                     viewport_size=self._res,
-                    run_in_thread=run_in_thread,
+                    run_in_thread=self._run_in_thread,
                     auto_start=False,
                     view_center=self._camera_init_lookat,
                     shadow=self.context.shadow,
@@ -93,7 +83,7 @@ class Viewer(RBC):
                         "refresh_rate": self._refresh_rate,
                     },
                 )
-                if not run_in_thread:
+                if not self._run_in_thread:
                     self._pyrender_viewer.start(auto_refresh=False)
                 self._pyrender_viewer.wait_until_initialized()
                 break

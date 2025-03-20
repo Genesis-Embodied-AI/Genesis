@@ -24,7 +24,9 @@ if sys.platform == "darwin":
     libc.fflush(None)
     libc.dup2(devnull.fileno(), stderr_fileno)
 
+
 with patch("builtins.print", fake_print):
+    import pygel3d
     import taichi as ti
 
 if sys.platform == "darwin":

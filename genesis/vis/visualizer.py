@@ -58,6 +58,18 @@ class Visualizer(RBC):
                 viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
                 viewer_options.res = (int(viewer_width), int(viewer_height))
+            if viewer_options.run_in_thread is None:
+                if gs.platform == "Linux":
+                    viewer_options.run_in_thread = True
+                elif gs.platform == "macOS":
+                    viewer_options.run_in_thread = False
+                    gs.logger.warning(
+                        "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
+                    )
+                elif gs.platform == "Windows":
+                    viewer_options.run_in_thread = True
+            if gs.platform == "macOS" and viewer_options.run_in_thread:
+                gs.raise_exception("Running viewer in background thread is not supported on MacOS.")
 
             self._viewer = Viewer(viewer_options, self._context)
 
