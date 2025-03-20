@@ -26,16 +26,19 @@
 
 ## Table of Contents
 
-1. [What is Genesis?](#what-is-genesis)
-2. [Key Features](#key-features)
-3. [Quick Installation](#quick-installation)
-4. [Docker](#docker)
-5. [Documentation](#documentation)
-6. [Contributing to Genesis](#contributing-to-genesis)
-7. [Support](#support)
-8. [License and Acknowledgments](#license-and-acknowledgments)
-9. [Associated Papers](#associated-papers)
-10. [Citation](#citation)
+- [Genesis](#genesis)
+  - [🔥 News](#-news)
+  - [Table of Contents](#table-of-contents)
+  - [What is Genesis?](#what-is-genesis)
+  - [Key Features](#key-features)
+  - [Quick Installation](#quick-installation)
+  - [Docker](#docker)
+  - [Documentation](#documentation)
+  - [Contributing to Genesis](#contributing-to-genesis)
+  - [Support](#support)
+  - [License and Acknowledgments](#license-and-acknowledgments)
+  - [Associated Papers](#associated-papers)
+  - [Citation](#citation)
 
 ## What is Genesis?
 
@@ -180,3 +183,5 @@ If you use Genesis in your research, please consider citing:
   year = {2024},
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
 }
+
+buyiyang
