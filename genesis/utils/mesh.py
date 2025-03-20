@@ -1037,7 +1037,7 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     return mesh
 
 
-def create_plane(size=1000, color=None, normal=(0, 0, 1)):
+def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[size, size, thickness])
     mesh.vertices[:, 2] -= thickness / 2

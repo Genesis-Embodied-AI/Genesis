@@ -732,6 +732,8 @@ class Collider:
                         for j in range(n_active):
                             i_ga = self.active_buffer[j, i_b]
                             i_gb = self.sort_buffer[i, i_b].i_g
+                            if i_ga > i_gb:
+                                i_ga, i_gb = i_gb, i_ga
 
                             if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                 continue
@@ -770,6 +772,8 @@ class Collider:
                             for j in range(n_active_awake):
                                 i_ga = self.active_buffer_awake[j, i_b]
                                 i_gb = self.sort_buffer[i, i_b].i_g
+                                if i_ga > i_gb:
+                                    i_ga, i_gb = i_gb, i_ga
 
                                 if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                     continue
@@ -786,6 +790,8 @@ class Collider:
                                 for j in range(n_active_hib):
                                     i_ga = self.active_buffer_hib[j, i_b]
                                     i_gb = self.sort_buffer[i, i_b].i_g
+                                    if i_ga > i_gb:
+                                        i_ga, i_gb = i_gb, i_ga
 
                                     if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                         continue
@@ -873,7 +879,7 @@ class Collider:
                     if ti.static(self._solver._box_box_detection):
                         if (
                             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                            and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                         ):
                             self._func_box_box_contact(i_ga, i_gb, i_b)
                         else:

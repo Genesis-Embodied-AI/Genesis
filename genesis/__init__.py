@@ -158,11 +158,19 @@ def init(
     EPS = eps
 
     taichi_kwargs = {}
+    if gs.logger.level == _logging.CRITICAL:
+        taichi_kwargs.update(log_level=ti.CRITICAL)
+    elif gs.logger.level == _logging.ERROR:
+        taichi_kwargs.update(log_level=ti.ERROR)
+    elif gs.logger.level == _logging.WARNING:
+        taichi_kwargs.update(log_level=ti.WARNING)
+    elif gs.logger.level == _logging.INFO:
+        taichi_kwargs.update(log_level=ti.INFO)
+    elif gs.logger.level == _logging.DEBUG:
+        taichi_kwargs.update(log_level=ti.TRACE if debug else ti.DEBUG)
     if debug:
         if backend == gs_backend.cpu:
-            taichi_kwargs.update(
-                cpu_max_num_threads=1,
-            )
+            taichi_kwargs.update(cpu_max_num_threads=1)
         else:
             logger.warning("CPU backend is strongly recommended in debug mode.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -183,8 +191,8 @@ def init(
     with patch("builtins.print", fake_print):
         ti.init(
             arch=TI_ARCH[platform][backend],
-            # debug is not working on Apple Silicon CPU (causes segfault)
-            debug=False if platform == "macOS" and backend == gs_backend.cpu else debug,
+            # debug is causing segfault on some machines
+            debug=False,
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             force_scalarize_matrix=not debug,
@@ -197,6 +205,7 @@ def init(
 
     for ti_output in _ti_outputs:
         logger.debug(ti_output)
+    _ti_outputs.clear()
 
     global exit_callbacks
     exit_callbacks = []
