@@ -198,7 +198,8 @@ def init(
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             force_scalarize_matrix=not debug,
-            advanced_optimization=not debug,
+            # Turning off advanced optimization is causin issues on MacOS
+            advanced_optimization=True,
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,

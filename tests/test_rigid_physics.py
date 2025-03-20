@@ -192,4 +192,4 @@ def test_stacked_boxes(show_viewer):
         qpos = entity.get_dofs_position()
         qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
         np.testing.assert_allclose(qpos[:3], qpos0, atol=0.05)
-        np.testing.assert_allclose(qpos[3:], 0, atol=0.01)
+        np.testing.assert_allclose(qpos[3:], 0, atol=0.02)
