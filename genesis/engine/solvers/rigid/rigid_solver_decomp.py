@@ -1563,9 +1563,9 @@ class RigidSolver(Solver):
             self._func_implicit_damping()
         self._func_integrate()
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+        self._func_forward_kinematics()
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
-            self._func_forward_kinematics(i_b)
             self._func_transform_COM(i_b)
             self._func_update_geoms(i_b)
 
@@ -1590,9 +1590,9 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+        self._func_forward_kinematics()
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in envs_idx:
-            self._func_forward_kinematics(i_b)
             self._func_transform_COM(i_b)
             self._func_update_geoms(i_b)
 
@@ -2147,16 +2147,18 @@ class RigidSolver(Solver):
         self._func_COM_cdofd(i_b)
 
     @ti.func
-    def _func_forward_kinematics(self, i_b):
+    def _func_forward_kinematics(self):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_e_ in range(self.n_awake_entities[i_b]):
-                i_e = self.awake_entities[i_e_, i_b]
-                self._func_forward_kinematics_entity(i_e, i_b)
+            for i_b in range(self._B):
+                for i_e_ in range(self.n_awake_entities[i_b]):
+                    i_e = self.awake_entities[i_e_, i_b]
+                    self._func_forward_kinematics_entity(i_e, i_b)
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_e in range(self.n_entities):
-                self._func_forward_kinematics_entity(i_e, i_b)
+            for i_b in range(self._B):
+                for i_e in range(self.n_entities):
+                    self._func_forward_kinematics_entity(i_e, i_b)
 
     @ti.func
     def _func_forward_kinematics_entity(self, i_e, i_b):

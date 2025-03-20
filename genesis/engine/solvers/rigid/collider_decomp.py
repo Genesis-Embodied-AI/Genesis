@@ -204,9 +204,10 @@ class Collider:
             b = envs_idx[i_b_]
             self.first_time[b] = 1
             for i in range(self._solver.n_geoms):
-                self.contact_cache.i_va_0[i, i, b] = -1
-                self.contact_cache.penetration[i, i, b] = 0
-                self.contact_cache.normal[i, i, b] = 0
+                for j in range(self._solver.n_geoms):
+                    self.contact_cache.i_va_0[i, j, b] = -1
+                    self.contact_cache.penetration[i, j, b] = 0
+                    self.contact_cache.normal[i, j, b] = 0
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
