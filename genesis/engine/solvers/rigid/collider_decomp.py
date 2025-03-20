@@ -1,8 +1,10 @@
+import time
 import numpy as np
 import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.styles import colors, formats
 
 from .mpr_decomp import MPR
 
@@ -106,6 +108,7 @@ class Collider:
                 n_possible_pairs += 1
 
         self._n_contacts_per_pair = 5
+        self._max_possible_pairs = n_possible_pairs
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
 
@@ -741,6 +744,13 @@ class Collider:
                             if not self._func_check_collision_valid(i_ga, i_gb, i_b):
                                 continue
 
+                            if self.n_broad_pairs[i_b] == self._max_collision_pairs:
+                                print(
+                                    f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
+                                    f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
+                                    f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
+                                )
+                                break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
                             self.n_broad_pairs[i_b] = self.n_broad_pairs[i_b] + 1
@@ -1053,24 +1063,31 @@ class Collider:
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
         i_col = self.n_contacts[i_b]
 
-        ga_info = self._solver.geoms_info[i_ga]
-        gb_info = self._solver.geoms_info[i_gb]
+        if i_col == self._max_contact_pairs:
+            print(
+                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
+                f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
+                f"'max_collision_pairs'.{formats.RESET}"
+            )
+        else:
+            ga_info = self._solver.geoms_info[i_ga]
+            gb_info = self._solver.geoms_info[i_gb]
 
-        friction_a = ga_info.friction * self._solver.geoms_state[i_ga, i_b].friction_ratio
-        friction_b = gb_info.friction * self._solver.geoms_state[i_gb, i_b].friction_ratio
+            friction_a = ga_info.friction * self._solver.geoms_state[i_ga, i_b].friction_ratio
+            friction_b = gb_info.friction * self._solver.geoms_state[i_gb, i_b].friction_ratio
 
-        # b to a
-        self.contact_data[i_col, i_b].geom_a = i_ga
-        self.contact_data[i_col, i_b].geom_b = i_gb
-        self.contact_data[i_col, i_b].normal = normal
-        self.contact_data[i_col, i_b].pos = contact_pos
-        self.contact_data[i_col, i_b].penetration = penetration
-        self.contact_data[i_col, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
-        self.contact_data[i_col, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
-        self.contact_data[i_col, i_b].link_a = ga_info.link_idx
-        self.contact_data[i_col, i_b].link_b = gb_info.link_idx
+            # b to a
+            self.contact_data[i_col, i_b].geom_a = i_ga
+            self.contact_data[i_col, i_b].geom_b = i_gb
+            self.contact_data[i_col, i_b].normal = normal
+            self.contact_data[i_col, i_b].pos = contact_pos
+            self.contact_data[i_col, i_b].penetration = penetration
+            self.contact_data[i_col, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
+            self.contact_data[i_col, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
+            self.contact_data[i_col, i_b].link_a = ga_info.link_idx
+            self.contact_data[i_col, i_b].link_b = gb_info.link_idx
 
-        self.n_contacts[i_b] = i_col + 1
+            self.n_contacts[i_b] = i_col + 1
 
     @ti.func
     def _func_compute_tolerance(self, i_ga, i_gb, i_b):
