@@ -1,4 +1,5 @@
 from typing import Literal
+from itertools import chain
 from dataclasses import dataclass
 
 import numpy as np
@@ -50,7 +51,7 @@ def _gs_search_by_joint_names(
             gs_q_idcs = dict()
             gs_dof_idcs = dict()
             valid_joint_names = []
-            for joint in entity.joints:
+            for joint in chain.from_iterable(entity.joints):
                 valid_joint_names.append(joint.name)
                 if joint.name in joint_names:
                     if to == "entity":
@@ -135,7 +136,10 @@ def _get_model_mappings(
 ):
     if joint_names is None:
         joint_names = [
-            joint.name for entity in gs_sim.entities for joint in entity.joints if joint.type != gs.JOINT_TYPE.FIXED
+            joint.name
+            for entity in gs_sim.entities
+            for joint in chain.from_iterable(entity.joints)
+            if joint.type != gs.JOINT_TYPE.FIXED
         ]
     body_names = [body.name for entity in gs_sim.entities for body in entity.links if not body.is_fixed]
 
@@ -214,8 +218,7 @@ def check_mujoco_model_consistency(
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    if hasattr(mujoco.mjtDisableBit, "mjDSBL_NATIVECCD"):
-        assert mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    assert mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     assert mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_MULTICCD
     assert not (mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_FWDINV)
 
@@ -292,13 +295,37 @@ def check_mujoco_model_consistency(
     mj_dof_invweight0 = mj_sim.model.dof_invweight0
     np.testing.assert_allclose(gs_dof_invweight0[gs_dof_idcs], mj_dof_invweight0[mj_dof_idcs], atol=atol)
 
-    gs_dof_solparams = np.concatenate([joint.dofs_sol_params for entity in gs_sim.entities for joint in entity.joints])
+    gs_jnt_solparams = np.concatenate(
+        [joint.sol_params for entity in gs_sim.entities for joints in entity.joints for joint in joints]
+    )
+    gs_jnt_solref = gs_jnt_solparams[:, :2]
+    mj_jnt_solref = mj_sim.model.jnt_solref
+    np.testing.assert_allclose(gs_jnt_solref[gs_jnt_idcs], mj_jnt_solref[mj_jnt_idcs], atol=atol)
+    gs_jnt_solimp = gs_jnt_solparams[:, 2:]
+    mj_jnt_solimp = mj_sim.model.jnt_solimp
+    np.testing.assert_allclose(gs_jnt_solimp[gs_jnt_idcs], mj_jnt_solimp[mj_jnt_idcs], atol=atol)
+    gs_dof_solparams = np.concatenate(
+        [joint.dofs_sol_params for entity in gs_sim.entities for joints in entity.joints for joint in joints]
+    )
     gs_dof_solref = gs_dof_solparams[:, :2]
     mj_dof_solref = mj_sim.model.dof_solref
     np.testing.assert_allclose(gs_dof_solref[gs_dof_idcs], mj_dof_solref[mj_dof_idcs], atol=atol)
     gs_dof_solimp = gs_dof_solparams[:, 2:]
     mj_dof_solimp = mj_sim.model.dof_solimp
     np.testing.assert_allclose(gs_dof_solimp[gs_dof_idcs], mj_dof_solimp[mj_dof_idcs], atol=atol)
+
+    np.testing.assert_allclose(mj_sim.model.jnt_margin, 0, atol=atol)
+    gs_jnt_range = np.stack(
+        [
+            gs_sim.rigid_solver.dofs_info[gs_sim.rigid_solver.joints_info[i].dof_start].limit.to_numpy()
+            for i in gs_jnt_idcs
+        ],
+        axis=0,
+    )
+    mj_jnt_range = mj_sim.model.jnt_range
+    mj_jnt_range[mj_sim.model.jnt_limited == 0, 0] = float("-inf")
+    mj_jnt_range[mj_sim.model.jnt_limited == 0, 1] = float("+inf")
+    np.testing.assert_allclose(gs_jnt_range, mj_jnt_range[mj_jnt_idcs], atol=atol)
 
     # actuator (position control)
     for v in mj_sim.model.actuator_dyntype:

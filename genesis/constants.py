@@ -42,7 +42,6 @@ class JOINT_TYPE(IntEnum):
     PRISMATIC = 2
     SPHERICAL = 3
     FREE = 4
-    PLANAR = 5
 
 
 class EQUALITY_TYPE(IntEnum):

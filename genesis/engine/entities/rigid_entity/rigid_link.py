@@ -21,6 +21,8 @@ class RigidLink(RBC):
         entity,
         name,
         idx,
+        joint_start,
+        n_joints,
         geom_start,
         cell_start,
         vert_start,
@@ -50,6 +52,9 @@ class RigidLink(RBC):
         self._parent_idx = parent_idx
         self._child_idxs = list()
         self._invweight = invweight
+
+        self._joint_start = joint_start
+        self._n_joints = n_joints
 
         self._geom_start = geom_start
         self._cell_start = cell_start
@@ -85,10 +90,10 @@ class RigidLink(RBC):
         # find root link and check if link is fixed
         solver_links = self._solver.links
         link = self
-        is_fixed = self.joint.type is gs.JOINT_TYPE.FIXED
+        is_fixed = all(joint.type is gs.JOINT_TYPE.FIXED for joint in self.joints)
         while link.parent_idx > -1:
             link = solver_links[link.parent_idx]
-            if link.joint.type is not gs.JOINT_TYPE.FIXED:
+            if all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
                 is_fixed = False
         self.root_idx = gs.np_int(link.idx)
         self.is_fixed = gs.np_int(is_fixed)
@@ -427,11 +432,62 @@ class RigidLink(RBC):
         return self._visualize_contact
 
     @property
-    def joint(self):
+    def joints(self):
         """
-        The joint that connects the link to its parent link.
+        The sequence of joints that connects the link to its parent link.
         """
         return self._solver.joints[self._idx]
+
+    @property
+    def n_joints(self):
+        """
+        Number of the joints that connects the link to its parent link.
+        """
+        return len(self.joints)
+
+    @property
+    def joint_start(self):
+        """
+        The start index of the link's joints in the RigidSolver.
+        """
+        return self._joint_start
+
+    @property
+    def joint_end(self):
+        """
+        The end index of the link's joints in the RigidSolver.
+        """
+        return self._joint_start + self.n_joints
+
+    @property
+    def n_dofs(self):
+        """The number of degrees of freedom (DOFs) of the entity."""
+        return sum(joint.n_dofs for joint in self.joints)
+
+    @property
+    def dof_start(self):
+        """The index of the link's first degree of freedom (DOF) in the scene."""
+        return self.joints[0].dof_start
+
+    @property
+    def dof_end(self):
+        """The index of the link's last degree of freedom (DOF) in the scene *plus one*."""
+        return self.joints[-1].dof_end
+
+    @property
+    def n_qs(self):
+        """Returns the number of `q` variables of the link."""
+        return sum(joint.n_qs for joint in self.joints)
+
+    @property
+    def q_start(self):
+        """Returns the starting index of the `q` variables of the link in the rigid solver."""
+        return self.joints[0].q_start
+
+    @property
+    def q_end(self):
+        """Returns the last index of the `q` variables of the link in the rigid solver *plus one*."""
+        return self.joints[-1].q_end
 
     @property
     def idx(self):

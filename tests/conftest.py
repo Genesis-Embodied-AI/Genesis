@@ -1,4 +1,5 @@
 import os
+from itertools import chain
 from enum import Enum
 
 import pytest
@@ -83,8 +84,7 @@ def mj_sim(xml_path, gs_solver, gs_integrator):
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    if hasattr(mujoco.mjtDisableBit, "mjDSBL_NATIVECCD"):
-        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
     data = mujoco.MjData(model)
 
@@ -130,7 +130,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
     )
 
     # Joint damping is not properly supported in Genesis for now
-    for joint in gs_robot.joints:
+    for joint in chain.from_iterable(gs_robot.joints):
         joint.dofs_damping[:] = 0.0
 
     scene.build()

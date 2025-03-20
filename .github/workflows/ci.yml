@@ -38,7 +38,6 @@ jobs:
           docker run -u ci:ci --gpus all --rm -v ${{ github.workspace }}:/app cuda11_py11:latest \
           bash -c "cd /app && \
           sudo bash ./.github/workflows/setup_env.sh && \
-          pip install 'mujoco==3.2.5' && \
           pip install -e . && \
           pytest -v tests"
 
