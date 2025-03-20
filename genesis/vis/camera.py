@@ -338,7 +338,7 @@ class Camera(RBC):
 
                     return point_cloud_world, mask
                 else:
-                    point_cloud = point_cloud_h
+                    point_cloud = point_cloud_h[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
                     return point_cloud, mask
 
             intrinsic_K = opengl_projection_matrix_to_intrinsics(
