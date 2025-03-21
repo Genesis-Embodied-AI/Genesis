@@ -209,7 +209,6 @@ class Raytracer:
         self.visualizer = scene.visualizer
         if self.rendered_envs_idx is None:
             self.rendered_envs_idx = list(range(self.sim._B))
-        self.rendered_envs_idx_slice = slice(self.rendered_envs_idx[0], self.rendered_envs_idx[-1] + 1)
 
         self._scene = LuisaRenderPy.create_scene()
         self._scene.init(

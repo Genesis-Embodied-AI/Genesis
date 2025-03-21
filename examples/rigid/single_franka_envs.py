@@ -20,7 +20,7 @@ def main():
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             plane_reflection=False,
-            n_rendered_envs=args.num_env,
+            rendered_envs_idx=list(range(args.num_env)),
             env_separate_rigid=args.sep,
             show_world_frame=False,
             show_link_frame=False,
