@@ -207,9 +207,10 @@ class Collider:
             b = envs_idx[i_b_]
             self.first_time[b] = 1
             for i in range(self._solver.n_geoms):
-                self.contact_cache.i_va_0[i, i, b] = -1
-                self.contact_cache.penetration[i, i, b] = 0
-                self.contact_cache.normal[i, i, b] = 0
+                for j in range(self._solver.n_geoms):
+                    self.contact_cache.i_va_0[i, j, b] = -1
+                    self.contact_cache.penetration[i, j, b] = 0
+                    self.contact_cache.normal[i, j, b] = 0
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -1196,7 +1197,7 @@ class Collider:
     @ti.func
     def _func_box_box_contact(self, i_ga: ti.i32, i_gb: ti.i32, i_b: ti.i32):
         """
-        Use Mujoco's box-box contact detection algorithm for more stable collision detction.
+        Use Mujoco's box-box contact detection algorithm for more stable collision detection.
 
         The compilation and running time of this function is longer than the MPR-based contact detection.
 
@@ -1239,7 +1240,7 @@ class Collider:
         rottabs = ti.abs(rott)
 
         plen2 = rotabs @ size2
-        plen1 = rottabs.transpose() @ size1
+        plen1 = rotabs.transpose() @ size1
         penetration = margin
         for i in range(3):
             penetration = penetration + size1[i] * 3 + size2[i] * 3
@@ -1296,20 +1297,13 @@ class Collider:
                         penetration = c3
                         cle1 = 0
                         for k in range(3):
-                            if k != i:
-                                if (tmp2[k] > 0) != (c2 < 0):
-                                    cle1 = cle1 + 1 << k
+                            if (k != i) and ((tmp2[k] > 0) ^ (c2 < 0)):
+                                cle1 = cle1 + (1 << k)
 
                         cle2 = 0
                         for k in range(3):
-                            if k != j:
-                                val = rot[i, 3 - k - j]
-                                cond1 = val > 0
-                                cond2 = c2 < 0
-                                cond3 = ((k - j + 3) % 3) == 1
-                                xor_all = (cond1 != cond2) != cond3
-                                if xor_all:
-                                    cle2 = cle2 + 1 << k
+                            if (k != j) and (rot[i, 3 - k - j] > 0) ^ (c2 < 0) ^ (((k - j + 3) % 3) == 1):
+                                cle2 = cle2 + (1 << k)
 
                         code = 12 + i * 3 + j
                         clnorm = tmp2
@@ -1746,11 +1740,10 @@ class Collider:
                             x, y = self.box_ppts2[i, 0, i_b], self.box_ppts2[i, 1, i_b]
 
                             if nl == 0:
-                                if (not (nf == 0)) and (x < -lx or x > lx) and (y < -ly or y > ly):
+                                if (nf != 0) and (x < -lx or x > lx) and (y < -ly or y > ly):
                                     continue
-                            else:
-                                if x < -lx or x > lx or y < -ly or y > ly:
-                                    continue
+                            elif x < -lx or x > lx or y < -ly or y > ly:
+                                continue
 
                             c1 = 0
                             for j in range(2):
@@ -1759,7 +1752,7 @@ class Collider:
                                 elif self.box_ppts2[i, j, i_b] > s[j]:
                                     c1 = c1 + (self.box_ppts2[i, j, i_b] - s[j]) ** 2
 
-                            c1 = c1 + self.box_pu[i, i_b][2] * self.box_pu[i, i_b][2] * innorm * innorm
+                            c1 = c1 + (self.box_pu[i, i_b][2] * innorm) ** 2
 
                             if self.box_pu[i, i_b][2] > 0 and c1 > margin2:
                                 continue
