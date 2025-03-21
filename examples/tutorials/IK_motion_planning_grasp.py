@@ -64,7 +64,7 @@ path = franka.plan_path(
     num_waypoints=200,  # 2s duration
 )
 # draw the planned path
-path_debug = scene.draw_debug_path(path, franka)
+path_debug = scene.draw_debug_path(path, franka, link_idx=end_effector.idx)
 
 # execute the planned path
 for waypoint in path:
