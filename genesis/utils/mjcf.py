@@ -191,10 +191,11 @@ def parse_link(mj, i_l, scale):
                 gear = mj.actuator_gear[i_a, 0]
                 j_info["dofs_kp"] = np.tile(-gear * actuator_kp, (n_dofs,))
                 j_info["dofs_kv"] = np.tile(-gear * actuator_kv, (n_dofs,))
-                if mj.actuator_forcelimited[i_a] or mj.actuator_ctrllimited[i_a]:
-                    j_info["dofs_force_range"] = np.tile(
-                        np.minimum(np.tile(mj.actuator_forcerange[i_a], n_dofs), gear * mj.actuator_ctrlrange[i_a]),
-                        (n_dofs, 1),
+                if mj.actuator_forcelimited[i_a]:
+                    j_info["dofs_force_range"] = np.tile(mj.actuator_forcerange[i_a], (n_dofs, 1))
+                if mj.actuator_ctrllimited[i_a] and biastype == mujoco.mjtBias.mjBIAS_NONE:
+                    j_info["dofs_force_range"] = np.minimum(
+                        j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                     )
                 break
 

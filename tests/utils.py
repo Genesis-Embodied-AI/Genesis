@@ -24,6 +24,7 @@ def init_simulators(gs_sim, mj_sim, qpos=None, qvel=None):
     if qvel is not None:
         gs_robot.set_dofs_velocity(qvel)
     # TODO: This should be moved in `set_state`, `set_qpos`, `set_dofs_position`, `set_dofs_velocity`
+    gs_sim.rigid_solver.dofs_state.qf_constraint.fill(0.0)
     gs_sim.rigid_solver._kernel_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
     if gs_sim.scene.visualizer:
@@ -182,9 +183,9 @@ def _get_model_mappings(
         mj_q_idcs += range(mj_q_start_j, mj_q_start_j + n_q_j)
         if (mj_joint_j.id == mj_sim.model.actuator_trnid[:, 0]).any():
             act_names.append(joint_name)
-            ((act_id,),) = np.nonzero(mj_joint_j.id == mj_sim.model.actuator_trnid[:, 0])
-            # TODO: assuming 1DoF actuators
-            mj_act_idcs.append(act_id)
+            (act_ids,) = np.nonzero(mj_joint_j.id == mj_sim.model.actuator_trnid[:, 0])
+            # FIXME: only supporting 1DoF per actuator
+            mj_act_idcs.append(act_ids[0])
     mj_body_idcs = [mj_sim.model.body(body_name).id for body_name in body_names]
     (gs_jnt_idcs, gs_q_idcs, gs_dof_idcs) = _gs_search_by_joint_names(gs_sim.scene, joint_names)
     (_, _, gs_act_idcs) = _gs_search_by_joint_names(gs_sim.scene, act_names)
@@ -477,7 +478,10 @@ def check_mujoco_data_consistency(
 
     # Acceleration pre- VS post-implicit damping
     # gs_qacc_post = gs_sim.rigid_solver.dofs_state.acc.to_numpy()[:, 0]
-    gs_qacc_pre = gs_sim.rigid_solver.constraint_solver.qacc.to_numpy()[:, 0]
+    if gs_n_constraints:
+        gs_qacc_pre = gs_sim.rigid_solver.constraint_solver.qacc.to_numpy()[:, 0]
+    else:
+        gs_qacc_pre = gs_qacc_smooth
     mj_qacc_pre = mj_sim.data.qacc
     np.testing.assert_allclose(gs_qacc_pre[gs_dof_idcs], mj_qacc_pre[mj_dof_idcs], atol=atol)
 

@@ -2,10 +2,17 @@ import pytest
 import xml.etree.ElementTree as ET
 
 import numpy as np
+
+import mujoco
 import genesis as gs
 from genesis.ext import trimesh
 
-from .utils import simulate_and_check_mujoco_consistency
+from .utils import (
+    init_simulators,
+    check_mujoco_model_consistency,
+    check_mujoco_data_consistency,
+    simulate_and_check_mujoco_consistency,
+)
 
 
 @pytest.fixture
@@ -122,6 +129,27 @@ def test_walker(gs_sim, mj_sim):
     qvel = np.random.rand(gs_robot.n_dofs) * 0.2
     # Cannot simulate any longer because collision detection is very sensitive
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=90)
+
+
+@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
+def test_robot_kinematics(gs_sim, mj_sim):
+    # Disable all constraints and actuation
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
+    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
+    gs_sim.rigid_solver._enable_collision = False
+    gs_sim.rigid_solver._enable_joint_limit = False
+
+    check_mujoco_model_consistency(gs_sim, mj_sim)
+
+    (gs_robot,) = gs_sim.entities
+    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    for _ in range(100):
+        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
+        init_simulators(gs_sim, mj_sim, qpos)
 
 
 def test_nonconvex_collision(show_viewer):
