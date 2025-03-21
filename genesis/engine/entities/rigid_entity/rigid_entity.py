@@ -652,8 +652,8 @@ class RigidEntity(Entity):
 
             dof_offset = 0
             for i_j in range(l_info.joint_start, l_info.joint_end):
-                I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
-                j_info = self.joints_info[I_j]
+                I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
+                j_info = self._solver.joints_info[I_j]
 
                 if j_info.type == gs.JOINT_TYPE.FIXED:
                     pass
@@ -981,15 +981,18 @@ class RigidEntity(Entity):
             gs.raise_exception("Target dofs not provided.")
         links_idx_by_dofs = []
         for v in self.links:
-            links_idx_by_dof_at_v = v.joint.dof_idx_local
-            if links_idx_by_dof_at_v is None:
-                link_relevant = False
-            elif isinstance(links_idx_by_dof_at_v, list):
-                link_relevant = any([vv in dofs_idx for vv in links_idx_by_dof_at_v])
-            else:
-                link_relevant = links_idx_by_dof_at_v in dofs_idx
-            if link_relevant:
-                links_idx_by_dofs.append(v.idx_local)  # converted to global later
+            for joint in v.joints:
+                links_idx_by_dof_at_v = joint.dof_idx_local
+                if links_idx_by_dof_at_v is None:
+                    link_relevant = False
+                elif isinstance(links_idx_by_dof_at_v, list):
+                    link_relevant = any(vv in dofs_idx for vv in links_idx_by_dof_at_v)
+                else:
+                    link_relevant = links_idx_by_dof_at_v in dofs_idx
+                if link_relevant:
+                    links_idx_by_dofs.append(v.idx_local)  # converted to global later
+                    break
+
         links_idx_by_dofs = self._get_ls_idx(links_idx_by_dofs)
         n_links_by_dofs = len(links_idx_by_dofs)
 
@@ -1237,8 +1240,8 @@ class RigidEntity(Entity):
                             l_info = self._solver.links_info[I_l]
 
                             for i_j in range(l_info.joint_start, l_info.joint_end):
-                                I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
-                                j_info = self.joints_info[I_j]
+                                I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
+                                j_info = self._solver.joints_info[I_j]
 
                                 I_dof_start = (
                                     [j_info.dof_start, i_b]

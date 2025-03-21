@@ -2262,7 +2262,6 @@ class RigidSolver(Solver):
 
                 # compute axis and anchor
                 if joint_type == gs.JOINT_TYPE.FREE:
-                    # self.joints_state[i_j, i_b].xanchor = self.qpos[q_start:q_start+3, i_b]
                     self.joints_state[i_j, i_b].xanchor = ti.Vector(
                         [self.qpos[q_start, i_b], self.qpos[q_start + 1, i_b], self.qpos[q_start + 2, i_b]]
                     )
@@ -2324,7 +2323,7 @@ class RigidSolver(Solver):
                 elif joint_type == gs.JOINT_TYPE.PRISMATIC:
                     axis = self.dofs_info[dof_start].motion_vel
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
-                    pos = pos + axis * self.dofs_state[dof_start, i_b].pos
+                    pos = pos + self.joints_state[i_j, i_b].xaxis * self.dofs_state[dof_start, i_b].pos
                 else:
                     print("unrecognized joint type", joint_type)
 
