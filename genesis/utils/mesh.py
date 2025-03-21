@@ -577,8 +577,8 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                         if combined_image.ndim == 2:
                             roughness_image = combined_image
                         else:
-                            roughness_image = combined_image[:, :, 1]    # G for roughness
-                            metallic_image = combined_image[:, :, 2]     # B for metallic
+                            roughness_image = combined_image[:, :, 1]  # G for roughness
+                            metallic_image = combined_image[:, :, 2]  # B for metallic
                             # metallic_image = np.array(bands[0])     # R for metallic????
 
                     # image_index = texture.source
@@ -676,15 +676,16 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
             # TODO: Parse them!
             for extension_name, extension_material in material.extensions.items():
                 if extension_name == "KHR_materials_specular":
-                    specular_weight = extension_material.get("specularFactor", 1,0)
+                    specular_weight = extension_material.get("specularFactor", 1.0)
                     specular_color = np.array(
-                        extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=float)
-                
+                        extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=float
+                    )
+
                 elif extension_name == "KHR_materials_clearcoat":
                     clearcoat_weight = extension_material.get("clearcoatFactor", 0.0)
                     clearcoat_roughness_factor = (extension_material["clearcoatRoughnessFactor"],)
 
-                elif extension_name == 'KHR_materials_volume':
+                elif extension_name == "KHR_materials_volume":
                     attenuation_distance = extension_material["attenuationDistance"]
 
                 elif extension_name == "KHR_materials_transmission":
