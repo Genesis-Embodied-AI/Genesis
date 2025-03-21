@@ -58,6 +58,18 @@ class Visualizer(RBC):
                 viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
                 viewer_options.res = (int(viewer_width), int(viewer_height))
+            if viewer_options.run_in_thread is None:
+                if gs.platform == "Linux":
+                    viewer_options.run_in_thread = True
+                elif gs.platform == "macOS":
+                    viewer_options.run_in_thread = False
+                    gs.logger.warning(
+                        "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
+                    )
+                elif gs.platform == "Windows":
+                    viewer_options.run_in_thread = True
+            if gs.platform == "macOS" and viewer_options.run_in_thread:
+                gs.raise_exception("Running viewer in background thread is not supported on MacOS.")
 
             self._viewer = Viewer(viewer_options, self._context)
 
@@ -92,9 +104,11 @@ class Visualizer(RBC):
 
         # temp fix for cam.render() segfault
         if self._viewer is not None:
-            # need to update viewer once here, because otherwise camera will update scene if render is called right after build, which will lead to segfault. TODO: this slows down visualizer.update(). Needs to remove this once the bug is fixed.
+            # need to update viewer once here, because otherwise camera will update scene if render is called right
+            # after build, which will lead to segfault.
+            # TODO: this slows down visualizer.update(). Needs to remove this once the bug is fixed.
             try:
-                self._viewer.update()
+                self._viewer.update(auto_refresh=True)
             except:
                 pass
 
@@ -121,18 +135,18 @@ class Visualizer(RBC):
             # need to update viewer once here, because otherwise camera will update scene if render is called right
             # after build, which will lead to segfault.
             if self._viewer is not None:
-                self._viewer.update()
+                self._viewer.update(auto_refresh=True)
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
                 self._rasterizer.render_camera(self._cameras[0])
 
-    def update(self, force=True):
+    def update(self, force=True, auto=True):
         if force:  # force update
             self.reset()
 
         if self._viewer is not None:
             if self._viewer.is_alive():
-                self._viewer.update()
+                self._viewer.update(auto_refresh=auto)
             else:
                 gs.raise_exception("Viewer closed.")
 

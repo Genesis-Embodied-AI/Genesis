@@ -54,6 +54,11 @@ genesis = [
 
 [tool.black]
 line-length = 120
+force-exclude = '''
+/(
+    genesis/ext
+)/
+'''
 
 [tool.pytest.ini_options]
 addopts = [
