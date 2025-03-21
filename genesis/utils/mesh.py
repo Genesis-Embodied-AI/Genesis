@@ -534,10 +534,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 normal_image = get_image(texture.source)
                 if normal_image is not None:
                     normal_texture = create_texture(normal_image, None, "linear")
-                # image_index = texture.source
-                # if image_index is not None:
-                #     image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                #     normal_texture = create_texture(np.array(image), None, "linear")
 
             # TODO: Parse occlusion
             if material.occlusionTexture is not None:
@@ -547,10 +543,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 occlusion_image = get_image(texture.source)
                 if occlusion_image is not None:
                     occlusion_texture = create_texture(occlusion_image, None, "linear")
-                # image_index = texture.source
-                # if image_index is not None:
-                #     image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                #     occlusion_texture = create_texture(np.array(image), None, "linear")
 
             # parse alpha mode
             if material.alphaMode == "OPAQUE":
@@ -581,16 +573,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                             metallic_image = combined_image[:, :, 2]  # B for metallic
                             # metallic_image = np.array(bands[0])     # R for metallic????
 
-                    # image_index = texture.source
-                    # if image_index is not None:
-                    #     image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    #     bands = image.split()
-                    #     if len(bands) == 1:
-                    #         roughness_image = np.array(bands[0])
-                    #     else:
-                    #         roughness_image = np.array(bands[1])  # G for roughness
-                    #         metallic_image = np.array(bands[2])  # B for metallic
-
                 metallic_factor = None
                 if pbr_texture.metallicFactor is not None:
                     metallic_factor = (pbr_texture.metallicFactor,)
@@ -609,10 +591,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     if pbr_texture.baseColorTexture.texCoord is not None:
                         uvs_used = pbr_texture.baseColorTexture.texCoord
                     color_image = get_image(texture.source, "RGBA")
-                    # image_index = texture.source
-                    # if image_index is not None:
-                    #     image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    #     color_image = np.array(image.convert("RGBA"))
 
                 # parse color
                 color_factor = None
@@ -629,8 +607,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     if texture.get("texCoord", None) is not None:
                         uvs_used = texture["texCoord"]
                     color_image = get_image(texture.get("index", None), "RGBA")
-                    # image = Image.open(uri_to_PIL(glb.images[].uri))
-                    # color_image = np.array(image.convert("RGBA"))
 
                 color_factor = None
                 if "diffuseFactor" in extension_material:
@@ -658,13 +634,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     if material.emissiveTexture.texCoord is not None:
                         uvs_used = material.emissiveTexture.texCoord
                     emissive_image = get_image(texture.source, "RGB")
-
-                    # image_index = texture.source
-                    # if image_index is not None:
-                    #     image = Image.open(uri_to_PIL(glb.images[image_index].uri))
-                    #     if image.mode != "RGB":
-                    #         image = image.convert("RGB")
-                    #     emissive_image = np.array(image)
 
                 emissive_factor = None
                 if material.emissiveFactor is not None:
