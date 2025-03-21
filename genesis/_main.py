@@ -78,7 +78,19 @@ class JointControlGUI:
 def get_movable_dofs(robot):
     motor_dofs = []
     motor_dof_names = []
-    for joint in robot.joints:
+    
+    if gs.platform == "macOS":
+        # Flatten the nested list structure for macOS
+        all_joints = []
+        for joint_list in robot.joints:
+            for joint in joint_list:
+                all_joints.append(joint)
+        joints_to_process = all_joints
+    else:
+        # For other platforms, assume the structure is already flat
+        joints_to_process = robot.joints
+    
+    for joint in joints_to_process:
         if joint.type == gs.JOINT_TYPE.FREE:
             continue
         elif joint.type == gs.JOINT_TYPE.FIXED:
@@ -189,27 +201,36 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         )
         gui_process.start()
 
-        def update_scene(scene, stop_event, gui_joint_positions, motor_dofs, rotate, entity):
+        # Run the main viewer in the main thread, and update scene in another thread
+        def update_scene(gui_joint_positions, motor_dofs, rotate, entity, dt, stop_event):
             t = 0
-            while scene.viewer.is_alive() and not stop_event.is_set():
+            while not stop_event.is_set():
                 # rotate entity
                 t += dt
                 if rotate:
                     entity.set_quat(gs.utils.geom.xyz_to_quat(np.array([0, 0, t * 50])))
 
                 entity.set_dofs_position(
-                    # position=torch.tensor(gui_positions),
                     position=torch.tensor(gui_joint_positions),
                     dofs_idx_local=motor_dofs,
                     zero_velocity=True,
                 )
-                scene.visualizer.update(force=True)
-            scene.viewer.stop()
-
+                # Don't call scene.visualizer.update() from this thread
+                # Let the main thread handle it
+                
+        # Start the update thread
         gs.tools.run_in_another_thread(
-            fn=update_scene, args=(scene, stop_event, gui_joint_positions, motor_dofs, rotate, entity)
+            fn=update_scene, 
+            args=(gui_joint_positions, motor_dofs, rotate, entity, dt, stop_event)
         )
-        scene.viewer.start()
+        
+        # Main thread handles the viewer updates
+        while scene.viewer.is_alive() and not stop_event.is_set():
+            scene.visualizer.update(force=True)
+            
+        # Clean up when viewer is closed
+        stop_event.set()
+        gui_process.terminate()
 
     else:
         raise NotImplementedError(f"Platform {gs.platform} is not supported.")
