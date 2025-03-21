@@ -123,7 +123,7 @@ class MeshLight(ShapeLight):
 
 class Raytracer:
     def __init__(self, options, vis_options):
-        self.cuda_device = options.cuda_device
+        self.device_index = options.device_index
         self.logging_level = options.logging_level
         self.state_limit = options.state_limit
         self.tracing_depth = options.tracing_depth
@@ -174,7 +174,8 @@ class Raytracer:
         LuisaRenderPy.init(
             context_path=LRP_PATH,
             context_id=str(gs.UID()),
-            cuda_device=self.cuda_device,
+            backend="cuda" if gs.platform != "macOS" else "metal",
+            device_index=self.device_index,
             log_level=logging_class[self.logging_level],
         )
 

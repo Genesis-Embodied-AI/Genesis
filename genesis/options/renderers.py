@@ -37,8 +37,8 @@ class RayTracer(Renderer):
 
     Parameters
     ----------
-    cuda_device : int, optional
-        CUDA device ID. Defaults to 0.
+    device_index : int, optional
+        Device ID used for the raytracer. Defaults to 0.
     logging_level : str, optional
         Logging level. Should be one of "debug", "info", "warning". Defaults to "warning".
     state_limit : int, optional
@@ -65,7 +65,7 @@ class RayTracer(Renderer):
         Lower bound for direct face normal vs vertex normal for face normal interpolation. Range is [0, 180]. Defaults to 180.
     """
 
-    cuda_device: int = 0
+    device_index: int = 0
     logging_level: str = "warning"
     state_limit: int = 2**25
     tracing_depth: int = 32
