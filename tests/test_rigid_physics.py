@@ -39,6 +39,24 @@ def box_plan():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def box_box():
+    """Generate an XML model for two boxes."""
+    mjcf = ET.Element("mujoco", model="one_box")
+    ET.SubElement(mjcf, "option", timestep="0.01")  # FIXME: It only works for 5ms
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
+    box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.2")
+    ET.SubElement(box1_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 1 0 0.4")
+    ET.SubElement(box1_body, "joint", name="root1", type="free")
+    box2_body = ET.SubElement(worldbody, "body", name="box2", pos="0. 0. 0.8")
+    ET.SubElement(box2_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    ET.SubElement(box2_body, "joint", name="root2", type="free")
+    return mjcf
+
+
 def _build_chain_capsule_hinge(asset_tmp_path, enable_mesh):
     if enable_mesh:
         mesh_path = str(asset_tmp_path / "capsule.obj")
@@ -102,6 +120,39 @@ def test_box_plan_dynamics(gs_sim, mj_sim):
     qpos = np.concatenate((cube_pos, cube_quat))
     qvel = np.random.rand(gs_robot.n_dofs) * 0.2
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150)
+
+
+@pytest.mark.parametrize("model_name", ["box_box"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
+def test_box_box_dynamics(gs_sim):
+    for _ in range(50):
+        cube1_pos = np.array([0.0, 0.0, 0.2])
+        cube1_quat = np.array([1.0, 0.0, 0.0, 0.0])
+        cube2_pos = np.array([0.0, 0.0, 0.6 + 0.4 * np.random.rand()])
+        cube2_quat = gs.utils.geom.xyz_to_quat(np.array([0.0, 0.0, 2 * np.pi * np.random.rand()]), degrees=False)
+        init_simulators(gs_sim, qpos=np.concatenate((cube1_pos, cube1_quat, cube2_pos, cube2_quat)))
+        for i in range(50):
+            gs_sim.scene.step()
+
+            gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()[0]
+            if i > 20:
+                gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
+
+                gs_contact_pos = gs_sim.rigid_solver.collider.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
+                # for pos in gs_contact_pos:
+                #     gs_sim.scene.draw_debug_sphere(pos, radius=0.01, color=(1, 0, 0, 1))
+
+                gs_contact_normal = gs_sim.rigid_solver.collider.contact_data.normal.to_numpy()[:gs_n_contacts, 0]
+                gs_penetration = gs_sim.rigid_solver.collider.contact_data.penetration.to_numpy()[:gs_n_contacts, 0]
+
+                # gs_sim.scene.viewer.run()
+                breakpoint()
+
+            if gs_sim.scene.visualizer:
+                gs_sim.scene.visualizer.update()
+        breakpoint()
 
 
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
