@@ -78,7 +78,7 @@ class JointControlGUI:
 def get_movable_dofs(robot):
     motor_dofs = []
     motor_dof_names = []
-    
+
     if gs.platform == "macOS":
         # Flatten the nested list structure for macOS
         all_joints = []
@@ -87,9 +87,8 @@ def get_movable_dofs(robot):
                 all_joints.append(joint)
         joints_to_process = all_joints
     else:
-        # For other platforms, assume the structure is already flat
         joints_to_process = robot.joints
-    
+
     for joint in joints_to_process:
         if joint.type == gs.JOINT_TYPE.FREE:
             continue
@@ -201,7 +200,6 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         )
         gui_process.start()
 
-        # Run the main viewer in the main thread, and update scene in another thread
         def update_scene(gui_joint_positions, motor_dofs, rotate, entity, dt, stop_event):
             t = 0
             while not stop_event.is_set():
@@ -215,19 +213,15 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
                     dofs_idx_local=motor_dofs,
                     zero_velocity=True,
                 )
-                # Don't call scene.visualizer.update() from this thread
-                # Let the main thread handle it
-                
-        # Start the update thread
+
         gs.tools.run_in_another_thread(
-            fn=update_scene, 
-            args=(gui_joint_positions, motor_dofs, rotate, entity, dt, stop_event)
+            fn=update_scene, args=(gui_joint_positions, motor_dofs, rotate, entity, dt, stop_event)
         )
-        
+
         # Main thread handles the viewer updates
         while scene.viewer.is_alive() and not stop_event.is_set():
             scene.visualizer.update(force=True)
-            
+
         # Clean up when viewer is closed
         stop_event.set()
         gui_process.terminate()
