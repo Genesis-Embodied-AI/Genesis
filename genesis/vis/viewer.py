@@ -1,4 +1,5 @@
 import os
+import threading
 import importlib
 
 import numpy as np
@@ -117,7 +118,7 @@ class Viewer(RBC):
         pose = gu.trans_R_to_T(pos, R)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self, auto_refresh=True):
+    def update(self, auto_refresh=None):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -125,6 +126,11 @@ class Viewer(RBC):
             buffer_updates = self.context.update()
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
+
+            # Refresh viewer by default if and if this is possible
+            if auto_refresh is None:
+                viewer_thread = self._pyrender_viewer._thread or threading.main_thread()
+                auto_refresh = viewer_thread == threading.current_thread()
 
             if auto_refresh and not self._pyrender_viewer.run_in_thread:
                 self._pyrender_viewer.refresh()
