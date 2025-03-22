@@ -1678,7 +1678,6 @@ class Collider:
                                                 (self.box_linesu[i, i_b][2] + self.box_linesu[i, i_b][5] * c1) * innorm
                                                 <= margin
                                             ):
-
                                                 self.box_points[n, i_b] = (
                                                     self.box_linesu[i, i_b][0:3] * 0.5
                                                     + c1 * 0.5 * self.box_linesu[i, i_b][3:6]
@@ -1711,9 +1710,8 @@ class Collider:
                             if nl == 0:
                                 if (u < 0 or u > 1) and (v < 0 or v > 1):
                                     continue
-                            else:
-                                if u < 0 or u > 1 or v < 0 or v > 1:
-                                    continue
+                            elif u < 0 or u > 1 or v < 0 or v > 1:
+                                continue
 
                             u = ti.math.clamp(u, 0, 1)
                             v = ti.math.clamp(v, 0, 1)
@@ -1724,13 +1722,13 @@ class Collider:
 
                             tmp2 = self.box_points[n, i_b] - tmp1
 
-                            c1 = tmp2.dot(tmp2)
-                            if not (tmp1[2] > 0 and c1 > margin2):
+                            c2 = tmp2.dot(tmp2)
 
+                            if not (tmp1[2] > 0 and c2 > margin2):
                                 self.box_points[n, i_b] = self.box_points[n, i_b] + tmp1
                                 self.box_points[n, i_b] = self.box_points[n, i_b] * 0.5
 
-                                self.box_depth[n, i_b] = ti.sqrt(c1) * (-1 if tmp1[2] < 0 else 1)
+                                self.box_depth[n, i_b] = ti.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
                                 n = n + 1
 
                     nf = n
@@ -1807,7 +1805,5 @@ class Collider:
 
                         self.contact_data[col_i, i_b].pos = self.contact_data[col_j, i_b].pos
                         self.contact_data[col_i, i_b].penetration = self.contact_data[col_j, i_b].penetration
-                    if i_ga == 20:
-                        col_i = self.n_contacts[i_b] - n + i
                     i = i + 1
             self.n_contacts[i_b] = self.n_contacts[i_b] - n + i
