@@ -551,6 +551,33 @@ def trans_quat_to_T(trans, quat):
         )
 
 
+def T_to_trans_quat(T):
+    if isinstance(T, torch.Tensor):
+        if T.ndim == 2:
+            trans = T[:3, 3]
+            quat = R_to_quat(T[:3, :3])
+        elif T.ndim == 3:
+            trans = T[:, :3, 3]
+            quat = R_to_quat(T[:, :3, :3])
+        else:
+            gs.raise_exception(f"ndim expected to be 2 or 3, but got {T.ndim=}")
+        return trans, quat
+    elif isinstance(T, np.ndarray):
+        if T.ndim == 2:
+            trans = T[:3, 3]
+            quat = Rotation.from_matrix(T[:3, :3]).as_quat()
+            quat = xyzw_to_wxyz(quat)
+        elif T.ndim == 3:
+            trans = T[:, :3, 3]
+            quat = Rotation.from_matrix(T[:, :3, :3]).as_quat()
+            quat = xyzw_to_wxyz(quat)
+        else:
+            gs.raise_exception(f"ndim expected to be 2 or 3, but got {T.ndim=}")
+        return trans, quat
+    else:
+        raise TypeError(f"Input must be a torch.Tensor or np.ndarray. Got: {type(T)}")
+
+
 def trans_R_to_T(trans, R):
     if isinstance(trans, torch.Tensor) and isinstance(R, torch.Tensor):
         T = torch.eye(4, dtype=R.dtype, device=R.device)
