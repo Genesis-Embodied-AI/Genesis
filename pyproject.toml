@@ -9,7 +9,7 @@ name = "genesis-world"
 version = "0.2.1"
 description = "A universal and generative physics engine"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "psutil",
     "scikit-image",
@@ -37,6 +37,7 @@ dependencies = [
     "OpenEXR",
     "black",
     "pytest",
+    "pytest-xdist",
     "scipy >= 1.14",
 ]
 
@@ -65,6 +66,13 @@ addopts = [
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
     "--exitfirst",
+    "--strict-markers",
+    "--numprocesses=auto",
+    "--dist=loadgroup",
+    "-m not benchmarks",
+]
+markers = [
+    "benchmarks: marks benchmarks (executed independently and sequentially).",
 ]
 log_cli_level = "WARNING"
 

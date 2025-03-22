@@ -38,8 +38,13 @@ jobs:
           docker run -u ci:ci --gpus all --rm -v ${{ github.workspace }}:/app cuda11_py11:latest \
           bash -c "cd /app && \
           sudo bash ./.github/workflows/setup_env.sh && \
+          curl -sS 'https://api.github.com/repos/ompl/ompl/releases/tags/prerelease' \
+          | jq -r '.assets[].browser_download_url' \
+          | while IFS= read -r URL; do wget -q -c \"\$URL\"; done && \
+          python -m pip install --no-index --find-links . ompl && \
           pip install -e . && \
-          pytest -v tests"
+          pytest -v tests && \
+          pytest -v -m 'benchmarks' tests"
 
       - name: Display Speed Test
         run: cat speed_test.txt
