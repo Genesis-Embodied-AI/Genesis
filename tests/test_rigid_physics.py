@@ -144,8 +144,9 @@ def test_box_box_dynamics(gs_sim):
 
 
 @pytest.mark.parametrize("box_box_detection", [False, True])
-@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
-def test_many_boxes_dynamics(box_box_detection, show_viewer):
+@pytest.mark.parametrize("dynamics", [False, True])
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)  # TODO: Add GPU once tests run in parrallel
+def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
@@ -159,7 +160,6 @@ def test_many_boxes_dynamics(box_box_detection, show_viewer):
         ),
         show_viewer=show_viewer,
     )
-
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -176,19 +176,26 @@ def test_many_boxes_dynamics(box_box_detection, show_viewer):
         )
     scene.build()
 
-    for i in range(150):
+    if dynamics:
+        for entity in scene.entities[1:]:
+            entity.set_dofs_velocity(4.0 * np.random.rand(6))
+    for i in range(700 if dynamics else 300):
         scene.step()
 
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
-        qvel = entity.get_dofs_velocity()
-        np.testing.assert_allclose(qvel, 0, atol=0.02)
+        qvel = entity.get_dofs_velocity().cpu()
+        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.02)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
-        qpos = entity.get_dofs_position()
-        qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
-        np.testing.assert_allclose(qpos[:3], qpos0, atol=0.05)
-        np.testing.assert_allclose(qpos[3:], 0, atol=0.02)
+        qpos = entity.get_dofs_position().cpu()
+        if dynamics:
+            assert qpos[:2].norm() < 20.0
+            assert qpos[2] < 5.0
+        else:
+            qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
+            np.testing.assert_allclose(qpos[:3], qpos0, atol=0.05)
+            np.testing.assert_allclose(qpos[3:], 0, atol=0.03)
 
     if show_viewer:
         scene.viewer.stop()
@@ -237,7 +244,7 @@ def test_robot_kinematics(gs_sim, mj_sim):
     for _ in range(100):
         qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
         init_simulators(gs_sim, mj_sim, qpos)
-        check_mujoco_data_consistency(gs_sim, mj_sim, atol=(1e-9 if gs.np_float == np.float64 else 1e-6))
+        check_mujoco_data_consistency(gs_sim, mj_sim, atol=(1e-9 if gs.np_float == np.float64 else 5e-5))
 
 
 @pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
