@@ -1786,13 +1786,14 @@ class Collider:
             for i in range(n):
                 self.box_valid[i, i_b] = True
 
+            # remove duplicates
             for i in range(n - 1):
                 for j in range(i + 1, n):
                     col_i = self.n_contacts[i_b] - n + i
                     col_j = self.n_contacts[i_b] - n + j
                     pos_i = self.contact_data[col_i, i_b].pos
                     pos_j = self.contact_data[col_j, i_b].pos
-                    if pos_i[0] == pos_j[0] and pos_i[1] == pos_j[1] and pos_i[2] == pos_j[2]:
+                    if (ti.abs(pos_i - pos_j) < gs.EPS).all():
                         self.box_valid[i, i_b] = False
                         break
             i = 0
