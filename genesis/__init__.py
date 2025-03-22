@@ -149,7 +149,7 @@ def init(
     elif gs.logger.level == _logging.ERROR:
         taichi_kwargs.update(log_level=ti.ERROR)
     elif gs.logger.level == _logging.WARNING:
-        taichi_kwargs.update(log_level=ti.WARNING)
+        taichi_kwargs.update(log_level=ti.WARN)
     elif gs.logger.level == _logging.INFO:
         taichi_kwargs.update(log_level=ti.INFO)
     elif gs.logger.level == _logging.DEBUG:
