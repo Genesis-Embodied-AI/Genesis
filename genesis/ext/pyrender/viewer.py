@@ -62,6 +62,7 @@ from .shader_program import ShaderProgram, ShaderProgramCache
 from .trackball import Trackball
 
 pyglet.options["shadow_window"] = False
+DEFAULT_RECORDING_SAVE_FILENAME = "default-recording-save-filename.mp4"
 
 
 class Viewer(pyglet.window.Window):
@@ -561,6 +562,8 @@ class Viewer(pyglet.window.Window):
         """
         if filename is None:
             filename = self._get_save_filename(["mp4"])
+            if filename is None:
+                filename = DEFAULT_RECORDING_SAVE_FILENAME
 
         self.video_recorder.close()
         shutil.move(self.video_recorder.filename, filename)
