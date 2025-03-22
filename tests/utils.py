@@ -225,6 +225,10 @@ def check_mujoco_model_consistency(
     assert mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_MULTICCD
     assert not (mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_FWDINV)
 
+    mj_adj_collision = bool(mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
+    gs_adj_collision = gs_sim.rigid_solver._options.enable_adjacent_collision
+    assert gs_adj_collision == mj_adj_collision
+
     mj_solver = mujoco.mjtSolver(mj_sim.model.opt.solver)
     if mj_solver.name == "mjSOL_PGS":
         assert False

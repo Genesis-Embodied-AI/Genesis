@@ -201,6 +201,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
         scene.viewer.stop()
 
 
+@pytest.mark.adjacent_collision(True)
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
 @pytest.mark.parametrize(
     "gs_solver",
