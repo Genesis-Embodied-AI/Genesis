@@ -60,7 +60,7 @@ def init(
     global platform
     platform = get_platform()
     if backend is None:
-        if debug or platform == "macOS":
+        if debug:
             backend = gs_backend.cpu
         else:
             backend = gs_backend.gpu
@@ -83,7 +83,7 @@ def init(
     if backend not in GS_ARCH[platform]:
         raise_exception(f"backend ~~<{backend}>~~ not supported for platform ~~<{platform}>~~")
     if backend == gs_backend.metal:
-        logger.warning("Beware Apple Metal backend is partially broken.")
+        logger.info("Beware Apple Metal backend may be unstable.")
 
     # get default device and compute total device memory
     global device
