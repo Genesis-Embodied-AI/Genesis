@@ -389,6 +389,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         "quat": mj_geom.quat,
         "contype": mj_geom.contype[0],
         "conaffinity": mj_geom.conaffinity[0],
+        "group": mj_geom.group[0],
         "is_convex": convexify,
         "data": geom_size,
         "friction": mj_geom.friction[0],
@@ -431,11 +432,15 @@ def parse_geoms(mj, scale, convexify, surface, xml_path):
             "when calling `scene.add_entity`."
         )
 
-    # Duplicating collision geometries as visual for bodies not having dedicated visual geometries
+    # Parse geometry group if available.
+    # Duplicate collision geometries as visual for bodies not having dedicated visual geometries as a fallback.
     for link_g_info in links_g_info:
+        has_visual_group = any(g_info["group"] > 0 for g_info in link_g_info)
         is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
-        if is_all_col:
-            for g_info in link_g_info.copy():
+        for g_info in link_g_info.copy():
+            group = g_info.pop("group")
+            is_col = g_info["contype"] or g_info["conaffinity"]
+            if (has_visual_group and group in (1, 2) and is_col) or (not has_visual_group and is_all_col):
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
                 vmesh = gs.Mesh(
