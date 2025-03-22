@@ -552,7 +552,7 @@ class PointCloud(Geometry3D):
         extents : (3,) float
           Edge length of axis aligned bounding box
         """
-        return self.bounds.ptp(axis=0)
+        return np.ptp(self.bounds, axis=0)
 
     @property
     def centroid(self):

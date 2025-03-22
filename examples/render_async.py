@@ -1,18 +1,14 @@
-import argparse
-
-import torch
-
 import genesis as gs
 
 
+def run_sim(scene):
+    for _ in range(200):
+        scene.step(refresh_visualizer=False)
+
+
 def main():
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    args = parser.parse_args()
-
     ########################## init ##########################
-    gs.init(backend=gs.cpu)
+    gs.init()
 
     ########################## create a scene ##########################
 
@@ -22,8 +18,10 @@ def main():
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
+            run_in_thread=False,
         ),
-        show_viewer=args.vis,
+        show_viewer=True,
+        show_FPS=True,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0.0, 0.0, -10.0),
@@ -39,29 +37,8 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    gs.tools.run_in_another_thread(fn=run_sim, args=(scene, args.vis))
-    if args.vis:
-        scene.viewer.start()
-
-
-def run_sim(scene, enable_vis):
-    from time import time
-
-    t_prev = time()
-    i = 0
-    while True:
-        i += 1
-
-        scene.step()
-
-        t_now = time()
-        print(1 / (t_now - t_prev), "FPS")
-        t_prev = t_now
-        if i > 200:
-            break
-
-    if enable_vis:
-        scene.viewer.stop()
+    gs.tools.run_in_another_thread(fn=run_sim, args=(scene,))
+    scene.viewer.run()
 
 
 if __name__ == "__main__":

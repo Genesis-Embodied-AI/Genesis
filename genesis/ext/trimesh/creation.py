@@ -558,7 +558,7 @@ def box(extents=None, transform=None, bounds=None, **kwargs):
         bounds = np.array(bounds, dtype=np.float64)
         if bounds.shape != (2, 3):
             raise ValueError("`bounds` must be (2, 3) float!")
-        extents = bounds.ptp(axis=0)
+        extents = np.ptp(bounds, axis=0)
         vertices *= extents
         vertices += bounds[0]
     elif extents is not None:

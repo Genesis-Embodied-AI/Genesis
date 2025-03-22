@@ -185,7 +185,7 @@ class Texture(object):
         width = self.width
         height = self.height
         if self.source is not None:
-            data = np.ascontiguousarray(np.flip(self.source, axis=0).flatten())
+            data = np.flip(self.source, axis=0).reshape((-1,))
             width = self.source.shape[1]
             height = self.source.shape[0]
 

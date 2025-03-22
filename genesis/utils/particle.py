@@ -60,10 +60,23 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
     """
     Mesh to particles via `random` or `regular` sampler.
     """
-    assert sampler in ["random", "regular"]
+    assert sampler in ("random", "regular")
+
+    # compute file name via hashing for caching
     ptc_file_path = msu.get_ptc_path(mesh.vertices, mesh.faces, p_size, sampler)
 
-    if not os.path.exists(ptc_file_path):
+    # loading pre-computed cache if available
+    is_cached_loaded = False
+    if os.path.exists(ptc_file_path):
+        gs.logger.debug("Sampled particles file (`.ptc`) found in cache.")
+        try:
+            with open(ptc_file_path, "rb") as file:
+                positions = pkl.load(file)
+            is_cached_loaded = True
+        except (EOFError, pkl.UnpicklingError):
+            gs.logger.info("Ignoring corrupted cache.")
+
+    if not is_cached_loaded:
         with gs.logger.timer(f"Sampling particles with ~<{sampler}>~ sampler and generating `.ptc` file:"):
             # sample a cube first
             box_size = mesh.bounds[1] - mesh.bounds[0]
@@ -73,11 +86,8 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
             positions = positions[igl.signed_distance(positions, mesh.vertices, mesh.faces)[0] < 0]
 
             os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)
-            pkl.dump(positions, open(ptc_file_path, "wb"))
-
-    else:
-        gs.logger.debug("Sampled particles (`.ptc`) found in cache.")
-        positions = pkl.load(open(ptc_file_path, "rb"))
+            with open(ptc_file_path, "wb") as file:
+                pkl.dump(positions, file)
 
     return positions
 
@@ -89,9 +99,22 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     If this sampler fails, it returns `None`.
     """
     assert "pbs" in sampler
+
+    # compute file name via hashing for caching
     ptc_file_path = msu.get_ptc_path(mesh.vertices, mesh.faces, p_size, sampler)
 
-    if not os.path.exists(ptc_file_path):
+    # loading pre-computed cache if available
+    is_cached_loaded = False
+    if os.path.exists(ptc_file_path):
+        gs.logger.debug("Sampled particles file (`.ptc`) found in cache.")
+        try:
+            with open(ptc_file_path, "rb") as file:
+                positions = pkl.load(file)
+            is_cached_loaded = True
+        except (EOFError, pkl.UnpicklingError):
+            gs.logger.info("Ignoring corrupted cache.")
+
+    if not is_cached_loaded:
         with gs.logger.timer(f"Sampling particles with ~<{sampler}>~ sampler and generating `.ptc` file:"):
             sdf_res = int(sampler.split("-")[-1])
 
@@ -126,9 +149,6 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
             reader.Update()
             positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
 
-            os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)
-            pkl.dump(positions, open(ptc_file_path, "wb"))
-
             # Clean up the intermediate files
             output_dir = os.path.join(miu.get_src_dir(), "ext/output")
             if os.path.exists(output_dir):
@@ -137,9 +157,10 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
                 )
                 process.communicate()
 
-    else:
-        gs.logger.debug("Sampled particles (`.ptc`) found in cache.")
-        positions = pkl.load(open(ptc_file_path, "rb"))
+            # Cache the generated positions
+            os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)
+            with open(ptc_file_path, "wb") as file:
+                pkl.dump(positions, file)
 
     positions += np.array(pos)
 
@@ -274,6 +295,17 @@ def shell_to_particles(p_size=0.01, pos=(0, 0, 0), inner_radius=0.5, outer_radiu
 
 
 def particles_to_mesh(positions, radius, backend):
+
+    def parse_args(backend):
+        args_dict = dict()
+        args_list = backend.split("-")
+        if len(args_list) >= 2:
+            args_dict["rscale"] = float(args_list[1])
+            args_list = args_list[2:]
+            for i in range(0, len(args_list), 2):
+                args_dict[args_list[i]] = float(args_list[i + 1])
+        return args_dict
+
     if positions.shape[0] == 0:
         return trimesh.Trimesh(vertices=np.zeros((0, 3)), faces=np.zeros((0, 3)))
 
@@ -286,17 +318,19 @@ def particles_to_mesh(positions, radius, backend):
     else:
         radii = np.array([])
 
-    if backend == "openvdb":
-        radius_scale = 2.0
+    args_dict = parse_args(backend)
+
+    if "openvdb" in backend:
         if not is_ParticleMesherPy_available:
             gs.raise_exception(f"Failed to import ParticleMesher. {ParticleMesherPy_error_msg}")
 
+        radius_scale = args_dict.get("rscale", 2.0)
         reconstructor = ParticleMesherPy.MeshConstructor(
             ParticleMesherPy.MeshConstructorConfig(
                 particle_radius=radius * radius_scale,
-                voxel_scale=1.0,
-                isovalue=0.0,
-                adaptivity=0.01,
+                voxel_scale=args_dict.get("vscale", 1.0),
+                isovalue=args_dict.get("isovalue", 0.0),
+                adaptivity=args_dict.get("adaptivity", 0.01),
             )
         )
         mesh = reconstructor.construct(positions=positions, radii=radii * radius_scale)
@@ -321,16 +355,14 @@ def particles_to_mesh(positions, radius, backend):
         positions.astype(np.float32).tofile(tmp_xyz_path)
 
         # suggested value is 1.4-1.6. 1.0 seems more detailed?
-        if len(backend.split("-")) >= 2:
-            r = radius * float(backend.split("-")[1])
-        else:
-            r = radius * 1.0
+        radius_scale = args_dict.get("rscale", 1.0)
+        smooth_iter = args_dict.get("smooth", None)
+        r = radius * radius_scale
+        command = f"splashsurf reconstruct {tmp_xyz_path} -r={r:.5f} -c=0.8 -l=2.0 -t=0.6 --subdomain-grid=on -o {tmp_obj_path}"
 
-        if "smooth" in backend:
-            smooth_iter = int(backend.split("-")[-1])
-            command = f"splashsurf reconstruct {tmp_xyz_path} -r={r:.5f} -c=0.8 -l=2.0 -t=0.6 --subdomain-grid=on -o {tmp_obj_path} --mesh-cleanup=on --mesh-smoothing-weights=on --mesh-smoothing-iters={smooth_iter} --normals=on --normals-smoothing-iters=10"
-        else:
-            command = f"splashsurf reconstruct {tmp_xyz_path} -r={r:.5f} -c=0.8 -l=2.0 -t=0.6 --subdomain-grid=on -o {tmp_obj_path}"
+        if smooth_iter is not None:
+            smooth_iter = int(smooth_iter)
+            command += f" --mesh-cleanup=on --mesh-smoothing-weights=on --mesh-smoothing-iters={smooth_iter} --normals=on --normals-smoothing-iters=10"
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, _ = process.communicate()
 

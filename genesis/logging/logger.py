@@ -1,3 +1,4 @@
+import sys
 import logging
 import threading
 from contextlib import contextmanager
@@ -60,35 +61,16 @@ class GenesisFormatter(logging.Formatter):
 
 
 class Logger:
-    def __init__(self, logging_level, debug, verbose_time):
-        if logging_level is None:
-            if debug:
-                logging_level = logging.DEBUG
-            else:
-                logging_level = logging.INFO
-
-        elif logging_level == "debug":
-            logging_level = logging.DEBUG
-
-        elif logging_level == "info":
-            logging_level = logging.INFO
-
-        elif logging_level == "warning":
-            logging_level = logging.WARNING
-
-        elif logging_level == "error":
-            logging_level = logging.ERROR
-
-        else:
-            # we cannot use gs.raise_exception here because it relies on the logger
-            raise Exception("Unsupported logging_level.")
+    def __init__(self, logging_level, verbose_time):
+        if isinstance(logging_level, str):
+            logging_level = logging_level.upper()
 
         self._logger = logging.getLogger("genesis")
         self._logger.setLevel(logging_level)
 
         self._formatter = GenesisFormatter(verbose_time)
 
-        self._handler = logging.StreamHandler()
+        self._handler = logging.StreamHandler(sys.stdout)
         self._handler.setLevel(logging_level)
         self._handler.setFormatter(self._formatter)
         self._logger.addHandler(self._handler)
@@ -98,6 +80,9 @@ class Logger:
         self._is_new_line = True
 
         self.timer_lock = threading.Lock()
+
+    def removeHandler(self, handler):
+        self._logger.removeHandler(handler)
 
     @property
     def INFO_length(self):
@@ -164,3 +149,7 @@ class Logger:
     @property
     def last_output(self):
         return self._formatter.last_output
+
+    @property
+    def level(self):
+        return self._logger.level

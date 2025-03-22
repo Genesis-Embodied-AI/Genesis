@@ -252,7 +252,7 @@ def translation_from_matrix(matrix):
     True
 
     """
-    return np.array(matrix, copy=False)[:3, 3].copy()
+    return np.asarray(matrix)[:3, 3].copy()
 
 
 def reflection_matrix(point, normal):
@@ -293,7 +293,7 @@ def reflection_from_matrix(matrix):
     True
 
     """
-    M = np.array(matrix, dtype=np.float64, copy=False)
+    M = np.asarray(matrix, dtype=np.float64)
     # normal: unit eigenvector corresponding to eigenvalue -1
     w, V = np.linalg.eig(M[:3, :3])
     i = np.where(abs(np.real(w) + 1.0) < 1e-8)[0]
@@ -376,7 +376,7 @@ def rotation_matrix(angle, direction, point=None):
 
     # if point is specified, rotation is not around origin
     if point is not None:
-        point = np.array(point[:3], dtype=np.float64, copy=False)
+        point = np.asarray(point[:3], dtype=np.float64)
         M[:3, 3] = point - np.dot(M[:3, :3], point)
 
     # return symbolic angles as sympy Matrix objects
@@ -399,7 +399,7 @@ def rotation_from_matrix(matrix):
     True
 
     """
-    R = np.array(matrix, dtype=np.float64, copy=False)
+    R = np.asarray(matrix, dtype=np.float64)
     R33 = R[:3, :3]
     # direction: unit eigenvector of R33 corresponding to eigenvalue of 1
     w, W = np.linalg.eig(R33.T)
@@ -478,7 +478,7 @@ def scale_from_matrix(matrix):
     True
 
     """
-    M = np.array(matrix, dtype=np.float64, copy=False)
+    M = np.asarray(matrix, dtype=np.float64)
     M33 = M[:3, :3]
     factor = np.trace(M33) - 2.0
     try:
@@ -533,11 +533,11 @@ def projection_matrix(point, normal, direction=None, perspective=None, pseudo=Fa
 
     """
     M = np.identity(4)
-    point = np.array(point[:3], dtype=np.float64, copy=False)
+    point = np.asarray(point[:3], dtype=np.float64)
     normal = unit_vector(normal[:3])
     if perspective is not None:
         # perspective projection
-        perspective = np.array(perspective[:3], dtype=np.float64, copy=False)
+        perspective = np.asarray(perspective[:3], dtype=np.float64)
         M[0, 0] = M[1, 1] = M[2, 2] = np.dot(perspective - point, normal)
         M[:3, :3] -= np.outer(perspective, normal)
         if pseudo:
@@ -550,7 +550,7 @@ def projection_matrix(point, normal, direction=None, perspective=None, pseudo=Fa
         M[3, 3] = np.dot(perspective, normal)
     elif direction is not None:
         # parallel projection
-        direction = np.array(direction[:3], dtype=np.float64, copy=False)
+        direction = np.asarray(direction[:3], dtype=np.float64)
         scale = np.dot(direction, normal)
         M[:3, :3] -= np.outer(direction, normal) / scale
         M[:3, 3] = direction * (np.dot(point, normal) / scale)
@@ -593,7 +593,7 @@ def projection_from_matrix(matrix, pseudo=False):
     True
 
     """
-    M = np.array(matrix, dtype=np.float64, copy=False)
+    M = np.asarray(matrix, dtype=np.float64)
     M33 = M[:3, :3]
     w, V = np.linalg.eig(M)
     i = np.where(abs(np.real(w) - 1.0) < 1e-8)[0]
@@ -738,7 +738,7 @@ def shear_from_matrix(matrix):
     True
 
     """
-    M = np.array(matrix, dtype=np.float64, copy=False)
+    M = np.asarray(matrix, dtype=np.float64)
     M33 = M[:3, :3]
     # normal: cross independent eigenvectors corresponding to the eigenvalue 1
     w, V = np.linalg.eig(M33)
@@ -1089,8 +1089,8 @@ def superimposition_matrix(v0, v1, scale=False, usesvd=True):
     True
 
     """
-    v0 = np.array(v0, dtype=np.float64, copy=False)[:3]
-    v1 = np.array(v1, dtype=np.float64, copy=False)[:3]
+    v0 = np.asarray(v0, dtype=np.float64)[:3]
+    v1 = np.asarray(v1, dtype=np.float64)[:3]
     return affine_matrix_from_points(v0, v1, shear=False, scale=scale, usesvd=usesvd)
 
 
@@ -1186,7 +1186,7 @@ def euler_from_matrix(matrix, axes="sxyz"):
     j = _NEXT_AXIS[i + parity]
     k = _NEXT_AXIS[i - parity + 1]
 
-    M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
+    M = np.asarray(matrix, dtype=np.float64)[:3, :3]
     if repetition:
         sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
         if sy > _EPS:
@@ -1385,7 +1385,7 @@ def quaternion_from_matrix(matrix, isprecise=False):
     True
 
     """
-    M = np.array(matrix, dtype=np.float64, copy=False)[:4, :4]
+    M = np.asarray(matrix, dtype=np.float64)[:4, :4]
     if isprecise:
         q = np.empty((4,))
         t = np.trace(M)
@@ -1740,7 +1740,7 @@ def arcball_constrain_to_axis(point, axis):
 
 def arcball_nearest_axis(point, axes):
     """Return axis, which arc is nearest to point."""
-    point = np.array(point, dtype=np.float64, copy=False)
+    point = np.asarray(point, dtype=np.float64)
     nearest = None
     mx = -1.0
     for axis in axes:
@@ -1860,7 +1860,7 @@ def unit_vector(data, axis=None, out=None):
             return data
     else:
         if out is not data:
-            out[:] = np.array(data, copy=False)
+            out[:] = np.asarray(data)
         data = out
     length = np.atleast_1d(np.sum(data * data, axis))
     np.sqrt(length, length)
@@ -1931,8 +1931,8 @@ def angle_between_vectors(v0, v1, directed=True, axis=0):
     True
 
     """
-    v0 = np.array(v0, dtype=np.float64, copy=False)
-    v1 = np.array(v1, dtype=np.float64, copy=False)
+    v0 = np.asarray(v0, dtype=np.float64)
+    v1 = np.asarray(v1, dtype=np.float64)
     dot = np.sum(v0 * v1, axis=axis)
     dot /= vector_norm(v0, axis=axis) * vector_norm(v1, axis=axis)
     return np.arccos(dot if directed else np.fabs(dot))
@@ -2154,7 +2154,7 @@ def transform_points(points, matrix, translate=True):
 
     # quickly check to see if we've been passed an identity matrix
     if np.abs(matrix - _IDENTITY[: dim + 1, : dim + 1]).max() < 1e-8:
-        return np.ascontiguousarray(points.copy())
+        return points.copy(order="C")
 
     if translate:
         # apply translation and rotation
@@ -2225,13 +2225,13 @@ def is_rigid(matrix, epsilon=1e-8):
         return False
 
     # make sure last row has no scaling
-    if (matrix[-1] - [0, 0, 0, 1]).ptp() > epsilon:
+    if np.ptp((matrix[-1] - [0, 0, 0, 1])) > epsilon:
         return False
 
     # check dot product of rotation against transpose
     check = np.dot(matrix[:3, :3], matrix[:3, :3].T) - _IDENTITY[:3, :3]
 
-    return check.ptp() < epsilon
+    return np.ptp(check) < epsilon
 
 
 def scale_and_translate(scale=None, translate=None):

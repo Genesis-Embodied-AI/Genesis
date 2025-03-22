@@ -17,6 +17,8 @@ class ViewerOptions(Options):
     ----------
     res : tuple, shape (2,), optional
         The resolution of the viewer. If not set, will auto-compute using resolution of the connected display.
+    run_in_thread: bool
+        Whether to run the viewer in a background thread. This option is not supported on MacOS. True by default if available.
     refresh_rate : int
         The refresh rate of the viewer.
     max_FPS : int | None
@@ -32,6 +34,7 @@ class ViewerOptions(Options):
     """
 
     res: Optional[tuple] = None
+    run_in_thread: Optional[bool] = None
     refresh_rate: int = 60
     max_FPS: Optional[int] = 60
     camera_pos: tuple = (3.5, 0.5, 2.5)

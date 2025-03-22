@@ -6,8 +6,9 @@ Author: Matthew Matl
 import sys
 from time import time
 
-import numpy as np
 import PIL
+import pyglet
+import numpy as np
 from OpenGL.GL import *
 import matplotlib.pyplot as plt
 
@@ -52,8 +53,9 @@ class Renderer(object):
 
     def __init__(self, viewport_width, viewport_height, jit, point_size=1.0):
         self.dpscale = 1
-        # Scaling needed on retina displays
-        if sys.platform == "darwin":
+
+        # Scaling needed on retina displays for old pyglet releases
+        if sys.platform == "darwin" and pyglet.version < "2.0":
             self.dpscale = 2
 
         self.viewport_width = viewport_width
@@ -171,6 +173,7 @@ class Renderer(object):
                             self._point_shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
                         else:
                             self._shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
+                        glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
             # Make forward pass
             # forward_pass_start = time()
@@ -1295,13 +1298,15 @@ class Renderer(object):
     def _delete_floor_framebuffer(self):
         if self._floor_fb is not None:
             glDeleteFramebuffers(1, [self._floor_fb])
-            self._shadow_fb = None
+            self._floor_fb = None
 
         if self._floor_texture_color is not None:
             self._floor_texture_color.delete()
+            self._floor_texture_color = None
 
         if self._floor_texture_depth is not None:
             self._floor_texture_depth.delete()
+            self._floor_texture_depth = None
 
     def _configure_shadow_framebuffer(self):
         if self._shadow_fb is None:

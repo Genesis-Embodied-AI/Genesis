@@ -1,12 +1,14 @@
+import os
+import importlib
+
 import numpy as np
+import OpenGL.error
+import OpenGL.platform
 
 import genesis as gs
 import genesis.utils.geom as gu
 
-try:
-    from genesis.ext import pyrender
-except:
-    print("Failed to import pyrender. Rendering will not work.")
+from genesis.ext import pyrender
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
 
@@ -22,17 +24,10 @@ class ViewerLock:
         self._pyrender_viewer.render_lock.release()
 
 
-class DummyViewerLock:
-    def __enter__(self):
-        pass
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass
-
-
 class Viewer(RBC):
     def __init__(self, options, context):
         self._res = options.res
+        self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
         self._max_FPS = options.max_FPS
         self._camera_init_pos = options.camera_pos
@@ -57,49 +52,56 @@ class Viewer(RBC):
         # set viewer camera
         self.setup_camera()
 
-        # viewer
-        if gs.platform == "Linux":
-            run_in_thread = True
-            auto_start = True
-        elif gs.platform == "macOS":
-            run_in_thread = False
-            auto_start = False
-            gs.logger.warning(
-                "Non-linux system detected. In order to use the interactive viewer, you need to manually run simulation in a separate thread and then start viewer. See `examples/render_on_macos.py`."
-            )
-        elif gs.platform == "Windows":
-            run_in_thread = True
-            auto_start = True
-            gs.logger.warning("Windows system detected. Viewer may have some issues.")
+        # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
+        opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
+        if opengl_platform_orig is None:
+            if gs.platform == "Windows":
+                all_opengl_platforms = ("wgl",)  # same as "native"
+            else:
+                all_opengl_platforms = ("native", "egl", "glx")  # "native" is platform-specific ("egl" or "glx")
+        else:
+            all_opengl_platforms = (opengl_platform_orig,)
 
-        self._pyrender_viewer = pyrender.Viewer(
-            context=self.context,
-            viewport_size=self._res,
-            run_in_thread=run_in_thread,
-            auto_start=auto_start,
-            view_center=self._camera_init_lookat,
-            shadow=self.context.shadow,
-            plane_reflection=self.context.plane_reflection,
-            env_separate_rigid=self.context.env_separate_rigid,
-            viewer_flags={
-                "window_title": f"Genesis {gs.__version__}",
-                "refresh_rate": self._refresh_rate,
-            },
-        )
-        if auto_start:
-            self._pyrender_viewer.wait_until_initialized()
+        for i, platform in enumerate(all_opengl_platforms):
+            # Force re-import OpenGL platform
+            os.environ["PYOPENGL_PLATFORM"] = platform
+            importlib.reload(OpenGL.platform)
+
+            try:
+                gs.logger.debug(f"Trying to create OpenGL Context for PYOPENGL_PLATFORM='{platform}'...")
+                self._pyrender_viewer = pyrender.Viewer(
+                    context=self.context,
+                    viewport_size=self._res,
+                    run_in_thread=self._run_in_thread,
+                    auto_start=False,
+                    view_center=self._camera_init_lookat,
+                    shadow=self.context.shadow,
+                    plane_reflection=self.context.plane_reflection,
+                    env_separate_rigid=self.context.env_separate_rigid,
+                    viewer_flags={
+                        "window_title": f"Genesis {gs.__version__}",
+                        "refresh_rate": self._refresh_rate,
+                    },
+                )
+                if not self._run_in_thread:
+                    self._pyrender_viewer.start(auto_refresh=False)
+                self._pyrender_viewer.wait_until_initialized()
+                break
+            except OpenGL.error.Error:
+                # Invalid OpenGL context. Trying another platform if any...
+                gs.logger.debug(f"Invalid OpenGL context.")
+                if i == len(all_opengl_platforms) - 1:
+                    raise
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
-    def start(self):
-        # used for starting viewer thread in non-linux OS
-        self._pyrender_viewer.start()
+    def run(self):
+        self._pyrender_viewer.run()
 
     def stop(self):
-        # used for closing viewer thread in non-linux OS
-        self._pyrender_viewer.close_external()
+        self._pyrender_viewer.close()
 
     def is_alive(self):
         return self._pyrender_viewer.is_active
@@ -115,7 +117,7 @@ class Viewer(RBC):
         pose = gu.trans_R_to_T(pos, R)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self):
+    def update(self, auto_refresh=True):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -123,6 +125,9 @@ class Viewer(RBC):
             buffer_updates = self.context.update()
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
+
+            if auto_refresh and not self._pyrender_viewer.run_in_thread:
+                self._pyrender_viewer.refresh()
 
         # lock FPS
         if self._max_FPS is not None:

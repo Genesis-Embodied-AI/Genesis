@@ -1,4 +1,10 @@
 # import taichi while suppressing its output
+import os
+import sys
+import ctypes
+import atexit
+import logging as _logging
+import traceback
 from unittest.mock import patch
 
 _ti_outputs = []
@@ -12,11 +18,7 @@ def fake_print(*args, **kwargs):
 with patch("builtins.print", fake_print):
     import taichi as ti
 
-import os
-import sys
 import torch
-import atexit
-import traceback
 import numpy as np
 
 from .constants import GS_ARCH, TI_ARCH
@@ -27,7 +29,6 @@ from .utils import set_random_seed, get_platform, get_device
 
 _initialized = False
 backend = None
-first_init = True
 exit_callbacks = []
 global_scene_list = set()
 
@@ -39,7 +40,7 @@ def init(
     debug=False,
     eps=1e-12,
     logging_level=None,
-    backend=gs_backend.gpu,
+    backend=None,
     theme="dark",
     logger_verbose_time=False,
 ):
@@ -55,27 +56,34 @@ def init(
     global _theme
     _theme = theme
 
+    # Dealing with default backend
+    global platform
+    platform = get_platform()
+    if backend is None:
+        if debug or platform == "macOS":
+            backend = gs_backend.cpu
+        else:
+            backend = gs_backend.gpu
+
     # verbose repr
     global _verbose
     _verbose = False
 
     # genesis.logger
     global logger
-    global first_init
-    if first_init:
-        logger = Logger(logging_level, debug, logger_verbose_time)
-        atexit.register(_gs_exit)
+    if logging_level is None:
+        logging_level = _logging.DEBUG if debug else _logging.INFO
+    logger = Logger(logging_level, logger_verbose_time)
+    atexit.register(_gs_exit)
 
-        # greeting message
-        _display_greeting(logger.INFO_length)
-
-        first_init = False
+    # greeting message
+    _display_greeting(logger.INFO_length)
 
     # genesis.backend
-    global platform
-    platform = get_platform()
     if backend not in GS_ARCH[platform]:
         raise_exception(f"backend ~~<{backend}>~~ not supported for platform ~~<{platform}>~~")
+    if backend == gs_backend.metal:
+        logger.warning("Beware Apple Metal backend is partially broken.")
 
     # get default device and compute total device memory
     global device
@@ -86,14 +94,6 @@ def init(
     logger.info(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
     )
-
-    # init taichi
-    with patch("builtins.print", fake_print):
-        # force_scalarize_matrix=True for speeding up kernel compilation
-        ti.init(arch=TI_ARCH[platform][backend], debug=debug, force_scalarize_matrix=True)
-
-    for ti_output in _ti_outputs:
-        logger.debug(ti_output)
 
     # dtype
     global ti_float
@@ -143,11 +143,56 @@ def init(
     global EPS
     EPS = eps
 
-    # seed
+    taichi_kwargs = {}
+    if gs.logger.level == _logging.CRITICAL:
+        taichi_kwargs.update(log_level=ti.CRITICAL)
+    elif gs.logger.level == _logging.ERROR:
+        taichi_kwargs.update(log_level=ti.ERROR)
+    elif gs.logger.level == _logging.WARNING:
+        taichi_kwargs.update(log_level=ti.WARNING)
+    elif gs.logger.level == _logging.INFO:
+        taichi_kwargs.update(log_level=ti.INFO)
+    elif gs.logger.level == _logging.DEBUG:
+        taichi_kwargs.update(log_level=ti.INFO)
+    if debug:
+        if backend == gs_backend.cpu:
+            taichi_kwargs.update(cpu_max_num_threads=1)
+        else:
+            logger.warning("CPU backend is strongly recommended in debug mode.")
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
+
     if seed is not None:
         global SEED
         SEED = seed
         set_random_seed(SEED)
+        taichi_kwargs.update(
+            random_seed=seed,
+        )
+
+    # init taichi
+    with patch("builtins.print", fake_print):
+        ti.init(
+            arch=TI_ARCH[platform][backend],
+            # debug is causing segfault on some machines
+            debug=False,
+            check_out_of_bound=debug,
+            # force_scalarize_matrix=True for speeding up kernel compilation
+            force_scalarize_matrix=not debug,
+            # Turning off advanced optimization is causin issues on MacOS
+            advanced_optimization=True,
+            fast_math=not debug,
+            default_ip=ti_int,
+            default_fp=ti_float,
+            **taichi_kwargs,
+        )
+
+    for ti_output in _ti_outputs:
+        logger.debug(ti_output)
+    _ti_outputs.clear()
 
     global exit_callbacks
     exit_callbacks = []
@@ -174,6 +219,12 @@ def destroy():
             if scene._visualizer._rasterizer is not None:
                 scene._visualizer._rasterizer.destroy()
     global_scene_list.clear()
+
+    global logger
+    logger.removeHandler(logger.handler)
+    logger = None
+
+    atexit.unregister(_gs_exit)
 
 
 def _globalize_backend(_backend):
@@ -243,6 +294,16 @@ def _gs_exit():
 
 
 ########################## shortcut imports for users ##########################
+
+if sys.platform == "darwin":
+    libc = ctypes.CDLL(None)
+    devnull = open(os.devnull, "w")
+    stderr_fileno = sys.stderr.fileno()
+    original_stderr_fileno = os.dup(stderr_fileno)
+    sys.stderr.flush()
+    libc.fflush(None)
+    libc.dup2(devnull.fileno(), stderr_fileno)
+
 from .constants import (
     IntEnum,
     JOINT_TYPE,
@@ -259,7 +320,7 @@ from .constants import (
 from .utils.uid import UID
 from .utils import tools
 from .utils.geom import *
-from .utils.misc import assert_built, assert_unbuilt, assert_initialized, raise_exception
+from .utils.misc import assert_built, assert_unbuilt, assert_initialized, raise_exception, raise_exception_from
 
 from .options import morphs
 from .options import renderers
@@ -273,6 +334,13 @@ from .engine import states, materials, force_fields
 from .engine.scene import Scene
 from .engine.mesh import Mesh
 from .engine.entities.emitter import Emitter
+
+if sys.platform == "darwin":
+    sys.stderr.flush()
+    libc.fflush(None)
+    libc.dup2(original_stderr_fileno, stderr_fileno)
+    os.close(original_stderr_fileno)
+    devnull.close()
 
 for name, member in gs_backend.__members__.items():
     globals()[name] = member

@@ -827,7 +827,7 @@ def interpolate(values, color_map=None, dtype=np.uint8):
     # make input always float
     values = np.asanyarray(values, dtype=np.float64).ravel()
     # scale values to 0.0 - 1.0 and get colors
-    colors = cmap((values - values.min()) / values.ptp())
+    colors = cmap((values - values.min()) / np.ptp(values))
     # convert to 0-255 RGBA
     rgba = to_rgba(colors, dtype=dtype)
 

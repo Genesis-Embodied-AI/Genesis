@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy==1.26.4"]
+requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -13,29 +13,31 @@ requires-python = ">=3.9"
 dependencies = [
     "psutil",
     "scikit-image",
-    "taichi == 1.7.3",
+    "taichi >= 1.7.2",
     "pydantic == 2.7.1",
     "numpy == 1.26.4",
     "six",
-    "PyOpenGL",
+    "PyOpenGL>=3.1.4",
     "freetype-py",
-    "pyglet",
+    "pyglet>=1.5",
     "libigl",
     "pygltflib == 1.16.0",
-    "mujoco == 3.2.5",
+    # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
+    #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
+    "mujoco >= 3.3.0, < 3.4.0",
     "pycollada",
     "opencv-python",
     "lxml",
     "tetgen >= 0.6.4",
-    "screeninfo",
-    "PyGEL3D", # might need to use PyGEL3D == 0.1.0 for MacOS (M1)
+    "PyGEL3D",
     "moviepy >= 2.0.0",
     "numba",
     "pymeshlab",
     "coacd",
     "OpenEXR",
     "black",
-    "scipy == 1.15.1",
+    "pytest",
+    "scipy >= 1.14",
 ]
 
 [tool.setuptools.packages.find]
@@ -52,6 +54,19 @@ genesis = [
 
 [tool.black]
 line-length = 120
+force-exclude = '''
+/(
+    genesis/ext
+)/
+'''
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+    "--pdbcls=IPython.terminal.debugger:TerminalPdb",
+    "--exitfirst",
+]
+log_cli_level = "WARNING"
 
 [project.scripts]
 gs = "genesis._main:main"

@@ -31,6 +31,7 @@ def main():
             # NOTE: Batching dofs/links info to set different physical attributes across environments (in parallel)
             #       By default, both are False as it's faster and thus only turn this on if necessary
             batch_dofs_info=True,
+            batch_joints_info=True,
             batch_links_info=True,
         ),
     )

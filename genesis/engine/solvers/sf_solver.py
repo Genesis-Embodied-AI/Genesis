@@ -271,7 +271,7 @@ class SFSolver(Solver):
     def get_state(self, f):
         return None
 
-    def set_state(self, f, state):
+    def set_state(self, f, state, envs_idx=None):
         return None
 
     # ------------------------------------------------------------------------------------

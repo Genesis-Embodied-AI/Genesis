@@ -691,7 +691,7 @@ class Box(_Primitive):
             if bounds.shape != (2, 3):
                 raise ValueError("`bounds` must be (2, 3) float")
             # create extents from AABB
-            extents = bounds.ptp(axis=0)
+            extents = np.ptp(bounds, axis=0)
             # translate to the center of the box
             transform = np.eye(4)
             transform[:3, 3] = bounds[0] + extents / 2.0

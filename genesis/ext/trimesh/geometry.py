@@ -176,7 +176,7 @@ def triangulate_quads(quads, dtype=np.int64):
 
         if len(quads.shape) == 2 and quads.shape[1] == 4:
             # if they are just quads stack and return
-            return np.vstack((quads[:, [0, 1, 2]], quads[:, [2, 3, 0]])).astype(dtype)
+            return np.vstack((quads[:, [0, 1, 2]], quads[:, [2, 3, 0]]), dtype=dtype)
     except ValueError:
         # new numpy raises an error for sequences
         pass

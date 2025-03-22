@@ -1,3 +1,5 @@
+from itertools import chain
+
 import numpy as np
 import taichi as ti
 import torch
@@ -151,59 +153,50 @@ class RigidEntity(Entity):
         else:
             gs.raise_exception("Unsupported primitive shape")
 
-        vmesh = gs.Mesh.from_trimesh(tmesh, surface=surface)
-        mesh = gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision())
-
-        link = self._add_link(
-            name=f"{link_name_prefix}_baselink",
-            pos=np.array(morph.pos),
-            quat=np.array(morph.quat),
-            inertial_pos=gu.zero_pos(),
-            inertial_quat=gu.identity_quat(),
-            inertial_i=None,
-            inertial_mass=None,
-            parent_idx=-1,
-            invweight=None,
-        )
-        self._add_joint(
-            name=f"{link_name_prefix}_baselink_joint",
-            n_qs=n_qs,
-            n_dofs=n_dofs,
-            type=joint_type,
-            pos=gu.zero_pos(),
-            quat=gu.identity_quat(),
-            dofs_motion_ang=gu.default_dofs_motion_ang(n_dofs),
-            dofs_motion_vel=gu.default_dofs_motion_vel(n_dofs),
-            dofs_limit=gu.default_dofs_limit(n_dofs),
-            dofs_invweight=gu.default_dofs_invweight(n_dofs),
-            dofs_stiffness=gu.default_dofs_stiffness(n_dofs),
-            dofs_sol_params=gu.default_solver_params(n_dofs),
-            dofs_damping=gu.free_dofs_damping(n_dofs),
-            dofs_armature=gu.free_dofs_armature(n_dofs),
-            dofs_kp=gu.default_dofs_kp(n_dofs),
-            dofs_kv=gu.default_dofs_kv(n_dofs),
-            dofs_force_range=gu.default_dofs_force_range(n_dofs),
-            init_qpos=init_qpos,
-        )
-
         # contains one visual geom (vgeom) and one collision geom (geom)
+        g_infos = []
         if morph.visualization:
-            link._add_vgeom(
-                vmesh=vmesh,
-                init_pos=gu.zero_pos(),
-                init_quat=gu.identity_quat(),
+            g_infos.append(
+                dict(
+                    contype=0,
+                    conaffinity=0,
+                    vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface),
+                )
             )
         if morph.collision:
-            link._add_geom(
-                mesh=mesh,
-                init_pos=gu.zero_pos(),
-                init_quat=gu.identity_quat(),
-                type=geom_type,
-                friction=gu.default_friction() if self.material.friction is None else self.material.friction,
-                sol_params=gu.default_solver_params(n=1)[0],
-                data=geom_data,
-                needs_coup=self.material.needs_coup,
+            g_infos.append(
+                dict(
+                    contype=1,
+                    conaffinity=1,
+                    mesh=gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()),
+                    type=geom_type,
+                    data=geom_data,
+                    sol_params=gu.default_solver_params(n=1)[0],
+                )
             )
+
+        link, (joint,) = self._add_by_info(
+            l_info=dict(
+                name=f"{link_name_prefix}_baselink",
+                pos=np.array(morph.pos),
+                quat=np.array(morph.quat),
+                inertial_pos=gu.zero_pos(),
+                inertial_quat=gu.identity_quat(),
+                parent_idx=-1,
+            ),
+            j_infos=[
+                dict(
+                    name=f"{link_name_prefix}_baselink_joint",
+                    n_qs=n_qs,
+                    n_dofs=n_dofs,
+                    type=joint_type,
+                    init_qpos=init_qpos,
+                )
+            ],
+            g_infos=g_infos,
+            morph=morph,
+            surface=surface,
+        )
 
     def _load_mesh(self, morph, surface):
         if morph.fixed:
@@ -217,114 +210,102 @@ class RigidEntity(Entity):
             n_qs = 7
             n_dofs = 6
             init_qpos = np.concatenate([morph.pos, morph.quat])
-        link_name = morph.file.split("/")[-1].replace(".", "_")
-
-        link = self._add_link(
-            name=f"{link_name}_baselink",
-            pos=np.array(morph.pos),
-            quat=np.array(morph.quat),
-            inertial_pos=None,
-            inertial_quat=gu.identity_quat(),
-            inertial_i=None,
-            inertial_mass=None,
-            parent_idx=-1,
-            invweight=None,
-        )
-        self._add_joint(
-            name=f"{link_name}_baselink_joint",
-            n_qs=n_qs,
-            n_dofs=n_dofs,
-            type=joint_type,
-            pos=gu.zero_pos(),
-            quat=gu.identity_quat(),
-            dofs_motion_ang=gu.default_dofs_motion_ang(n_dofs),
-            dofs_motion_vel=gu.default_dofs_motion_vel(n_dofs),
-            dofs_limit=gu.default_dofs_limit(n_dofs),
-            dofs_invweight=gu.default_dofs_invweight(n_dofs),
-            dofs_stiffness=gu.default_dofs_stiffness(n_dofs),
-            dofs_sol_params=gu.default_solver_params(n_dofs),
-            dofs_damping=gu.free_dofs_damping(n_dofs),
-            dofs_armature=gu.free_dofs_armature(n_dofs),
-            dofs_kp=gu.default_dofs_kp(n_dofs),
-            dofs_kv=gu.default_dofs_kv(n_dofs),
-            dofs_force_range=gu.default_dofs_force_range(n_dofs),
-            init_qpos=init_qpos,
-        )
 
         vmeshes, meshes = mu.parse_visual_and_col_mesh(morph, surface)
 
+        g_infos = []
         if morph.visualization:
             for vmesh in vmeshes:
-                link._add_vgeom(
-                    vmesh=vmesh,
-                    init_pos=gu.zero_pos(),
-                    init_quat=gu.identity_quat(),
+                g_infos.append(
+                    dict(
+                        contype=0,
+                        conaffinity=0,
+                        vmesh=vmesh,
+                    )
                 )
-
         if morph.collision:
             for mesh in meshes:
-                link._add_geom(
-                    mesh=mesh,
-                    init_pos=gu.zero_pos(),
-                    init_quat=gu.identity_quat(),
-                    type=gs.GEOM_TYPE.MESH,
-                    friction=gu.default_friction() if self.material.friction is None else self.material.friction,
-                    sol_params=gu.default_solver_params(n=1)[0],
-                    needs_coup=self.material.needs_coup,
+                g_infos.append(
+                    dict(
+                        contype=1,
+                        conaffinity=1,
+                        mesh=mesh,
+                        type=gs.GEOM_TYPE.MESH,
+                        sol_params=gu.default_solver_params(n=1)[0],
+                    )
                 )
 
-    def _load_terrain(self, morph, surface):
-        link = self._add_link(
-            name="baselink",
-            pos=np.array(morph.pos),
-            quat=np.array(morph.quat),
-            inertial_pos=None,
-            inertial_quat=gu.identity_quat(),
-            inertial_i=None,
-            inertial_mass=None,
-            parent_idx=-1,
-            invweight=None,
+        link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
+
+        link, (joint,) = self._add_by_info(
+            l_info=dict(
+                name=f"{link_name}_baselink",
+                pos=np.array(morph.pos),
+                quat=np.array(morph.quat),
+                inertial_pos=gu.zero_pos(),
+                inertial_quat=gu.identity_quat(),
+                parent_idx=-1,
+            ),
+            j_infos=[
+                dict(
+                    name=f"{link_name}_baselink_joint",
+                    n_qs=n_qs,
+                    n_dofs=n_dofs,
+                    type=joint_type,
+                    init_qpos=init_qpos,
+                )
+            ],
+            g_infos=g_infos,
+            morph=morph,
+            surface=surface,
         )
-        self._add_joint(
-            name="joint_baselink",
-            n_qs=0,
-            n_dofs=0,
-            type=gs.JOINT_TYPE.FIXED,
-            pos=gu.zero_pos(),
-            quat=gu.identity_quat(),
-            dofs_motion_ang=gu.default_dofs_motion_ang(0),
-            dofs_motion_vel=gu.default_dofs_motion_vel(0),
-            dofs_limit=gu.default_dofs_limit(0),
-            dofs_invweight=gu.default_dofs_invweight(0),
-            dofs_stiffness=gu.default_dofs_stiffness(0),
-            dofs_sol_params=gu.default_solver_params(0),
-            dofs_damping=gu.free_dofs_damping(0),
-            dofs_armature=gu.free_dofs_armature(0),
-            dofs_kp=gu.default_dofs_kp(0),
-            dofs_kv=gu.default_dofs_kv(0),
-            dofs_force_range=gu.default_dofs_force_range(0),
-            init_qpos=np.zeros(0),
+
+    def _load_terrain(self, morph, surface):
+        link, (joint,) = self._add_by_info(
+            l_info=dict(
+                name="baselink",
+                pos=np.array(morph.pos),
+                quat=np.array(morph.quat),
+                inertial_pos=None,
+                inertial_quat=gu.identity_quat(),
+                inertial_i=None,
+                inertial_mass=None,
+                parent_idx=-1,
+                invweight=None,
+            ),
+            j_infos=[
+                dict(
+                    name="joint_baselink",
+                    n_qs=0,
+                    n_dofs=0,
+                    type=gs.JOINT_TYPE.FIXED,
+                )
+            ],
+            morph=morph,
+            surface=surface,
         )
 
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array([morph.horizontal_scale, morph.vertical_scale])
 
+        g_infos = []
         if morph.visualization:
-            link._add_vgeom(
-                vmesh=vmesh,
-                init_pos=gu.zero_pos(),
-                init_quat=gu.identity_quat(),
+            g_infos.append(
+                dict(
+                    contype=0,
+                    conaffinity=0,
+                    vmesh=vmesh,
+                )
             )
-
         if morph.collision:
-            link._add_geom(
-                mesh=mesh,
-                init_pos=gu.zero_pos(),
-                init_quat=gu.identity_quat(),
-                type=gs.GEOM_TYPE.TERRAIN,
-                friction=gu.default_friction() if self.material.friction is None else self.material.friction,
-                sol_params=gu.default_solver_params(n=1)[0],
-                needs_coup=self.material.needs_coup,
+            g_infos.append(
+                dict(
+                    contype=1,
+                    conaffinity=1,
+                    mesh=mesh,
+                    type=gs.GEOM_TYPE.TERRAIN,
+                    sol_params=gu.default_solver_params(n=1)[0],
+                )
             )
 
     def _load_MJCF(self, morph, surface):
@@ -332,68 +313,41 @@ class RigidEntity(Entity):
         n_geoms = mj.ngeom
         n_links = mj.nbody - 1  # link 0 in mj is world
 
-        links_g_info = [list() for _ in range(n_links)]
-        world_g_info = []
+        # Check if there is any tendon. Report a warning if so.
+        if mj.ntendon:
+            gs.logger.warning("(MJCF) Tendon not supported")
 
-        # assign geoms to link
-        for i_g in range(n_geoms):
-            if mj.geom_bodyid[i_g] < 0:
-                continue
+        # Parse all geometries grouped by parent joint (or world)
+        world_g_info, *links_g_infos = mju.parse_geoms(mj, morph.scale, morph.convexify, surface, morph.file)
 
-            # address geoms directly attached to worldbody (0)
-            elif mj.geom_bodyid[i_g] == 0:
-                g_info = mju.parse_geom(mj, i_g, morph.scale, morph.convexify, surface, morph.file)
-                if g_info is not None:
-                    world_g_info.append(g_info)
+        # Parse all bodies (links and joints)
+        (world_l_info, *l_infos), (world_j_info, *links_j_infos) = mju.parse_links(mj, morph.scale)
+        l_infos, links_j_infos, links_g_infos, ordered_links_idx = uu._order_links(
+            l_infos, links_j_infos, links_g_infos
+        )
 
-            else:
-                g_info = mju.parse_geom(mj, i_g, morph.scale, morph.convexify, surface, morph.file)
-                if g_info is not None:
-                    link_idx = mj.geom_bodyid[i_g] - 1
-                    links_g_info[link_idx].append(g_info)
-
-        l_infos = []
-        j_infos = []
-
-        q_offset, dof_offset = 0, 0
-
-        for i_l in range(n_links):
-            l_info, j_info = mju.parse_link(mj, i_l + 1, q_offset, dof_offset, morph.scale)
-
-            l_infos.append(l_info)
-            j_infos.append(j_info)
-
-            q_offset += j_info["n_qs"]
-            dof_offset += j_info["n_dofs"]
-
-        l_infos, j_infos, links_g_info, ordered_links_idx = uu._order_links(l_infos, j_infos, links_g_info)
-        for i_l in range(len(l_infos)):
-            l_info = l_infos[i_l]
-            j_info = j_infos[i_l]
-
-            if l_info["parent_idx"] < 0:  # base link
-                if morph.pos is not None:
-                    l_info["pos"] = np.array(morph.pos)
-                    gs.logger.warning("Overriding base link's pos with user provided value in morph.")
-                if morph.quat is not None:
-                    l_info["quat"] = np.array(morph.quat)
-                    gs.logger.warning("Overriding base link's quat with user provided value in morph.")
-
-                if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial value will be reflected
-                    j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
-
-            self._add_by_info(l_info, j_info, links_g_info[i_l], morph, surface)
-
+        # Add all bodies to this entity
+        all_infos = list(zip(l_infos, links_j_infos, links_g_infos))
         if world_g_info:
-            l_world_info, j_world_info = mju.parse_link(mj, 0, q_offset, dof_offset, morph.scale)
-            if morph.pos is not None:
-                l_world_info["pos"] = np.array(morph.pos)
-                gs.logger.warning("Overriding base link's pos with user provided value in morph.")
-            if morph.quat is not None:
-                l_world_info["quat"] = np.array(morph.quat)
-                gs.logger.warning("Overriding base link's quat with user provided value in morph.")
-            self._add_by_info(l_world_info, j_world_info, world_g_info, morph, surface)
+            # Only take into account the world if it features at least one geometry
+            all_infos.append((world_l_info, world_j_info, world_g_info))
+        for l_info, link_j_infos, link_g_infos in all_infos:
+            if l_info["parent_idx"] < 0:
+                for j_info in link_j_infos:
+                    if j_info["type"] != gs.JOINT_TYPE.FIXED:  # base link
+                        if morph.pos is not None:
+                            l_info["pos"] = np.array(morph.pos)
+                            gs.logger.warning("Overriding base link's pos with user provided value in morph.")
+                        if morph.quat is not None:
+                            l_info["quat"] = np.array(morph.quat)
+                            gs.logger.warning("Overriding base link's quat with user provided value in morph.")
+
+                    if j_info["type"] == gs.JOINT_TYPE.FREE:
+                        # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver,
+                        # but this initial value will be reflected
+                        j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+
+            self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
@@ -409,6 +363,8 @@ class RigidEntity(Entity):
                     torque_scale=e_info["torque_scale"],
                     sol_params=e_info["sol_params"],
                 )
+            else:
+                gs.logger.warning(f"(MJCF) Equality type '{e_info['type']}' not supported for now.")
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
@@ -425,63 +381,10 @@ class RigidEntity(Entity):
                     # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial value will be reflected in init_qpos
                     j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
 
-            self._add_by_info(l_info, j_info, l_info["g_infos"], morph, surface)
-
-    def _add_by_info(self, l_info, j_info, g_infos, morph, surface):
-        link = self._add_link(
-            name=l_info["name"],
-            pos=l_info["pos"],
-            quat=l_info["quat"],
-            inertial_pos=l_info["inertial_pos"] if not morph.recompute_inertia else None,
-            inertial_quat=l_info["inertial_quat"],
-            inertial_i=l_info["inertial_i"] if not morph.recompute_inertia else None,
-            inertial_mass=l_info["inertial_mass"] if not morph.recompute_inertia else None,
-            parent_idx=l_info["parent_idx"] + self._link_start if l_info["parent_idx"] >= 0 else l_info["parent_idx"],
-            invweight=l_info["invweight"],
-        )
-        self._add_joint(
-            name=j_info["name"],
-            n_qs=j_info["n_qs"],
-            n_dofs=j_info["n_dofs"],
-            type=j_info["type"],
-            pos=j_info["pos"],
-            quat=j_info["quat"],
-            dofs_motion_ang=j_info["dofs_motion_ang"],
-            dofs_motion_vel=j_info["dofs_motion_vel"],
-            dofs_limit=j_info["dofs_limit"],
-            dofs_invweight=j_info["dofs_invweight"],
-            dofs_stiffness=j_info["dofs_stiffness"],
-            dofs_sol_params=j_info["dofs_sol_params"],
-            dofs_damping=j_info["dofs_damping"],
-            dofs_armature=j_info["dofs_armature"],
-            dofs_kp=j_info["dofs_kp"],
-            dofs_kv=j_info["dofs_kv"],
-            dofs_force_range=j_info["dofs_force_range"],
-            init_qpos=j_info["init_qpos"],
-        )
-
-        # geoms
-        for g_info in g_infos:
-            if g_info["is_col"] and morph.collision:
-                link._add_geom(
-                    mesh=g_info["mesh"],
-                    init_pos=g_info["pos"],
-                    init_quat=g_info["quat"],
-                    type=g_info["type"],
-                    friction=g_info["friction"] if self.material.friction is None else self.material.friction,
-                    sol_params=g_info["sol_params"],
-                    data=g_info["data"],
-                    needs_coup=self.material.needs_coup,
-                )
-            if not g_info["is_col"] and morph.visualization:
-                link._add_vgeom(
-                    vmesh=g_info["mesh"],
-                    init_pos=g_info["pos"],
-                    init_quat=g_info["quat"],
-                )
+            self._add_by_info(l_info, (j_info,), l_info["g_infos"], morph, surface)
 
     def _build(self):
-        assert self.n_links == self.n_joints
+        assert self.n_links == len(self.joints)
         for link in self._links:
             link._build()
 
@@ -506,7 +409,7 @@ class RigidEntity(Entity):
         # compute joint limit in q space
         q_limit_lower = []
         q_limit_upper = []
-        for joint in self._joints:
+        for joint in chain.from_iterable(self._joints):
             if joint.type == gs.JOINT_TYPE.FREE:
                 q_limit_lower.append(joint.dofs_limit[:3, 0])
                 q_limit_lower.append(-np.ones(4))  # quaternion lower bound
@@ -550,22 +453,25 @@ class RigidEntity(Entity):
             dtype=gs.ti_float, shape=self._solver._batch_shape((self.n_dofs, self._IK_error_dim))
         )
 
-    def _add_link(
-        self,
-        name,
-        pos,
-        quat,
-        inertial_pos,
-        inertial_quat,
-        inertial_i,
-        inertial_mass,
-        parent_idx,
-        invweight,
-    ):
+    def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
+        if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
+            raise ValueError(
+                "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
+            )
+
+        if isinstance(morph, gs.options.morphs.FileMorph) and morph.recompute_inertia:
+            l_info.update(inertial_pos=None, inertial_quat=None, inertial_i=None, inertial_mass=None)
+
+        parent_idx = l_info["parent_idx"]
+        if parent_idx >= 0:
+            parent_idx += self._link_start
+
         link = RigidLink(
             entity=self,
-            name=name,
+            name=l_info["name"],
             idx=self.n_links + self._link_start,
+            joint_start=self.n_joints + self._joint_start,
+            n_joints=len(j_infos),
             geom_start=self.n_geoms + self._geom_start,
             cell_start=self.n_cells + self._cell_start,
             vert_start=self.n_verts + self._vert_start,
@@ -575,74 +481,97 @@ class RigidEntity(Entity):
             vgeom_start=self.n_vgeoms + self._vgeom_start,
             vvert_start=self.n_vverts + self._vvert_start,
             vface_start=self.n_vfaces + self._vface_start,
-            pos=pos,
-            quat=quat,
-            inertial_pos=inertial_pos,
-            inertial_quat=inertial_quat,
-            inertial_i=inertial_i,
-            inertial_mass=inertial_mass,
+            pos=l_info["pos"],
+            quat=l_info["quat"],
+            inertial_pos=l_info.get("inertial_pos"),
+            inertial_quat=l_info.get("inertial_quat"),
+            inertial_i=l_info.get("inertial_i"),
+            inertial_mass=l_info.get("inertial_mass"),
             parent_idx=parent_idx,
-            invweight=invweight,
+            invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
         )
         self._links.append(link)
-        return link
 
-    def _add_joint(
-        self,
-        name,
-        n_qs,
-        n_dofs,
-        type,
-        pos,
-        quat,
-        dofs_motion_ang,
-        dofs_motion_vel,
-        dofs_limit,
-        dofs_invweight,
-        dofs_stiffness,
-        dofs_sol_params,
-        dofs_damping,
-        dofs_armature,
-        dofs_kp,
-        dofs_kv,
-        dofs_force_range,
-        init_qpos,
-    ):
-        if (
-            len(np.array(dofs_sol_params).shape) == 2
-            and np.array(dofs_sol_params).shape[0] == 1
-            and (dofs_sol_params[0][3] >= 1.0 or dofs_sol_params[0][2] >= dofs_sol_params[0][3])
-        ):
-            gs.logger.warning(f"Joint {name}'s sol_params {dofs_sol_params[0]} look not right, change to default.")
-            dofs_sol_params = gu.default_solver_params(1)
+        joints = gs.List()
+        self._joints.append(joints)
+        for j_info in j_infos:
+            n_dofs = j_info["n_dofs"]
 
-        joint = RigidJoint(
-            entity=self,
-            name=name,
-            idx=self.n_joints + self._joint_start,
-            q_start=self.n_qs + self._q_start,
-            dof_start=self.n_dofs + self._dof_start,
-            n_qs=n_qs,
-            n_dofs=n_dofs,
-            type=type,
-            pos=pos,
-            quat=quat,
-            dofs_motion_ang=dofs_motion_ang,
-            dofs_motion_vel=dofs_motion_vel,
-            dofs_limit=dofs_limit,
-            dofs_invweight=dofs_invweight,
-            dofs_stiffness=dofs_stiffness,
-            dofs_sol_params=dofs_sol_params,
-            dofs_damping=dofs_damping,
-            dofs_armature=dofs_armature,
-            dofs_kp=dofs_kp,
-            dofs_kv=dofs_kv,
-            dofs_force_range=dofs_force_range,
-            init_qpos=init_qpos,
-        )
-        self._joints.append(joint)
-        return joint
+            sol_params = np.array(j_info.get("sol_params", gu.default_solver_params(1)), copy=True)
+            dofs_sol_params = np.array(j_info.get("dofs_sol_params", gu.default_solver_params(n_dofs)), copy=True)
+            for _sol_params in (sol_params, dofs_sol_params):
+                if (
+                    len(_sol_params.shape) == 2
+                    and _sol_params.shape[0] == 1
+                    and (_sol_params[0][3] >= 1.0 or _sol_params[0][2] >= _sol_params[0][3])
+                ):
+                    gs.logger.warning(f"Joint {name}'s sol_params {_sol_params[0]} look not right, change to default.")
+                    _sol_params[:] = gu.default_solver_params(len(_sol_params))
+
+            dofs_motion_ang = j_info.get("dofs_motion_ang")
+            if dofs_motion_ang is None:
+                dofs_motion_ang = gu.default_dofs_motion_ang(n_dofs)
+            dofs_motion_vel = j_info.get("dofs_motion_vel")
+            if dofs_motion_vel is None:
+                dofs_motion_vel = gu.default_dofs_motion_vel(n_dofs)
+
+            joint = RigidJoint(
+                entity=self,
+                name=j_info["name"],
+                idx=self.n_joints + self._joint_start,
+                q_start=self.n_qs + self._q_start,
+                dof_start=self.n_dofs + self._dof_start,
+                n_qs=j_info["n_qs"],
+                n_dofs=n_dofs,
+                type=j_info["type"],
+                pos=j_info.get("pos", gu.zero_pos()),
+                quat=j_info.get("quat", gu.identity_quat()),
+                init_qpos=j_info.get("init_qpos", np.zeros(n_dofs)),
+                sol_params=sol_params,
+                dofs_motion_ang=dofs_motion_ang,
+                dofs_motion_vel=dofs_motion_vel,
+                dofs_limit=j_info.get("dofs_limit", gu.default_dofs_limit(n_dofs)),
+                dofs_invweight=j_info.get("dofs_invweight", gu.default_dofs_invweight(n_dofs)),
+                dofs_stiffness=j_info.get("dofs_stiffness", gu.default_dofs_stiffness(n_dofs)),
+                dofs_sol_params=dofs_sol_params,
+                dofs_damping=j_info.get("dofs_damping", gu.free_dofs_damping(n_dofs)),
+                dofs_armature=j_info.get("dofs_armature", gu.free_dofs_armature(n_dofs)),
+                dofs_kp=j_info.get("dofs_kp", gu.default_dofs_kp(n_dofs)),
+                dofs_kv=j_info.get("dofs_kv", gu.default_dofs_kv(n_dofs)),
+                dofs_force_range=j_info.get("dofs_force_range", gu.default_dofs_force_range(n_dofs)),
+            )
+            joints.append(joint)
+
+        # geoms
+        for g_info in g_infos:
+            is_col = g_info["contype"] or g_info["conaffinity"]
+            friction = g_info.get("friction", self.material.friction)
+            if friction is None:
+                friction = gu.default_friction()
+            g_info.setdefault("pos", gu.zero_pos())
+            g_info.setdefault("quat", gu.identity_quat())
+            if morph.collision and is_col:
+                link._add_geom(
+                    mesh=g_info["mesh"],
+                    init_pos=g_info["pos"],
+                    init_quat=g_info["quat"],
+                    type=g_info["type"],
+                    friction=friction,
+                    sol_params=g_info["sol_params"],
+                    data=g_info.get("data"),
+                    needs_coup=self.material.needs_coup,
+                    contype=g_info["contype"],
+                    conaffinity=g_info["conaffinity"],
+                )
+            if morph.visualization and not is_col:
+                link._add_vgeom(
+                    vmesh=g_info["vmesh"],
+                    init_pos=g_info["pos"],
+                    init_quat=g_info["quat"],
+                )
+
+        return link, joints
 
     def _add_equality(
         self, name, type, link1_idx, link2_idx, anchor1_pos, anchor2_pos, rel_pose, torque_scale, sol_params
@@ -721,47 +650,19 @@ class RigidEntity(Entity):
             l_info = self._solver.links_info[I_l]
             l_state = self._solver.links_state[i_l, i_b]
 
-            if l_info.joint_type == gs.JOINT_TYPE.FIXED:
-                pass
+            dof_offset = 0
+            for i_j in range(l_info.joint_start, l_info.joint_end):
+                I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
+                j_info = self._solver.joints_info[I_j]
 
-            elif l_info.joint_type == gs.JOINT_TYPE.REVOLUTE:
-                i_d = l_info.dof_start
-                I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
-                i_d_jac = i_d - self._dof_start
-                rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
-                translation = rotation.cross(tgt_link_pos - l_state.pos)
+                if j_info.type == gs.JOINT_TYPE.FIXED:
+                    pass
 
-                self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
-                self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
-                self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
-                self._jacobian[3, i_d_jac, i_b] = rotation[0] * rot_mask[0]
-                self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
-                self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
-
-            elif l_info.joint_type == gs.JOINT_TYPE.PRISMATIC:
-                i_d = l_info.dof_start
-                I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
-                i_d_jac = i_d - self._dof_start
-                translation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_vel, l_state.quat)
-
-                self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
-                self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
-                self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
-
-            elif l_info.joint_type == gs.JOINT_TYPE.FREE:
-                # translation
-                for i_d_ in range(3):
-                    i_d = l_info.dof_start + i_d_
-                    i_d_jac = i_d - self._dof_start
-
-                    self._jacobian[i_d_, i_d_jac, i_b] = 1.0 * pos_mask[i_d_]
-
-                # rotation
-                for i_d_ in range(3):
-                    i_d = l_info.dof_start + i_d_ + 3
-                    i_d_jac = i_d - self._dof_start
+                elif j_info.type == gs.JOINT_TYPE.REVOLUTE:
+                    i_d = j_info.dof_start
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
-                    rotation = self._solver.dofs_info[I_d].motion_ang
+                    i_d_jac = i_d + dof_offset - self._dof_start
+                    rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
                     translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -770,6 +671,41 @@ class RigidEntity(Entity):
                     self._jacobian[3, i_d_jac, i_b] = rotation[0] * rot_mask[0]
                     self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
                     self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
+
+                elif j_info.type == gs.JOINT_TYPE.PRISMATIC:
+                    i_d = j_info.dof_start
+                    I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                    i_d_jac = i_d + dof_offset - self._dof_start
+                    translation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_vel, l_state.quat)
+
+                    self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
+                    self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
+                    self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
+
+                elif j_info.type == gs.JOINT_TYPE.FREE:
+                    # translation
+                    for i_d_ in ti.static(range(3)):
+                        i_d = j_info.dof_start + i_d_
+                        i_d_jac = i_d + dof_offset - self._dof_start
+
+                        self._jacobian[i_d_, i_d_jac, i_b] = 1.0 * pos_mask[i_d_]
+
+                    # rotation
+                    for i_d_ in ti.static(range(3)):
+                        i_d = j_info.dof_start + i_d_ + 3
+                        i_d_jac = i_d + dof_offset - self._dof_start
+                        I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                        rotation = self._solver.dofs_info[I_d].motion_ang
+                        translation = rotation.cross(tgt_link_pos - l_state.pos)
+
+                        self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
+                        self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
+                        self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
+                        self._jacobian[3, i_d_jac, i_b] = rotation[0] * rot_mask[0]
+                        self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
+                        self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
+
+                dof_offset = dof_offset + j_info.n_dofs
 
             i_l = l_info.parent_idx
 
@@ -1045,15 +981,18 @@ class RigidEntity(Entity):
             gs.raise_exception("Target dofs not provided.")
         links_idx_by_dofs = []
         for v in self.links:
-            links_idx_by_dof_at_v = v.joint.dof_idx_local
-            if links_idx_by_dof_at_v is None:
-                link_relevant = False
-            elif isinstance(links_idx_by_dof_at_v, list):
-                link_relevant = any([vv in dofs_idx for vv in links_idx_by_dof_at_v])
-            else:
-                link_relevant = links_idx_by_dof_at_v in dofs_idx
-            if link_relevant:
-                links_idx_by_dofs.append(v.idx_local)  # converted to global later
+            for joint in v.joints:
+                links_idx_by_dof_at_v = joint.dof_idx_local
+                if links_idx_by_dof_at_v is None:
+                    link_relevant = False
+                elif isinstance(links_idx_by_dof_at_v, list):
+                    link_relevant = any(vv in dofs_idx for vv in links_idx_by_dof_at_v)
+                else:
+                    link_relevant = links_idx_by_dof_at_v in dofs_idx
+                if link_relevant:
+                    links_idx_by_dofs.append(v.idx_local)  # converted to global later
+                    break
+
         links_idx_by_dofs = self._get_ls_idx(links_idx_by_dofs)
         n_links_by_dofs = len(links_idx_by_dofs)
 
@@ -1299,27 +1238,29 @@ class RigidEntity(Entity):
                             i_l = links_idx_by_dofs[_i_l]
                             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
                             l_info = self._solver.links_info[I_l]
-                            I_dof_start = (
-                                [l_info.dof_start, i_b]
-                                if ti.static(self.solver._options.batch_dofs_info)
-                                else l_info.dof_start
-                            )
-                            dof_info = self._solver.dofs_info[I_dof_start]
-                            q_start = l_info.q_start
 
-                            if l_info.joint_type == gs.JOINT_TYPE.FREE:
-                                pass
+                            for i_j in range(l_info.joint_start, l_info.joint_end):
+                                I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
+                                j_info = self._solver.joints_info[I_j]
 
-                            elif (
-                                l_info.joint_type == gs.JOINT_TYPE.REVOLUTE
-                                or l_info.joint_type == gs.JOINT_TYPE.PRISMATIC
-                            ):
-                                if ti.math.isinf(dof_info.limit[0]) or ti.math.isinf(dof_info.limit[1]):
+                                I_dof_start = (
+                                    [j_info.dof_start, i_b]
+                                    if ti.static(self.solver._options.batch_dofs_info)
+                                    else j_info.dof_start
+                                )
+                                dof_info = self._solver.dofs_info[I_dof_start]
+                                q_start = j_info.q_start
+
+                                if j_info.type == gs.JOINT_TYPE.FREE:
                                     pass
-                                else:
-                                    self._solver.qpos[q_start, i_b] = dof_info.limit[0] + ti.random() * (
-                                        dof_info.limit[1] - dof_info.limit[0]
-                                    )
+
+                                elif j_info.type == gs.JOINT_TYPE.REVOLUTE or j_info.type == gs.JOINT_TYPE.PRISMATIC:
+                                    if ti.math.isinf(dof_info.limit[0]) or ti.math.isinf(dof_info.limit[1]):
+                                        pass
+                                    else:
+                                        self._solver.qpos[q_start, i_b] = dof_info.limit[0] + ti.random() * (
+                                            dof_info.limit[1] - dof_info.limit[0]
+                                        )
                     else:
                         pass  # When respect_joint_limit=False, we can simply continue from the last solution
 
@@ -1327,6 +1268,89 @@ class RigidEntity(Entity):
             for i_q in range(self.n_qs):
                 self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+
+    @gs.assert_built
+    def forward_kinematics(self, qpos, qs_idx_local=None, ls_idx_local=None, envs_idx=None):
+        """
+        Compute forward kinematics for a single target link.
+
+        Parameters
+        ----------
+        qpos : array_like, shape (n_qs,) or (n_envs, n_qs) or (len(envs_idx), n_qs)
+            The joint positions.
+        qs_idx_local : None | array_like, optional
+            The indices of the qpos to set. If None, all qpos will be set. Defaults to None.
+        ls_idx_local : None | array_like, optional
+            The indices of the links to get. If None, all links will be returned. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+
+        Returns
+        -------
+        links_pos : array_like, shape (n_links, 3) or (n_envs, n_links, 3) or (len(envs_idx), n_links, 3)
+            The positions of the links (link frame origins).
+        links_quat : array_like, shape (n_links, 4) or (n_envs, n_links, 4) or (len(envs_idx), n_links, 4)
+            The orientations of the links.
+        """
+
+        if self._solver.n_envs == 0:
+            qpos = qpos.unsqueeze(0)
+            envs_idx = torch.zeros(1, dtype=gs.tc_int)
+        else:
+            envs_idx = self._solver._get_envs_idx(envs_idx)
+
+        links_idx = self._get_ls_idx(ls_idx_local)
+        links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
+        links_quat = torch.empty((len(envs_idx), len(links_idx), 4), dtype=gs.tc_float, device=gs.device)
+
+        self._kernel_forward_kinematics(
+            links_pos,
+            links_quat,
+            qpos,
+            self._get_qs_idx(qs_idx_local),
+            links_idx,
+            envs_idx,
+        )
+
+        if self._solver.n_envs == 0:
+            links_pos = links_pos.squeeze(0)
+            links_quat = links_quat.squeeze(0)
+        return links_pos, links_quat
+
+    @ti.kernel
+    def _kernel_forward_kinematics(
+        self,
+        links_pos: ti.types.ndarray(),
+        links_quat: ti.types.ndarray(),
+        qpos: ti.types.ndarray(),
+        qs_idx: ti.types.ndarray(),
+        links_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+            # save original qpos
+            # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
+            self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]]
+            # set new qpos
+            self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
+            # run FK
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in ti.static(range(3)):
+                links_pos[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].pos[i]
+            for i in ti.static(range(4)):
+                links_quat[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].quat[i]
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+            # restore original qpos
+            self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
+            # run FK
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
@@ -1379,9 +1403,11 @@ class RigidEntity(Entity):
             from ompl import util as ou
 
             ou.setLogLevel(ou.LOG_ERROR)
-        except:
-            gs.raise_exception(
-                "Failed to import OMPL. Did you install? (For installation instructions, see https://genesis-world.readthedocs.io/en/latest/user_guide/overview/installation.html#optional-motion-planning)"
+        except Exception as e:
+            gs.raise_exception_from(
+                "Failed to import OMPL. Did you install? (For installation instructions, see "
+                "https://genesis-world.readthedocs.io/en/latest/user_guide/overview/installation.html#optional-motion-planning)",
+                e,
             )
 
         supported_planners = [
@@ -1526,13 +1552,13 @@ class RigidEntity(Entity):
         """
 
         if name is not None:
-            for joint in self._joints:
+            for joint in chain.from_iterable(self._joints):
                 if joint.name == name:
                     return joint
             gs.raise_exception(f"Joint not found for name: {name}.")
 
         elif uid is not None:
-            for joint in self._joints:
+            for joint in chain.from_iterable(self._joints):
                 if uid in str(joint.uid):
                     return joint
             gs.raise_exception(f"Joint not found for uid: {uid}.")
@@ -2410,7 +2436,7 @@ class RigidEntity(Entity):
             }
         return contact_info
 
-    def get_links_net_contact_force(self):
+    def get_links_net_contact_force(self, envs_idx=None):
         """
         Returns net force applied on each links due to direct external contacts.
 
@@ -2426,7 +2452,8 @@ class RigidEntity(Entity):
 
         if self._solver.n_envs == 0:
             entity_links_force = entity_links_force.squeeze(0)
-
+        elif not envs_idx is None:
+            entity_links_force = entity_links_force[envs_idx]
         return entity_links_force
 
     def set_friction_ratio(self, friction_ratio, ls_idx_local, envs_idx=None):
@@ -2515,6 +2542,24 @@ class RigidEntity(Entity):
         self._solver.set_links_invweight(invweight, self._get_ls_idx(ls_idx_local), envs_idx)
 
     @gs.assert_built
+    def set_mass(self, mass):
+        """
+        Set the mass of the entity.
+
+        Parameters
+        ----------
+        mass : float
+            The mass to set.
+        """
+        original_mass_distribution = []
+        for link in self.links:
+            original_mass_distribution.append(link.get_mass())
+        original_mass_distribution = np.array(original_mass_distribution)
+        original_mass_distribution /= np.sum(original_mass_distribution)
+        for link, mass_ratio in zip(self.links, original_mass_distribution):
+            link.set_mass(mass * mass_ratio)
+
+    @gs.assert_built
     def get_mass(self):
         """
         Get the total mass of the entity in kg.
@@ -2541,15 +2586,14 @@ class RigidEntity(Entity):
     @property
     def init_qpos(self):
         """The initial qpos of the entity."""
-        return np.concatenate([joint.init_qpos for joint in self._joints])
+        return np.concatenate([joint.init_qpos for joint in chain.from_iterable(self._joints)])
 
     @property
     def n_qs(self):
         """The number of `q` (generalized coordinates) of the entity."""
         if self._is_built:
             return self._n_qs
-        else:
-            return sum([joint.n_qs for joint in self._joints])
+        return sum(joint.n_qs for joint in chain.from_iterable(self._joints))
 
     @property
     def n_links(self):
@@ -2559,45 +2603,44 @@ class RigidEntity(Entity):
     @property
     def n_joints(self):
         """The number of `RigidJoint` in the entity."""
-        return len(self._joints)
+        return sum(map(len, self._joints))
 
     @property
     def n_dofs(self):
         """The number of degrees of freedom (DOFs) of the entity."""
         if self._is_built:
             return self._n_dofs
-        else:
-            return sum([joint.n_dofs for joint in self._joints])
+        return sum(joint.n_dofs for joint in chain.from_iterable(self._joints))
 
     @property
     def n_geoms(self):
         """The number of `RigidGeom` in the entity."""
-        return sum([link.n_geoms for link in self._links])
+        return sum(link.n_geoms for link in self._links)
 
     @property
     def n_cells(self):
         """The number of sdf cells in the entity."""
-        return sum([link.n_cells for link in self._links])
+        return sum(link.n_cells for link in self._links)
 
     @property
     def n_verts(self):
         """The number of vertices (from collision geom `RigidGeom`) in the entity."""
-        return sum([link.n_verts for link in self._links])
+        return sum(link.n_verts for link in self._links)
 
     @property
     def n_faces(self):
         """The number of faces (from collision geom `RigidGeom`) in the entity."""
-        return sum([link.n_faces for link in self._links])
+        return sum(link.n_faces for link in self._links)
 
     @property
     def n_edges(self):
         """The number of edges (from collision geom `RigidGeom`) in the entity."""
-        return sum([link.n_edges for link in self._links])
+        return sum(link.n_edges for link in self._links)
 
     @property
     def n_vgeoms(self):
         """The number of vgeoms (visual geoms - `RigidVisGeom`) in the entity."""
-        return sum([link.n_vgeoms for link in self._links])
+        return sum(link.n_vgeoms for link in self._links)
 
     @property
     def n_vverts(self):
@@ -2635,6 +2678,11 @@ class RigidEntity(Entity):
         return self._link_start
 
     @property
+    def gravity_compensation(self):
+        """Apply a force to compensate gravity. A value of 1 will make a zero-gravity behavior. Default to 0"""
+        return self.material.gravity_compensation
+
+    @property
     def link_start(self):
         """The index of the entity's first RigidLink in the scene."""
         return self._link_start
@@ -2645,14 +2693,19 @@ class RigidEntity(Entity):
         return self._link_start + self.n_links
 
     @property
+    def joint_start(self):
+        """The index of the entity's first RigidJoint in the scene."""
+        return self._joint_start
+
+    @property
+    def joint_end(self):
+        """The index of the entity's last RigidJoint in the scene *plus one*."""
+        return self._joint_start + self.n_joints
+
+    @property
     def dof_start(self):
         """The index of the entity's first degree of freedom (DOF) in the scene."""
         return self._dof_start
-
-    @property
-    def gravity_compensation(self):
-        """Apply a force to compensate gravity. A value of 1 will make a zero-gravity behavior. Default to 0"""
-        return self.material.gravity_compensation
 
     @property
     def dof_end(self):
@@ -2734,7 +2787,7 @@ class RigidEntity(Entity):
     @property
     def base_joint(self):
         """The base joint of the entity"""
-        return self._joints[0]
+        return self._joints[0][0]
 
     @property
     def n_equalities(self):

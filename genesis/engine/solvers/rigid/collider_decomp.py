@@ -1,8 +1,10 @@
+import time
 import numpy as np
 import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.styles import colors, formats
 
 from .mpr_decomp import MPR
 
@@ -66,6 +68,8 @@ class Collider:
         # compute collision pairs
         # convert to numpy array for faster retrieval
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
+        geoms_contype = self._solver.geoms_info.contype.to_numpy()
+        geoms_conaffinity = self._solver.geoms_info.conaffinity.to_numpy()
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
@@ -88,7 +92,13 @@ class Collider:
                     continue
 
                 # adjacent links
-                if links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la:
+                if not self._solver._enable_adjacent_collision and (
+                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                ):
+                    continue
+
+                # contype and conaffinity
+                if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
                     continue
 
                 # pair of fixed base links
@@ -98,6 +108,7 @@ class Collider:
                 n_possible_pairs += 1
 
         self._n_contacts_per_pair = 5
+        self._max_possible_pairs = n_possible_pairs
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
 
@@ -181,16 +192,38 @@ class Collider:
 
         self.reset()
 
-    def reset(self):
-        self.first_time.fill(1)
-        self.contact_cache.i_va_0.fill(-1)
-        self.contact_cache.penetration.fill(0)
-        self.contact_cache.normal.fill(0)
+    def reset(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_reset(envs_idx)
 
     @ti.kernel
-    def clear(self):
+    def _kernel_reset(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
+        for i_b_ in range(envs_idx.shape[0]):
+            b = envs_idx[i_b_]
+            self.first_time[b] = 1
+            for i in range(self._solver.n_geoms):
+                self.contact_cache.i_va_0[i, i, b] = -1
+                self.contact_cache.penetration[i, i, b] = 0
+                self.contact_cache.normal[i, i, b] = 0
+
+    def clear(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
+        self._kernel_clear(envs_idx)
+
+    @ti.kernel
+    def _kernel_clear(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
 
             if ti.static(self._solver._use_hibernation):
                 self.n_contacts_hibernated[i_b] = 0
@@ -604,7 +637,16 @@ class Collider:
             is_valid = False
 
         # adjacent links
-        if self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la:
+        if ti.static(not self._solver._enable_adjacent_collision) and (
+            self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
+        ):
+            is_valid = False
+
+        # contype and conaffinity
+        if not (
+            (self._solver.geoms_info[i_ga].contype & self._solver.geoms_info[i_gb].conaffinity)
+            or (self._solver.geoms_info[i_gb].contype & self._solver.geoms_info[i_ga].conaffinity)
+        ):
             is_valid = False
 
         # pair of fixed links
@@ -693,6 +735,8 @@ class Collider:
                         for j in range(n_active):
                             i_ga = self.active_buffer[j, i_b]
                             i_gb = self.sort_buffer[i, i_b].i_g
+                            if i_ga > i_gb:
+                                i_ga, i_gb = i_gb, i_ga
 
                             if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                 continue
@@ -700,6 +744,13 @@ class Collider:
                             if not self._func_check_collision_valid(i_ga, i_gb, i_b):
                                 continue
 
+                            if self.n_broad_pairs[i_b] == self._max_collision_pairs:
+                                print(
+                                    f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
+                                    f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
+                                    f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
+                                )
+                                break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
                             self.n_broad_pairs[i_b] = self.n_broad_pairs[i_b] + 1
@@ -731,6 +782,8 @@ class Collider:
                             for j in range(n_active_awake):
                                 i_ga = self.active_buffer_awake[j, i_b]
                                 i_gb = self.sort_buffer[i, i_b].i_g
+                                if i_ga > i_gb:
+                                    i_ga, i_gb = i_gb, i_ga
 
                                 if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                     continue
@@ -747,6 +800,8 @@ class Collider:
                                 for j in range(n_active_hib):
                                     i_ga = self.active_buffer_hib[j, i_b]
                                     i_gb = self.sort_buffer[i, i_b].i_g
+                                    if i_ga > i_gb:
+                                        i_ga, i_gb = i_gb, i_ga
 
                                     if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                         continue
@@ -834,7 +889,7 @@ class Collider:
                     if ti.static(self._solver._box_box_detection):
                         if (
                             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                            and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                         ):
                             self._func_box_box_contact(i_ga, i_gb, i_b)
                         else:
@@ -1008,24 +1063,31 @@ class Collider:
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
         i_col = self.n_contacts[i_b]
 
-        ga_info = self._solver.geoms_info[i_ga]
-        gb_info = self._solver.geoms_info[i_gb]
+        if i_col == self._max_contact_pairs:
+            print(
+                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
+                f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
+                f"'max_collision_pairs'.{formats.RESET}"
+            )
+        else:
+            ga_info = self._solver.geoms_info[i_ga]
+            gb_info = self._solver.geoms_info[i_gb]
 
-        friction_a = ga_info.friction * self._solver.geoms_state[i_ga, i_b].friction_ratio
-        friction_b = gb_info.friction * self._solver.geoms_state[i_gb, i_b].friction_ratio
+            friction_a = ga_info.friction * self._solver.geoms_state[i_ga, i_b].friction_ratio
+            friction_b = gb_info.friction * self._solver.geoms_state[i_gb, i_b].friction_ratio
 
-        # b to a
-        self.contact_data[i_col, i_b].geom_a = i_ga
-        self.contact_data[i_col, i_b].geom_b = i_gb
-        self.contact_data[i_col, i_b].normal = normal
-        self.contact_data[i_col, i_b].pos = contact_pos
-        self.contact_data[i_col, i_b].penetration = penetration
-        self.contact_data[i_col, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
-        self.contact_data[i_col, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
-        self.contact_data[i_col, i_b].link_a = ga_info.link_idx
-        self.contact_data[i_col, i_b].link_b = gb_info.link_idx
+            # b to a
+            self.contact_data[i_col, i_b].geom_a = i_ga
+            self.contact_data[i_col, i_b].geom_b = i_gb
+            self.contact_data[i_col, i_b].normal = normal
+            self.contact_data[i_col, i_b].pos = contact_pos
+            self.contact_data[i_col, i_b].penetration = penetration
+            self.contact_data[i_col, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
+            self.contact_data[i_col, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
+            self.contact_data[i_col, i_b].link_a = ga_info.link_idx
+            self.contact_data[i_col, i_b].link_b = gb_info.link_idx
 
-        self.n_contacts[i_b] = i_col + 1
+            self.n_contacts[i_b] = i_col + 1
 
     @ti.func
     def _func_compute_tolerance(self, i_ga, i_gb, i_b):
