@@ -13,8 +13,9 @@ class MjSim:
     data: mujoco.MjData
 
 
-def init_simulators(gs_sim, mj_sim, qpos=None, qvel=None):
-    _, (_, _, mj_q_idcs, mj_dof_idcs, _) = _get_model_mappings(gs_sim, mj_sim)
+def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
+    if mj_sim is not None:
+        _, (_, _, mj_q_idcs, mj_dof_idcs, _) = _get_model_mappings(gs_sim, mj_sim)
 
     (gs_robot,) = gs_sim.entities
 
@@ -30,10 +31,11 @@ def init_simulators(gs_sim, mj_sim, qpos=None, qvel=None):
     if gs_sim.scene.visualizer:
         gs_sim.scene.visualizer.update()
 
-    mujoco.mj_resetData(mj_sim.model, mj_sim.data)
-    mj_sim.data.qpos[mj_q_idcs] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-    mj_sim.data.qvel[mj_dof_idcs] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
-    mujoco.mj_forward(mj_sim.model, mj_sim.data)
+    if mj_sim is not None:
+        mujoco.mj_resetData(mj_sim.model, mj_sim.data)
+        mj_sim.data.qpos[mj_q_idcs] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+        mj_sim.data.qvel[mj_dof_idcs] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        mujoco.mj_forward(mj_sim.model, mj_sim.data)
 
 
 def _gs_search_by_joint_names(
