@@ -1,4 +1,6 @@
 import argparse
+import threading
+
 import numpy as np
 
 import genesis as gs
@@ -7,7 +9,6 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-m", "--mac", action="store_true", default=False)
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -43,15 +44,6 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    if args.mac:
-        gs.tools.run_in_another_thread(fn=run_sim, args=(scene, drone, args.vis))
-        if args.vis:
-            scene.viewer.start()
-    else:
-        run_sim(scene, drone, args.vis)
-
-
-def run_sim(scene, drone, enable_vis):
     traj = np.array(
         [
             [1.0, 1.0, 0.98824805, 1.0],
@@ -214,9 +206,6 @@ def run_sim(scene, drone, enable_vis):
         # 14468 is hover rpm
         drone.set_propellels_rpm((1 + 0.05 * traj[i]) * 14468.429183500699)
         scene.step()
-
-    if enable_vis:
-        scene.viewer.stop()
 
 
 if __name__ == "__main__":
