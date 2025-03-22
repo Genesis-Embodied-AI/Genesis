@@ -11,6 +11,9 @@ N_FRAME_FPS = 10
 REPORT_FILE = "speed_test.txt"
 
 
+pytestmark = [pytest.mark.benchmarks]
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_txt_logging():
     if os.path.exists(REPORT_FILE):
@@ -146,7 +149,7 @@ def random(solver, n_envs):
     ######################## simulate #########################
     vec_fps = []
     robot.set_dofs_kp(np.full(12, 1000), np.arange(6, 18))
-    dofs = torch.arange(6, 18).cuda()
+    dofs = torch.arange(6, 18, device=gs.device)
     robot.control_dofs_position(torch.zeros((n_envs, 12), device=gs.device), dofs)
     for i in range(1000):
         robot.control_dofs_position(torch.rand((n_envs, 12), device=gs.device) * 0.1 - 0.05, dofs)
@@ -201,6 +204,7 @@ def cubes(solver, n_envs, n_cubes, is_island):
     return total_fps
 
 
+@pytest.mark.xdist_group(name="serial")
 @pytest.mark.parametrize(
     "runnable",
     ["random", "anymal_c", "batched_franka"],
@@ -221,6 +225,7 @@ def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs, backend)
         file.write(msg)
 
 
+@pytest.mark.xdist_group(name="serial")
 @pytest.mark.parametrize(
     "solver",
     [gs.constraint_solver.CG, gs.constraint_solver.Newton],

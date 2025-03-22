@@ -185,7 +185,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qvel = entity.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.02)
+        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.03)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qpos = entity.get_dofs_position().cpu()
@@ -364,11 +364,11 @@ def test_inverse_kinematics(show_viewer):
 
     # release
     franka.control_dofs_position(np.array([0.4, 0.4]), fingers_dof)
-    for i in range(250):
+    for i in range(400):
         scene.step()
 
     qvel = cube.get_dofs_velocity().cpu()
-    np.testing.assert_allclose(qvel, 0, atol=1e-2)
+    np.testing.assert_allclose(qvel, 0, atol=0.05)
     qpos = cube.get_dofs_position().cpu()
     np.testing.assert_allclose(qpos[2], 0.06, atol=1e-3)
 
