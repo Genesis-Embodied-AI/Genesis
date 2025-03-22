@@ -24,6 +24,8 @@ class RigidJoint(RBC):
         type,
         pos,
         quat,
+        init_qpos,
+        sol_params,
         dofs_motion_ang,
         dofs_motion_vel,
         dofs_limit,
@@ -35,7 +37,6 @@ class RigidJoint(RBC):
         dofs_kp,
         dofs_kv,
         dofs_force_range,
-        init_qpos,
     ):
         self._name = name
         self._entity = entity
@@ -51,6 +52,7 @@ class RigidJoint(RBC):
         self._pos = pos
         self._quat = quat
         self._init_qpos = init_qpos
+        self._sol_params = sol_params
 
         self._dofs_motion_ang = dofs_motion_ang
         self._dofs_motion_vel = dofs_motion_vel
@@ -88,7 +90,6 @@ class RigidJoint(RBC):
 
     @ti.kernel
     def _kernel_get_pos(self, tensor: ti.types.ndarray()):
-
         for i_b in range(self._solver._B):
             I_l = [self._idx, i_b] if ti.static(self._solver._options.batch_links_info) else self._idx
             l_info = self._solver.links_info[I_l]
@@ -96,16 +97,19 @@ class RigidJoint(RBC):
 
             p_pos = ti.Vector.zero(gs.ti_float, 3)
             p_quat = gu.ti_identity_quat()
-
             if i_p != -1:
                 p_pos = self._solver.links_state[i_p, i_b].pos
                 p_quat = self._solver.links_state[i_p, i_b].quat
 
             tmp_pos, tmp_quat = gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
 
-            joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
-                l_info.joint_pos, l_info.joint_quat, tmp_pos, tmp_quat
-            )
+            for i_j in range(l_info.joint_start, l_info.joint_start + self._idx + 1):
+                I_j = [i_j, i_b] if ti.static(self._solver._options.batch_joints_info) else i_j
+                j_info = self._solver.joints_info[I_j]
+
+                joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
+                    j_info.pos, gu.ti_identity_quat(), tmp_pos, tmp_quat
+                )
 
             for i in ti.static(range(3)):
                 tensor[i_b, i] = joint_pos[i]
@@ -138,9 +142,13 @@ class RigidJoint(RBC):
 
             tmp_pos, tmp_quat = gu.ti_transform_pos_quat_by_trans_quat(l_info.pos, l_info.quat, p_pos, p_quat)
 
-            joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
-                l_info.joint_pos, l_info.joint_quat, tmp_pos, tmp_quat
-            )
+            for i_j in range(l_info.joint_start, l_info.joint_start + self._idx + 1):
+                I_j = [i_j, i_b] if ti.static(self._solver._options.batch_joints_info) else i_j
+                j_info = self._solver.joints_info[I_j]
+
+                joint_pos, joint_quat = gu.ti_transform_pos_quat_by_trans_quat(
+                    j_info.pos, gu.ti_identity_quat(), tmp_pos, tmp_quat
+                )
 
             for i in ti.static(range(4)):
                 tensor[i_b, i] = joint_quat[i]
@@ -239,6 +247,13 @@ class RigidJoint(RBC):
         Returns the initial quaternion of the joint in the world frame.
         """
         return self._quat
+
+    @property
+    def sol_params(self):
+        """
+        Retruns the solver parameters of the joint.
+        """
+        return self._sol_params
 
     @property
     def q_start(self):

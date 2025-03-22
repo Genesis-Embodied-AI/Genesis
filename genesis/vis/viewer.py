@@ -27,6 +27,7 @@ class ViewerLock:
 class Viewer(RBC):
     def __init__(self, options, context):
         self._res = options.res
+        self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
         self._max_FPS = options.max_FPS
         self._camera_init_pos = options.camera_pos
@@ -51,17 +52,6 @@ class Viewer(RBC):
         # set viewer camera
         self.setup_camera()
 
-        # viewer
-        if gs.platform == "Linux":
-            run_in_thread = True
-        elif gs.platform == "macOS":
-            run_in_thread = False
-            gs.logger.warning(
-                "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
-            )
-        elif gs.platform == "Windows":
-            run_in_thread = True
-
         # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
         opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
         if opengl_platform_orig is None:
@@ -82,7 +72,7 @@ class Viewer(RBC):
                 self._pyrender_viewer = pyrender.Viewer(
                     context=self.context,
                     viewport_size=self._res,
-                    run_in_thread=run_in_thread,
+                    run_in_thread=self._run_in_thread,
                     auto_start=False,
                     view_center=self._camera_init_lookat,
                     shadow=self.context.shadow,
@@ -93,7 +83,7 @@ class Viewer(RBC):
                         "refresh_rate": self._refresh_rate,
                     },
                 )
-                if not run_in_thread:
+                if not self._run_in_thread:
                     self._pyrender_viewer.start(auto_refresh=False)
                 self._pyrender_viewer.wait_until_initialized()
                 break
@@ -106,6 +96,9 @@ class Viewer(RBC):
         self.lock = ViewerLock(self._pyrender_viewer)
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
+
+    def run(self):
+        self._pyrender_viewer.run()
 
     def stop(self):
         self._pyrender_viewer.close()
@@ -124,7 +117,7 @@ class Viewer(RBC):
         pose = gu.trans_R_to_T(pos, R)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self):
+    def update(self, auto_refresh=True):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -133,7 +126,7 @@ class Viewer(RBC):
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
 
-            if not self._pyrender_viewer.run_in_thread:
+            if auto_refresh and not self._pyrender_viewer.run_in_thread:
                 self._pyrender_viewer.refresh()
 
         # lock FPS

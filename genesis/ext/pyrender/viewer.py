@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import time
+import threading
 from threading import Event, RLock, Semaphore, Thread
 
 import imageio
@@ -390,7 +391,7 @@ class Viewer(pyglet.window.Window):
         # because all access to the OpenGL context must be done from the thread that created it in the first place. As
         # a result, the logic for catching an invalid OpenGL context must be implemented at the thread-level.
         self.auto_start = auto_start
-        if self.run_in_thread:
+        if self._run_in_thread:
             self._initialized_event.clear()
             self._thread = Thread(target=self.start, daemon=True)
             self._thread.start()
@@ -534,8 +535,12 @@ class Viewer(pyglet.window.Window):
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
+        viewer_thread = self._thread if self._run_in_thread else threading.main_thread()
+        if viewer_thread != threading.current_thread():
+            gs.raise_exception("This method can only be called from the thread that started the viewer.")
+
         self.on_close()
-        if self.run_in_thread:
+        if self._run_in_thread:
             while self._is_active:
                 time.sleep(1.0 / self.viewer_flags["refresh_rate"])
 
@@ -617,7 +622,7 @@ class Viewer(pyglet.window.Window):
         if depth:
             self.render_flags["depth"] = True
         self.pending_offscreen_camera = (camera_node, render_target, normal)
-        if self.run_in_thread:
+        if self._run_in_thread:
             # send_offscreen_request
             self._offscreen_event.set()
             # wait_for_offscreen
@@ -642,7 +647,7 @@ class Viewer(pyglet.window.Window):
         if self.pending_offscreen_camera is None:
             return
 
-        if self.run_in_thread:
+        if self._run_in_thread:
             self.render_lock.acquire()
 
         # Make OpenGL context current
@@ -659,7 +664,7 @@ class Viewer(pyglet.window.Window):
         self.render_flags["offscreen"] = False
         self._offscreen_result_semaphore.release()
 
-        if self.run_in_thread:
+        if self._run_in_thread:
             self.render_lock.release()
 
     def on_draw(self):
@@ -667,7 +672,7 @@ class Viewer(pyglet.window.Window):
         if self._renderer is None:
             return
 
-        if self.run_in_thread or not self.auto_start:
+        if self._run_in_thread or not self.auto_start:
             self.render_lock.acquire()
 
         # Make OpenGL context current
@@ -722,7 +727,7 @@ class Viewer(pyglet.window.Window):
                     align=caption["location"],
                 )
 
-        if self.run_in_thread or not self.auto_start:
+        if self._run_in_thread or not self.auto_start:
             self.render_lock.release()
 
     def on_resize(self, width, height):
@@ -1182,7 +1187,7 @@ class Viewer(pyglet.window.Window):
                 pass
 
         if not self.context:
-            raise ValueError("Unable to initialize an OpenGL 3+ context")
+            gs.raise_exception("Unable to initialize an OpenGL 3+ context")
         clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
@@ -1200,16 +1205,16 @@ class Viewer(pyglet.window.Window):
         self.activate()
 
         if auto_refresh:
-            while self._is_active:
-                try:
-                    self.refresh()
-                except AttributeError:
-                    # The graphical window has been closed
-                    self.on_close()
+            self.run()
         else:
             self.refresh()
 
-    def _run(self):
+    def run(self):
+        if self._run_in_thread:
+            gs.raise_exception("This method can only be called manually if the viewer is already running in thread.")
+        elif threading.main_thread() != threading.current_thread():
+            gs.raise_exception("This method can only be called manually from main thread on MacOS.")
+
         while self._is_active:
             try:
                 self.refresh()
@@ -1218,6 +1223,10 @@ class Viewer(pyglet.window.Window):
                 self.on_close()
 
     def refresh(self):
+        viewer_thread = self._thread if self._run_in_thread else threading.main_thread()
+        if viewer_thread != threading.current_thread():
+            gs.raise_exception("This method can only be called from the thread that started the viewer.")
+
         time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
         while self._offscreen_event.wait(time_next_frame - time.time()):
             self.draw_offscreen()

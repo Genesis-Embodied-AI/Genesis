@@ -20,6 +20,8 @@ class MPR:
             self.CCD_EPS = 1e-6
         else:
             self.CCD_EPS = 1e-10
+        self.CCD_TOLERANCE = 1e-6
+        self.CCD_ITERATIONS = 50
 
         self.support_field = SupportField(rigid_solver)
         self.init_support()
@@ -88,7 +90,7 @@ class MPR:
         AB_AB = AB.dot(AB)
         AP_AB = AP.dot(AB)
         t = AP_AB / AB_AB
-        if t < 0.0:
+        if t < 0.0 or ti.abs(t) < self.CCD_EPS:
             t = gs.ti_float(0.0)
         elif t > 1.0:
             t = gs.ti_float(1.0)
@@ -112,18 +114,18 @@ class MPR:
         d = w * v - r * r
         dist = s = t = gs.ti_float(0.0)
         pdir = gs.ti_vec3([0.0, 0.0, 0.0])
-        if ti.abs(d) < gs.EPS:
+        if ti.abs(d) < self.CCD_EPS:
             s = t = -1.0
         else:
             s = (q * r - w * p) / d
             t = (-s * r - q) / w
 
         if (
-            (ti.abs(s) < gs.EPS or s > 0.0)
-            and (ti.abs(s - 1.0) < gs.EPS or s < 1.0)
-            and (ti.abs(t) < gs.EPS or t > 0.0)
-            and (ti.abs(t - 1.0) < gs.EPS or t < 1.0)
-            and (ti.abs(t + s - 1.0) < gs.EPS or t + s < 1.0)
+            (ti.abs(s) < self.CCD_EPS or s > 0.0)
+            and (ti.abs(s - 1.0) < self.CCD_EPS or s < 1.0)
+            and (ti.abs(t) < self.CCD_EPS or t > 0.0)
+            and (ti.abs(t - 1.0) < self.CCD_EPS or t < 1.0)
+            and (ti.abs(t + s - 1.0) < self.CCD_EPS or t + s < 1.0)
         ):
             pdir = x0 + d1 * s + d2 * t
             dist = (P - pdir).norm() ** 2
@@ -144,19 +146,15 @@ class MPR:
 
     @ti.func
     def mpr_portal_dir(self, i_ga, i_gb, i_b):
-        ans = gs.ti_vec3([0.0, 0.0, 0.0])
         v2v1 = self.simplex_support[i_ga, i_gb, 2, i_b].v - self.simplex_support[i_ga, i_gb, 1, i_b].v
         v3v1 = self.simplex_support[i_ga, i_gb, 3, i_b].v - self.simplex_support[i_ga, i_gb, 1, i_b].v
-        direction = v2v1.cross(v3v1)
-        ans = direction.normalized()
-        return ans
+        direction = v2v1.cross(v3v1).normalized()
+        return direction
 
     @ti.func
     def mpr_portal_encapsules_origin(self, direction, i_ga, i_gb, i_b):
-        dot = direction.dot(self.simplex_support[i_ga, i_gb, 1, i_b].v)
-
-        return dot > 0.0
-        # return dot > 0 or ti.abs(dot) < CCD_EPS
+        dot = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(direction)
+        return ti.abs(dot) < self.CCD_EPS or dot > 0.0
 
     @ti.func
     def mpr_portal_can_encapsule_origin(self, v, direction):
@@ -170,15 +168,24 @@ class MPR:
         dv3 = self.simplex_support[i_ga, i_gb, 3, i_b].v.dot(direction)
         dv4 = v.dot(direction)
         dot1 = ti.min(dv4 - dv1, dv4 - dv2, dv4 - dv3)
-
-        mpr_tolerance = 1e-5
-        return dot1 <= mpr_tolerance
+        return ti.abs(dot1 - self.CCD_TOLERANCE) < self.CCD_EPS * ti.max(1.0, ti.abs(dot1)) or dot1 < self.CCD_TOLERANCE
 
     @ti.func
     def support_sphere(self, direction, i_g, i_b):
         sphere_center = self._solver.geoms_state[i_g, i_b].pos
         sphere_radius = self._solver.geoms_info[i_g].data[0]
         return sphere_center + direction * sphere_radius
+
+    @ti.func
+    def support_capsule(self, direction, i_g, i_b):
+        g_state = self._solver.geoms_state[i_g, i_b]
+        capule_center = g_state.pos
+        capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_state.quat)
+        capule_radius = self._solver.geoms_info[i_g].data[0]
+        capule_halflength = 0.5 * self._solver.geoms_info[i_g].data[1]
+        capule_endpoint_side = ti.math.sign(direction.dot(capsule_axis))
+        capule_endpoint = capule_center + capule_halflength * capule_endpoint_side * capsule_axis
+        return capule_endpoint + direction * capule_radius
 
     # @ti.func
     # def support_prism(self, direction, i_g, i_b):
@@ -233,6 +240,8 @@ class MPR:
         geom_type = self._solver.geoms_info[i_g].type
         if geom_type == gs.GEOM_TYPE.SPHERE:
             v = self.support_sphere(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.CAPSULE:
+            v = self.support_capsule(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.BOX:
             v, vid = self.support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
@@ -256,7 +265,7 @@ class MPR:
         g_state = self._solver.geoms_state[i_g, i_b]
         direction_in_init_frame = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_state.quat))
 
-        dot_max = gs.ti_float(-1e20)
+        dot_max = gs.ti_float(-1e10)
         v = ti.Vector.zero(gs.ti_float, 3)
         vid = 0
 
@@ -298,8 +307,6 @@ class MPR:
     def mpr_find_pos(self, i_ga, i_gb, i_b):
         b = ti.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.ti_float)
 
-        sum_ = gs.ti_float(0.0)
-        inv_ = gs.ti_float(0.0)
         direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
 
         for i in range(4):
@@ -307,20 +314,16 @@ class MPR:
             vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
             b[i] = vec.dot(self.simplex_support[i_ga, i_gb, i3, i_b].v) * (1 - i % 2 * 2)
 
-            sum_ = sum_ + b[i]
+        sum_ = b.sum()
 
-        if sum_ == 0 or sum_ < 0:
-            sum_ = 0
-            for i in range(4):
-                if i == 0:
-                    b[i] = 0
-                else:
-                    i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
-                    vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
-                    b[i] = vec.dot(direction)
-                    sum_ = sum_ + b[i]
+        if sum_ <= 0:
+            b[0] = 0.0
+            for i in range(1, 4):
+                i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
+                vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
+                b[i] = vec.dot(direction)
 
-        inv_ = 1 / sum_
+        sum_ = b.sum()
 
         p1 = gs.ti_vec3([0.0, 0.0, 0.0])
         p2 = gs.ti_vec3([0.0, 0.0, 0.0])
@@ -330,6 +333,7 @@ class MPR:
             vec = self.simplex_support[i_ga, i_gb, i, i_b].v2 * b[i]
             p2 += vec
 
+        inv_ = 1 / sum_
         p1 = p1 * inv_
         p2 = p2 * inv_
         pos = (p1 + p2) * 0.5
@@ -356,7 +360,6 @@ class MPR:
     @ti.func
     def mpr_find_penetration(self, i_ga, i_gb, i_b):
         iterations = 0
-        max_iterations = 100
 
         is_col = False
         pos = gs.ti_vec3([1.0, 0.0, 0.0])
@@ -366,18 +369,17 @@ class MPR:
         while True:
             direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
             v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
-            if self.mpr_portal_reach_tolerance(v, direction, i_ga, i_gb, i_b) or iterations > max_iterations:
+            if self.mpr_portal_reach_tolerance(v, direction, i_ga, i_gb, i_b) or iterations > self.CCD_ITERATIONS:
                 depth, pdir = self.mpr_point_tri_depth(
                     gs.ti_vec3([0.0, 0.0, 0.0]),
                     self.simplex_support[i_ga, i_gb, 1, i_b].v,
                     self.simplex_support[i_ga, i_gb, 2, i_b].v,
                     self.simplex_support[i_ga, i_gb, 3, i_b].v,
                 )
-                pdir = pdir.normalized()
-                # if ti.abs(depth) < 1e-10:
-                #     pdir = gs.ti_vec3([1., 0., 0.])
-                # else:
-                #     pdir = pdir.normalized()
+                if depth < self.CCD_EPS:
+                    pdir = gs.ti_vec3([0.0, 0.0, 0.0])
+                else:
+                    pdir = pdir.normalized()
 
                 is_col = True
                 pos = self.mpr_find_pos(i_ga, i_gb, i_b)
@@ -453,14 +455,12 @@ class MPR:
 
         dot = v.dot(direction)
 
-        # if dot < 0 or ti.abs(dot) < CCD_EPS:
-        if dot < self.CCD_EPS:
+        if ti.abs(dot) < self.CCD_EPS or dot < 0:
             ret = -1
         else:
             direction = self.simplex_support[i_ga, i_gb, 0, i_b].v.cross(self.simplex_support[i_ga, i_gb, 1, i_b].v)
-            if direction.norm() < self.CCD_EPS:
-                # if portal.points[1].v == ccd_vec3_origin:
-                if self.simplex_support[i_ga, i_gb, 1, i_b].v.norm() < self.CCD_EPS:
+            if direction.dot(direction) < self.CCD_EPS:
+                if (ti.abs(self.simplex_support[i_ga, i_gb, 1, i_b].v) < self.CCD_EPS).all():
                     ret = 1
                 else:
                     ret = 2
@@ -468,8 +468,7 @@ class MPR:
                 direction = direction.normalized()
                 v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                 dot = v.dot(direction)
-                # if dot < 0 or ti.abs(dot) < CCD_EPS:
-                if dot < self.CCD_EPS:
+                if ti.abs(dot) < self.CCD_EPS or dot < 0:
                     ret = -1
                 else:
                     self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
@@ -490,8 +489,7 @@ class MPR:
                     while self.simplex_size[i_ga, i_gb, i_b] < 4:
                         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
-                        # if dot < 0 or ti.abs(dot) < CCD_EPS:
-                        if dot < self.CCD_EPS:
+                        if ti.abs(dot) < self.CCD_EPS or dot < 0:
                             ret = -1
                             break
 
@@ -499,8 +497,7 @@ class MPR:
 
                         va = self.simplex_support[i_ga, i_gb, 1, i_b].v.cross(v)
                         dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-                        # if dot < 0 or ti.abs(dot) < CCD_EPS:
-                        if dot < -self.CCD_EPS:
+                        if dot < 0 and ti.abs(dot) > self.CCD_EPS:
                             self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
                             self.simplex_support[i_ga, i_gb, 2, i_b].v2 = v2
                             self.simplex_support[i_ga, i_gb, 2, i_b].v = v
@@ -509,8 +506,7 @@ class MPR:
                         if not cont:
                             va = v.cross(self.simplex_support[i_ga, i_gb, 2, i_b].v)
                             dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-                            # if dot < 0 or ti.abs(dot) < CCD_EPS:
-                            if dot < -self.CCD_EPS:
+                            if dot < 0 and ti.abs(dot) > self.CCD_EPS:
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v = v

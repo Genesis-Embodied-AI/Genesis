@@ -22,7 +22,9 @@ dependencies = [
     "pyglet>=1.5",
     "libigl",
     "pygltflib == 1.16.0",
-    "mujoco == 3.2.5",
+    # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
+    #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
+    "mujoco >= 3.3.0, < 3.4.0",
     "pycollada",
     "opencv-python",
     "lxml",
@@ -52,10 +54,17 @@ genesis = [
 
 [tool.black]
 line-length = 120
+force-exclude = '''
+/(
+    genesis/ext
+)/
+'''
 
 [tool.pytest.ini_options]
 addopts = [
     "--import-mode=importlib",
+    "--pdbcls=IPython.terminal.debugger:TerminalPdb",
+    "--exitfirst",
 ]
 log_cli_level = "WARNING"
 

@@ -243,6 +243,18 @@ def parse_visual_and_col_mesh(morph, surface):
             tmeshes.append(vm.trimesh)
         tmesh = trimesh.util.concatenate(tmeshes)
 
+        num_vertices = len(tmesh.vertices)
+        if num_vertices > 5000:
+            gs.logger.warning(
+                f"Mesh '{morph.file}' contains many vertices ({num_vertices}). Consider setting "
+                "'morph.decimate=True' to speed up collision detection."
+            )
+        if not tmesh.is_convex and not (morph.convexify or morph.decompose_nonconvex):
+            gs.logger.warning(
+                f"Mesh '{morph.file}' is non-convex. Consider setting 'morph.decompose_nonconvex=True' "
+                "or 'morph.convexify=True' to speed up collision detection."
+            )
+
         if morph.convexify or tmesh.is_convex or not morph.decompose_nonconvex:
             ms.append(
                 gs.Mesh.from_trimesh(
@@ -1037,7 +1049,7 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     return mesh
 
 
-def create_plane(size=1000, color=None, normal=(0, 0, 1)):
+def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[size, size, thickness])
     mesh.vertices[:, 2] -= thickness / 2
