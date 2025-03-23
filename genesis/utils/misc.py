@@ -14,6 +14,10 @@ import genesis as gs
 from genesis.constants import backend as gs_backend
 
 
+class DeprecationError(Exception):
+    pass
+
+
 def raise_exception(msg="Something went wrong."):
     gs.logger._error_msg = msg
     raise gs.GenesisException(msg)

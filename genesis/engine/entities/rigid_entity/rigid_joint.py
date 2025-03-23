@@ -3,6 +3,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import DeprecationError
 from genesis.repr_base import RBC
 
 
@@ -72,6 +73,71 @@ class RigidJoint(RBC):
 
             self._dofs_damping = np.zeros_like(self._dofs_damping)
             self._dofs_armature = np.zeros_like(self._dofs_armature)
+
+    # ------------------------------------------------------------------------------------
+    # -------------------------------- real-time state -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def get_pos(self):
+        """
+        Get the position of the joint in the world frame.
+        """
+        raise DeprecationError(
+            "This method has been removed. Please consider operating at link-level to get the cartesian position in "
+            "word frame."
+        )
+
+    def get_quat(self):
+        """
+        Get the quaternion of the joint in the world frame.
+        """
+        raise DeprecationError(
+            "This method has been removed. Please consider operating at link-level to get the cartesian orientation in "
+            "word frame."
+        )
+
+    @gs.assert_built
+    def get_anchor_pos(self):
+        """
+        Get the anchor position of the joint in the world frame.
+
+        Mathematically, the anchor point corresponds to the point that is fixed wrt parent link and is coincident with
+        the joint for the neutral configuration qpos0. This means that this point moves under the effect of the
+        generalized coordinates corresponding to this joint (and all its ancestors in the kinematic tree). Physically,
+        the anchor point is the "output" of the joint transmission, on which the child body is welded.
+        """
+        tensor = torch.empty(self._solver._batch_shape(3, True), dtype=gs.tc_float, device=gs.device)
+        self._kernel_get_anchor_pos(tensor)
+        if self._solver.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
+
+    @ti.kernel
+    def _kernel_get_anchor_pos(self, tensor: ti.types.ndarray()):
+        for i_b in range(self._solver._B):
+            xpos = self._solver.joints_state[self._idx, i_b].xanchor
+            for i in ti.static(range(3)):
+                tensor[i_b, i] = xpos[i]
+
+    @gs.assert_built
+    def get_anchor_axis(self):
+        """
+        Get the anchor axis of the joint in the world frame.
+
+        See `RigidJoint.get_anchor_pos` documentation for details about the notion on anchor point.
+        """
+        tensor = torch.empty(self._solver._batch_shape(3, True), dtype=gs.tc_float, device=gs.device)
+        self._kernel_get_anchor_axis(tensor)
+        if self._solver.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
+
+    @ti.kernel
+    def _kernel_get_anchor_axis(self, tensor: ti.types.ndarray()):
+        for i_b in range(self._solver._B):
+            xaxis = self._solver.joints_state[self._idx, i_b].xaxis
+            for i in ti.static(range(3)):
+                tensor[i_b, i] = xaxis[i]
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
