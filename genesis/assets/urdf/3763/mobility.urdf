@@ -58,6 +58,6 @@
 		<axis xyz="0 1 0"/>
 		<child link="link_0_helper"/>
 		<parent link="link_1"/>
-		<limit lower="-0.1080000000000001" upper="-z0.008000000000000007"/>
+		<limit lower="-0.1080000000000001" upper="-0.008000000000000007"/>
 	</joint>
 </robot>
