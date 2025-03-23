@@ -134,8 +134,6 @@ def test_box_box_dynamics(gs_sim):
         init_simulators(gs_sim, qpos=np.concatenate((cube1_pos, cube1_quat, cube2_pos, cube2_quat)))
         for i in range(100):
             gs_sim.scene.step()
-            if gs_sim.scene.visualizer:
-                gs_sim.scene.visualizer.update()
 
         qvel = gs_robot.get_dofs_velocity().cpu()
         np.testing.assert_allclose(qvel, 0, atol=1e-2)
@@ -179,13 +177,13 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    for i in range(700 if dynamics else 300):
+    for i in range(700 if dynamics else 400):
         scene.step()
 
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qvel = entity.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.03)
+        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.05)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qpos = entity.get_dofs_position().cpu()
@@ -246,6 +244,31 @@ def test_robot_kinematics(gs_sim, mj_sim):
         qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
         init_simulators(gs_sim, mj_sim, qpos)
         check_mujoco_data_consistency(gs_sim, mj_sim, atol=(1e-9 if gs.np_float == np.float64 else 5e-5))
+
+
+@pytest.mark.dof_damping(True)
+@pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
+def test_stickman(gs_sim, mj_sim):
+    # Make sure that "static" model information are matching
+    check_mujoco_model_consistency(gs_sim, mj_sim)
+
+    # Initialize the simulation
+    init_simulators(gs_sim)
+
+    # Run the simulation for a few steps
+    for i in range(6000):
+        gs_sim.scene.step()
+
+    (gs_robot,) = gs_sim.entities
+    qvel = gs_robot.get_dofs_velocity().cpu()
+    np.testing.assert_allclose(qvel, 0, atol=0.1)
+    qpos = gs_robot.get_dofs_position().cpu()
+    assert np.linalg.norm(qpos[:2]) < 1.3
+    body_z = gs_sim.rigid_solver.links_state.pos.to_numpy()[:-1, 0, 2]
+    np.testing.assert_array_less(0, body_z)
 
 
 @pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)

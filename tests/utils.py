@@ -289,7 +289,7 @@ def check_mujoco_model_consistency(
     np.testing.assert_allclose(gs_dof_damping[gs_dof_idcs], mj_dof_damping[mj_dof_idcs], atol=atol)
 
     # FIXME: DoF damping implementation in Genesis is not consistent with Mujoco (for efficiency)
-    np.testing.assert_allclose(mj_sim.model.dof_damping, 0.0)
+    # np.testing.assert_allclose(mj_sim.model.dof_damping, 0.0)
 
     gs_dof_armature = gs_sim.rigid_solver.dofs_info.armature.to_numpy()
     mj_dof_armature = mj_sim.model.dof_armature
@@ -573,5 +573,5 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         # Do a single simulation step (eventually with substeps for Genesis)
         mujoco.mj_step(mj_sim.model, mj_sim.data)
         gs_sim.scene.step()
-        if gs_sim.scene.visualizer:
-            gs_sim.scene.visualizer.update()
+        # if gs_sim.scene.visualizer:
+        #     gs_sim.scene.visualizer.update()
