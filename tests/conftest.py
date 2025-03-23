@@ -2,6 +2,7 @@ import os
 from itertools import chain
 from enum import Enum
 
+import psutil
 import pytest
 import pyglet
 import numpy as np
@@ -17,6 +18,15 @@ def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
     return f"{val}"
+
+
+def pytest_xdist_auto_num_workers(config):
+    if config.option.numprocesses == "auto":
+        physical_core_count = psutil.cpu_count(logical=False)
+        _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
+        _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
+        return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
+    return config.option.numprocesses
 
 
 def pytest_addoption(parser):
