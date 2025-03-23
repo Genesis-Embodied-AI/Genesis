@@ -144,7 +144,9 @@ def _get_model_mappings(
             for joint in chain.from_iterable(entity.joints)
             if joint.type != gs.JOINT_TYPE.FIXED
         ]
-    body_names = [body.name for entity in gs_sim.entities for body in entity.links if not body.is_fixed]
+    body_names = [
+        body.name for entity in gs_sim.entities for body in entity.links if not (body.is_fixed and body.parent_idx < 0)
+    ]
 
     act_names: list[str] = []
     mj_jnt_idcs: list[int] = []
