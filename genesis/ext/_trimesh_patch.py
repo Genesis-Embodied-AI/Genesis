@@ -1,8 +1,8 @@
 import os
-import numpy as np
-
 import re
-from collections import deque, defaultdict
+from collections import defaultdict, deque
+
+import numpy as np
 
 try:
     # `pip install pillow`
@@ -15,15 +15,22 @@ except BaseException as E:
 
     Image = ExceptionWrapper(E)
 
-from .. import util
-from ..visual.color import to_float
-from ..visual.texture import unmerge_faces, TextureVisuals
-from ..visual.material import SimpleMaterial
+import trimesh
+from trimesh import util
+from trimesh.constants import log, tol
+from trimesh.visual.color import to_float
+from trimesh.visual.material import SimpleMaterial
+from trimesh.visual.texture import TextureVisuals, unmerge_faces
 
-from ..constants import log, tol
 
-
-def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False, maintain_order=False, **kwargs):
+def load_obj(
+    file_obj,
+    resolver=None,
+    group_material=True,
+    skip_materials=False,
+    maintain_order=False,
+    **kwargs,
+):
     """
     Load a Wavefront OBJ file into kwargs for a trimesh.Scene
     object.
@@ -80,12 +87,12 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
             material_kwargs = parse_mtl(resolver[mtl_path], resolver=resolver)
             # turn parsed kwargs into material objects
             materials = {k: SimpleMaterial(**v) for k, v in material_kwargs.items()}
-        except (IOError, TypeError):
+        except (OSError, TypeError):
             # usually the resolver couldn't find the asset
-            log.debug("unable to load materials from: {}".format(mtl_path))
+            log.debug(f"unable to load materials from: {mtl_path}")
         except BaseException:
             # something else happened so log a warning
-            log.debug("unable to load materials from: {}".format(mtl_path), exc_info=True)
+            log.debug(f"unable to load materials from: {mtl_path}", exc_info=True)
 
     # extract vertices from raw text
     v, vn, vt, vc = _parse_vertices(text=text)
@@ -130,7 +137,10 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
         # maxsplit=1 means that it can stop working
         # after it finds the first newline
         # passed as arg as it's not a kwarg in python2
-        face_lines = [i.split("\n", 1)[0].strip() for i in re.split("^f", chunk, flags=re.MULTILINE)[1:]]
+        face_lines = [
+            i.split("\n", 1)[0].strip()
+            for i in re.split("^f", chunk, flags=re.MULTILINE)[1:]
+        ]
 
         # check every face for mixed tri-quad-ngon
         columns = len(face_lines[0].replace("/", " ").split())
@@ -140,7 +150,9 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
         if flat_array:
             # the fastest way to get to a numpy array
             # processes the whole string at once into a 1D array
-            array = np.fromstring(" ".join(face_lines).replace("/", " "), sep=" ", dtype=np.int64)
+            array = np.fromstring(
+                " ".join(face_lines).replace("/", " "), sep=" ", dtype=np.int64
+            )
             # also wavefront is 1-indexed (vs 0-indexed) so offset
             # only applies to positive indices
             array[array > 0] -= 1
@@ -179,7 +191,9 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
             else:
                 mask_vn = None
                 # no face normals but face texturre
-                new_faces, mask_v, mask_vt = unmerge_faces(faces, faces_tex, maintain_faces=maintain_order)
+                new_faces, mask_v, mask_vt = unmerge_faces(
+                    faces, faces_tex, maintain_faces=maintain_order
+                )
 
             if tol.strict:
                 # we should NOT have messed up the faces
@@ -207,7 +221,9 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
                 assert faces.max() < len(v)
             if vn is not None and np.shape(faces_norm) == faces.shape:
                 # do the crazy unmerging logic for split indices
-                new_faces, mask_v, mask_vn = unmerge_faces(faces, faces_norm, maintain_faces=maintain_order)
+                new_faces, mask_v, mask_vn = unmerge_faces(
+                    faces, faces_norm, maintain_faces=maintain_order
+                )
             else:
                 # generate the mask so we only include
                 # referenced vertices in every new mesh
@@ -237,7 +253,9 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
                 normals = vn[mask_vn]
                 if normals.shape != mesh["vertices"].shape:
                     raise ValueError(
-                        "incorrect normals {} != {}".format(str(normals.shape), str(mesh["vertices"].shape))
+                        "incorrect normals {} != {}".format(
+                            str(normals.shape), str(mesh["vertices"].shape)
+                        )
                     )
                 mesh["vertex_normals"] = normals
             except BaseException:
@@ -252,7 +270,7 @@ def load_obj(file_obj, resolver=None, group_material=True, skip_materials=False,
             visual = TextureVisuals(uv=uv)
         elif material is not None:
             # case where material is specified but not available
-            log.debug("specified material ({})  not loaded!".format(material))
+            log.debug(f"specified material ({material})  not loaded!")
         # assign the visual
         mesh["visual"] = visual
         # store geometry by name
@@ -341,10 +359,11 @@ def parse_mtl(mtl, resolver=None):
                 # if there is only one value return that
                 if len(value) == 1:
                     value = value[0]
-                # store the key by mapped value
-                material[mapped[key]] = value
-                # also store key by OBJ name
-                material[key] = value
+                if material is not None:
+                    # store the key by mapped value
+                    material[mapped[key]] = value
+                    # also store key by OBJ name
+                    material[key] = value
             except BaseException:
                 log.debug("failed to convert color!", exc_info=True)
         # pass everything as kwargs to material constructor
@@ -396,8 +415,6 @@ def _parse_faces_vectorized(array, columns, sample_line):
 
     # TODO: probably need to support 8 and 12 columns for quads
     # or do something more general
-    # Update from Xian: this is added. Not sure if completed
-
     faces_tex, faces_norm = None, None
     if columns == 6:
         # if we have two values per vertex the second
@@ -417,16 +434,16 @@ def _parse_faces_vectorized(array, columns, sample_line):
             # which is vertex/texture
             faces_tex = array[:, index + 1]
         else:
-            log.debug("face lines are weird: {}".format(sample_line))
-    elif columns == 9:
+            log.debug(f"face lines are weird: {sample_line}")
+    elif columns == 8:
+        raise_exception("Not supported yet. Contact us if you need this.")
+    elif columns == 12:
         # if we have three values per vertex
         # second value is always texture
         faces_tex = array[:, index + 1]
         # third value is reference to vertex normal (`vn`)
         faces_norm = array[:, index + 2]
-    elif columns == 8:
-        raise Exception("Not supported yet. Contact us if you need this.")
-    elif columns == 12:
+    elif columns == 9:
         # if we have three values per vertex
         # second value is always texture
         faces_tex = array[:, index + 1]
@@ -473,12 +490,16 @@ def _parse_faces_fallback(lines):
             # a list comprehension
             collect_append = collect.append
             [
-                [collect_append(split[0]), collect_append(split[i + 1]), collect_append(split[i + 2])]
+                [
+                    collect_append(split[0]),
+                    collect_append(split[i + 1]),
+                    collect_append(split[i + 2]),
+                ]
                 for i in range(len(split) - 2)
             ]
             split = collect
         else:
-            log.debug("face needs more values 3>{} skipping!".format(len(split)))
+            log.debug(f"face needs more values 3>{len(split)} skipping!")
             continue
 
         # f is like: '76/558/76'
@@ -541,14 +562,18 @@ def _parse_vertices(text):
     # up to the location of out our first vertex but we
     # are going to use this check for "do we have texture"
     # determination later so search the whole stupid file
-    starts = {k: text.find("\n{} ".format(k)) for k in ["v", "vt", "vn"]}
+    starts = {k: text.find(f"\n{k} ") for k in ["v", "vt", "vn"]}
 
     # no valid values so exit early
     if not any(v >= 0 for v in starts.values()):
         return None, None, None, None
 
     # find the last position of each valid value
-    ends = {k: text.find("\n", text.rfind("\n{} ".format(k)) + 2 + len(k)) for k, v in starts.items() if v >= 0}
+    ends = {
+        k: text.find("\n", text.rfind(f"\n{k} ") + 2 + len(k))
+        for k, v in starts.items()
+        if v >= 0
+    }
 
     # take the first and last position of any vertex property
     start = min(s for s in starts.values() if s >= 0)
@@ -557,7 +582,11 @@ def _parse_vertices(text):
     chunk = text[start:end].replace("+e", "e").replace("-e", "e")
 
     # get the clean-ish data from the file as python lists
-    data = {k: [i.split("\n", 1)[0] for i in chunk.split("\n{} ".format(k))[1:]] for k, v in starts.items() if v >= 0}
+    data = {
+        k: [i.split("\n", 1)[0] for i in chunk.split(f"\n{k} ")[1:]]
+        for k, v in starts.items()
+        if v >= 0
+    }
 
     # count the number of data values per row on a sample row
     per_row = {k: len(v[0].split()) for k, v in data.items()}
@@ -782,7 +811,12 @@ def export_obj(
     """
     # store the multiple options for formatting
     # vertex indexes for faces
-    face_formats = {("v",): "{}", ("v", "vn"): "{}//{}", ("v", "vt"): "{}/{}", ("v", "vn", "vt"): "{}/{}/{}"}
+    face_formats = {
+        ("v",): "{}",
+        ("v", "vn"): "{}//{}",
+        ("v", "vt"): "{}/{}",
+        ("v", "vn", "vt"): "{}/{}/{}",
+    }
 
     # check the input
     if util.is_instance_named(mesh, "Trimesh"):
@@ -806,17 +840,29 @@ def export_obj(
         # we are going to reference face_formats with this
         face_type = ["v"]
         # OBJ includes vertex color as RGB elements on the same line
-        if include_color and current.visual.kind in ["vertex", "face"] and len(current.visual.vertex_colors):
-
+        if (
+            include_color
+            and current.visual.kind in ["vertex", "face"]
+            and len(current.visual.vertex_colors)
+        ):
             # create a stacked blob with position and color
-            v_blob = np.column_stack((current.vertices, to_float(current.visual.vertex_colors[:, :3])))
+            v_blob = np.column_stack(
+                (current.vertices, to_float(current.visual.vertex_colors[:, :3]))
+            )
         else:
             # otherwise just export vertices
             v_blob = current.vertices
 
             # add the first vertex key and convert the array
         # add the vertices
-        export = deque(["v " + util.array_to_string(v_blob, col_delim=" ", row_delim="\nv ", digits=digits)])
+        export = deque(
+            [
+                "v "
+                + util.array_to_string(
+                    v_blob, col_delim=" ", row_delim="\nv ", digits=digits
+                )
+            ]
+        )
 
         # if include_normals is None then
         # only include if they're already stored
@@ -826,7 +872,10 @@ def export_obj(
         if include_normals:
             try:
                 converted = util.array_to_string(
-                    current.vertex_normals, col_delim=" ", row_delim="\nvn ", digits=digits
+                    current.vertex_normals,
+                    col_delim=" ",
+                    row_delim="\nvn ",
+                    digits=digits,
                 )
                 # if vertex normals are stored in cache export them
                 face_type.append("vn")
@@ -857,13 +906,15 @@ def export_obj(
 
                 # export the UV coordinates
                 if len(np.shape(getattr(current.visual, "uv", None))) == 2:
-                    converted = util.array_to_string(current.visual.uv, col_delim=" ", row_delim="\nvt ", digits=digits)
+                    converted = util.array_to_string(
+                        current.visual.uv, col_delim=" ", row_delim="\nvt ", digits=digits
+                    )
                     # if vertex texture exists and is the right shape
                     face_type.append("vt")
                     # add the uv coordinates
                     export.append("vt " + converted)
                 # add the directive to use the exported material
-                export.appendleft("usemtl {}".format(tex_name))
+                export.appendleft(f"usemtl {tex_name}")
             except BaseException:
                 log.debug("failed to convert UV coordinates", exc_info=True)
 
@@ -874,7 +925,10 @@ def export_obj(
             export.append(
                 "f "
                 + util.array_to_string(
-                    current.faces + 1 + counts["v"], col_delim=" ", row_delim="\nf ", value_format=face_format
+                    current.faces + 1 + counts["v"],
+                    col_delim=" ",
+                    row_delim="\nf ",
+                    value_format=face_format,
                 )
             )
         # offset our vertex position
@@ -886,12 +940,12 @@ def export_obj(
         # add this object
         objects.append("\n".join(export))
 
+    # collect files like images to write
+    mtl_data = {}
     # combine materials
     if len(materials) > 0:
         # collect text for a single mtllib file
         mtl_lib = []
-        # collect files like images to write
-        mtl_data = {}
         # now loop through: keys are garbage hash
         # values are (data, name)
         for data, _ in materials.values():
@@ -903,7 +957,7 @@ def export_obj(
                     # things like images
                     mtl_data[file_name] = file_data
                 else:
-                    log.warning("not writing {}".format(file_name))
+                    log.warning(f"not writing {file_name}")
 
         if mtl_name is None:
             # if no name passed set a default
@@ -911,18 +965,22 @@ def export_obj(
 
         # prepend a header to the MTL text if requested
         if header is not None:
-            prepend = "# {}\n\n".format(header).encode("utf-8")
+            prepend = f"# {header}\n\n".encode()
         else:
             prepend = b""
 
         # save the material data
         mtl_data[mtl_name] = prepend + b"\n\n".join(mtl_lib)
         # add the reference to the MTL file
-        objects.appendleft("mtllib {}".format(mtl_name))
+        objects.appendleft(f"mtllib {mtl_name}")
 
     if header is not None:
         # add a created-with header to the top of the file
-        objects.appendleft("# {}".format(header))
+        objects.appendleft(f"# {header}")
+
+    # add a trailing newline
+    objects.append("\n")
+
     # combine elements into a single string
     text = "\n".join(objects)
 
@@ -938,4 +996,23 @@ def export_obj(
     return text
 
 
-_obj_loaders = {"obj": load_obj}
+#################### trimesh monkey-patching ####################
+
+
+def ColorVisuals__init(self, mesh=None, face_colors=None, vertex_colors=None):
+    ColorVisuals__init__orig(self, mesh, face_colors, vertex_colors)
+    self.defaults = {
+        "material_diffuse": np.array([102, 102, 102, 255], dtype=np.uint8),
+        "material_ambient": np.array([64, 64, 64, 255], dtype=np.uint8),
+        "material_specular": np.array([197, 197, 197, 255], dtype=np.uint8),
+        "material_shine": 77.0,
+    }
+
+
+trimesh.visual.DEFAULT_COLOR[:] = [102, 102, 102, 255]
+
+trimesh.exchange.obj.load_obj = load_obj
+
+trimesh.exchange.load.mesh_loaders.update({"obj": load_obj})
+ColorVisuals__init__orig = trimesh.visual.ColorVisuals.__init__
+trimesh.visual.ColorVisuals.__init__ = ColorVisuals__init
