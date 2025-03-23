@@ -25,6 +25,7 @@ class IntEnum(enum.IntEnum):
 
 # geom type in rigid solver
 class GEOM_TYPE(IntEnum):
+    # Beware PLANE must be the first geometry type as this is assumed by MPR collision detection.
     PLANE = 0
     SPHERE = 1
     ELLIPSOID = 2

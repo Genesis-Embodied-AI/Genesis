@@ -207,41 +207,27 @@ class RigidSolver(Solver):
         invweight = np.zeros([self._n_links], dtype=gs.np_float)
 
         for i_link in range(self._n_links):
-            if n_dofs[i_link] > 0:
-                jacp = np.zeros([self._n_dofs, 3])
-                jacr = np.zeros([self._n_dofs, 3])
+            jacp = np.zeros([self._n_dofs, 3])
+            jacr = np.zeros([self._n_dofs, 3])
 
-                offset = offsets[i_link]
+            offset = offsets[i_link]
 
-                this_link = i_link
-                while this_link >= 0:
-                    for i_d_ in range(dof_end[this_link] - dof_start[this_link]):
-                        i_d = dof_end[this_link] - i_d_ - 1
-                        jacr[i_d] = cdof_ang[i_d]
+            this_link = i_link
+            while this_link >= 0:
+                for i_d_ in range(dof_end[this_link] - dof_start[this_link]):
+                    i_d = dof_end[this_link] - i_d_ - 1
+                    jacr[i_d] = cdof_ang[i_d]
 
-                        tmp = np.cross(cdof_ang[i_d], offset)
-                        jacp[i_d] = cdof_vel[i_d] + tmp
+                    tmp = np.cross(cdof_ang[i_d], offset)
+                    jacp[i_d] = cdof_vel[i_d] + tmp
 
-                    this_link = parent_idx[this_link]
+                this_link = parent_idx[this_link]
 
-                jac = np.concatenate([jacp, jacr], 1)
+            jac = np.concatenate([jacp, jacr], 1)
 
-                A = jac.T @ mass_mat_inv @ jac
+            A = jac.T @ mass_mat_inv @ jac
 
-                invweight[i_link] = (A[0, 0] + A[1, 1] + A[2, 2]) / 3
-
-        for i_link in range(self._n_links):
-            if n_dofs[i_link] == 0:
-                next_link = parent_idx[i_link]
-                while n_dofs[next_link] == 0 and next_link >= 0:
-                    next_link = parent_idx[next_link]
-                if next_link >= 0:
-                    invweight[i_link] = invweight[next_link]
-                else:
-                    for i in range(self._n_links):
-                        if n_dofs[i] > 0:
-                            invweight[i_link] = invweight[i]
-                            break
+            invweight[i_link] = (A[0, 0] + A[1, 1] + A[2, 2]) / 3
 
         self._kernel_init_invweight(invweight)
 

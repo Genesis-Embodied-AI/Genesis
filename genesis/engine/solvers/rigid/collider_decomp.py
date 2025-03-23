@@ -101,8 +101,8 @@ class Collider:
                 if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
                     continue
 
-                # pair of fixed base links
-                if links_is_fixed[i_la] and links_is_fixed[i_lb]:
+                # pair of fixed links wrt the same link
+                if links_is_fixed[i_la] and links_is_fixed[i_lb] and i_la == i_lb:
                     continue
 
                 n_possible_pairs += 1
@@ -650,8 +650,9 @@ class Collider:
         ):
             is_valid = False
 
-        # pair of fixed links
-        if self._solver.links_info[I_la].is_fixed and self._solver.links_info[I_lb].is_fixed:
+        # pair of fixed links wrt the same link
+        # TODO: There may be several fixed joints chained together, which is not detected by this condition.
+        if self._solver.links_info[I_la].is_fixed and self._solver.links_info[I_lb].is_fixed and i_la == i_lb:
             is_valid = False
 
         # hibernated <-> fixed links
