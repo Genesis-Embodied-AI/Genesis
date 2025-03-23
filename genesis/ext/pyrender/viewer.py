@@ -559,11 +559,13 @@ class Viewer(pyglet.window.Window):
             a file dialog will be opened to ask the user where
             to save the video file.
         """
+        self.video_recorder.close()
         if filename is None:
             filename = self._get_save_filename(["mp4"])
-
-        self.video_recorder.close()
-        shutil.move(self.video_recorder.filename, filename)
+        if filename is None:
+            os.remove(self.video_recorder.filename)
+        else:
+            shutil.move(self.video_recorder.filename, filename)
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
@@ -1021,7 +1023,7 @@ class Viewer(pyglet.window.Window):
         except Exception:
             return None
 
-        if filename == ():
+        if not filename:
             return None
         return filename
 
