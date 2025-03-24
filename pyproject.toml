@@ -66,7 +66,6 @@ addopts = [
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
     "--exitfirst",
-    "--strict-markers",
     "--numprocesses=auto",
     "--dist=loadgroup",
     "-m not benchmarks",

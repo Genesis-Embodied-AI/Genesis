@@ -101,7 +101,7 @@ class Collider:
                 if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
                     continue
 
-                # pair of fixed base links
+                # pair of fixed links wrt the world
                 if links_is_fixed[i_la] and links_is_fixed[i_lb]:
                     continue
 
@@ -650,7 +650,7 @@ class Collider:
         ):
             is_valid = False
 
-        # pair of fixed links
+        # pair of fixed links wrt the world
         if self._solver.links_info[I_la].is_fixed and self._solver.links_info[I_lb].is_fixed:
             is_valid = False
 

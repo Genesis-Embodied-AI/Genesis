@@ -70,7 +70,33 @@ def initialize_genesis(request, backend):
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator):
+def adjacent_collision(request):
+    adjacent_collision = None
+    for mark in request.node.iter_markers("adjacent_collision"):
+        if mark.args:
+            if adjacent_collision is not None:
+                pytest.fail("'adjacent_collision' can only be specified once.")
+            (adjacent_collision,) = mark.args
+    if adjacent_collision is None:
+        adjacent_collision = False
+    return adjacent_collision
+
+
+@pytest.fixture
+def dof_damping(request):
+    dof_damping = None
+    for mark in request.node.iter_markers("dof_damping"):
+        if mark.args:
+            if dof_damping is not None:
+                pytest.fail("'dof_damping' can only be specified once.")
+            (dof_damping,) = mark.args
+    if dof_damping is None:
+        dof_damping = False
+    return dof_damping
+
+
+@pytest.fixture
+def mj_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
     elif gs_solver == gs.constraint_solver.Newton:
@@ -96,16 +122,21 @@ def mj_sim(xml_path, gs_solver, gs_integrator):
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
     model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    if adjacent_collision:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    else:
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
     data = mujoco.MjData(model)
 
     # Joint damping is not properly supported in Genesis for now
-    model.dof_damping[:] = 0.0
+    if not dof_damping:
+        model.dof_damping[:] = 0.0
 
     return MjSim(model, data)
 
 
 @pytest.fixture
-def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
+def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, show_viewer, mj_sim):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -124,7 +155,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
             constraint_solver=gs_solver,
             box_box_detection=True,
             enable_self_collision=True,
-            enable_adjacent_collision=True,
+            enable_adjacent_collision=adjacent_collision,
             contact_resolve_time=0.02,
             iterations=mj_sim.model.opt.iterations,
             tolerance=mj_sim.model.opt.tolerance,
@@ -140,8 +171,9 @@ def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
     )
 
     # Joint damping is not properly supported in Genesis for now
-    for joint in chain.from_iterable(gs_robot.joints):
-        joint.dofs_damping[:] = 0.0
+    if not dof_damping:
+        for joint in chain.from_iterable(gs_robot.joints):
+            joint.dofs_damping[:] = 0.0
 
     scene.build()
 

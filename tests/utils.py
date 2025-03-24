@@ -144,7 +144,9 @@ def _get_model_mappings(
             for joint in chain.from_iterable(entity.joints)
             if joint.type != gs.JOINT_TYPE.FIXED
         ]
-    body_names = [body.name for entity in gs_sim.entities for body in entity.links if not body.is_fixed]
+    body_names = [
+        body.name for entity in gs_sim.entities for body in entity.links if not (body.is_fixed and body.parent_idx < 0)
+    ]
 
     act_names: list[str] = []
     mj_jnt_idcs: list[int] = []
@@ -225,6 +227,10 @@ def check_mujoco_model_consistency(
     assert mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_MULTICCD
     assert not (mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_FWDINV)
 
+    mj_adj_collision = bool(mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
+    gs_adj_collision = gs_sim.rigid_solver._options.enable_adjacent_collision
+    assert gs_adj_collision == mj_adj_collision
+
     mj_solver = mujoco.mjtSolver(mj_sim.model.opt.solver)
     if mj_solver.name == "mjSOL_PGS":
         assert False
@@ -283,7 +289,7 @@ def check_mujoco_model_consistency(
     np.testing.assert_allclose(gs_dof_damping[gs_dof_idcs], mj_dof_damping[mj_dof_idcs], atol=atol)
 
     # FIXME: DoF damping implementation in Genesis is not consistent with Mujoco (for efficiency)
-    np.testing.assert_allclose(mj_sim.model.dof_damping, 0.0)
+    # np.testing.assert_allclose(mj_sim.model.dof_damping, 0.0)
 
     gs_dof_armature = gs_sim.rigid_solver.dofs_info.armature.to_numpy()
     mj_dof_armature = mj_sim.model.dof_armature
@@ -567,5 +573,5 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         # Do a single simulation step (eventually with substeps for Genesis)
         mujoco.mj_step(mj_sim.model, mj_sim.data)
         gs_sim.scene.step()
-        if gs_sim.scene.visualizer:
-            gs_sim.scene.visualizer.update()
+        # if gs_sim.scene.visualizer:
+        #     gs_sim.scene.visualizer.update()

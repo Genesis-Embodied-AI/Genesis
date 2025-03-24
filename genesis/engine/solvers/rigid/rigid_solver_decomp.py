@@ -22,6 +22,20 @@ IMP_MIN = 0.0001
 IMP_MAX = 0.9999
 
 
+def _sanitize_sol_params(sol_params, substep_dt, default_resolve_time=None):
+    timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.T
+    if default_resolve_time is not None:
+        # Use default default resolve time if and only if solref is not set
+        timeconst[timeconst == 0.0] = default_resolve_time
+    timeconst = np.maximum(timeconst, 2 * substep_dt)
+    dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
+    dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
+    mid = np.clip(mid, IMP_MIN, IMP_MAX)
+    width = np.maximum(0, width)
+    power = np.maximum(1, power)
+    return np.stack([timeconst, dampratio, dmin, dmax, width, mid, power], axis=1)
+
+
 @ti.data_oriented
 class RigidSolver(Solver):
     # ------------------------------------------------------------------------------------
@@ -192,8 +206,8 @@ class RigidSolver(Solver):
 
         invweight = np.zeros([self._n_links], dtype=gs.np_float)
 
-        for i_link in range(self._n_links):
-            if n_dofs[i_link] > 0:
+        if self._n_dofs > 0:
+            for i_link in range(self._n_links):
                 jacp = np.zeros([self._n_dofs, 3])
                 jacr = np.zeros([self._n_dofs, 3])
 
@@ -216,19 +230,6 @@ class RigidSolver(Solver):
 
                 invweight[i_link] = (A[0, 0] + A[1, 1] + A[2, 2]) / 3
 
-        for i_link in range(self._n_links):
-            if n_dofs[i_link] == 0:
-                next_link = parent_idx[i_link]
-                while n_dofs[next_link] == 0 and next_link >= 0:
-                    next_link = parent_idx[next_link]
-                if next_link >= 0:
-                    invweight[i_link] = invweight[next_link]
-                else:
-                    for i in range(self._n_links):
-                        if n_dofs[i] > 0:
-                            invweight[i_link] = invweight[i]
-                            break
-
         self._kernel_init_invweight(invweight)
 
     @ti.kernel
@@ -245,14 +246,16 @@ class RigidSolver(Solver):
     def _kernel_init_meaninertia(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
-            self.meaninertia[i_b] = 0.0
-            for i_e in range(self.n_entities):
-                e_info = self.entities_info[i_e]
-                for i_d in range(e_info.dof_start, e_info.dof_end):
-                    self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
-                    self.meaninertia[i_b] -= self.dofs_info[i_d].damping * self._substep_dt
             if self.n_dofs > 0:
-                self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
+                self.meaninertia[i_b] = 0.0
+                for i_e in range(self.n_entities):
+                    e_info = self.entities_info[i_e]
+                    for i_d in range(e_info.dof_start, e_info.dof_end):
+                        self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
+                        self.meaninertia[i_b] -= self.dofs_info[i_d].damping * self._substep_dt
+                    self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
+            else:
+                self.meaninertia[i_b] = 1.0
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
@@ -353,17 +356,9 @@ class RigidSolver(Solver):
         joints = tuple(chain.from_iterable(self.joints))
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
-            # Make sure that the constraints parameters are valid.
-            # Use default contact resolve time if and only if solref is not set.
+            # Make sure that the constraints parameters are valid
             dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
-            timeconst, dampratio, dmin, dmax, width, mid, power = dofs_sol_params.T
-            timeconst[timeconst == 0.0] = self._sol_contact_resolve_time
-            timeconst = np.maximum(timeconst, 2 * self._substep_dt)
-            dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
-            dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
-            mid = np.clip(mid, IMP_MIN, IMP_MAX)
-            width = np.maximum(0, width)
-            power = np.maximum(1, power)
+            dofs_sol_params = _sanitize_sol_params(dofs_sol_params, self._substep_dt, self._sol_contact_resolve_time)
 
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
@@ -371,7 +366,7 @@ class RigidSolver(Solver):
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                dofs_sol_params=np.stack([timeconst, dampratio, dmin, dmax, width, mid, power], axis=1),
+                dofs_sol_params=dofs_sol_params,
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
@@ -553,16 +548,11 @@ class RigidSolver(Solver):
         # Make sure that the constraints parameters are valid
         joints = tuple(chain.from_iterable(self.joints))
         joints_sol_params = np.concatenate([joint.sol_params for joint in joints], dtype=gs.np_float)
-        timeconst, dampratio, dmin, dmax, width, mid, power = joints_sol_params.T
-        dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
-        dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
-        mid = np.clip(mid, IMP_MIN, IMP_MAX)
-        width = np.maximum(0, width)
-        power = np.maximum(1, power)
+        joints_sol_params = _sanitize_sol_params(joints_sol_params, self._substep_dt)
 
         self._kernel_init_joint_fields(
             joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
-            joints_sol_params=np.stack([timeconst, dampratio, dmin, dmax, width, mid, power], axis=1),
+            joints_sol_params=joints_sol_params,
             joints_q_start=np.array([joint.q_start for joint in joints], dtype=gs.np_int),
             joints_dof_start=np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
             joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
@@ -873,14 +863,18 @@ class RigidSolver(Solver):
         self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=gs.np_float)
 
         if self.n_geoms > 0:
+            # Make sure that the constraints parameters are valid
             geoms = self.geoms
+            geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
+            geoms_sol_params = _sanitize_sol_params(geoms_sol_params, self._substep_dt, self._sol_contact_resolve_time)
+
             self._kernel_init_geom_fields(
                 geoms_pos=np.array([geom.init_pos for geom in geoms], dtype=gs.np_float),
                 geoms_quat=np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 geoms_link_idx=np.array([geom.link.idx for geom in geoms], dtype=gs.np_int),
                 geoms_type=np.array([geom.type for geom in geoms], dtype=gs.np_int),
                 geoms_friction=np.array([geom.friction for geom in geoms], dtype=gs.np_float),
-                geoms_sol_params=np.array([geom.sol_params for geom in geoms], dtype=gs.np_float),
+                geoms_sol_params=geoms_sol_params,
                 geoms_vert_start=np.array([geom.vert_start for geom in geoms], dtype=gs.np_int),
                 geoms_face_start=np.array([geom.face_start for geom in geoms], dtype=gs.np_int),
                 geoms_edge_start=np.array([geom.edge_start for geom in geoms], dtype=gs.np_int),
@@ -938,8 +932,6 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.geoms_info[i].data[j] = geoms_data[i, j]
                 self.geoms_info[i].sol_params[j] = geoms_sol_params[i, j]
-            self.geoms_info[i].sol_params[0] = self._sol_contact_resolve_time
-
             self.geoms_info[i].sol_params[0] = ti.max(self.geoms_info[i].sol_params[0], 2 * self._substep_dt)
 
             self.geoms_info[i].vert_start = geoms_vert_start[i]
@@ -3088,6 +3080,8 @@ class RigidSolver(Solver):
                             # + self.dofs_state[i_d, i_b].qf_actuator
                         )
 
+                        self.dofs_state[i_d, i_b].qf_smooth = self.dofs_state[i_d, i_b].force
+
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
@@ -3105,6 +3099,8 @@ class RigidSolver(Solver):
                         + self.dofs_state[i_d, i_b].qf_applied
                         # + self.dofs_state[i_d, i_b].qf_actuator
                     )
+
+                    self.dofs_state[i_d, i_b].qf_smooth = self.dofs_state[i_d, i_b].force
 
     @ti.func
     def _func_compute_qacc(self):
@@ -3854,6 +3850,10 @@ class RigidSolver(Solver):
         Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
         """
         assert len(sol_params) == 7
+
+        # Make sure that the constraints parameters are valid
+        sol_params = _sanitize_sol_params(sol_params)
+
         self._kernel_set_global_sol_params(sol_params)
 
     @ti.kernel
@@ -3863,23 +3863,17 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.geoms_info[i].sol_params[j] = sol_params[j]
 
-            self.geoms_info[I].sol_params[0] = ti.max(self.geoms_info[I].sol_params[0], 2 * self._substep_dt)
-
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_joints, self._B):
             I = [i, b] if ti.static(self._options.batch_joints_info) else i
             for j in ti.static(range(7)):
                 self.joints_info[I].sol_params[j] = sol_params[j]
 
-            self.joints_info[I].sol_params[0] = ti.max(self.joints_info[I].sol_params[0], 2 * self._substep_dt)
-
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_dofs, self._B):
             I = [i, b] if ti.static(self._options.batch_dofs_info) else i
             for j in ti.static(range(7)):
                 self.dofs_info[I].sol_params[j] = sol_params[j]
-
-            self.dofs_info[I].sol_params[0] = ti.max(self.dofs_info[I].sol_params[0], 2 * self._substep_dt)
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         if self._options.batch_dofs_info:

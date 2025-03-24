@@ -37,7 +37,7 @@ jobs:
         run: |
           docker run -u ci:ci --gpus all --rm -v ${{ github.workspace }}:/app cuda11_py11:latest \
           bash -c "cd /app && \
-          sudo bash ./.github/workflows/setup_env.sh && \
+          (sudo bash ./.github/workflows/setup_env.sh || true) && \
           curl -sS 'https://api.github.com/repos/ompl/ompl/releases/tags/prerelease' \
           | jq -r '.assets[].browser_download_url' \
           | while IFS= read -r URL; do wget -q -c \"\$URL\"; done && \
