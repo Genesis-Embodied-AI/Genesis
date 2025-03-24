@@ -351,20 +351,14 @@ class RigidEntity(Entity):
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
-            if e_info["type"] == gs.EQUALITY_TYPE.CONNECT:  # only this type is supported right now
-                self._add_equality(
-                    name=e_info["name"],
-                    type=e_info["type"],
-                    link1_idx=e_info["link1_idx"],
-                    link2_idx=e_info["link2_idx"],
-                    anchor1_pos=e_info["anchor1_pos"],
-                    anchor2_pos=e_info["anchor2_pos"],
-                    rel_pose=e_info["rel_pose"],
-                    torque_scale=e_info["torque_scale"],
-                    sol_params=e_info["sol_params"],
-                )
-            else:
-                gs.logger.warning(f"(MJCF) Equality type '{e_info['type']}' not supported for now.")
+            self._add_equality(
+                name=e_info["name"],
+                type=e_info["type"],
+                eq_obj1id=e_info["eq_obj1id"],
+                eq_obj2id=e_info["eq_obj2id"],
+                eq_data=e_info["eq_data"],
+                sol_params=e_info["sol_params"],
+            )
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
@@ -573,20 +567,23 @@ class RigidEntity(Entity):
 
         return link, joints
 
-    def _add_equality(
-        self, name, type, link1_idx, link2_idx, anchor1_pos, anchor2_pos, rel_pose, torque_scale, sol_params
-    ):
+    def _add_equality(self, name, type, eq_obj1id, eq_obj2id, eq_data, sol_params):
+        if type == gs.EQUALITY_TYPE.CONNECT:
+            eq_obj1id += self._link_start
+            eq_obj2id += self._link_start
+        elif type == gs.EQUALITY_TYPE.JOINT:
+            eq_obj1id += self._joint_start
+            eq_obj2id += self._joint_start
+        else:
+            pass
         equality = RigidEquality(
             entity=self,
             name=name,
             idx=self.n_equalities + self._equality_start,
             type=type,
-            link1_idx=link1_idx + self._link_start,
-            link2_idx=link2_idx + self._link_start,
-            anchor1_pos=anchor1_pos,
-            anchor2_pos=anchor2_pos,
-            rel_pose=rel_pose,
-            torque_scale=torque_scale,
+            eq_obj1id=eq_obj1id,
+            eq_obj2id=eq_obj2id,
+            eq_data=eq_data,
             sol_params=sol_params,
         )
         self._equalities.append(equality)

@@ -467,11 +467,15 @@ class RigidLink(RBC):
     @property
     def dof_start(self):
         """The index of the link's first degree of freedom (DOF) in the scene."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[0].dof_start
 
     @property
     def dof_end(self):
         """The index of the link's last degree of freedom (DOF) in the scene *plus one*."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[-1].dof_end
 
     @property
@@ -482,11 +486,15 @@ class RigidLink(RBC):
     @property
     def q_start(self):
         """Returns the starting index of the `q` variables of the link in the rigid solver."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[0].q_start
 
     @property
     def q_end(self):
         """Returns the last index of the `q` variables of the link in the rigid solver *plus one*."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[-1].q_end
 
     @property

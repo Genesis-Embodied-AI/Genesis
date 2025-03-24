@@ -1161,12 +1161,10 @@ class RigidSolver(Solver):
     def _init_equality_fields(self):
         struct_equality_info = ti.types.struct(
             equality_type=gs.ti_int,
-            link1_idx=gs.ti_int,
-            link2_idx=gs.ti_int,
-            anchor1_pos=gs.ti_vec3,
-            anchor2_pos=gs.ti_vec3,
-            rel_pose=gs.ti_vec4,
-            torque_scale=gs.ti_float,
+            eq_obj1id=gs.ti_int,
+            eq_obj2id=gs.ti_int,
+            eq_data=gs.ti_vec11,
+            eq_type=gs.ti_int,
             entity_idx=gs.ti_int,
             sol_params=gs.ti_vec7,
         )
@@ -1177,12 +1175,10 @@ class RigidSolver(Solver):
             equalities = self.equalities
             self._kernel_init_equality_fields(
                 equalities_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
-                equalities_link1_idx=np.array([equality.link1_idx for equality in equalities], dtype=gs.np_int),
-                equalities_link2_idx=np.array([equality.link2_idx for equality in equalities], dtype=gs.np_int),
-                equalities_anchor1_pos=np.array([equality.anchor1_pos for equality in equalities], dtype=gs.np_float),
-                equalities_anchor2_pos=np.array([equality.anchor2_pos for equality in equalities], dtype=gs.np_float),
-                equalities_rel_pose=np.array([equality.rel_pose for equality in equalities], dtype=gs.np_float),
-                equalities_torque_scale=np.array([equality.torque_scale for equality in equalities], dtype=gs.np_float),
+                equalities_eq_obj1id=np.array([equality.eq_obj1id for equality in equalities], dtype=gs.np_int),
+                equalities_eq_obj2id=np.array([equality.eq_obj2id for equality in equalities], dtype=gs.np_int),
+                equalities_eq_data=np.array([equality.eq_data for equality in equalities], dtype=gs.np_float),
+                equalities_eq_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
                 equalities_sol_params=np.array([equality.sol_params for equality in equalities], dtype=gs.np_float),
             )
             if self._use_contact_island:
@@ -1192,25 +1188,20 @@ class RigidSolver(Solver):
     def _kernel_init_equality_fields(
         self,
         equalities_type: ti.types.ndarray(),
-        equalities_link1_idx: ti.types.ndarray(),
-        equalities_link2_idx: ti.types.ndarray(),
-        equalities_anchor1_pos: ti.types.ndarray(),
-        equalities_anchor2_pos: ti.types.ndarray(),
-        equalities_rel_pose: ti.types.ndarray(),
-        equalities_torque_scale: ti.types.ndarray(),
+        equalities_eq_obj1id: ti.types.ndarray(),
+        equalities_eq_obj2id: ti.types.ndarray(),
+        equalities_eq_data: ti.types.ndarray(),
+        equalities_eq_type: ti.types.ndarray(),
         equalities_sol_params: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_equalities):
             self.equality_info[i].equality_type = equalities_type[i]
-            self.equality_info[i].link1_idx = equalities_link1_idx[i]
-            self.equality_info[i].link2_idx = equalities_link2_idx[i]
-            for j in ti.static(range(3)):
-                self.equality_info[i].anchor1_pos[j] = equalities_anchor1_pos[i, j]
-                self.equality_info[i].anchor2_pos[j] = equalities_anchor2_pos[i, j]
-            for j in ti.static(range(4)):
-                self.equality_info[i].rel_pose[j] = equalities_rel_pose[i, j]
-            self.equality_info[i].torque_scale = equalities_torque_scale[i]
+            self.equality_info[i].eq_obj1id = equalities_eq_obj1id[i]
+            self.equality_info[i].eq_obj2id = equalities_eq_obj2id[i]
+            self.equality_info[i].eq_type = equalities_eq_type[i]
+            for j in ti.static(range(11)):
+                self.equality_info[i].eq_data[j] = equalities_eq_data[i, j]
             for j in ti.static(range(7)):
                 self.equality_info[i].sol_params[j] = equalities_sol_params[i, j]
 
