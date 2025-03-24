@@ -1,0 +1,23 @@
+<mujoco model="equality_constraint_test">
+    <compiler angle="degree"/>
+    <option timestep="0.002"/>
+    <worldbody>
+        <!-- Parent body -->
+        <body name="parent" pos="0 0 1.0">
+            <!-- Child body 1 -->
+            <body name="child1" pos="0.5 0 0">
+                <joint name="joint1" type="hinge" axis="0 1 0" range="-45 45"/>
+                <geom type="capsule" size="0.05 0.2" rgba="0.9 0.1 0.1 1"/>
+            </body>
+            <!-- Child body 2 -->
+            <body name="child2" pos="0 0.5 0">
+                <joint name="joint2" type="hinge" axis="0 1 0" range="-45 45"/>
+                <geom type="capsule" size="0.05 0.2" rgba="0.1 0.1 0.9 1"/>
+            </body>
+        </body>
+    </worldbody>
+    <!-- Equality constraint to enforce identical DoFs -->
+    <equality>
+        <joint name="joint_equality" joint1="joint1" joint2="joint2"/>
+    </equality>
+</mujoco>

@@ -144,6 +144,8 @@ class RigidOptions(Options):
         Whether to enable self collision within each entity. Defaults to False.
     enable_adjacent_collision : bool, optional
         Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
+    disable_constraint: bool, optional
+        Whether to disable all constraints. Defaults to False.
     max_collision_pairs : int, optional
         Maximum number of collision pairs. Defaults to 100.
     integrator : gs.integrator, optional
@@ -184,6 +186,7 @@ class RigidOptions(Options):
     enable_joint_limit: bool = True
     enable_self_collision: bool = False
     enable_adjacent_collision: bool = False
+    disable_constraint: bool = False
     max_collision_pairs: int = 100
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6

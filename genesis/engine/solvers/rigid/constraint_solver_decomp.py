@@ -586,16 +586,18 @@ class ConstraintSolver:
                     self.jac_n_relevant_dofs[i_c, i_b] = 0
 
     def handle_constraints(self):
-        self.add_equality_constraints()
+        if not self._solver._disable_constraint:
+            if self._solver.n_equalities > 0:
+                self.add_equality_constraints()
 
-        if self._solver._enable_collision:
-            self.add_collision_constraints()
+            if self._solver._enable_collision:
+                self.add_collision_constraints()
 
-        if self._solver._enable_joint_limit:
-            self.add_joint_limit_constraints()
+            if self._solver._enable_joint_limit:
+                self.add_joint_limit_constraints()
 
-        if self._solver._enable_collision or self._solver._enable_joint_limit or self._solver.n_equalities > 0:
-            self.resolve()
+            if self._solver._enable_collision or self._solver._enable_joint_limit or self._solver.n_equalities > 0:
+                self.resolve()
 
     def resolve(self):
         from genesis.utils.tools import create_timer

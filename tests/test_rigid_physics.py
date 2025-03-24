@@ -235,6 +235,7 @@ def test_robot_kinematics(gs_sim, mj_sim):
     gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
+    gs_sim.rigid_solver._disable_constraint = True
 
     check_mujoco_model_consistency(gs_sim, mj_sim)
 
@@ -430,3 +431,20 @@ def test_nonconvex_collision(show_viewer):
 
     if show_viewer:
         scene.viewer.stop()
+
+
+@pytest.mark.parametrize("xml_path", ["xml/test_equality.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_equality_joint(gs_sim, mj_sim):
+    # there is an equality constraint
+    np.testing.assert_allclose(gs_sim.rigid_solver.n_equalities, 1, 0.1)
+
+    qpos = np.array((0.0, -1.0))
+    qvel = np.array((1, -0.3))
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150)
+
+    # check if the two joints are equal
+    gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-3)
