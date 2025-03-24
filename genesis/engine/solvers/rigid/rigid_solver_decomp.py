@@ -1651,10 +1651,8 @@ class RigidSolver(Solver):
     @ti.kernel
     def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._B):
-            self._func_forward_kinematics(i_b)
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
+            self._func_forward_kinematics(i_b)
             self._func_transform_COM(i_b)
             self._func_forward_velocity(i_b)
             self._func_update_geoms(i_b)
