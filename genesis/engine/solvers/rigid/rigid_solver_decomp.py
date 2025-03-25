@@ -1174,13 +1174,19 @@ class RigidSolver(Solver):
         )
         if self.n_equalities > 0:
             equalities = self.equalities
+
+            equalities_sol_params = np.array([equality.sol_params for equality in equalities], dtype=gs.np_float)
+            equalities_sol_params = _sanitize_sol_params(
+                equalities_sol_params, self._substep_dt, self._sol_contact_resolve_time
+            )
+
             self._kernel_init_equality_fields(
                 equalities_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
                 equalities_eq_obj1id=np.array([equality.eq_obj1id for equality in equalities], dtype=gs.np_int),
                 equalities_eq_obj2id=np.array([equality.eq_obj2id for equality in equalities], dtype=gs.np_int),
                 equalities_eq_data=np.array([equality.eq_data for equality in equalities], dtype=gs.np_float),
                 equalities_eq_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
-                equalities_sol_params=np.array([equality.sol_params for equality in equalities], dtype=gs.np_float),
+                equalities_sol_params=equalities_sol_params,
             )
             if self._use_contact_island:
                 gs.logger.warn("contact island is not supported for equality constraints yet")
