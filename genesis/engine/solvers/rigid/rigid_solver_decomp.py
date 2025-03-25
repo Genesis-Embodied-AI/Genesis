@@ -1,8 +1,8 @@
 from itertools import chain
 
 import numpy as np
-import taichi as ti
 import torch
+import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -4197,46 +4197,28 @@ class RigidSolver(Solver):
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].ctrl_pos = position[i_b_, i_d_]
 
     def get_links_pos(self, links_idx, envs_idx=None, *, unsafe=False):
-        _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_pos(tensor, links_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_links_pos(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].pos[i]
+        tensor = self.links_state.pos.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def get_links_quat(self, links_idx, envs_idx=None, *, unsafe=False):
-        _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_quat(tensor, links_idx, envs_idx)
+        tensor = self.links_state.quat.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
         return _tensor
 
-    @ti.kernel
-    def _kernel_get_links_quat(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(4)):
-                tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].quat[i]
-
     def get_links_vel(self, links_idx, envs_idx=None, *, unsafe=False):
+        # FIXME: This function should be updated to compute the link velocity
+        # expressed at link position in world coordinates.
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
@@ -4257,24 +4239,14 @@ class RigidSolver(Solver):
                 tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].vel[i]
 
     def get_links_ang(self, links_idx, envs_idx=None, *, unsafe=False):
-        _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_ang(tensor, links_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_links_ang(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].ang[i]
+        tensor = self.links_state.ang.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     @ti.kernel
     def _kernel_inverse_dynamics_for_sensors(self):
@@ -4322,67 +4294,38 @@ class RigidSolver(Solver):
                 tensor[i_b_, i_l_, i] = final_acc[i]
 
     def get_links_COM(self, links_idx, envs_idx=None, *, unsafe=False):
-        _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_COM(tensor, links_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_links_COM(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].COM[i]
+        tensor = self.links_state.COM.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def get_links_mass_shift(self, links_idx, envs_idx=None, *, unsafe=False):
-        _tensor, links_idx, envs_idx = self._sanitize_1D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, links_idx, envs_idx = self._sanitize_1D_io_variables(
             None, links_idx, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_mass_shift(tensor, links_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_links_mass_shift(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            tensor[i_b_, i_l_] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].mass_shift
+        tensor = self.links_state.mass_shift.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def get_links_COM_shift(self, links_idx, envs_idx=None, *, unsafe=False):
-        _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_COM_shift(tensor, links_idx, envs_idx)
-        return _tensor
+        tensor = self.links_state.i_pos_shift.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
-    @ti.kernel
-    def _kernel_get_links_COM_shift(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].i_pos_shift[i]
-
-    def _get_links_info(self, links_idx, name, envs_idx=None, *, unsafe=False):
+    def _get_links_info(self, links_idx, name, envs_idx=None):
         tensor, links_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, links_idx, batched=self._options.batch_links_info, idx_name="links_idx", unsafe=unsafe
+            None, links_idx, batched=self._options.batch_links_info, idx_name="links_idx"
         )
         if name == "invweight":
             self._kernel_get_links_invweight(tensor, links_idx, envs_idx)
@@ -4430,62 +4373,32 @@ class RigidSolver(Solver):
                 tensor[i_l_] = self.links_info[links_idx[i_l_]].invweight
 
     def get_geoms_friction_ratio(self, geoms_idx, envs_idx=None, *, unsafe=False):
-        _tensor, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
             None, geoms_idx, envs_idx, idx_name="geoms_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_geoms_friction_ratio(tensor, geoms_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_geoms_friction_ratio(
-        self,
-        tensor: ti.types.ndarray(),
-        geoms_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g_, i_b_ in ti.ndrange(geoms_idx.shape[0], envs_idx.shape[0]):
-            tensor[i_b_, i_g_] = self.geoms_state[geoms_idx[i_g_], envs_idx[i_b_]].friction_ratio
+        tensor = self.geoms_state.friction_ratio.to_torch(device=gs.device).transpose(1, 0)[geoms_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def get_geoms_pos(self, geoms_idx, envs_idx=None, *, unsafe=False):
-        _tensor, geoms_idx, envs_idx = self._sanitize_2D_io_variables(
+        # TODO: Avoid allocating memory twice.
+        _, geoms_idx, envs_idx = self._sanitize_2D_io_variables(
             None, geoms_idx, 3, envs_idx, idx_name="geoms_idx", unsafe=unsafe
         )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_geoms_pos(tensor, geoms_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_geoms_pos(
-        self,
-        tensor: ti.types.ndarray(),
-        geoms_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g_, i_b_ in ti.ndrange(geoms_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                tensor[i_b_, i_g_, i] = self.geoms_state[geoms_idx[i_g_], envs_idx[i_b_]].pos[i]
+        tensor = self.geoms_state.pos.to_torch(device=gs.device).transpose(1, 0)[geoms_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def get_qpos(self, qs_idx, envs_idx=None, *, unsafe=False):
-        _tensor, qs_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, qs_idx, envs_idx, idx_name="qs_idx", unsafe=unsafe
-        )
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_qpos(tensor, qs_idx, envs_idx)
-        return _tensor
-
-    @ti.kernel
-    def _kernel_get_qpos(
-        self,
-        tensor: ti.types.ndarray(),
-        qs_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
-            tensor[i_b_, i_q_] = self.qpos[qs_idx[i_q_], envs_idx[i_b_]]
+        # TODO: Avoid allocating memory twice.
+        _, qs_idx, envs_idx = self._sanitize_1D_io_variables(None, qs_idx, envs_idx, idx_name="qs_idx", unsafe=unsafe)
+        tensor = self.qpos.to_torch(device=gs.device).transpose(1, 0)[qs_idx, envs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def get_dofs_control_force(self, dofs_idx, envs_idx=None):
         return self._get_dofs_state(dofs_idx, "control_force", envs_idx)
@@ -4500,18 +4413,24 @@ class RigidSolver(Solver):
         return self._get_dofs_state(dofs_idx, "position", envs_idx)
 
     def _get_dofs_state(self, dofs_idx, name, envs_idx=None, *, unsafe=False):
-        _tensor, dofs_idx, envs_idx = self._sanitize_1D_io_variables(None, dofs_idx, envs_idx, unsafe=unsafe)
-        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
         if name == "control_force":
+            _tensor, dofs_idx, envs_idx = self._sanitize_1D_io_variables(None, dofs_idx, envs_idx, unsafe=unsafe)
+            tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
             self._kernel_get_dofs_control_force(tensor, dofs_idx, envs_idx)
-        elif name == "force":
-            self._kernel_get_dofs_force(tensor, dofs_idx, envs_idx)
-        elif name == "velocity":
-            self._kernel_get_dofs_velocity(tensor, dofs_idx, envs_idx)
-        elif name == "position":
-            self._kernel_get_dofs_position(tensor, dofs_idx, envs_idx)
         else:
-            gs.raise_exception("Invalid `name`.")
+            # TODO: Avoid allocating memory twice.
+            _, dofs_idx, envs_idx = self._sanitize_1D_io_variables(None, dofs_idx, envs_idx, unsafe=unsafe)
+            if name == "force":
+                tensor = self.dofs_state.force.to_torch(device=gs.device)
+            elif name == "velocity":
+                tensor = self.dofs_state.vel.to_torch(device=gs.device)
+            elif name == "position":
+                tensor = self.dofs_state.pos.to_torch(device=gs.device)
+            else:
+                gs.raise_exception("Invalid `name`.")
+            _tensor = tensor.transpose(1, 0)[dofs_idx, envs_idx]
+            if self.n_envs == 0:
+                _tensor = _tensor.squeeze(0)
         return _tensor
 
     @ti.kernel
@@ -4542,39 +4461,6 @@ class RigidSolver(Solver):
                 self.dofs_info[I_d].force_range[0],
                 self.dofs_info[I_d].force_range[1],
             )
-
-    @ti.kernel
-    def _kernel_get_dofs_force(
-        self,
-        tensor: ti.types.ndarray(),
-        dofs_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            tensor[i_b_, i_d_] = self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].force
-
-    @ti.kernel
-    def _kernel_get_dofs_velocity(
-        self,
-        tensor: ti.types.ndarray(),
-        dofs_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            tensor[i_b_, i_d_] = self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].vel
-
-    @ti.kernel
-    def _kernel_get_dofs_position(
-        self,
-        tensor: ti.types.ndarray(),
-        dofs_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            tensor[i_b_, i_d_] = self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].pos
 
     def get_dofs_kp(self, dofs_idx, envs_idx=None):
         return self._get_dofs_info(dofs_idx, "kp", envs_idx)
