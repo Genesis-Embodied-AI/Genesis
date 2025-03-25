@@ -6,6 +6,7 @@ import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import ti_mat_field_to_torch
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 
@@ -4196,25 +4197,13 @@ class RigidSolver(Solver):
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].ctrl_mode = gs.CTRL_MODE.POSITION
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].ctrl_pos = position[i_b_, i_d_]
 
-    def get_links_pos(self, links_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
-        )
-        tensor = self.links_state.pos.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_links_pos(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def get_links_quat(self, links_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            None, links_idx, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
-        )
-        tensor = self.links_state.quat.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return _tensor
+    def get_links_quat(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_links_vel(self, links_idx, envs_idx=None, *, unsafe=False):
         # FIXME: This function should be updated to compute the link velocity
@@ -4238,15 +4227,9 @@ class RigidSolver(Solver):
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].vel[i]
 
-    def get_links_ang(self, links_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
-        )
-        tensor = self.links_state.ang.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_links_ang(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.links_state.ang, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     @ti.kernel
     def _kernel_inverse_dynamics_for_sensors(self):
@@ -4293,35 +4276,17 @@ class RigidSolver(Solver):
             for i in range(3):
                 tensor[i_b_, i_l_, i] = final_acc[i]
 
-    def get_links_COM(self, links_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
-        )
-        tensor = self.links_state.COM.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_links_COM(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.links_state.COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def get_links_mass_shift(self, links_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, links_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, links_idx, envs_idx, idx_name="links_idx", unsafe=unsafe
-        )
-        tensor = self.links_state.mass_shift.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.links_state.mass_shift, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def get_links_COM_shift(self, links_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            None, links_idx, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
-        )
-        tensor = self.links_state.i_pos_shift.to_torch(device=gs.device).transpose(1, 0)[links_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_links_COM_shift(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.links_state.i_pos_shift, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def _get_links_info(self, links_idx, name, envs_idx=None):
         tensor, links_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -4372,33 +4337,19 @@ class RigidSolver(Solver):
             for i_l_ in range(links_idx.shape[0]):
                 tensor[i_l_] = self.links_info[links_idx[i_l_]].invweight
 
-    def get_geoms_friction_ratio(self, geoms_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, geoms_idx, envs_idx, idx_name="geoms_idx", unsafe=unsafe
+    def get_geoms_friction_ratio(self, geoms_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(
+            self.geoms_state.friction_ratio, envs_idx, geoms_idx, transpose=True, unsafe=unsafe
         )
-        tensor = self.geoms_state.friction_ratio.to_torch(device=gs.device).transpose(1, 0)[geoms_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def get_geoms_pos(self, geoms_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, geoms_idx, envs_idx = self._sanitize_2D_io_variables(
-            None, geoms_idx, 3, envs_idx, idx_name="geoms_idx", unsafe=unsafe
-        )
-        tensor = self.geoms_state.pos.to_torch(device=gs.device).transpose(1, 0)[geoms_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_geoms_pos(self, geoms_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.geoms_state.pos, envs_idx, geoms_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def get_qpos(self, qs_idx, envs_idx=None, *, unsafe=False):
-        # TODO: Avoid allocating memory twice.
-        _, qs_idx, envs_idx = self._sanitize_1D_io_variables(None, qs_idx, envs_idx, idx_name="qs_idx", unsafe=unsafe)
-        tensor = self.qpos.to_torch(device=gs.device).transpose(1, 0)[qs_idx, envs_idx]
-        if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
+    def get_qpos(self, qs_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_mat_field_to_torch(self.qpos, envs_idx, qs_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_dofs_control_force(self, dofs_idx, envs_idx=None):
         return self._get_dofs_state(dofs_idx, "control_force", envs_idx)
@@ -4418,17 +4369,15 @@ class RigidSolver(Solver):
             tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
             self._kernel_get_dofs_control_force(tensor, dofs_idx, envs_idx)
         else:
-            # TODO: Avoid allocating memory twice.
-            _, dofs_idx, envs_idx = self._sanitize_1D_io_variables(None, dofs_idx, envs_idx, unsafe=unsafe)
             if name == "force":
-                tensor = self.dofs_state.force.to_torch(device=gs.device)
+                field = self.dofs_state.force
             elif name == "velocity":
-                tensor = self.dofs_state.vel.to_torch(device=gs.device)
+                field = self.dofs_state.vel
             elif name == "position":
-                tensor = self.dofs_state.pos.to_torch(device=gs.device)
+                field = self.dofs_state.pos
             else:
                 gs.raise_exception("Invalid `name`.")
-            _tensor = tensor.transpose(1, 0)[dofs_idx, envs_idx]
+            _tensor = ti_mat_field_to_torch(self.qpos, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0:
                 _tensor = _tensor.squeeze(0)
         return _tensor

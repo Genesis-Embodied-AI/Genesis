@@ -9,6 +9,8 @@ import subprocess
 import numpy as np
 import psutil
 import torch
+from taichi.lang import runtime_ops
+from taichi._kernels import matrix_to_ext_arr
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
@@ -235,3 +237,74 @@ def tensor_to_array(x):
 
 def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
+
+
+def ti_mat_field_to_torch(
+    field,
+    row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
+    col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
+    transpose=False,
+    *,
+    unsafe=False,
+) -> torch.Tensor:
+    """Converts a Taichi matrix field instance to a PyTorch tensor.
+
+    Args:
+        field (ti.Matrix): Matrix field to convert to Pytorch tensor.
+        row_mask (optional): Rows to extract from batch dimension after transpose if requested.
+        col_mask (optional): Columns to extract from batch dimension field after transpose if requested.
+        transpose (bool, optional): Whether to transpose the first two batch dimensions.
+        unsafe (bool, optional): Whether to skip validity check of the masks.
+
+    Returns:
+        torch.tensor: The result torch tensor.
+    """
+
+    # Make sure that the user-arguments are valid if requested
+    # FIXME: Add clear error messages instead of raise/assert.
+    if not unsafe:
+        field_shape = field.shape
+        if transpose:
+            field_shape = field_shape[::-1]
+        for i, mask in enumerate((row_mask, col_mask)):
+            if mask is None or isinstance(mask, slice):
+                # Slices are always valid by default. Nothing to check.
+                pass
+            elif isinstance(mask, int):
+                # Do not allow negative indexing for consistency with Taichi
+                assert 0 <= mask < field_shape[i]
+            else:
+                mask_start, mask_end = mask[0], mask[-1]
+                # ValueError if not convertible to int, as a validation check
+                mask_start, mask_end = int(mask_start), int(mask_end)
+                assert 0 <= mask_start <= mask_end < field_shape[i]
+
+    # Must convert masks to torch if not slice or int since torch will do it anyway.
+    # Note that being contiguous is not required and does not affect performance.
+    row_is_tensor = not (row_mask is None or isinstance(row_mask, (slice, int)))
+    if row_is_tensor:
+        row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
+    col_is_tensor = not (col_mask is None or isinstance(col_mask, (slice, int)))
+    if col_is_tensor:
+        col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
+
+    # Extract field as a whole.
+    # Note that this is usually much faster than using a custom kernel to extract a slice.
+    tensor = field.to_torch(device=gs.device)
+
+    # Transpose if requested.
+    # Note that it is worth transposing here rather than outside this function, as it preserve row-major memory
+    # alignment in case of advanced masking, which would spare computation later on if expected from the user.
+    if transpose:
+        tensor = tensor.transpose(1, 0)
+
+    # Extract slice if necessary
+    if col_is_tensor and row_is_tensor:
+        tensor = tensor[row_mask.unsqueeze(1), col_mask]
+    else:
+        if col_mask is not None:
+            tensor = tensor[:, col_mask]
+        if row_mask is not None:
+            tensor = tensor[row_mask]
+
+    return tensor

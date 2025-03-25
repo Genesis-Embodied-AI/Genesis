@@ -11,7 +11,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array, ti_mat_field_to_torch
 
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
@@ -632,7 +632,7 @@ class RigidEntity(Entity):
 
         self._kernel_get_jacobian(link.idx)
 
-        jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
+        jacobian = self._jacobian.to_torch(gs.device).transpose(1, 0)
         if self._solver.n_envs == 0:
             jacobian = jacobian.squeeze(0)
 
@@ -1034,16 +1034,15 @@ class RigidEntity(Entity):
             respect_joint_limit,
             envs_idx,
         )
+        qpos = self._IK_qpos_best.to_torch(gs.device).tranpose(1, 0)
         if self._solver.n_envs > 0:
-            qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0)[envs_idx]
+            qpos = qpos[envs_idx]
         else:
-            qpos = self._IK_qpos_best.to_torch(gs.device).permute(1, 0).squeeze(0)
+            qpos = qpos.squeeze(0)
 
         if return_error:
             error_pose = (
-                self._IK_err_pose_best.to_torch(gs.device)
-                .reshape([self._IK_n_tgts, 6, -1])[:n_links]
-                .permute([2, 0, 1])
+                self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].transpose(1, 0)
             )
             if self._solver.n_envs == 0:
                 error_pose = error_pose.squeeze(0)
@@ -2440,9 +2439,9 @@ class RigidEntity(Entity):
                 "geom_b": scene_contact_info["geom_b"][:max_env_collisions].t(),
                 "link_a": scene_contact_info["link_a"][:max_env_collisions].t(),
                 "link_b": scene_contact_info["link_b"][:max_env_collisions].t(),
-                "position": scene_contact_info["pos"][:max_env_collisions].permute(1, 0, 2),
-                "force_a": -scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
-                "force_b": scene_contact_info["force"][:max_env_collisions].permute(1, 0, 2),
+                "position": scene_contact_info["pos"][:max_env_collisions].transpose(1, 0),
+                "force_a": -scene_contact_info["force"][:max_env_collisions].transpose(1, 0),
+                "force_b": scene_contact_info["force"][:max_env_collisions].transpose(1, 0),
                 "valid_mask": valid_mask[:max_env_collisions].t(),
             }
         return contact_info
@@ -2456,16 +2455,10 @@ class RigidEntity(Entity):
         entity_links_force : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The net force applied on each links due to direct external contacts.
         """
-        scene_links_force = (
-            self._solver.links_state.contact_force.to_torch(gs.device).clone().detach().permute([1, 0, 2])
+        tensor = ti_mat_field_to_torch(
+            self._solver.links_state.contact_force, envs_idx, slice(self.link_start, self.link_end), transpose=True
         )
-        entity_links_force = scene_links_force[:, self.link_start : self.link_end]
-
-        if self._solver.n_envs == 0:
-            entity_links_force = entity_links_force.squeeze(0)
-        elif not envs_idx is None:
-            entity_links_force = entity_links_force[envs_idx]
-        return entity_links_force
+        return tensor.squeeze(0) if self._solver.n_envs == 0 else tensor
 
     def set_friction_ratio(self, friction_ratio, ls_idx_local, envs_idx=None):
         """
