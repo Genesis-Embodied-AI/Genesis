@@ -209,6 +209,8 @@ def parse_link(mj, i_l, scale):
     l_info["invweight"] /= scale**3
     for j_info in j_infos:
         j_info["pos"] *= scale
+    # exclude joints with 0 dofs in MJCF models to align with mujoco
+    j_infos = [j_info for j_info in j_infos if j_info["n_dofs"] > 0]
 
     return l_info, j_infos
 
@@ -460,19 +462,20 @@ def parse_equality(mj, i_e, scale, ordered_links_idx):
     mj_equality = mj.equality(i_e)
     e_info["name"] = mj_equality.name
 
+    e_info["eq_data"] = mj.eq_data[i_e]
+    e_info["eq_data"][:6] *= scale
+    e_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
+
     if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
         e_info["type"] = gs.EQUALITY_TYPE.CONNECT
-        e_info["link1_idx"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
-        e_info["link2_idx"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
-        e_info["anchor1_pos"] = mj.eq_data[i_e][0:3] * scale
-        e_info["anchor2_pos"] = mj.eq_data[i_e][3:6] * scale
-        e_info["rel_pose"] = mj.eq_data[i_e][6:10]
-        e_info["torque_scale"] = mj.eq_data[i_e][10]
-        e_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
-
+        e_info["eq_obj1id"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
+        e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
     elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
         e_info["type"] = gs.EQUALITY_TYPE.WELD
     elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
+        e_info["eq_obj1id"] = mj.eq_obj1id[i_e]
+        e_info["eq_obj2id"] = mj.eq_obj2id[i_e]
+        # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
         e_info["type"] = gs.EQUALITY_TYPE.JOINT
     else:
         raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
