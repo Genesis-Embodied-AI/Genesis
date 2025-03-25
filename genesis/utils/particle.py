@@ -6,11 +6,11 @@ import tempfile
 
 import igl
 import numpy as np
+import trimesh
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy
 
 import genesis as gs
-from genesis.ext import trimesh
 
 from . import geom as gu
 from . import mesh as msu
@@ -73,7 +73,7 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
             with open(ptc_file_path, "rb") as file:
                 positions = pkl.load(file)
             is_cached_loaded = True
-        except (EOFError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:
@@ -111,7 +111,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
             with open(ptc_file_path, "rb") as file:
                 positions = pkl.load(file)
             is_cached_loaded = True
-        except (EOFError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:

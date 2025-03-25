@@ -1400,7 +1400,7 @@ class RigidEntity(Entity):
             from ompl import util as ou
 
             ou.setLogLevel(ou.LOG_ERROR)
-        except Exception as e:
+        except ImportError as e:
             gs.raise_exception_from(
                 "Failed to import OMPL. Did you install? (For installation instructions, see "
                 "https://genesis-world.readthedocs.io/en/latest/user_guide/overview/installation.html#optional-motion-planning)",

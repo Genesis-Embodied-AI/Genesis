@@ -2,7 +2,7 @@
 
 import numpy as np
 
-import genesis.ext.trimesh.transformations as transformations
+import trimesh.transformations as transformations
 
 
 class Trackball(object):

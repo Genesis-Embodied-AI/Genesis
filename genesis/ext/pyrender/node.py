@@ -6,7 +6,7 @@ Author: Matthew Matl
 
 import numpy as np
 
-import genesis.ext.trimesh.transformations as transformations
+import trimesh.transformations as transformations
 
 from .camera import Camera
 from .mesh import Mesh

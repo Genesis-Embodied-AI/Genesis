@@ -1,12 +1,12 @@
 import os
 
-import mujoco
 import numpy as np
+import trimesh
+from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
+import mujoco
 import genesis as gs
-from genesis.ext import trimesh
-from genesis.ext.trimesh.visual.texture import TextureVisuals
 
 from . import geom as gu
 from .misc import get_assets_dir

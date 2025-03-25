@@ -2,10 +2,10 @@ import pytest
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import trimesh
 
 import mujoco
 import genesis as gs
-from genesis.ext import trimesh
 
 from .utils import (
     init_simulators,

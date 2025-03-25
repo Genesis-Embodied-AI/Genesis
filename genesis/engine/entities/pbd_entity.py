@@ -7,7 +7,7 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.entities.particle_entity import ParticleEntity
-from genesis.ext import trimesh
+import trimesh
 
 
 @ti.data_oriented
