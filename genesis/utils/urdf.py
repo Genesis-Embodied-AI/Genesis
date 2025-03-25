@@ -358,7 +358,46 @@ def parse_urdf(morph, surface):
     for j_info in j_infos:
         j_info["pos"] *= morph.scale
 
-    return l_infos, j_infos
+    equalities = parse_equality(robot, morph, j_infos)
+
+    return l_infos, j_infos, equalities
+
+
+def parse_equality(robot, morph, j_infos):
+    equalities = []
+
+    for joint in robot.joints:
+        if joint.mimic:
+            print(
+                f"Joint '{joint.name}' mimics '{joint.mimic.joint}' with multiplier {joint.mimic.multiplier} and offset {joint.mimic.offset}"
+            )
+
+            e_info = dict()
+            e_info["name"] = f"mimic_{joint.name}_to_{joint.mimic.joint}"
+
+            # find the joint id by the name
+            def find_joint_id(name):
+                for i, j_info in enumerate(j_infos):
+                    if j_info["name"] == name:
+                        return i
+                return -1
+
+            e_info["eq_obj1id"] = find_joint_id(joint.name)
+            e_info["eq_obj2id"] = find_joint_id(joint.mimic.joint)
+            e_info["type"] = gs.EQUALITY_TYPE.JOINT
+
+            e_info["sol_params"] = gu.default_solver_params(1)[0]
+            e_info["eq_data"] = np.zeros([11])
+            e_info["eq_data"][0] = joint.mimic.offset
+            e_info["eq_data"][1] = joint.mimic.multiplier
+            e_info["eq_data"][:6] *= morph.scale
+
+            equalities.append(e_info)
+    return equalities
+
+    from IPython import embed
+
+    embed()
 
 
 def merge_fixed_links(robot, links_to_keep):
