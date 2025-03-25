@@ -1034,7 +1034,7 @@ class RigidEntity(Entity):
             respect_joint_limit,
             envs_idx,
         )
-        qpos = self._IK_qpos_best.to_torch(gs.device).tranpose(1, 0)
+        qpos = self._IK_qpos_best.to_torch(gs.device).transpose(1, 0)
         if self._solver.n_envs > 0:
             qpos = qpos[envs_idx]
         else:
@@ -1929,6 +1929,7 @@ class RigidEntity(Entity):
         return self._get_dofs_idx_local(dofs_idx_local) + self._dof_start
 
     def _get_ls_idx_local(self, ls_idx_local=None):
+        # FIXME: Should avoid allocating memory systematically, and through warning if necessary
         if ls_idx_local is None:
             ls_idx_local = torch.arange(self.n_links, dtype=torch.int32, device=gs.device)
         else:

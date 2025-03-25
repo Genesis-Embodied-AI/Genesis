@@ -16,6 +16,12 @@ import genesis as gs
 from genesis.constants import backend as gs_backend
 
 
+ALLOCATE_TENSOR_WARNING = (
+    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
+    "impede performance if it occurs in the critical path of your application."
+)
+
+
 class DeprecationError(Exception):
     pass
 
@@ -259,9 +265,7 @@ def ti_mat_field_to_torch(
     Returns:
         torch.tensor: The result torch tensor.
     """
-
     # Make sure that the user-arguments are valid if requested
-    # FIXME: Add clear error messages instead of raise/assert.
     if not unsafe:
         field_shape = field.shape
         if transpose:
@@ -269,24 +273,35 @@ def ti_mat_field_to_torch(
         for i, mask in enumerate((row_mask, col_mask)):
             if mask is None or isinstance(mask, slice):
                 # Slices are always valid by default. Nothing to check.
-                pass
+                is_valid = True
             elif isinstance(mask, int):
                 # Do not allow negative indexing for consistency with Taichi
-                assert 0 <= mask < field_shape[i]
+                is_valid = 0 <= mask < field_shape[i]
             else:
                 mask_start, mask_end = mask[0], mask[-1]
-                # ValueError if not convertible to int, as a validation check
-                mask_start, mask_end = int(mask_start), int(mask_end)
-                assert 0 <= mask_start <= mask_end < field_shape[i]
+                try:
+                    mask_start, mask_end = int(mask_start), int(mask_end)
+                except ValueError:
+                    gs.raise_exception(f"Expecting 1D tensor for masks.")
+                is_valid = 0 <= mask_start <= mask_end < field_shape[i]
+            if not is_valid:
+                gs.raise_exception("Masks are out-of-range.")
 
     # Must convert masks to torch if not slice or int since torch will do it anyway.
     # Note that being contiguous is not required and does not affect performance.
+    must_allocate = False
     row_is_tensor = not (row_mask is None or isinstance(row_mask, (slice, int)))
     if row_is_tensor:
-        row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
+        _row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
+        must_allocate = _row_mask is not row_mask
+        row_mask = _row_mask
     col_is_tensor = not (col_mask is None or isinstance(col_mask, (slice, int)))
     if col_is_tensor:
-        col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
+        _col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
+        must_allocate = _col_mask is not col_mask
+        col_mask = _col_mask
+    if must_allocate:
+        gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
     # Extract field as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.

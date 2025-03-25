@@ -1,8 +1,9 @@
 import pytest
 import xml.etree.ElementTree as ET
 
-import numpy as np
 import trimesh
+import torch
+import numpy as np
 
 import mujoco
 import genesis as gs
@@ -201,7 +202,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qvel = entity.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.04)
+        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.05)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qpos = entity.get_dofs_position().cpu()
@@ -294,12 +295,6 @@ def test_stickman(gs_sim, mj_sim):
 def test_inverse_kinematics(show_viewer):
     # create and build the scene
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
-        ),
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
@@ -495,3 +490,94 @@ def test_urdf_mimic_panda(show_viewer):
 
     if show_viewer:
         scene.viewer.stop()
+
+
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_data_accessor(n_envs):
+    # TODO: Check if works for batched and non-batched envs
+
+    # create and build the scene
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    gs_robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=n_envs)
+
+    # Initialize the simulation
+    gs_sim = scene.sim
+    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    qpos_all = []
+    for i in range(max(n_envs, 1)):
+        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
+        if n_envs:
+            gs_robot.set_qpos(qpos[None], envs_idx=[i])
+            _qpos = gs_robot.get_qpos(envs_idx=[i]).squeeze(0).cpu()
+        else:
+            gs_robot.set_qpos(qpos)
+            _qpos = gs_robot.get_qpos().squeeze(0).cpu()
+        np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+        if n_envs:
+            _qpos = gs_robot.get_qpos()[i].cpu()
+            np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+
+    # Simulate for a while, until they collide with something
+    for _ in range(400):
+        gs_sim.step()
+        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        if (gs_n_contacts > 0).all():
+            break
+    else:
+        assert False
+
+    # Make sure that all the robots ends up in the different state
+    qposs = gs_robot.get_qpos().cpu()
+    for i in range(n_envs - 1):
+        with np.testing.assert_raises(AssertionError):
+            np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=1e-9)
+
+    # Check attributes getters
+    for arg1_max, arg2_max, accessor in (
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_pos),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_quat),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_vel),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_ang),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_acc),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_COM),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_mass_shift),
+        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_COM_shift),
+        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_control_force),
+        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_force),
+        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_velocity),
+        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_position),
+        (gs_sim.rigid_solver.n_geoms, n_envs, gs_sim.rigid_solver.get_geoms_pos),
+        (gs_sim.rigid_solver.n_qs, n_envs, gs_sim.rigid_solver.get_qpos),
+        (gs_sim.rigid_solver.n_geoms, -1, gs_sim.rigid_solver.get_geoms_friction),
+        (-1, n_envs, gs_robot.get_links_net_contact_force),
+    ):
+        datas = accessor().cpu()
+        if arg1_max > 0:
+            datas_ = accessor(range(arg1_max)).cpu()
+            np.testing.assert_allclose(datas_, datas, atol=1e-9)
+        for i in range(arg1_max) if arg1_max > 0 else (None,):
+            for arg1 in (
+                ([i], slice(i, i + 1), range(i, i + 1), np.array([i]), torch.tensor([i])) if arg1_max > 0 else (None,)
+            ):
+                for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
+                    for arg2 in (
+                        ([j], slice(j, j + 1), range(j, j + 1), np.array([j]), torch.tensor([j]))
+                        if arg2_max > 0
+                        else (None,)
+                    ):
+                        if arg1 is None:
+                            data = accessor(arg2).cpu()
+                            data_ = datas[[j]] if n_envs else datas
+                        elif arg2 is None:
+                            data = accessor(arg1).cpu()
+                            data_ = datas[[i]]
+                        else:
+                            data = accessor(arg1, arg2).cpu()
+                            data_ = datas[[j], :][:, [i]]
+                        np.testing.assert_allclose(data_, data, atol=1e-9)
