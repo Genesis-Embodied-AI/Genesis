@@ -3540,8 +3540,6 @@ class RigidSolver(Solver):
         if isinstance(envs_idx, slice):
             return self._scene._envs_idx[envs_idx]
         if isinstance(envs_idx, int):
-            if not 0 <= envs_idx < self._scene.n_envs:
-                gs.raise_exception("`envs_idx` exceeds valid range.")
             return self._scene._envs_idx[[envs_idx]]
 
         # Early return if unsafe
