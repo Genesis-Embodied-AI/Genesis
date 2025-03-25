@@ -1812,8 +1812,7 @@ class RigidEntity(Entity):
             if pos.ndim != 2:
                 gs.raise_exception("`pos` must be a 2D tensor for parallelized scene.")
 
-        self._solver.set_links_pos(pos.unsqueeze(-2), [self.base_link_idx], envs_idx)
-
+        self._solver.set_links_pos(pos.unsqueeze(-2), [self.base_link_idx], envs_idx, skip_forward=zero_velocity)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 
@@ -1843,8 +1842,9 @@ class RigidEntity(Entity):
             if quat.ndim != 2:
                 gs.raise_exception("`quat` must be a 2D tensor for parallelized scene.")
 
-        self._solver.set_links_quat(torch.as_tensor(quat).unsqueeze(-2), [self.base_link_idx], envs_idx)
-
+        self._solver.set_links_quat(
+            torch.as_tensor(quat).unsqueeze(-2), [self.base_link_idx], envs_idx, skip_forward=zero_velocity
+        )
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 
@@ -1947,7 +1947,7 @@ class RigidEntity(Entity):
         return idx_global
 
     @gs.assert_built
-    def set_qpos(self, qpos, qs_idx_local=None, zero_velocity=True, envs_idx=None):
+    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True):
         """
         Set the entity's qpos.
 
@@ -1957,13 +1957,13 @@ class RigidEntity(Entity):
             The qpos to set.
         qs_idx_local : None | array_like, optional
             The indices of the qpos to set. If None, all qpos will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
         """
         qs_idx = self._get_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
-        self._solver.set_qpos(qpos, qs_idx, envs_idx)
+        self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=zero_velocity)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 
@@ -2058,7 +2058,7 @@ class RigidEntity(Entity):
         self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_position(self, position, dofs_idx_local=None, zero_velocity=True, envs_idx=None):
+    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True):
         """
         Set the entity's dofs' position.
 
@@ -2068,13 +2068,13 @@ class RigidEntity(Entity):
             The position to set.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_position(position, dofs_idx, envs_idx)
+        self._solver.set_dofs_position(position, dofs_idx, envs_idx, skip_forward=zero_velocity)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 
@@ -2347,16 +2347,7 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-
-        envs_idx = self._solver._sanitize_envs_idx(envs_idx)
-        if self._solver.n_envs == 0:
-            qvel = torch.zeros(self.n_dofs, dtype=gs.tc_float, device=gs.device)
-            self.set_dofs_velocity(qvel)
-        else:
-            qvel = torch.zeros(
-                self._solver._batch_shape(self.n_dofs, True, B=len(envs_idx)), dtype=gs.tc_float, device=gs.device
-            )
-            self.set_dofs_velocity(qvel, envs_idx=envs_idx)
+        self.set_dofs_velocity(None, envs_idx=envs_idx)
 
     @gs.assert_built
     def detect_collision(self, env_idx=0):

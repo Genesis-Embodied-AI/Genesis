@@ -6,7 +6,7 @@ import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import ti_mat_field_to_torch, ALLOCATE_TENSOR_WARNING
+from genesis.utils.misc import ti_mat_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 
@@ -152,6 +152,12 @@ class RigidSolver(Solver):
         self._links = self.links
         self._joints = self.joints
         self._equalities = self.equalities
+
+        base_links_idx = {0}
+        for joint in tuple(chain.from_iterable(self.joints)):
+            if joint.type == gs.JOINT_TYPE.FREE:
+                base_links_idx.append(joint.link.idx)
+        self._base_links_idx = torch.tensor(tuple(base_links_idx), dtype=gs.tc_int, device=gs.device)
 
         # used for creating dummy fields for compilation to work
         self.n_qs_ = max(1, self.n_qs)
@@ -3560,85 +3566,15 @@ class RigidSolver(Solver):
         return _envs_idx
 
     def _sanitize_1D_io_variables(
-        self, tensor, inputs_idx, input_max, envs_idx, batched=True, idx_name="dofs_idx", *, unsafe=False
-    ):
-        # Handling default arguments
-        if batched:
-            envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        else:
-            envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
-
-        if inputs_idx is None:
-            inputs_idx = range(0, input_max)
-        elif isinstance(inputs_idx, slice):
-            inputs_idx = range(
-                inputs_idx.start or 0,
-                inputs_idx.stop if inputs_idx.stop is not None else input_max,
-                inputs_idx.step or 1,
-            )
-        elif isinstance(envs_idx, int):
-            inputs_idx = [inputs_idx]
-
-        if tensor is None:
-            if batched and self.n_envs > 0:
-                shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
-            else:
-                shape = (len(inputs_idx),)
-            _tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
-
-        # Early return if unsafe
-        if unsafe:
-            return _tensor, inputs_idx, envs_idx
-
-        # Perform a bunch of sanity checks
-        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _inputs_idx is not inputs_idx:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        if _inputs_idx.ndim != 1:
-            gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        inputs_start, inputs_end = inputs_idx[0], inputs_idx[-1]
-        if not (0 <= inputs_start <= inputs_end < input_max):
-            gs.raise_exception("`{idx_name}` is out-of-range.")
-
-        if tensor is not None:
-            _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _tensor is not tensor:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            if _tensor.shape[-1] != len(_inputs_idx):
-                gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
-
-        if batched:
-            if self.n_envs == 0:
-                if _tensor.ndim != 1:
-                    gs.raise_exception(
-                        f"Invalid input shape: {_tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
-                    )
-            else:
-                if _tensor.ndim == 2:
-                    if _tensor.shape[0] != len(envs_idx):
-                        gs.raise_exception(
-                            f"Invalid input shape: {_tensor.shape}. First dimension of the input tensor does not match "
-                            "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
-                        )
-                else:
-                    gs.raise_exception(
-                        f"Invalid input shape: {_tensor.shape}. Expecting a 2D tensor for scene with parallelized envs."
-                    )
-        else:
-            if _tensor.ndim != 1:
-                gs.raise_exception("Expecting 1D output tensor.")
-        return _tensor, _inputs_idx, envs_idx
-
-    def _sanitize_2D_io_variables(
         self,
         tensor,
         inputs_idx,
         input_max,
-        vec_size,
-        envs_idx=None,
+        envs_idx,
         batched=True,
-        idx_name="links_idx",
+        idx_name="dofs_idx",
         *,
+        skip_allocation=False,
         unsafe=False,
     ):
         # Handling default arguments
@@ -3658,12 +3594,93 @@ class RigidSolver(Solver):
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 
-        if tensor is None:
+        if tensor is None and not skip_allocation:
+            if batched and self.n_envs > 0:
+                shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
+            else:
+                shape = (len(inputs_idx),)
+            tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
+
+        # Early return if unsafe
+        if unsafe:
+            return tensor, inputs_idx, envs_idx
+
+        # Perform a bunch of sanity checks
+        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
+        if _inputs_idx is not inputs_idx:
+            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        if _inputs_idx.ndim != 1:
+            gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
+        inputs_start, inputs_end = inputs_idx[0], inputs_idx[-1]
+        if not (0 <= inputs_start <= inputs_end < input_max):
+            gs.raise_exception("`{idx_name}` is out-of-range.")
+
+        if tensor is not None:
+            _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
+            if _tensor is not tensor:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+            if _tensor.shape[-1] != len(_inputs_idx):
+                gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
+
+            if batched:
+                if self.n_envs == 0:
+                    if _tensor.ndim != 1:
+                        gs.raise_exception(
+                            f"Invalid input shape: {_tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
+                        )
+                else:
+                    if _tensor.ndim == 2:
+                        if _tensor.shape[0] != len(envs_idx):
+                            gs.raise_exception(
+                                f"Invalid input shape: {_tensor.shape}. First dimension of the input tensor does not match "
+                                "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
+                            )
+                    else:
+                        gs.raise_exception(
+                            f"Invalid input shape: {_tensor.shape}. Expecting a 2D tensor for scene with parallelized envs."
+                        )
+            else:
+                if _tensor.ndim != 1:
+                    gs.raise_exception("Expecting 1D output tensor.")
+            return _tensor, _inputs_idx, envs_idx
+        return None, _inputs_idx, envs_idx
+
+    def _sanitize_2D_io_variables(
+        self,
+        tensor,
+        inputs_idx,
+        input_max,
+        vec_size,
+        envs_idx=None,
+        batched=True,
+        idx_name="links_idx",
+        *,
+        skip_allocation=False,
+        unsafe=False,
+    ):
+        # Handling default arguments
+        if batched:
+            envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        else:
+            envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
+
+        if inputs_idx is None:
+            inputs_idx = range(0, input_max)
+        elif isinstance(inputs_idx, slice):
+            inputs_idx = range(
+                inputs_idx.start or 0,
+                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.step or 1,
+            )
+        elif isinstance(envs_idx, int):
+            inputs_idx = [inputs_idx]
+
+        if tensor is None and not skip_allocation:
             if batched and self.n_envs > 0:
                 shape = self._batch_shape((len(inputs_idx), vec_size), True, B=len(envs_idx))
             else:
                 shape = (len(inputs_idx), vec_size)
-            _tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
+            tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
 
         # Early return if unsafe
         if unsafe:
@@ -3686,38 +3703,40 @@ class RigidSolver(Solver):
             if _tensor.shape[-1] != vec_size:
                 gs.raise_exception(f"Last dimension of the input tensor must be {vec_size}.")
 
-        if batched:
-            if self.n_envs == 0:
-                if _tensor.ndim != 2:
-                    gs.raise_exception(
-                        f"Invalid input shape: {_tensor.shape}. Expecting a 2D tensor for non-parallelized scene."
-                    )
-
-            else:
-                if _tensor.ndim == 3:
-                    if _tensor.shape[0] != len(envs_idx):
+            if batched:
+                if self.n_envs == 0:
+                    if _tensor.ndim != 2:
                         gs.raise_exception(
-                            f"Invalid input shape: {_tensor.shape}. First dimension of the input tensor does not match "
-                            "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
+                            f"Invalid input shape: {_tensor.shape}. Expecting a 2D tensor for non-parallelized scene."
                         )
+
                 else:
-                    gs.raise_exception(
-                        f"Invalid input shape: {_tensor.shape}. Expecting a 3D tensor for scene with parallelized envs."
-                    )
-        else:
-            if _tensor.ndim != 2:
-                gs.raise_exception("Expecting 2D input tensor.")
-        return _tensor, _inputs_idx, envs_idx
+                    if _tensor.ndim == 3:
+                        if _tensor.shape[0] != len(envs_idx):
+                            gs.raise_exception(
+                                f"Invalid input shape: {_tensor.shape}. First dimension of the input tensor does not match "
+                                "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
+                            )
+                    else:
+                        gs.raise_exception(
+                            f"Invalid input shape: {_tensor.shape}. Expecting a 3D tensor for scene with parallelized envs."
+                        )
+            else:
+                if _tensor.ndim != 2:
+                    gs.raise_exception("Expecting 2D input tensor.")
+            return _tensor, _inputs_idx, envs_idx
+        return None, _inputs_idx, envs_idx
 
     def _get_qs_idx(self, qs_idx_local=None):
         return self._get_qs_idx_local(qs_idx_local) + self._q_start
 
-    def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
-        """
-        Only effetive for base links.
-        """
+    def set_links_pos(self, pos, links_idx, envs_idx=None, *, unsafe=False, skip_forward=False):
+        raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
+
+    def set_base_links_pos(self, pos, envs_idx=None, *, unsafe=False, skip_forward=False):
+        # Get the list of all the free links
         pos, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            pos, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+            pos, self._base_links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         self._kernel_set_links_pos(pos, links_idx, envs_idx)
         if not skip_forward:
@@ -3743,12 +3762,12 @@ class RigidSolver(Solver):
                 for i in ti.static(range(3)):
                     self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
 
-    def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
-        """
-        Only effetive for base links.
-        """
+    def set_links_quat(self, quat, links_idx, envs_idx=None, *, unsafe=False, skip_forward=False):
+        raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
+
+    def set_base_links_quat(self, quat, envs_idx=None, *, unsafe=False, skip_forward=False):
         quat, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            quat, links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
+            quat, self._base_links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         self._kernel_set_links_quat(quat, links_idx, envs_idx)
         if skip_forward:
@@ -4110,14 +4129,20 @@ class RigidSolver(Solver):
                 self.dofs_info[dofs_idx[i_d_]].limit[0] = lower[i_d_]
                 self.dofs_info[dofs_idx[i_d_]].limit[1] = upper[i_d_]
 
-    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False):
+    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            velocity, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
+            velocity, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe, skip_allocation=True
         )
-        if self.n_envs == 0:
-            velocity = velocity.unsqueeze(0)
-        self._kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx)
-        self._kernel_forward_kinematics_links_geoms(envs_idx)
+
+        if velocity is None:
+            self._kernel_set_dofs_zero_velocity(dofs_idx, envs_idx)
+        else:
+            if self.n_envs == 0:
+                velocity = velocity.unsqueeze(0)
+            self._kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx)
+
+        if not skip_forward:
+            self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_dofs_velocity(
@@ -4129,6 +4154,16 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].vel = velocity[i_b_, i_d_]
+
+    @ti.kernel
+    def _kernel_set_dofs_zero_velocity(
+        self,
+        dofs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+            self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].vel = 0.0
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(

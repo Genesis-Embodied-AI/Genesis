@@ -531,6 +531,8 @@ def test_data_accessor(n_envs):
             break
     else:
         assert False
+    gs_sim.rigid_solver._kernel_forward_dynamics()
+    gs_sim.rigid_solver._func_constraint_force()
 
     # Make sure that all the robots ends up in the different state
     qposs = gs_robot.get_qpos().cpu()
@@ -538,38 +540,41 @@ def test_data_accessor(n_envs):
         with np.testing.assert_raises(AssertionError):
             np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=1e-9)
 
-    # Check attributes getters
-    for arg1_max, arg2_max, accessor in (
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_pos),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_quat),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_vel),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_ang),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_acc),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_COM),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_mass_shift),
-        (gs_sim.rigid_solver.n_links, n_envs, gs_sim.rigid_solver.get_links_COM_shift),
-        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_control_force),
-        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_force),
-        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_velocity),
-        (gs_sim.rigid_solver.n_dofs, n_envs, gs_sim.rigid_solver.get_dofs_position),
-        (gs_sim.rigid_solver.n_geoms, n_envs, gs_sim.rigid_solver.get_geoms_pos),
-        (gs_sim.rigid_solver.n_qs, n_envs, gs_sim.rigid_solver.get_qpos),
-        (gs_sim.rigid_solver.n_geoms, -1, gs_sim.rigid_solver.get_geoms_friction),
-        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_pos),
-        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_quat),
-        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_vel),
-        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_ang),
-        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_acc),
-        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_control_force),
-        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_force),
-        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_velocity),
-        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_position),
-        (gs_robot.n_qs, scene.n_envs, gs_robot.get_qpos),
-        (-1, scene.n_envs, gs_robot.get_links_net_contact_force),
+    # Check attribute getters
+    gs_solver = gs_sim.rigid_solver
+    for arg1_max, arg2_max, getter, setter in (
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_pos, None),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_quat, None),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_vel, None),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_ang, None),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_acc, None),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_COM, None),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_mass_shift, gs_solver.set_links_mass_shift),
+        (gs_solver.n_links, scene.n_envs, gs_solver.get_links_COM_shift, gs_solver.set_links_COM_shift),
+        (gs_solver.n_dofs, scene.n_envs, gs_solver.get_dofs_control_force, gs_solver.control_dofs_force),
+        (gs_solver.n_dofs, scene.n_envs, gs_solver.get_dofs_force, None),
+        (gs_solver.n_dofs, scene.n_envs, gs_solver.get_dofs_velocity, gs_solver.set_dofs_velocity),
+        (gs_solver.n_dofs, scene.n_envs, gs_solver.get_dofs_position, gs_solver.set_dofs_position),
+        (gs_solver.n_geoms, scene.n_envs, gs_solver.get_geoms_pos, None),
+        (gs_solver.n_qs, scene.n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
+        (gs_solver.n_geoms, -1, gs_solver.get_geoms_friction, gs_solver.set_geoms_friction),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_pos, None),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_quat, None),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_vel, None),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_ang, None),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_acc, None),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_control_force, None),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_force, None),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position),
+        (gs_robot.n_qs, scene.n_envs, gs_robot.get_qpos, gs_robot.set_qpos),
+        (-1, scene.n_envs, gs_robot.get_links_net_contact_force, None),
     ):
-        datas = accessor().cpu()
+        datas = getter().cpu()
+        if setter is not None:
+            setter(datas)
         if arg1_max > 0:
-            datas_ = accessor(range(arg1_max)).cpu()
+            datas_ = getter(range(arg1_max)).cpu()
             np.testing.assert_allclose(datas_, datas, atol=1e-9)
         for i in range(arg1_max) if arg1_max > 0 else (None,):
             for arg1 in (
@@ -582,12 +587,18 @@ def test_data_accessor(n_envs):
                         else (None,)
                     ):
                         if arg1 is None:
-                            data = accessor(arg2).cpu()
-                            data_ = datas[[j]] if n_envs else datas
+                            data = getter(arg2).cpu()
+                            if setter is not None:
+                                setter(data, arg2)
+                            data_ = datas[[j]]
                         elif arg2 is None:
-                            data = accessor(arg1).cpu()
+                            data = getter(arg1).cpu()
+                            if setter is not None:
+                                setter(data, arg1)
                             data_ = datas[[i]]
                         else:
-                            data = accessor(arg1, arg2).cpu()
+                            data = getter(arg1, arg2).cpu()
+                            if setter is not None:
+                                setter(data, arg1, arg2)
                             data_ = datas[[j], :][:, [i]]
                         np.testing.assert_allclose(data_, data, atol=1e-9)
