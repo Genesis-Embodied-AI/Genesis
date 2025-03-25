@@ -22,6 +22,11 @@ def ti_transform_quat_by_quat(v, u):
 
 
 @ti.func
+def ti_quat_mul(u, v):
+    return ti_transform_quat_by_quat(v, u)
+
+
+@ti.func
 def ti_rotvec_to_quat(rotvec):
     theta = rotvec.norm()
     v = ti.Vector.zero(gs.ti_float, 3)

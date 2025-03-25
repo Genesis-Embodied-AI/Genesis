@@ -466,3 +466,21 @@ def test_equality_joint(gs_sim, mj_sim):
     # check if the two joints are equal
     gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-9)
+
+
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_equality_weld(gs_sim, mj_sim):
+    # there is an equality constraint
+    assert gs_sim.rigid_solver.n_equalities == 1
+
+    qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    qpos = gs_sim.rigid_solver.dofs_state.pos.to_numpy()[:, 0]
+    qvel[0], qvel[1], qvel[2] = 1, 0.5, -1
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=3000, atol=1e-8)
+
+    # check if the two joints are equal
+    # gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    # np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-9)
