@@ -1,9 +1,9 @@
 import numpy as np
 import taichi as ti
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.ext import trimesh
 from genesis.ext.urdfpy.urdf import URDF
 from genesis.utils.hybrid import (
     check_graph,

@@ -2,10 +2,10 @@ import pytest
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import trimesh
 
 import mujoco
 import genesis as gs
-from genesis.ext import trimesh
 
 from .utils import (
     init_simulators,
@@ -36,6 +36,24 @@ def box_plan():
     box_body = ET.SubElement(worldbody, "body", name="box", pos="0. 0. 0.3")
     ET.SubElement(box_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
     ET.SubElement(box_body, "joint", name="root", type="free")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def mimic_hinges():
+    mjcf = ET.Element("mujoco", model="mimic_hinges")
+    ET.SubElement(mjcf, "compiler", angle="degree")
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    parent = ET.SubElement(worldbody, "body", name="parent", pos="0 0 1.0")
+    child1 = ET.SubElement(parent, "body", name="child1", pos="0.5 0 0")
+    ET.SubElement(child1, "geom", type="capsule", size="0.05 0.2", rgba="0.9 0.1 0.1 1")
+    ET.SubElement(child1, "joint", type="hinge", name="joint1", axis="0 1 0", range="-45 45")
+    child2 = ET.SubElement(parent, "body", name="child2", pos="0 0.5 0")
+    ET.SubElement(child2, "geom", type="capsule", size="0.05 0.2", rgba="0.1 0.1 0.9 1")
+    ET.SubElement(child2, "joint", type="hinge", name="joint2", axis="0 1 0", range="-45 45")
+    equality = ET.SubElement(mjcf, "equality")
+    ET.SubElement(equality, "joint", name="joint_equality", joint1="joint1", joint2="joint2")
     return mjcf
 
 
@@ -235,6 +253,7 @@ def test_robot_kinematics(gs_sim, mj_sim):
     gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
+    gs_sim.rigid_solver._disable_constraint = True
 
     check_mujoco_model_consistency(gs_sim, mj_sim)
 
@@ -430,3 +449,20 @@ def test_nonconvex_collision(show_viewer):
 
     if show_viewer:
         scene.viewer.stop()
+
+
+@pytest.mark.parametrize("model_name", ["mimic_hinges"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_equality_joint(gs_sim, mj_sim):
+    # there is an equality constraint
+    assert gs_sim.rigid_solver.n_equalities == 1
+
+    qpos = np.array((0.0, -1.0))
+    qvel = np.array((1, -0.3))
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, atol=1e-8)
+
+    # check if the two joints are equal
+    gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-9)

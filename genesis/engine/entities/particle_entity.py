@@ -1,6 +1,7 @@
 import numpy as np
 import taichi as ti
 import torch
+import trimesh
 from scipy.spatial import KDTree
 
 import genesis as gs
@@ -9,7 +10,6 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
 from genesis.utils.misc import to_gs_tensor
-from genesis.ext import trimesh
 
 from .base_entity import Entity
 

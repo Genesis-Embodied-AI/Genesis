@@ -1,10 +1,12 @@
 # import taichi while suppressing its output
 import os
 import sys
+import site
 import ctypes
 import atexit
 import logging as _logging
 import traceback
+from platform import system
 from unittest.mock import patch
 
 _ti_outputs = []
@@ -19,6 +21,7 @@ with patch("builtins.print", fake_print):
     import taichi as ti
 
 import torch
+import trimesh
 import numpy as np
 
 from .constants import GS_ARCH, TI_ARCH
@@ -31,6 +34,50 @@ _initialized = False
 backend = None
 exit_callbacks = []
 global_scene_list = set()
+
+
+############ fix python DLL search dir for OMPL ############
+try:
+    import ompl
+
+    _is_ompl_available = True
+except ImportError:
+    _is_ompl_available = False
+
+
+def dll_loader(lib, path):
+    # First, try the user-specified path
+    sys = system()
+    if sys == "Windows":
+        ext = ".dll"
+    elif sys == "Darwin":
+        ext = ".dylib"
+    else:  # Linux, other UNIX systems
+        ext = ".so"
+    fname = f"lib{lib}{ext}"
+    fpath = os.path.join(path, fname)
+
+    # Fallback to site-packages
+    if not os.path.isfile(fpath):
+        for sitepackagedir in site.getsitepackages():
+            for _fname in os.listdir(sitepackagedir):
+                _fpath = os.path.join(sitepackagedir, _fname)
+                if os.path.isfile(_fpath):
+                    if _fname.startswith(fname):
+                        fpath = _fpath
+                        break
+
+    # Fallback to system loading and pray
+    if not os.path.isfile(fpath):
+        fpath = find_library(lib)
+
+    cdll = ctypes.CDLL(fpath, ctypes.RTLD_GLOBAL)
+    if cdll is None:
+        gs.raise_exception(f"Failed to load dynamic library '{lib}' (search path '{path}').")
+
+
+if _is_ompl_available:
+    ompl.dll_loader = dll_loader
 
 
 ########################## init ##########################
@@ -129,6 +176,8 @@ def init(
     ti_vec6 = ti.types.vector(6, ti_float)
     global ti_vec7
     ti_vec7 = ti.types.vector(7, ti_float)
+    global ti_vec11
+    ti_vec11 = ti.types.vector(11, ti_float)
     global ti_mat3
     ti_mat3 = ti.types.matrix(3, 3, ti_float)
     global ti_mat4
@@ -305,6 +354,8 @@ if sys.platform == "darwin":
     libc.fflush(None)
     libc.dup2(devnull.fileno(), stderr_fileno)
 
+from .ext import _trimesh_patch
+
 from .constants import (
     IntEnum,
     JOINT_TYPE,
@@ -335,6 +386,7 @@ from .engine import states, materials, force_fields
 from .engine.scene import Scene
 from .engine.mesh import Mesh
 from .engine.entities.emitter import Emitter
+
 
 if sys.platform == "darwin":
     sys.stderr.flush()

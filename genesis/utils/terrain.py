@@ -1,9 +1,10 @@
-import numpy as np
-import pickle
 import os
 
+import numpy as np
+import pickle
+import trimesh
+
 import genesis as gs
-from genesis.ext import trimesh
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
 

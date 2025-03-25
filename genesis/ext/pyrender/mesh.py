@@ -7,8 +7,7 @@ Author: Matthew Matl
 import copy
 
 import numpy as np
-
-from genesis.ext import trimesh
+import trimesh
 
 from .constants import GLTF
 from .material import MetallicRoughnessMaterial

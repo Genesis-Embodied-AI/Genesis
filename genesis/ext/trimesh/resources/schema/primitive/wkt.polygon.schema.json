@@ -1,7 +1,0 @@
-{
-  "$id": "https://github.com/mikedh/trimesh/blob/main/trimesh/resources/schema/primitive/wkt.polygon.schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A single polygon in the Well Known Text format (WKT).",
-  "pattern": " *POLYGON *\\( *\\( *([+-]?([0-9]*[.])?[0-9]+ *[+-]?([0-9]*[.])?[0-9]+ *,* *)*\\) *\\) *",
-  "type": "string"
-}

@@ -5,11 +5,11 @@ from contextlib import redirect_stdout
 import numpy as np
 import pyvista as pv
 import tetgen
+import trimesh
 
 import genesis as gs
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
-from genesis.ext import trimesh
 from genesis.repr_base import RBC
 
 
@@ -102,7 +102,7 @@ class Mesh(RBC):
                 with open(rm_file_path, "rb") as file:
                     verts, faces = pkl.load(file)
                 is_cached_loaded = True
-            except (EOFError, pkl.UnpicklingError):
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
