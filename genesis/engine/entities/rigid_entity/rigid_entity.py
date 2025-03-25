@@ -1915,10 +1915,16 @@ class RigidEntity(Entity):
         # Handling default argument and special cases
         if idx_local is None:
             idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
+        elif isinstance(idx_local, (range, slice)):
+            idx_global = range(
+                (idx_local.start or 0) + idx_global_start,
+                (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
+                idx_local.step or 1,
+            )
         elif isinstance(idx_local, int):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
-            idx_global = [i + idx_local for i in idx_local]
+            idx_global = [i + idx_global_start for i in idx_local]
         else:
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:
@@ -1957,7 +1963,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         qs_idx = self._get_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
-        self._solver.set_qpos(qpos, qs, envs_idx)
+        self._solver.set_qpos(qpos, qs_idx, envs_idx)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 

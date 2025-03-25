@@ -3571,7 +3571,11 @@ class RigidSolver(Solver):
         if inputs_idx is None:
             inputs_idx = range(0, input_max)
         elif isinstance(inputs_idx, slice):
-            inputs_idx = range(inputs_idx.start or 0, inputs_idx.stop or input_max, inputs_idx.step or 1)
+            inputs_idx = range(
+                inputs_idx.start or 0,
+                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.step or 1,
+            )
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 
@@ -3646,7 +3650,11 @@ class RigidSolver(Solver):
         if inputs_idx is None:
             inputs_idx = range(0, input_max)
         elif isinstance(inputs_idx, slice):
-            inputs_idx = range(inputs_idx.start or 0, inputs_idx.stop or input_max, inputs_idx.step or 1)
+            inputs_idx = range(
+                inputs_idx.start or 0,
+                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.step or 1,
+            )
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 

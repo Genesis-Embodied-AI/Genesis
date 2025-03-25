@@ -555,7 +555,17 @@ def test_data_accessor(n_envs):
         (gs_sim.rigid_solver.n_geoms, n_envs, gs_sim.rigid_solver.get_geoms_pos),
         (gs_sim.rigid_solver.n_qs, n_envs, gs_sim.rigid_solver.get_qpos),
         (gs_sim.rigid_solver.n_geoms, -1, gs_sim.rigid_solver.get_geoms_friction),
-        (-1, n_envs, gs_robot.get_links_net_contact_force),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_pos),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_quat),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_vel),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_ang),
+        (gs_robot.n_links, scene.n_envs, gs_robot.get_links_acc),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_control_force),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_force),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_velocity),
+        (gs_robot.n_dofs, scene.n_envs, gs_robot.get_dofs_position),
+        (gs_robot.n_qs, scene.n_envs, gs_robot.get_qpos),
+        (-1, scene.n_envs, gs_robot.get_links_net_contact_force),
     ):
         datas = accessor().cpu()
         if arg1_max > 0:
