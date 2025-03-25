@@ -369,7 +369,7 @@ class RigidEntity(Entity):
                 gs.logger.warning(f"Equality type {e_info['type']} not supported")
 
     def _load_URDF(self, morph, surface):
-        l_infos, j_infos = uu.parse_urdf(morph, surface)
+        l_infos, j_infos, equalities = uu.parse_urdf(morph, surface)
 
         for i_l in range(len(l_infos)):
             l_info = l_infos[i_l]
@@ -384,6 +384,18 @@ class RigidEntity(Entity):
                     j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
 
             self._add_by_info(l_info, (j_info,), l_info["g_infos"], morph, surface)
+
+        for e_info in equalities:
+            # only those two types of equality are supported
+            if e_info["type"] == gs.EQUALITY_TYPE.CONNECT or e_info["type"] == gs.EQUALITY_TYPE.JOINT:
+                self._add_equality(
+                    name=e_info["name"],
+                    type=e_info["type"],
+                    eq_obj1id=e_info["eq_obj1id"],
+                    eq_obj2id=e_info["eq_obj2id"],
+                    eq_data=e_info["eq_data"],
+                    sol_params=e_info["sol_params"],
+                )
 
     def _build(self):
         assert self.n_links == len(self.joints)
