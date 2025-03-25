@@ -466,3 +466,32 @@ def test_equality_joint(gs_sim, mj_sim):
     # check if the two joints are equal
     gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-9)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_urdf_mimic_panda(show_viewer):
+    # create and build the scene
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    hand = scene.add_entity(
+        gs.morphs.URDF(file="urdf/panda_bullet/hand.urdf"),
+    )
+    scene.build()
+
+    rigid = scene.sim.rigid_solver
+    assert rigid.n_equalities == 1
+
+    qvel = rigid.dofs_state.vel.to_numpy()
+    qvel[-1] = 1
+    rigid.dofs_state.vel.from_numpy(qvel)
+
+    for i in range(200):
+        scene.step()
+
+    gs_qpos = rigid.qpos.to_numpy()[:, 0]
+    np.testing.assert_allclose(gs_qpos[-1], gs_qpos[-2], atol=1e-9)
+
+    if show_viewer:
+        scene.viewer.stop()
