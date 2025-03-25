@@ -9,7 +9,7 @@ import genesis.utils.mesh as mu
 import genesis.utils.misc as miscu
 import genesis.utils.particle as pu
 from genesis.engine import entities
-from genesis.ext import trimesh
+import trimesh
 
 LRP_PATH = os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin")
 try:

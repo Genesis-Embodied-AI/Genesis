@@ -3,9 +3,9 @@
 import os
 import genesis as gs
 
-from lxml import etree as ET
+import trimesh
 import numpy as np
-from genesis.ext import trimesh
+from lxml import etree as ET
 
 
 def rpy_to_matrix(coords):

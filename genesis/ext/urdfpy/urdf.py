@@ -9,10 +9,9 @@ import networkx as nx
 import numpy as np
 import PIL
 import six
+import trimesh
 from lxml import etree as ET
 from scipy.spatial.transform import Rotation
-
-from genesis.ext import trimesh
 
 from .utils import (
     configure_origin,

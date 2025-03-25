@@ -21,6 +21,7 @@ with patch("builtins.print", fake_print):
     import taichi as ti
 
 import torch
+import trimesh
 import numpy as np
 
 from .constants import GS_ARCH, TI_ARCH
@@ -351,6 +352,8 @@ if sys.platform == "darwin":
     libc.fflush(None)
     libc.dup2(devnull.fileno(), stderr_fileno)
 
+from .ext import _trimesh_patch
+
 from .constants import (
     IntEnum,
     JOINT_TYPE,
@@ -381,6 +384,7 @@ from .engine import states, materials, force_fields
 from .engine.scene import Scene
 from .engine.mesh import Mesh
 from .engine.entities.emitter import Emitter
+
 
 if sys.platform == "darwin":
     sys.stderr.flush()

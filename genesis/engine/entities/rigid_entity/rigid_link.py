@@ -3,7 +3,7 @@ import taichi as ti
 import torch
 
 import genesis as gs
-from genesis.ext import trimesh
+import trimesh
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 

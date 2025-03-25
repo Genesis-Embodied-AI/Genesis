@@ -1,9 +1,10 @@
 import os
 
+import trimesh
 import numpy as np
 
 import genesis as gs
-from genesis.ext import trimesh, urdfpy
+from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import mesh as mu

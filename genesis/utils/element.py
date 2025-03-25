@@ -2,9 +2,9 @@ import os
 import pickle as pkl
 
 import numpy as np
+import trimesh
 
 import genesis as gs
-from genesis.ext import trimesh
 
 from . import geom as gu
 from . import mesh as mu
@@ -46,7 +46,7 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
             with open(tet_file_path, "rb") as file:
                 verts, elems = pkl.load(file)
             is_cached_loaded = True
-        except (EOFError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:

@@ -10,10 +10,10 @@ import numpy as np
 import pygltflib
 import pyvista as pv
 import tetgen
+import trimesh
 from PIL import Image
 
 import genesis as gs
-from genesis.ext import trimesh
 
 from . import geom as gu
 from .misc import (
@@ -186,7 +186,7 @@ def convex_decompose(mesh, morph):
             with open(cvx_path, "rb") as file:
                 mesh_parts = pkl.load(file)
             is_cached_loaded = True
-        except (EOFError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:
