@@ -209,6 +209,7 @@ def parse_link(mj, i_l, scale):
     l_info["invweight"] /= scale**3
     for j_info in j_infos:
         j_info["pos"] *= scale
+    # exclude joints with 0 dofs in MJCF models to align with mujoco
     j_infos = [j_info for j_info in j_infos if j_info["n_dofs"] > 0]
 
     return l_info, j_infos

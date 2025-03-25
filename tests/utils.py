@@ -549,12 +549,12 @@ def check_mujoco_data_consistency(
     np.testing.assert_allclose(gs_cinr_mass[gs_body_idcs], mj_cinr_mass[mj_body_idcs], atol=atol)
 
 
-def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, num_steps):
+def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, atol=1e-9, *, num_steps):
     # Get mapping between Mujoco and Genesis
     _, (_, _, mj_q_idcs, mj_dof_idcs, _) = _get_model_mappings(gs_sim, mj_sim)
 
     # Make sure that "static" model information are matching
-    check_mujoco_model_consistency(gs_sim, mj_sim)
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
 
     # Initialize the simulation
     init_simulators(gs_sim, mj_sim, qpos, qvel)
@@ -563,7 +563,7 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
     qvel_prev = None
     for i in range(num_steps):
         # Make sure that all "dynamic" quantities are matching before stepping
-        check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev)
+        check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, atol=atol)
 
         # Keep Mujoco and Genesis simulation in sync to avoid drift over time
         mj_sim.data.qpos[mj_q_idcs] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]

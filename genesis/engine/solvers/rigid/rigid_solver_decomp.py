@@ -65,10 +65,14 @@ class RigidSolver(Solver):
         self._hibernation_thresh_vel = options.hibernation_thresh_vel
         self._hibernation_thresh_acc = options.hibernation_thresh_acc
 
-        if options.contact_resolve_time is None:
-            self._sol_contact_resolve_time = 2 * self._substep_dt
+        if options.constraint_resolve_time is None:
+            self._sol_constraint_resolve_time = 2 * self._substep_dt
         else:
+            self._sol_constraint_resolve_time = options.constraint_resolve_time
+
+        if options.contact_resolve_time is not None:
             self._sol_contact_resolve_time = options.contact_resolve_time
+            gs.logger.warning("contact_resolve_time is deprecated. Please use constraint_resolve_time instead.")
 
         self._options = options
 
@@ -359,7 +363,7 @@ class RigidSolver(Solver):
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             # Make sure that the constraints parameters are valid
             dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
-            dofs_sol_params = _sanitize_sol_params(dofs_sol_params, self._substep_dt, self._sol_contact_resolve_time)
+            dofs_sol_params = _sanitize_sol_params(dofs_sol_params, self._substep_dt, self._sol_constraint_resolve_time)
 
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
@@ -867,7 +871,9 @@ class RigidSolver(Solver):
             # Make sure that the constraints parameters are valid
             geoms = self.geoms
             geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
-            geoms_sol_params = _sanitize_sol_params(geoms_sol_params, self._substep_dt, self._sol_contact_resolve_time)
+            geoms_sol_params = _sanitize_sol_params(
+                geoms_sol_params, self._substep_dt, self._sol_constraint_resolve_time
+            )
 
             self._kernel_init_geom_fields(
                 geoms_pos=np.array([geom.init_pos for geom in geoms], dtype=gs.np_float),
@@ -1177,7 +1183,7 @@ class RigidSolver(Solver):
 
             equalities_sol_params = np.array([equality.sol_params for equality in equalities], dtype=gs.np_float)
             equalities_sol_params = _sanitize_sol_params(
-                equalities_sol_params, self._substep_dt, self._sol_contact_resolve_time
+                equalities_sol_params, self._substep_dt, self._sol_constraint_resolve_time
             )
 
             self._kernel_init_equality_fields(
