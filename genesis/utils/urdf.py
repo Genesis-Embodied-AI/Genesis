@@ -391,13 +391,9 @@ def parse_equality(robot, morph, j_infos):
             e_info["eq_data"][0] = joint.mimic.offset
             e_info["eq_data"][1] = joint.mimic.multiplier
             e_info["eq_data"][:6] *= morph.scale
-
             equalities.append(e_info)
+
     return equalities
-
-    from IPython import embed
-
-    embed()
 
 
 def merge_fixed_links(robot, links_to_keep):
