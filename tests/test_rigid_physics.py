@@ -40,7 +40,7 @@ def box_plan():
 
 
 @pytest.fixture(scope="session")
-def mimic_hinges(asset_tmp_path):
+def mimic_hinges():
     mjcf = ET.Element("mujoco", model="mimic_hinges")
     ET.SubElement(mjcf, "compiler", angle="degree")
     ET.SubElement(mjcf, "option", timestep="0.01")

@@ -165,7 +165,7 @@ class RigidOptions(Options):
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
     contact_resolve_time : float, optional
-        Please note that this argument will be deprecated in a future version. Use constraint_resolve_time instead. Time to resolve a contact. The smaller the value, the more stiff the constraint. Defaults to 0.02. (called timeconst in https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
+        Please note that this argument will be deprecated in a future version. Use constraint_resolve_time instead.
     constraint_resolve_time : float, optional
         Time to resolve a constraint. The smaller the value, the more stiff the constraint. Defaults to 0.02. (called timeconst in https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
     use_contact_island : bool, optional

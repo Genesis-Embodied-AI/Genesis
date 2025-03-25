@@ -351,14 +351,16 @@ class RigidEntity(Entity):
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
-            self._add_equality(
-                name=e_info["name"],
-                type=e_info["type"],
-                eq_obj1id=e_info["eq_obj1id"],
-                eq_obj2id=e_info["eq_obj2id"],
-                eq_data=e_info["eq_data"],
-                sol_params=e_info["sol_params"],
-            )
+            # only those two types of equality are supported
+            if e_info["type"] == gs.EQUALITY_TYPE.CONNECT or e_info["type"] == gs.EQUALITY_TYPE.JOINT:
+                self._add_equality(
+                    name=e_info["name"],
+                    type=e_info["type"],
+                    eq_obj1id=e_info["eq_obj1id"],
+                    eq_obj2id=e_info["eq_obj2id"],
+                    eq_data=e_info["eq_data"],
+                    sol_params=e_info["sol_params"],
+                )
 
     def _load_URDF(self, morph, surface):
         l_infos, j_infos = uu.parse_urdf(morph, surface)
