@@ -12,7 +12,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import tensor_to_array, ti_mat_field_to_torch
+from genesis.utils.misc import tensor_to_array, ti_field_to_torch
 
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
@@ -2467,7 +2467,7 @@ class RigidEntity(Entity):
         entity_links_force : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The net force applied on each links due to direct external contacts.
         """
-        tensor = ti_mat_field_to_torch(
+        tensor = ti_field_to_torch(
             self._solver.links_state.contact_force, envs_idx, slice(self.link_start, self.link_end), transpose=True
         )
         return tensor.squeeze(0) if self._solver.n_envs == 0 else tensor
