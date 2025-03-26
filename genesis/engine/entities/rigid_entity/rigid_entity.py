@@ -1788,7 +1788,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_pos(self, pos, zero_velocity=True, envs_idx=None):
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True):
         """
         Set position of the entity's base link.
 
@@ -1804,21 +1804,12 @@ class RigidEntity(Entity):
 
         if self.base_link.is_fixed:
             gs.logger.warning("Base link is fixed. Overriding base link pose.")
-
-        pos = torch.as_tensor(pos)
-        if self._solver.n_envs == 0:
-            if pos.ndim != 1:
-                gs.raise_exception("`pos` must be a 1D tensor for unparallelized scene.")
-        else:
-            if pos.ndim != 2:
-                gs.raise_exception("`pos` must be a 2D tensor for parallelized scene.")
-
-        self._solver.set_links_pos(pos.unsqueeze(-2), [self.base_link_idx], envs_idx, skip_forward=zero_velocity)
+        self._solver.set_base_links_pos(pos.unsqueeze(-2), [self.base_link_idx], envs_idx, skip_forward=zero_velocity)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 
     @gs.assert_built
-    def set_quat(self, quat, zero_velocity=True, envs_idx=None):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True):
         """
         Set quaternion of the entity's base link.
 
@@ -1834,18 +1825,7 @@ class RigidEntity(Entity):
 
         if self.base_link.is_fixed:
             gs.logger.warning("Base link is fixed. Overriding base link pose.")
-
-        quat = torch.as_tensor(quat)
-        if self._solver.n_envs == 0:
-            if quat.ndim != 1:
-                gs.raise_exception("`quat` must be a 1D tensor for unparallelized scene.")
-        else:
-            if quat.ndim != 2:
-                gs.raise_exception("`quat` must be a 2D tensor for parallelized scene.")
-
-        self._solver.set_links_quat(
-            torch.as_tensor(quat).unsqueeze(-2), [self.base_link_idx], envs_idx, skip_forward=zero_velocity
-        )
+        self._solver.set_base_links_quat(quat.unsqueeze(-2), [self.base_link_idx], envs_idx, skip_forward=zero_velocity)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx)
 

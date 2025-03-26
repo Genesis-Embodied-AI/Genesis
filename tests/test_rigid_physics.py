@@ -494,7 +494,7 @@ def test_urdf_mimic_panda(show_viewer):
 
 @pytest.mark.parametrize("n_envs", [0, 3])
 def test_data_accessor(n_envs):
-    # TODO: Check if works for batched and non-batched envs
+    # TODO: Check that the setters are doing something and not just no-ops
 
     # create and build the scene
     scene = gs.Scene(
@@ -551,34 +551,54 @@ def test_data_accessor(n_envs):
         (gs_solver.n_links, n_envs, gs_solver.get_links_COM, None),
         (gs_solver.n_links, n_envs, gs_solver.get_links_mass_shift, gs_solver.set_links_mass_shift),
         (gs_solver.n_links, n_envs, gs_solver.get_links_COM_shift, gs_solver.set_links_COM_shift),
+        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, None),
+        (gs_solver.n_links, -1, gs_solver.get_links_invweight, None),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_control_force, gs_solver.control_dofs_force),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_force, None),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_velocity, gs_solver.set_dofs_velocity),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_position, gs_solver.set_dofs_position),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_force_range, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_limit, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_stiffness, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_invweight, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_armature, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_damping, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kp, gs_solver.set_dofs_kp),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kv, gs_solver.set_dofs_kv),
         (gs_solver.n_geoms, n_envs, gs_solver.get_geoms_pos, None),
-        (gs_solver.n_qs, n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
-        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, None),
-        (gs_solver.n_links, -1, gs_solver.get_links_invweight, None),
         (gs_solver.n_geoms, -1, gs_solver.get_geoms_friction, gs_solver.set_geoms_friction),
+        (gs_solver.n_qs, n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
         (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_limit, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_stiffness, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_armature, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_damping, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv),
         (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos),
-        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, None),
-        (gs_robot.n_links, -1, gs_robot.get_links_invweight, None),
         (-1, n_envs, gs_robot.get_links_net_contact_force, None),
+        (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos),
+        (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat),
     ):
-        datas = getter().cpu()
+        datas = getter()
         if setter is not None:
             setter(datas)
+        datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
         if arg1_max > 0:
-            datas_ = getter(range(arg1_max)).cpu()
+            datas_ = getter(range(arg1_max))
+            datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
             np.testing.assert_allclose(datas_, datas, atol=1e-9)
         for i in range(arg1_max) if arg1_max > 0 else (None,):
             for arg1 in (
@@ -591,18 +611,31 @@ def test_data_accessor(n_envs):
                         else (None,)
                     ):
                         if arg1 is None:
-                            data = getter(arg2).cpu()
+                            data = getter(arg2)
                             if setter is not None:
                                 setter(data, arg2)
-                            data_ = datas[[j]] if n_envs else datas
+                            if n_envs:
+                                if isinstance(datas, torch.Tensor):
+                                    data_ = datas[[j]]
+                                else:
+                                    data_ = [val[[j]] for val in datas]
+                            else:
+                                data_ = datas
                         elif arg2 is None:
-                            data = getter(arg1).cpu()
+                            data = getter(arg1)
                             if setter is not None:
                                 setter(data, arg1)
-                            data_ = datas[[i]]
+                            if isinstance(datas, torch.Tensor):
+                                data_ = datas[[i]]
+                            else:
+                                data_ = [val[[i]] for val in datas]
                         else:
-                            data = getter(arg1, arg2).cpu()
+                            data = getter(arg1, arg2)
                             if setter is not None:
                                 setter(data, arg1, arg2)
-                            data_ = datas[[j], :][:, [i]]
+                            if isinstance(datas, torch.Tensor):
+                                data_ = datas[[j], :][:, [i]]
+                            else:
+                                data_ = [val[[j], :][:, [i]] for val in datas]
+                        data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
                         np.testing.assert_allclose(data_, data, atol=1e-9)
