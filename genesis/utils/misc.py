@@ -240,7 +240,7 @@ def tensor_to_cpu(x):
 
 
 def tensor_to_array(x):
-    return np.array(tensor_to_cpu(x))
+    return np.asarray(tensor_to_cpu(x).numpy())
 
 
 def is_approx_multiple(a, b, tol=1e-7):
@@ -283,18 +283,23 @@ def ti_mat_field_to_torch(
         for i, mask in enumerate((col_mask if transpose else row_mask,) if is_1D_batch else (row_mask, col_mask)):
             if mask is None or isinstance(mask, slice):
                 # Slices are always valid by default. Nothing to check.
-                is_valid = True
+                is_out_of_bounds = False
             elif isinstance(mask, int):
                 # Do not allow negative indexing for consistency with Taichi
-                is_valid = 0 <= mask < field_shape[i]
-            else:
+                is_out_of_bounds = not (0 <= mask < field_shape[i])
+            elif isinstance(mask, torch.Tensor):
+                if not mask.ndim <= 1:
+                    gs.raise_exception(f"Expecting 1D tensor for masks.")
+                # Resort on post-mortem analysis for bounds check because runtime would be to costly
+                is_out_of_bounds = None
+            else:  # np.ndarray
                 mask_start, mask_end = mask[0], mask[-1]
                 try:
                     mask_start, mask_end = int(mask_start), int(mask_end)
                 except ValueError:
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
-                is_valid = 0 <= mask_start <= mask_end < field_shape[i]
-            if not is_valid:
+                is_out_of_bounds = not (0 <= mask_start <= mask_end < field_shape[i])
+            if is_out_of_bounds:
                 gs.raise_exception("Masks are out-of-range.")
 
     # Must convert masks to torch if not slice or int since torch will do it anyway.
@@ -328,16 +333,23 @@ def ti_mat_field_to_torch(
     # because this required allocating GPU data.
     is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, int)
     is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, int)
-    if is_col_mask_tensor and is_row_mask_tensor:
-        if not is_single_col and not is_single_row:
-            tensor = tensor[row_mask.unsqueeze(1), col_mask]
+    try:
+        if is_col_mask_tensor and is_row_mask_tensor:
+            if not is_single_col and not is_single_row:
+                tensor = tensor[row_mask.unsqueeze(1), col_mask]
+            else:
+                tensor = tensor[row_mask, col_mask]
         else:
-            tensor = tensor[row_mask, col_mask]
-    else:
-        if col_mask is not None:
-            tensor = tensor[col_mask] if is_1D_batch else tensor[:, col_mask]
-        if row_mask is not None:
-            tensor = tensor[row_mask]
+            if col_mask is not None:
+                tensor = tensor[col_mask] if is_1D_batch else tensor[:, col_mask]
+            if row_mask is not None:
+                tensor = tensor[row_mask]
+    except IndexError as e:
+        if not unsafe and is_out_of_bounds is None:
+            for i, mask in enumerate((col_mask if transpose else row_mask,) if is_1D_batch else (row_mask, col_mask)):
+                # Do bounds analysis at this point because it skipped
+                if not (0 <= mask[0] <= mask[-1] < field_shape[i]):
+                    gs.raise_exception_from("Masks are out-of-range.", e)
 
     # Make sure that masks are 1D if all dimensions must be kept
     if keepdim:
