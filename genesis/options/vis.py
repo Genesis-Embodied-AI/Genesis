@@ -85,6 +85,8 @@ class VisOptions(Options):
         Scale for contact arrow visualization, m/N. E.g. the force arrow representing 10N will be 0.2m long if scale is 0.02. Defaults to 0.02.
     n_support_neighbors : int
         Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies. Defaults to 12.
+    n_rendered_envs : int, optional
+        Number of environments with being rendered (from env 0 up to n). This cannot be used with `rendered_envs_idx`. Defaults to None.
     rendered_envs_idx : list, optional
         index of environments being rendered. If None, all environments will be rendered. Defaults to None.
     lights  : list of dict.
@@ -113,6 +115,7 @@ class VisOptions(Options):
     n_support_neighbors: int = (
         12  # number of neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies.
     )
+    n_rendered_envs: Optional[int] = None  # number of environments being rendered
     rendered_envs_idx: Optional[list] = None  # idx of environments being rendered
     lights: list = [
         {"type": "directional", "dir": (-1, -1, -1), "color": (1.0, 1.0, 1.0), "intensity": 5.0},
@@ -127,3 +130,7 @@ class VisOptions(Options):
             gs.raise_exception(
                 f"Unsupported `render_particle_as`: {self.render_particle_as}, must be one of ['sphere', 'tet']"
             )
+
+        if not self.n_rendered_envs is None:
+            assert self.rendered_envs_idx is None
+            self.rendered_envs_idx = list(range(self.n_rendered_envs))
