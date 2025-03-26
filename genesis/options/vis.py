@@ -132,5 +132,6 @@ class VisOptions(Options):
             )
 
         if not self.n_rendered_envs is None:
+            gs.logger.warning("n_rendered_envs is deprecated. Please use rendered_envs_idx instead.")
             assert self.rendered_envs_idx is None
             self.rendered_envs_idx = list(range(self.n_rendered_envs))
