@@ -1915,7 +1915,10 @@ class RigidEntity(Entity):
     def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         # Handling default argument and special cases
         if idx_local is None:
-            idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
+            if unsafe:
+                idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
+            else:
+                idx_global = range(idx_global_start, idx_local_max + idx_global_start)
         elif isinstance(idx_local, (range, slice)):
             idx_global = range(
                 (idx_local.start or 0) + idx_global_start,
@@ -1942,7 +1945,7 @@ class RigidEntity(Entity):
 
         if idx_global.ndim != 1:
             gs.raise_exception("Expecting a 1D tensor for `idx_local`.")
-        if (idx_global < 0).any() or (idx_local >= idx_global_start + idx_local_max).any():
+        if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
             gs.raise_exception("`idx_local` exceeds valid range.")
 
         return idx_global
