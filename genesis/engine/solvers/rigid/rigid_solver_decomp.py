@@ -3797,7 +3797,8 @@ class RigidSolver(Solver):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
             mass, links_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-
+        if self.n_envs == 0:
+            mass = mass.unsqueeze(0)
         self._kernel_set_links_mass_shift(mass, links_idx, envs_idx)
 
     @ti.kernel
@@ -3815,6 +3816,8 @@ class RigidSolver(Solver):
         com, links_idx, envs_idx = self._sanitize_2D_io_variables(
             com, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
+        if self.n_envs == 0:
+            com = com.unsqueeze(0)
         self._kernel_set_links_COM_shift(com, links_idx, envs_idx)
 
     @ti.kernel
