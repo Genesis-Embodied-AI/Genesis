@@ -557,6 +557,8 @@ def test_data_accessor(n_envs):
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_position, gs_solver.set_dofs_position),
         (gs_solver.n_geoms, n_envs, gs_solver.get_geoms_pos, None),
         (gs_solver.n_qs, n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
+        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, None),
+        (gs_solver.n_links, -1, gs_solver.get_links_invweight, None),
         (gs_solver.n_geoms, -1, gs_solver.get_geoms_friction, gs_solver.set_geoms_friction),
         (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None),
@@ -568,6 +570,8 @@ def test_data_accessor(n_envs):
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position),
         (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos),
+        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, None),
         (-1, n_envs, gs_robot.get_links_net_contact_force, None),
     ):
         datas = getter().cpu()

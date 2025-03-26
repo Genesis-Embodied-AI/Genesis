@@ -1657,6 +1657,7 @@ class RigidEntity(Entity):
         vel : torch.Tensor, shape (3,) or (n_envs, 3)
             The linear velocity of the entity's base link.
         """
+        # TODO: This would require tensor allocation because the velocity is not pre-computed
         return self._solver.get_links_vel([self.base_link_idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
@@ -1677,7 +1678,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang([self.base_link_idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_links_pos(self, ls_idx_local=None, envs_idx=None):
+    def get_links_pos(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns position of all the entity's links.
 
@@ -1694,10 +1695,10 @@ class RigidEntity(Entity):
             The position of all the entity's links.
         """
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_pos(links_idx, envs_idx)
+        return self._solver.get_links_pos(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_quat(self, ls_idx_local=None, envs_idx=None):
+    def get_links_quat(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns quaternion of all the entity's links.
 
@@ -1714,10 +1715,10 @@ class RigidEntity(Entity):
             The quaternion of all the entity's links.
         """
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_quat(links_idx, envs_idx)
+        return self._solver.get_links_quat(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_vel(self, ls_idx_local=None, envs_idx=None):
+    def get_links_vel(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns linear velocity of all the entity's links.
 
@@ -1734,10 +1735,10 @@ class RigidEntity(Entity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx)
+        return self._solver.get_links_vel(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_ang(self, ls_idx_local=None, envs_idx=None):
+    def get_links_ang(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns angular velocity of all the entity's links.
 
@@ -1754,10 +1755,10 @@ class RigidEntity(Entity):
             The angular velocity of all the entity's links.
         """
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_ang(links_idx, envs_idx)
+        return self._solver.get_links_ang(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_acc(self, ls_idx_local=None, envs_idx=None):
+    def get_links_acc(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns linear acceleration of the specified entity's links. (Mimicking accelerometer)
 
@@ -1774,17 +1775,17 @@ class RigidEntity(Entity):
             The linear acceleration of the specified entity's links.
         """
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_acc(links_idx, envs_idx)
+        return self._solver.get_links_acc(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_inertial_mass(self, ls_idx_local=None, envs_idx=None):
+    def get_links_inertial_mass(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_inertial_mass(links_idx, envs_idx)
+        return self._solver.get_links_inertial_mass(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_invweight(self, ls_idx_local=None, envs_idx=None):
+    def get_links_invweight(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_invweight(links_idx, envs_idx)
+        return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def set_pos(self, pos, zero_velocity=True, envs_idx=None):

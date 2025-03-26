@@ -156,7 +156,7 @@ class RigidSolver(Solver):
         base_links_idx = {0}
         for joint in tuple(chain.from_iterable(self.joints)):
             if joint.type == gs.JOINT_TYPE.FREE:
-                base_links_idx.append(joint.link.idx)
+                base_links_idx.add(joint.link.idx)
         self._base_links_idx = torch.tensor(tuple(base_links_idx), dtype=gs.tc_int, device=gs.device)
 
         # used for creating dummy fields for compilation to work
@@ -3594,16 +3594,19 @@ class RigidSolver(Solver):
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 
-        if tensor is None and not skip_allocation:
-            if batched and self.n_envs > 0:
-                shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
+        if tensor is None:
+            if skip_allocation:
+                _tensor = None
             else:
-                shape = (len(inputs_idx),)
-            tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
+                if batched and self.n_envs > 0:
+                    shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
+                else:
+                    shape = (len(inputs_idx),)
+                _tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
 
         # Early return if unsafe
         if unsafe:
-            return tensor, inputs_idx, envs_idx
+            return _tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
         _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
@@ -3642,8 +3645,7 @@ class RigidSolver(Solver):
             else:
                 if _tensor.ndim != 1:
                     gs.raise_exception("Expecting 1D output tensor.")
-            return _tensor, _inputs_idx, envs_idx
-        return None, _inputs_idx, envs_idx
+        return _tensor, _inputs_idx, envs_idx
 
     def _sanitize_2D_io_variables(
         self,
@@ -3675,12 +3677,15 @@ class RigidSolver(Solver):
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 
-        if tensor is None and not skip_allocation:
-            if batched and self.n_envs > 0:
-                shape = self._batch_shape((len(inputs_idx), vec_size), True, B=len(envs_idx))
+        if tensor is None:
+            if skip_allocation:
+                _tensor = None
             else:
-                shape = (len(inputs_idx), vec_size)
-            tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
+                if batched and self.n_envs > 0:
+                    shape = self._batch_shape((len(inputs_idx), vec_size), True, B=len(envs_idx))
+                else:
+                    shape = (len(inputs_idx), vec_size)
+                _tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
 
         # Early return if unsafe
         if unsafe:
@@ -3724,20 +3729,22 @@ class RigidSolver(Solver):
             else:
                 if _tensor.ndim != 2:
                     gs.raise_exception("Expecting 2D input tensor.")
-            return _tensor, _inputs_idx, envs_idx
-        return None, _inputs_idx, envs_idx
+        return _tensor, _inputs_idx, envs_idx
 
     def _get_qs_idx(self, qs_idx_local=None):
         return self._get_qs_idx_local(qs_idx_local) + self._q_start
 
-    def set_links_pos(self, pos, links_idx, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    def set_base_links_pos(self, pos, envs_idx=None, *, unsafe=False, skip_forward=False):
-        # Get the list of all the free links
+    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+        if links_idx is None:
+            links_idx = self._base_links_idx
         pos, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            pos, self._base_links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+            quat, links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
+        if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
+            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_pos(pos, links_idx, envs_idx)
         if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3762,13 +3769,17 @@ class RigidSolver(Solver):
                 for i in ti.static(range(3)):
                     self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
 
-    def set_links_quat(self, quat, links_idx, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    def set_base_links_quat(self, quat, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+        if links_idx is None:
+            links_idx = self._base_links_idx
         quat, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            quat, self._base_links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
+            quat, links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
+        if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
+            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_quat(quat, links_idx, envs_idx)
         if skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -4380,54 +4391,19 @@ class RigidSolver(Solver):
         tensor = ti_mat_field_to_torch(self.links_state.i_pos_shift, envs_idx, links_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def _get_links_info(self, links_idx, name, envs_idx=None):
-        tensor, links_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, links_idx, self.n_links, envs_idx, batched=self._options.batch_links_info, idx_name="links_idx"
+    def get_links_inertial_mass(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        if not unsafe and self._options.batch_links_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
+        tensor = ti_mat_field_to_torch(self.links_info.invweight, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 or self._options.batch_links_info else tensor
+
+    def get_links_invweight(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        if not unsafe and self._options.batch_links_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
+        tensor = ti_mat_field_to_torch(
+            self.links_info.inertial_mass, envs_idx, links_idx, transpose=True, unsafe=unsafe
         )
-        if name == "invweight":
-            self._kernel_get_links_invweight(tensor, links_idx, envs_idx)
-            return tensor
-        elif name == "inertial_mass":
-            self._kernel_get_links_inertial_mass(tensor, links_idx, envs_idx)
-            return tensor
-        else:
-            gs.raise_exception(f"Invalid `name` {name}.")
-
-    def get_links_inertial_mass(self, links_idx, envs_idx=None):
-        return self._get_links_info(links_idx, "inertial_mass", envs_idx)
-
-    @ti.kernel
-    def _kernel_get_links_inertial_mass(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        if ti.static(self._options.batch_links_info):
-            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-                tensor[i_b_, i_l_] = self.links_info[links_idx[i_l_], envs_idx[i_b_]].inertial_mass
-        else:
-            for i_l_ in range(links_idx.shape[0]):
-                tensor[i_l_] = self.links_info[links_idx[i_l_]].inertial_mass
-
-    def get_links_invweight(self, links_idx, envs_idx=None):
-        return self._get_links_info(links_idx, "invweight", envs_idx)
-
-    @ti.kernel
-    def _kernel_get_links_invweight(
-        self,
-        tensor: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        if ti.static(self._options.batch_links_info):
-            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-                tensor[i_b_, i_l_] = self.links_info[links_idx[i_l_], envs_idx[i_b_]].invweight
-        else:
-            for i_l_ in range(links_idx.shape[0]):
-                tensor[i_l_] = self.links_info[links_idx[i_l_]].invweight
+        return tensor.squeeze(0) if self.n_envs == 0 or self._options.batch_links_info else tensor
 
     def get_geoms_friction_ratio(self, geoms_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_mat_field_to_torch(
@@ -4739,21 +4715,7 @@ class RigidSolver(Solver):
             )
 
     def get_geoms_friction(self, geoms_idx=None, *, unsafe=False):
-        tensor, geoms_idx, _ = self._sanitize_1D_io_variables(
-            None, geoms_idx, self.n_geoms, None, batched=False, idx_name="geoms_idx", unsafe=unsafe
-        )
-        self._kernel_get_geoms_friction(tensor, geoms_idx)
-        return tensor
-
-    @ti.kernel
-    def _kernel_get_geoms_friction(
-        self,
-        tensor: ti.types.ndarray(),
-        geoms_idx: ti.types.ndarray(),
-    ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g_ in ti.ndrange(geoms_idx.shape[0]):
-            tensor[i_g_] = self.geoms_info[geoms_idx[i_g_]].friction
+        return ti_mat_field_to_torch(self.geoms_info.friction, geoms_idx, None, unsafe=unsafe)
 
     def set_geom_friction(self, friction, geoms_idx):
         self._kernel_set_geom_friction(geoms_idx, friction)

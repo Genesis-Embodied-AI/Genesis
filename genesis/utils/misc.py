@@ -266,11 +266,17 @@ def ti_mat_field_to_torch(
         torch.tensor: The result torch tensor.
     """
     # Make sure that the user-arguments are valid if requested
+    field_shape = field.shape
+    is_1D_batch = len(field_shape) == 1
     if not unsafe:
-        field_shape = field.shape
         if transpose:
             field_shape = field_shape[::-1]
-        for i, mask in enumerate((row_mask, col_mask)):
+        if is_1D_batch:
+            if transpose and row_mask is not None:
+                gs.raise_exception("Cannot specify row mask for fields with 1D batch and `transpose=True`.")
+            elif not transpose and col_mask is not None:
+                gs.raise_exception("Cannot specify column mask for fields with 1D batch and `transpose=False`.")
+        for i, mask in enumerate((col_mask if transpose else row_mask,) if is_1D_batch else (row_mask, col_mask)):
             if mask is None or isinstance(mask, slice):
                 # Slices are always valid by default. Nothing to check.
                 is_valid = True
@@ -307,10 +313,10 @@ def ti_mat_field_to_torch(
     # Note that this is usually much faster than using a custom kernel to extract a slice.
     tensor = field.to_torch(device=gs.device)
 
-    # Transpose if requested.
+    # Transpose if necessary and requested.
     # Note that it is worth transposing here rather than outside this function, as it preserve row-major memory
     # alignment in case of advanced masking, which would spare computation later on if expected from the user.
-    if transpose:
+    if transpose and not is_1D_batch:
         tensor = tensor.transpose(1, 0)
 
     # Extract slice if necessary
@@ -318,7 +324,7 @@ def ti_mat_field_to_torch(
         tensor = tensor[row_mask.unsqueeze(1), col_mask]
     else:
         if col_mask is not None:
-            tensor = tensor[:, col_mask]
+            tensor = tensor[col_mask] if is_1D_batch else tensor[:, col_mask]
         if row_mask is not None:
             tensor = tensor[row_mask]
 
