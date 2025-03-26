@@ -13,6 +13,7 @@ class HoverEnv:
         self.device = torch.device(device)
 
         self.num_envs = num_envs
+        self.rendered_env_num = min(10, self.num_envs)
         self.num_obs = obs_cfg["num_obs"]
         self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
@@ -39,7 +40,7 @@ class HoverEnv:
                 camera_lookat=(0.0, 0.0, 1.0),
                 camera_fov=40,
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
+            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(self.rendered_env_num))),
             rigid_options=gs.options.RigidOptions(
                 dt=self.dt,
                 constraint_solver=gs.constraint_solver.Newton,
