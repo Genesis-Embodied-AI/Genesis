@@ -136,7 +136,7 @@ def get_device(backend: gs_backend):
     elif backend == gs_backend.vulkan:
         if torch.xpu.is_available():  # pytorch 2.5+ Intel XPU device
             device_idx = torch.xpu.current_device()
-            device = torch.device("xpu:{device_idx}")
+            device = torch.device(f"xpu:{device_idx}")
             device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3
