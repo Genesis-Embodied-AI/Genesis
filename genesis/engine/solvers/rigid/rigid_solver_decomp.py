@@ -3553,7 +3553,7 @@ class RigidSolver(Solver):
             return envs_idx
 
         # Perform a bunch of sanity checks
-        _envs_idx = torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
+        _envs_idx = torch.atleast_1d(torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
         if _envs_idx is not envs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
@@ -3581,7 +3581,7 @@ class RigidSolver(Solver):
         if batched:
             envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
-            envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
+            envs_idx = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
 
         if inputs_idx is None:
             inputs_idx = range(0, input_max)
@@ -3591,7 +3591,7 @@ class RigidSolver(Solver):
                 inputs_idx.stop if inputs_idx.stop is not None else input_max,
                 inputs_idx.step or 1,
             )
-        elif isinstance(envs_idx, int):
+        elif isinstance(inputs_idx, int):
             inputs_idx = [inputs_idx]
 
         is_preallocated = tensor is not None
@@ -3607,7 +3607,7 @@ class RigidSolver(Solver):
             return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
-        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
+        _inputs_idx = torch.atleast_1d(torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
         if _inputs_idx is not inputs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
         if _inputs_idx.ndim != 1:
@@ -3673,7 +3673,7 @@ class RigidSolver(Solver):
                 inputs_idx.stop if inputs_idx.stop is not None else input_max,
                 inputs_idx.step or 1,
             )
-        elif isinstance(envs_idx, int):
+        elif isinstance(inputs_idx, int):
             inputs_idx = [inputs_idx]
 
         is_preallocated = tensor is not None
@@ -3852,10 +3852,13 @@ class RigidSolver(Solver):
             tensor,
             links_idx,
             self.n_links,
+            envs_idx,
             batched=self._options.batch_links_info,
             idx_name="links_idx",
             unsafe=unsafe,
         )
+        if self.n_envs == 0 and self._options.batch_links_info:
+            tensor = tensor.unsqueeze(0)
         if name == "invweight":
             self._kernel_set_links_invweight(tensor, links_idx, envs_idx)
         elif name == "inertial_mass":
@@ -3863,8 +3866,8 @@ class RigidSolver(Solver):
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
 
-    def set_links_inertial_mass(self, invweight, links_idx, envs_idx=None):
-        self._set_links_info(invweight, links_idx, "inertial_mass", envs_idx)
+    def set_links_inertial_mass(self, invweight, links_idx=None, envs_idx=None, *, unsafe=False):
+        self._set_links_info(invweight, links_idx, "inertial_mass", envs_idx, unsafe=unsafe)
 
     @ti.kernel
     def _kernel_set_links_inertial_mass(
@@ -3881,8 +3884,8 @@ class RigidSolver(Solver):
             for i_l_ in range(links_idx.shape[0]):
                 self.links_info[links_idx[i_l_]].inertial_mass = inertial_mass[i_l_]
 
-    def set_links_invweight(self, invweight, links_idx, envs_idx=None):
-        self._set_links_info(invweight, links_idx, "invweight", envs_idx)
+    def set_links_invweight(self, invweight, links_idx=None, envs_idx=None, *, unsafe=False):
+        self._set_links_info(invweight, links_idx, "invweight", envs_idx, unsafe=unsafe)
 
     @ti.kernel
     def _kernel_set_links_invweight(
@@ -4398,16 +4401,16 @@ class RigidSolver(Solver):
     def get_links_inertial_mass(self, links_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
-        tensor = ti_mat_field_to_torch(self.links_info.invweight, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 or self._options.batch_links_info else tensor
+        tensor = ti_mat_field_to_torch(
+            self.links_info.inertial_mass, envs_idx, links_idx, transpose=True, unsafe=unsafe
+        )
+        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_links_info else tensor
 
     def get_links_invweight(self, links_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
-        tensor = ti_mat_field_to_torch(
-            self.links_info.inertial_mass, envs_idx, links_idx, transpose=True, unsafe=unsafe
-        )
-        return tensor.squeeze(0) if self.n_envs == 0 or self._options.batch_links_info else tensor
+        tensor = ti_mat_field_to_torch(self.links_info.invweight, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_links_info else tensor
 
     def get_geoms_friction_ratio(self, geoms_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_mat_field_to_torch(

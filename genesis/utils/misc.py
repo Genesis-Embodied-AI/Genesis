@@ -251,6 +251,7 @@ def ti_mat_field_to_torch(
     field,
     row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
     col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
+    keepdim=True,
     transpose=False,
     *,
     unsafe=False,
@@ -261,6 +262,7 @@ def ti_mat_field_to_torch(
         field (ti.Matrix): Matrix field to convert to Pytorch tensor.
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
         col_mask (optional): Columns to extract from batch dimension field after transpose if requested.
+        keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
         transpose (bool, optional): Whether to transpose the first two batch dimensions.
         unsafe (bool, optional): Whether to skip validity check of the masks.
 
@@ -298,13 +300,13 @@ def ti_mat_field_to_torch(
     # Must convert masks to torch if not slice or int since torch will do it anyway.
     # Note that being contiguous is not required and does not affect performance.
     must_allocate = False
-    row_is_tensor = not (row_mask is None or isinstance(row_mask, (slice, int)))
-    if row_is_tensor:
+    is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int)))
+    if is_row_mask_tensor:
         _row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
         must_allocate = _row_mask is not row_mask
         row_mask = _row_mask
-    col_is_tensor = not (col_mask is None or isinstance(col_mask, (slice, int)))
-    if col_is_tensor:
+    is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int)))
+    if is_col_mask_tensor:
         _col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
         must_allocate = _col_mask is not col_mask
         col_mask = _col_mask
@@ -321,13 +323,27 @@ def ti_mat_field_to_torch(
     if transpose and not is_1D_batch:
         tensor = tensor.transpose(1, 0)
 
-    # Extract slice if necessary
-    if col_is_tensor and row_is_tensor:
-        tensor = tensor[row_mask.unsqueeze(1), col_mask]
+    # Extract slice if necessary.
+    # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions,
+    # because this required allocating GPU data.
+    is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, int)
+    is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, int)
+    if is_col_mask_tensor and is_row_mask_tensor:
+        if not is_single_col and not is_single_row:
+            tensor = tensor[row_mask.unsqueeze(1), col_mask]
+        else:
+            tensor = tensor[row_mask, col_mask]
     else:
         if col_mask is not None:
             tensor = tensor[col_mask] if is_1D_batch else tensor[:, col_mask]
         if row_mask is not None:
             tensor = tensor[row_mask]
+
+    # Make sure that masks are 1D if all dimensions must be kept
+    if keepdim:
+        if is_single_row:
+            tensor = tensor.unsqueeze(0)
+        if is_single_col:
+            tensor = tensor.unsqueeze(0 if is_1D_batch else 1)
 
     return tensor

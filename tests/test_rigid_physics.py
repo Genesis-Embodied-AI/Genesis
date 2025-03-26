@@ -557,8 +557,8 @@ def test_data_accessor(n_envs):
         (gs_solver.n_links, n_envs, gs_solver.get_links_COM, None),
         (gs_solver.n_links, n_envs, gs_solver.get_links_mass_shift, gs_solver.set_links_mass_shift),
         (gs_solver.n_links, n_envs, gs_solver.get_links_COM_shift, gs_solver.set_links_COM_shift),
-        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, None),
-        (gs_solver.n_links, -1, gs_solver.get_links_invweight, None),
+        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, gs_solver.set_links_inertial_mass),
+        (gs_solver.n_links, -1, gs_solver.get_links_invweight, gs_solver.set_links_invweight),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_control_force, gs_solver.control_dofs_force),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_force, None),
         (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_velocity, gs_solver.set_dofs_velocity),
@@ -579,8 +579,8 @@ def test_data_accessor(n_envs):
         (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None),
-        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, None),
-        (gs_robot.n_links, -1, gs_robot.get_links_invweight, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
@@ -612,6 +612,7 @@ def test_data_accessor(n_envs):
         for i in range(arg1_max) if arg1_max > 0 else (None,):
             for arg1 in (
                 (
+                    i,
                     [i],
                     slice(i, i + 1),
                     range(i, i + 1),
@@ -625,6 +626,7 @@ def test_data_accessor(n_envs):
                 for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
                     for arg2 in (
                         (
+                            j,
                             [j],
                             slice(j, j + 1),
                             range(j, j + 1),
