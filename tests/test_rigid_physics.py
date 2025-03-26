@@ -495,6 +495,7 @@ def test_urdf_mimic_panda(show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 3])
 def test_data_accessor(n_envs):
     # TODO: Check that the setters are doing something and not just no-ops
+    # TODO: Compare the getter output with their corresponding field value if applicable
 
     # create and build the scene
     scene = gs.Scene(
@@ -505,9 +506,10 @@ def test_data_accessor(n_envs):
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
     scene.build(n_envs=n_envs)
+    gs_sim = scene.sim
+    gs_solver = gs_sim.rigid_solver
 
     # Initialize the simulation
-    gs_sim = scene.sim
     dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
     qpos_all = []
     for i in range(max(n_envs, 1)):
@@ -547,7 +549,20 @@ def test_data_accessor(n_envs):
     # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
     # * Compare first 'Get' output with last 'Get' output
     # * Compare last 'Get' output with corresponding slice of non-masking 'Get' output
-    gs_solver = gs_sim.rigid_solver
+    def get_all_supported_masks(i):
+        return (
+            i,
+            [i],
+            slice(i, i + 1),
+            range(i, i + 1),
+            np.array([i], dtype=np.int32),
+            torch.tensor([i], dtype=torch.int64),
+            torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+        )
+
+    def must_cast(value):
+        return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
+
     for arg1_max, arg2_max, getter, setter in (
         (gs_solver.n_links, n_envs, gs_solver.get_links_pos, None),
         (gs_solver.n_links, n_envs, gs_solver.get_links_quat, None),
@@ -610,37 +625,11 @@ def test_data_accessor(n_envs):
 
         # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
-            for arg1 in (
-                (
-                    i,
-                    [i],
-                    slice(i, i + 1),
-                    range(i, i + 1),
-                    np.array([i], dtype=np.int32),
-                    torch.tensor([i], dtype=torch.int64),
-                    torch.tensor([i], dtype=gs.tc_int, device=gs.device),
-                )
-                if arg1_max > 0
-                else (None,)
-            ):
+            for arg1 in get_all_supported_masks(i) if arg1_max > 0 else (None,):
                 for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
-                    for arg2 in (
-                        (
-                            j,
-                            [j],
-                            slice(j, j + 1),
-                            range(j, j + 1),
-                            np.array([j], dtype=np.int32),
-                            torch.tensor([j], dtype=torch.int64),
-                            torch.tensor([j], dtype=gs.tc_int, device=gs.device),
-                        )
-                        if arg2_max > 0
-                        else (None,)
-                    ):
+                    for arg2 in get_all_supported_masks(j) if arg2_max > 0 else (None,):
                         if arg1 is None:
-                            unsafe = (
-                                isinstance(arg2, torch.Tensor) and arg2.device == gs.device and arg2.dtype == gs.tc_int
-                            )
+                            unsafe = not must_cast(arg2)
                             data = getter(arg2, unsafe=unsafe)
                             if setter is not None:
                                 setter(data, arg2, unsafe=unsafe)
@@ -652,9 +641,7 @@ def test_data_accessor(n_envs):
                             else:
                                 data_ = datas
                         elif arg2 is None:
-                            unsafe = (
-                                isinstance(arg1, torch.Tensor) and arg1.device == gs.device and arg1.dtype == gs.tc_int
-                            )
+                            unsafe = not must_cast(arg1)
                             data = getter(arg1, unsafe=unsafe)
                             if setter is not None:
                                 setter(data, arg1, unsafe=unsafe)
@@ -663,10 +650,7 @@ def test_data_accessor(n_envs):
                             else:
                                 data_ = [val[[i]] for val in datas]
                         else:
-                            unsafe = all(
-                                isinstance(arg, torch.Tensor) and arg.device == gs.device and arg.dtype == gs.tc_int
-                                for arg in (arg1, arg2)
-                            )
+                            unsafe = not any(map(must_cast, (arg1, arg2)))
                             data = getter(arg1, arg2, unsafe=unsafe)
                             if setter is not None:
                                 setter(data, arg1, arg2, unsafe=unsafe)
@@ -676,3 +660,11 @@ def test_data_accessor(n_envs):
                                 data_ = [val[[j], :][:, [i]] for val in datas]
                         data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
                         np.testing.assert_allclose(data_, data, atol=1e-9)
+
+    for dofs_idx in (*get_all_supported_masks(0), None):
+        for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
+            unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
+            dofs_pos = gs_solver.get_dofs_position(dofs_idx, envs_idx)
+            dofs_vel = gs_solver.get_dofs_velocity(dofs_idx, envs_idx)
+            gs_sim.rigid_solver.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
+            gs_sim.rigid_solver.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
