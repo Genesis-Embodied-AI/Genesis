@@ -58,7 +58,7 @@ class HoverEnv:
                 morph=gs.morphs.Mesh(
                     file="meshes/sphere.obj",
                     scale=0.05,
-                    fixed=True,
+                    fixed=False,
                     collision=False,
                 ),
                 surface=gs.surfaces.Rough(
@@ -118,8 +118,6 @@ class HoverEnv:
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["pos_x_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["pos_y_range"], (len(envs_idx),), self.device)
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["pos_z_range"], (len(envs_idx),), self.device)
-        if self.target is not None:
-            self.target.set_pos(self.commands[envs_idx], zero_velocity=True, envs_idx=envs_idx)
 
     def _at_target(self):
         at_target = (
@@ -133,6 +131,9 @@ class HoverEnv:
 
         # 14468 is hover rpm
         self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)
+        # update target pos
+        if self.target is not None:
+            self.target.set_pos(self.commands, zero_velocity=True, envs_idx=list(range(self.num_envs)))
         self.scene.step()
 
         # update buffers
