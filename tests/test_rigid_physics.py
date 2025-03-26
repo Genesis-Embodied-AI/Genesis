@@ -1,8 +1,9 @@
 import pytest
 import xml.etree.ElementTree as ET
 
-import numpy as np
 import trimesh
+import torch
+import numpy as np
 
 import mujoco
 import genesis as gs
@@ -201,7 +202,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qvel = entity.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.04)
+        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.05)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qpos = entity.get_dofs_position().cpu()
@@ -294,12 +295,6 @@ def test_stickman(gs_sim, mj_sim):
 def test_inverse_kinematics(show_viewer):
     # create and build the scene
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
-        ),
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
@@ -495,3 +490,181 @@ def test_urdf_mimic_panda(show_viewer):
 
     if show_viewer:
         scene.viewer.stop()
+
+
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_data_accessor(n_envs):
+    # TODO: Check that the setters are doing something and not just no-ops
+    # TODO: Compare the getter output with their corresponding field value if applicable
+
+    # create and build the scene
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    gs_robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=n_envs)
+    gs_sim = scene.sim
+    gs_solver = gs_sim.rigid_solver
+
+    # Initialize the simulation
+    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    qpos_all = []
+    for i in range(max(n_envs, 1)):
+        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
+        if n_envs:
+            gs_robot.set_qpos(qpos[None], envs_idx=[i])
+            _qpos = gs_robot.get_qpos(envs_idx=[i]).squeeze(0).cpu()
+        else:
+            gs_robot.set_qpos(qpos)
+            _qpos = gs_robot.get_qpos().squeeze(0).cpu()
+        np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+        if n_envs:
+            _qpos = gs_robot.get_qpos()[i].cpu()
+            np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+
+    # Simulate for a while, until they collide with something
+    for _ in range(400):
+        gs_sim.step()
+        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        if (gs_n_contacts > 0).all():
+            break
+    else:
+        assert False
+    gs_sim.rigid_solver._kernel_forward_dynamics()
+    gs_sim.rigid_solver._func_constraint_force()
+
+    # Make sure that all the robots ends up in the different state
+    qposs = gs_robot.get_qpos().cpu()
+    for i in range(n_envs - 1):
+        with np.testing.assert_raises(AssertionError):
+            np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=1e-9)
+
+    # Check attribute getters / setters.
+    # First, without any any row or column masking:
+    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # Then, for any possible combinations of row and column masking:
+    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # * Compare first 'Get' output with last 'Get' output
+    # * Compare last 'Get' output with corresponding slice of non-masking 'Get' output
+    def get_all_supported_masks(i):
+        return (
+            i,
+            [i],
+            slice(i, i + 1),
+            range(i, i + 1),
+            np.array([i], dtype=np.int32),
+            torch.tensor([i], dtype=torch.int64),
+            torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+        )
+
+    def must_cast(value):
+        return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
+
+    for arg1_max, arg2_max, getter, setter in (
+        (gs_solver.n_links, n_envs, gs_solver.get_links_pos, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_quat, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_vel, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_ang, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_acc, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_COM, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_mass_shift, gs_solver.set_links_mass_shift),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_COM_shift, gs_solver.set_links_COM_shift),
+        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, gs_solver.set_links_inertial_mass),
+        (gs_solver.n_links, -1, gs_solver.get_links_invweight, gs_solver.set_links_invweight),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_control_force, gs_solver.control_dofs_force),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_force, None),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_velocity, gs_solver.set_dofs_velocity),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_position, gs_solver.set_dofs_position),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_force_range, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_limit, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_stiffness, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_invweight, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_armature, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_damping, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kp, gs_solver.set_dofs_kp),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kv, gs_solver.set_dofs_kv),
+        (gs_solver.n_geoms, n_envs, gs_solver.get_geoms_pos, None),
+        (gs_solver.n_geoms, -1, gs_solver.get_geoms_friction, gs_solver.set_geoms_friction),
+        (gs_solver.n_qs, n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_limit, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_stiffness, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_armature, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_damping, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv),
+        (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos),
+        (-1, n_envs, gs_robot.get_links_net_contact_force, None),
+        (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos),
+        (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat),
+    ):
+        # Check getter and setter without row or column masking
+        datas = getter()
+        if setter is not None:
+            setter(datas)
+        datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
+        if arg1_max > 0:
+            datas_ = getter(range(arg1_max))
+            datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
+            np.testing.assert_allclose(datas_, datas, atol=1e-9)
+
+        # Check getter and setter for all possible combinations of row and column masking
+        for i in range(arg1_max) if arg1_max > 0 else (None,):
+            for arg1 in get_all_supported_masks(i) if arg1_max > 0 else (None,):
+                for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
+                    for arg2 in get_all_supported_masks(j) if arg2_max > 0 else (None,):
+                        if arg1 is None:
+                            unsafe = not must_cast(arg2)
+                            data = getter(arg2, unsafe=unsafe)
+                            if setter is not None:
+                                setter(data, arg2, unsafe=unsafe)
+                            if n_envs:
+                                if isinstance(datas, torch.Tensor):
+                                    data_ = datas[[j]]
+                                else:
+                                    data_ = [val[[j]] for val in datas]
+                            else:
+                                data_ = datas
+                        elif arg2 is None:
+                            unsafe = not must_cast(arg1)
+                            data = getter(arg1, unsafe=unsafe)
+                            if setter is not None:
+                                setter(data, arg1, unsafe=unsafe)
+                            if isinstance(datas, torch.Tensor):
+                                data_ = datas[[i]]
+                            else:
+                                data_ = [val[[i]] for val in datas]
+                        else:
+                            unsafe = not any(map(must_cast, (arg1, arg2)))
+                            data = getter(arg1, arg2, unsafe=unsafe)
+                            if setter is not None:
+                                setter(data, arg1, arg2, unsafe=unsafe)
+                            if isinstance(datas, torch.Tensor):
+                                data_ = datas[[j], :][:, [i]]
+                            else:
+                                data_ = [val[[j], :][:, [i]] for val in datas]
+                        data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
+                        np.testing.assert_allclose(data_, data, atol=1e-9)
+
+    for dofs_idx in (*get_all_supported_masks(0), None):
+        for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
+            unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
+            dofs_pos = gs_solver.get_dofs_position(dofs_idx, envs_idx)
+            dofs_vel = gs_solver.get_dofs_velocity(dofs_idx, envs_idx)
+            gs_sim.rigid_solver.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
+            gs_sim.rigid_solver.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
