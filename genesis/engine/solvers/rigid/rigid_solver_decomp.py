@@ -3594,19 +3594,17 @@ class RigidSolver(Solver):
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 
-        if tensor is None:
-            if skip_allocation:
-                _tensor = None
+        is_preallocated = tensor is not None
+        if not is_preallocated and not skip_allocation:
+            if batched and self.n_envs > 0:
+                shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
             else:
-                if batched and self.n_envs > 0:
-                    shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
-                else:
-                    shape = (len(inputs_idx),)
-                _tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
+                shape = (len(inputs_idx),)
+            tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
 
         # Early return if unsafe
         if unsafe:
-            return _tensor, inputs_idx, envs_idx
+            return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
         _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
@@ -3618,34 +3616,35 @@ class RigidSolver(Solver):
         if not (0 <= inputs_start <= inputs_end < input_max):
             gs.raise_exception("`{idx_name}` is out-of-range.")
 
-        if tensor is not None:
+        if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
             if _tensor is not tensor:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            if _tensor.shape[-1] != len(_inputs_idx):
+            tensor = _tensor
+            if tensor.shape[-1] != len(_inputs_idx):
                 gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
 
             if batched:
                 if self.n_envs == 0:
-                    if _tensor.ndim != 1:
+                    if tensor.ndim != 1:
                         gs.raise_exception(
-                            f"Invalid input shape: {_tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
+                            f"Invalid input shape: {tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
                         )
                 else:
-                    if _tensor.ndim == 2:
-                        if _tensor.shape[0] != len(envs_idx):
+                    if tensor.ndim == 2:
+                        if tensor.shape[0] != len(envs_idx):
                             gs.raise_exception(
-                                f"Invalid input shape: {_tensor.shape}. First dimension of the input tensor does not match "
+                                f"Invalid input shape: {tensor.shape}. First dimension of the input tensor does not match "
                                 "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
                             )
                     else:
                         gs.raise_exception(
-                            f"Invalid input shape: {_tensor.shape}. Expecting a 2D tensor for scene with parallelized envs."
+                            f"Invalid input shape: {tensor.shape}. Expecting a 2D tensor for scene with parallelized envs."
                         )
             else:
-                if _tensor.ndim != 1:
+                if tensor.ndim != 1:
                     gs.raise_exception("Expecting 1D output tensor.")
-        return _tensor, _inputs_idx, envs_idx
+        return tensor, _inputs_idx, envs_idx
 
     def _sanitize_2D_io_variables(
         self,
@@ -3677,19 +3676,17 @@ class RigidSolver(Solver):
         elif isinstance(envs_idx, int):
             inputs_idx = [inputs_idx]
 
-        if tensor is None:
-            if skip_allocation:
-                _tensor = None
+        is_preallocated = tensor is not None
+        if not is_preallocated and not skip_allocation:
+            if batched and self.n_envs > 0:
+                shape = self._batch_shape((len(inputs_idx), vec_size), True, B=len(envs_idx))
             else:
-                if batched and self.n_envs > 0:
-                    shape = self._batch_shape((len(inputs_idx), vec_size), True, B=len(envs_idx))
-                else:
-                    shape = (len(inputs_idx), vec_size)
-                _tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
+                shape = (len(inputs_idx), vec_size)
+            tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
 
         # Early return if unsafe
         if unsafe:
-            return _tensor, inputs_idx, envs_idx
+            return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
         _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
@@ -3701,35 +3698,38 @@ class RigidSolver(Solver):
         if not (0 <= inputs_start <= inputs_end < input_max):
             gs.raise_exception("`{idx_name}` is out-of-range.")
 
-        if tensor is not None:
+        if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _tensor.shape[-2] != len(_inputs_idx):
+            if _tensor is not tensor:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+            tensor = _tensor
+            if tensor.shape[-2] != len(_inputs_idx):
                 gs.raise_exception(f"Second last dimension of the input tensor does not match length of `{idx_name}`.")
-            if _tensor.shape[-1] != vec_size:
+            if tensor.shape[-1] != vec_size:
                 gs.raise_exception(f"Last dimension of the input tensor must be {vec_size}.")
 
             if batched:
                 if self.n_envs == 0:
-                    if _tensor.ndim != 2:
+                    if tensor.ndim != 2:
                         gs.raise_exception(
-                            f"Invalid input shape: {_tensor.shape}. Expecting a 2D tensor for non-parallelized scene."
+                            f"Invalid input shape: {tensor.shape}. Expecting a 2D tensor for non-parallelized scene."
                         )
 
                 else:
-                    if _tensor.ndim == 3:
-                        if _tensor.shape[0] != len(envs_idx):
+                    if tensor.ndim == 3:
+                        if tensor.shape[0] != len(envs_idx):
                             gs.raise_exception(
-                                f"Invalid input shape: {_tensor.shape}. First dimension of the input tensor does not match "
+                                f"Invalid input shape: {tensor.shape}. First dimension of the input tensor does not match "
                                 "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
                             )
                     else:
                         gs.raise_exception(
-                            f"Invalid input shape: {_tensor.shape}. Expecting a 3D tensor for scene with parallelized envs."
+                            f"Invalid input shape: {tensor.shape}. Expecting a 3D tensor for scene with parallelized envs."
                         )
             else:
-                if _tensor.ndim != 2:
+                if tensor.ndim != 2:
                     gs.raise_exception("Expecting 2D input tensor.")
-        return _tensor, _inputs_idx, envs_idx
+        return tensor, _inputs_idx, envs_idx
 
     def _get_qs_idx(self, qs_idx_local=None):
         return self._get_qs_idx_local(qs_idx_local) + self._q_start

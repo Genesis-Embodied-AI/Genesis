@@ -540,7 +540,13 @@ def test_data_accessor(n_envs):
         with np.testing.assert_raises(AssertionError):
             np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=1e-9)
 
-    # Check attribute getters
+    # Check attribute getters / setters.
+    # First, without any any row or column masking:
+    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # Then, for any possible combinations of row and column masking:
+    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # * Compare first 'Get' output with last 'Get' output
+    # * Compare last 'Get' output with corresponding slice of non-masking 'Get' output
     gs_solver = gs_sim.rigid_solver
     for arg1_max, arg2_max, getter, setter in (
         (gs_solver.n_links, n_envs, gs_solver.get_links_pos, None),
@@ -592,6 +598,7 @@ def test_data_accessor(n_envs):
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat),
     ):
+        # Check getter and setter without row or column masking
         datas = getter()
         if setter is not None:
             setter(datas)
@@ -600,20 +607,41 @@ def test_data_accessor(n_envs):
             datas_ = getter(range(arg1_max))
             datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
             np.testing.assert_allclose(datas_, datas, atol=1e-9)
+
+        # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
             for arg1 in (
-                ([i], slice(i, i + 1), range(i, i + 1), np.array([i]), torch.tensor([i])) if arg1_max > 0 else (None,)
+                (
+                    [i],
+                    slice(i, i + 1),
+                    range(i, i + 1),
+                    np.array([i], dtype=np.int32),
+                    torch.tensor([i], dtype=torch.int64),
+                    torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+                )
+                if arg1_max > 0
+                else (None,)
             ):
                 for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
                     for arg2 in (
-                        ([j], slice(j, j + 1), range(j, j + 1), np.array([j]), torch.tensor([j]))
+                        (
+                            [j],
+                            slice(j, j + 1),
+                            range(j, j + 1),
+                            np.array([j], dtype=np.int32),
+                            torch.tensor([j], dtype=torch.int64),
+                            torch.tensor([j], dtype=gs.tc_int, device=gs.device),
+                        )
                         if arg2_max > 0
                         else (None,)
                     ):
                         if arg1 is None:
-                            data = getter(arg2)
+                            unsafe = (
+                                isinstance(arg2, torch.Tensor) and arg2.device == gs.device and arg2.dtype == gs.tc_int
+                            )
+                            data = getter(arg2, unsafe=unsafe)
                             if setter is not None:
-                                setter(data, arg2)
+                                setter(data, arg2, unsafe=unsafe)
                             if n_envs:
                                 if isinstance(datas, torch.Tensor):
                                     data_ = datas[[j]]
@@ -622,17 +650,24 @@ def test_data_accessor(n_envs):
                             else:
                                 data_ = datas
                         elif arg2 is None:
-                            data = getter(arg1)
+                            unsafe = (
+                                isinstance(arg1, torch.Tensor) and arg1.device == gs.device and arg1.dtype == gs.tc_int
+                            )
+                            data = getter(arg1, unsafe=unsafe)
                             if setter is not None:
-                                setter(data, arg1)
+                                setter(data, arg1, unsafe=unsafe)
                             if isinstance(datas, torch.Tensor):
                                 data_ = datas[[i]]
                             else:
                                 data_ = [val[[i]] for val in datas]
                         else:
-                            data = getter(arg1, arg2)
+                            unsafe = all(
+                                isinstance(arg, torch.Tensor) and arg.device == gs.device and arg.dtype == gs.tc_int
+                                for arg in (arg1, arg2)
+                            )
+                            data = getter(arg1, arg2, unsafe=unsafe)
                             if setter is not None:
-                                setter(data, arg1, arg2)
+                                setter(data, arg1, arg2, unsafe=unsafe)
                             if isinstance(datas, torch.Tensor):
                                 data_ = datas[[j], :][:, [i]]
                             else:
