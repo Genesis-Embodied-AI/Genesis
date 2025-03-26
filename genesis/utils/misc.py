@@ -119,8 +119,9 @@ def get_device(backend: gs_backend):
         if not torch.cuda.is_available():
             gs.raise_exception("cuda device not available")
 
-        device = torch.device("cuda")
-        device_property = torch.cuda.get_device_properties(0)
+        device_idx = torch.cuda.current_device()
+        device = torch.device(f"cuda:{device_idx}")
+        device_property = torch.cuda.get_device_properties(device_idx)
         device_name = device_property.name
         total_mem = device_property.total_memory / 1024**3
 
@@ -130,12 +131,13 @@ def get_device(backend: gs_backend):
 
         # on mac, cpu and gpu are in the same device
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps")
+        device = torch.device("mps:0")
 
     elif backend == gs_backend.vulkan:
         if torch.xpu.is_available():  # pytorch 2.5+ Intel XPU device
-            device = torch.device("xpu")
-            device_property = torch.xpu.get_device_properties(0)
+            device_idx = torch.xpu.current_device()
+            device = torch.device("xpu:{device_idx}")
+            device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
