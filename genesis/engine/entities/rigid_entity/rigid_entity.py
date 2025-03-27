@@ -1,4 +1,5 @@
 from itertools import chain
+from typing import Literal
 
 import numpy as np
 import taichi as ti
@@ -1719,9 +1720,11 @@ class RigidEntity(Entity):
         return self._solver.get_links_quat(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_vel(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_vel(
+        self, ls_idx_local=None, envs_idx=None, *, ref: Literal["link_origin", "link_com"] = "link_origin", unsafe=False
+    ):
         """
-        Returns linear velocity of all the entity's links.
+        Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
         Parameters
         ----------
@@ -1729,6 +1732,8 @@ class RigidEntity(Entity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com"
+            The reference point being used to expressed the velocity of each link.
 
         Returns
         -------
@@ -1736,12 +1741,12 @@ class RigidEntity(Entity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx, unsafe=unsafe)
+        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref, unsafe=unsafe)
 
     @gs.assert_built
     def get_links_ang(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
         """
-        Returns angular velocity of all the entity's links.
+        Returns angular velocity of all the entity's links in world coordinates.
 
         Parameters
         ----------

@@ -240,7 +240,7 @@ def tensor_to_cpu(x):
 
 
 def tensor_to_array(x):
-    return np.asarray(tensor_to_cpu(x).numpy())
+    return np.asarray(tensor_to_cpu(x))
 
 
 def is_approx_multiple(a, b, tol=1e-7):

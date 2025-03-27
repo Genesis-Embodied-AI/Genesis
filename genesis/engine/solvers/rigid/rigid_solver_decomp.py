@@ -1,4 +1,5 @@
 from itertools import chain
+from typing import Literal
 
 import numpy as np
 import torch
@@ -1269,7 +1270,7 @@ class RigidSolver(Solver):
         Velocity of a certain point on a rigid link.
         """
         link_state = self.links_state[link_idx, i_b]
-        vel_rot = link_state.ang.cross(pos_world - link_state.pos)
+        vel_rot = link_state.ang.cross(pos_world - link_state.COM)
         vel_lin = link_state.vel
         return vel_rot + vel_lin
 
@@ -4315,14 +4316,20 @@ class RigidSolver(Solver):
         tensor = ti_mat_field_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
-    def get_links_vel(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        # FIXME: This function should be updated to compute the link velocity
-        # expressed at link position in world coordinates.
+    def get_links_vel(
+        self,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com"] = "link_origin",
+        unsafe: bool = False,
+    ):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        self._kernel_get_links_vel(tensor, links_idx, envs_idx)
+        assert ref in ("link_origin", "link_com")
+        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref=int(ref == "link_origin"))
         return _tensor
 
     @ti.kernel
@@ -4331,11 +4338,21 @@ class RigidSolver(Solver):
         tensor: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
+        ref: ti.template(),
     ):
+        # This is the velocity in world coordinates expressed at global com-position.
+        # Must translate to get the velocity expressed at link-position, which is usually
+        # expected by the user and arguably the only quantity that is meaningful for the user.
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            l_state = self.links_state[links_idx[i_l_], envs_idx[i_b_]]
+            xvel = l_state.vel
+            if ti.static(ref == 1):  # link's origin
+                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
+            else:  # link's CoM
+                xvel = xvel + l_state.ang.cross(l_state.i_pos)
             for i in ti.static(range(3)):
-                tensor[i_b_, i_l_, i] = self.links_state[links_idx[i_l_], envs_idx[i_b_]].vel[i]
+                tensor[i_b_, i_l_, i] = xvel[i]
 
     def get_links_ang(self, links_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_mat_field_to_torch(self.links_state.ang, envs_idx, links_idx, transpose=True, unsafe=unsafe)
