@@ -265,20 +265,26 @@ MAX_CACHE_SIZE = 1000
 class FieldMetadata:
     shape: tuple[int, ...]
     dtype: ti._lib.core.DataType
+    mapping_key: Any
 
 
 def _ensure_compiled(self, *args):
-    extracted = []
-    for arg, kernel_arg in zip(args, self.mapper.arguments):
-        anno = kernel_arg.annotation
-        if isinstance(anno, ti.template):
-            subkey = arg
-        else:
-            needs_grad = getattr(arg, "requires_grad", False) if anno.needs_grad is None else anno.needs_grad
-            subkey = (arg.dtype, arg.ndim, needs_grad, anno.boundary)
-        extracted.append(subkey)
-    key = tuple(extracted)
-    field_meta.mapping_key = key
+    # Note that the field is enough to determine the key because all the other arguments depends on it.
+    # This may not be the case anymore if the output is no longer dynamically allocated at some point.
+    field_meta = FIELD_CACHE[id(args[0])]
+    key = field_meta.mapping_key
+    if key is None:
+        extracted = []
+        for arg, kernel_arg in zip(args, self.mapper.arguments):
+            anno = kernel_arg.annotation
+            if isinstance(anno, ti.template):
+                subkey = arg
+            else:
+                needs_grad = getattr(arg, "requires_grad", False) if anno.needs_grad is None else anno.needs_grad
+                subkey = (arg.dtype, arg.ndim, needs_grad, anno.boundary)
+            extracted.append(subkey)
+        key = tuple(extracted)
+        field_meta.mapping_key = key
 
     instance_id = self.mapper.mapping.get(key)
     if instance_id is None:
@@ -372,7 +378,7 @@ def ti_field_to_torch(
     field_id = id(field)
     field_meta = FIELD_CACHE.get(field_id)
     if field_meta is None:
-        field_meta = FieldMetadata(field.shape, field.dtype)
+        field_meta = FieldMetadata(field.shape, field.dtype, None)
         if len(FIELD_CACHE) == MAX_CACHE_SIZE:
             FIELD_CACHE.popitem(last=False)
         FIELD_CACHE[field_id] = field_meta
