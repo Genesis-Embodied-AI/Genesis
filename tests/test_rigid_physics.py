@@ -526,6 +526,54 @@ def test_nonconvex_collision(show_viewer):
         scene.viewer.stop()
 
 
+@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+def test_terrain_generation(show_viewer):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-5.0, -5.0, 10.0),
+            camera_lookat=(5.0, 5.0, 0.0),
+            camera_fov=40,
+        ),
+        show_viewer=show_viewer,
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+        ),
+    )
+    terrain = scene.add_entity(
+        morph=gs.morphs.Terrain(
+            n_subterrains=(2, 2),
+            subterrain_size=(6.0, 6.0),
+            horizontal_scale=0.25,
+            vertical_scale=0.005,
+            subterrain_types=[
+                ["flat_terrain", "random_uniform_terrain"],
+                ["pyramid_sloped_terrain", "discrete_obstacles_terrain"],
+            ],
+        ),
+    )
+    ball = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(1.0, 1.0, 1.0),
+            radius=0.1,
+        ),
+    )
+    scene.build(n_envs=225)
+
+    ball.set_pos(torch.cartesian_prod(*(torch.linspace(1.0, 10.0, 15),) * 2, torch.tensor((0.6,))))
+    for _ in range(400):
+        scene.step()
+
+    # Make sure that at least one ball is as minimum height, and some are signficantly higher
+    height_field = terrain.geoms[0].metadata["height_field"]
+    height_field_min = terrain.terrain_scale[1] * height_field.min()
+    height_field_max = terrain.terrain_scale[1] * height_field.max()
+    height_balls = ball.get_pos().cpu()[:, 2]
+    height_balls_min = height_balls.min() - 0.1
+    height_balls_max = height_balls.max() - 0.1
+    np.testing.assert_allclose(height_balls_min, height_field_min, atol=1e-3)
+    assert height_balls_max - height_balls_min > 0.5 * (height_field_max - height_field_min)
+
+
 @pytest.mark.parametrize("model_name", ["mimic_hinges"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])

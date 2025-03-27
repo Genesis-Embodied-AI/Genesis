@@ -14,6 +14,7 @@ import trimesh
 from PIL import Image
 
 import genesis as gs
+from genesis.ext import fast_simplification
 
 from . import geom as gu
 from .misc import (
@@ -173,7 +174,11 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
 def convex_decompose(mesh, morph):
     if morph.decimate:
         if mesh.vertices.shape[0] > 3:
-            mesh = mesh.simplify_quadric_decimation(morph.decimate_face_num)
+            mesh = trimesh.Trimesh(
+                *fast_simplification.simplify(
+                    mesh.vertices, mesh.faces, target_count=morph.decimate_face_num, lossless=True
+                )
+            )
 
     # compute file name via hashing for caching
     cvx_path = get_cvx_path(mesh.vertices, mesh.faces, morph.coacd_options)
