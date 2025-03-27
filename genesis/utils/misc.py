@@ -6,6 +6,9 @@ import platform
 import random
 import shutil
 import subprocess
+from dataclasses import dataclass
+from collections import OrderedDict
+from typing import Any
 
 import numpy as np
 import psutil
@@ -20,12 +23,6 @@ from taichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
-
-
-ALLOCATE_TENSOR_WARNING = (
-    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
-    "impede performance if it occurs in the critical path of your application."
-)
 
 
 class DeprecationError(Exception):
@@ -255,6 +252,20 @@ def is_approx_multiple(a, b, tol=1e-7):
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
 
+ALLOCATE_TENSOR_WARNING = (
+    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
+    "impede performance if it occurs in the critical path of your application."
+)
+
+FIELD_CACHE: dict[int, "FieldMetadata"] = OrderedDict()
+MAX_CACHE_SIZE = 1000
+
+
+@dataclass
+class FieldMetadata:
+    shape: tuple[int, ...]
+    dtype: ti._lib.core.DataType
+
 
 def _ensure_compiled(self, *args):
     extracted = []
@@ -267,6 +278,7 @@ def _ensure_compiled(self, *args):
             subkey = (arg.dtype, arg.ndim, needs_grad, anno.boundary)
         extracted.append(subkey)
     key = tuple(extracted)
+    field_meta.mapping_key = key
 
     instance_id = self.mapper.mapping.get(key)
     if instance_id is None:
@@ -325,6 +337,7 @@ def _launch_kernel(self, t_kernel, *args):
         raise e from None
 
 
+_to_pytorch_type_fast = functools.lru_cache(maxsize=None)(to_pytorch_type)
 _tensor_to_ext_arr_fast = ti.kernel(tensor_to_ext_arr._primal.func)
 _tensor_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _tensor_to_ext_arr_fast._primal)
 _tensor_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _tensor_to_ext_arr_fast._primal)
@@ -355,8 +368,17 @@ def ti_field_to_torch(
     Returns:
         torch.tensor: The result torch tensor.
     """
+    # Get field metadata
+    field_id = id(field)
+    field_meta = FIELD_CACHE.get(field_id)
+    if field_meta is None:
+        field_meta = FieldMetadata(field.shape, field.dtype)
+        if len(FIELD_CACHE) == MAX_CACHE_SIZE:
+            FIELD_CACHE.popitem(last=False)
+        FIELD_CACHE[field_id] = field_meta
+
     # Make sure that the user-arguments are valid if requested
-    field_shape = field.shape
+    field_shape = field_meta.shape
     is_1D_batch = len(field_shape) == 1
     if not unsafe:
         _field_shape = field_shape[::-1] if transpose else field_shape
@@ -406,14 +428,7 @@ def ti_field_to_torch(
     # Extract field as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.
     # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
-    ti_dtype = field.dtype
-    if ti_dtype == gs.ti_float:
-        tc_dtype = gs.tc_float
-    elif ti_dtype == gs.ti_int:
-        tc_dtype = gs.tc_int
-    else:
-        # Fallback to 'slow' exhaustive mapping. Should never be useful in practice.
-        tc_dtype = to_pytorch_type(ti_dtype)
+    tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
     if isinstance(field, ti.lang.ScalarField):
         out = torch.zeros(size=field_shape, dtype=tc_dtype, device=gs.device)
         _tensor_to_ext_arr_fast(field, out)
