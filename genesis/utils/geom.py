@@ -348,6 +348,36 @@ def get_face_norm(v0, v1, v2):
     return face_norm
 
 
+# def quat_mul_axis(q: jax.Array, axis: jax.Array) -> jax.Array:
+#   """Multiplies a quaternion and an axis.
+
+#   Args:
+#     q: (4,) quaternion (w,x,y,z)
+#     axis: (3,) axis (x,y,z)
+
+#   Returns:
+#     A quaternion q * axis
+#   """
+#   return jp.array([
+#       -q[1] * axis[0] - q[2] * axis[1] - q[3] * axis[2],
+#       q[0] * axis[0] + q[2] * axis[2] - q[3] * axis[1],
+#       q[0] * axis[1] + q[3] * axis[0] - q[1] * axis[2],
+#       q[0] * axis[2] + q[1] * axis[1] - q[2] * axis[0],
+#   ])
+
+
+@ti.func
+def ti_quat_mul_axis(q, axis):
+    return ti.Vector(
+        [
+            -q[1] * axis[0] - q[2] * axis[1] - q[3] * axis[2],
+            q[0] * axis[0] + q[2] * axis[2] - q[3] * axis[1],
+            q[0] * axis[1] + q[3] * axis[0] - q[1] * axis[2],
+            q[0] * axis[2] + q[1] * axis[1] - q[2] * axis[0],
+        ]
+    )
+
+
 # ------------------------------------------------------------------------------------
 # -------------------------------- torch and numpy -----------------------------------
 # ------------------------------------------------------------------------------------

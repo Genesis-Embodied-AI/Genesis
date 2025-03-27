@@ -437,19 +437,19 @@ def check_mujoco_data_consistency(
         print("mj_efc_aref", mj_efc_aref)
         # pos_error * 1e9 [-0.001451283538, 0.003197664356, -0.000794031507]
         # rot_error * 1e9 [-0.000000003469, -0.000000027756, 0.000000000000]
-        # for gs_sidx, mj_sidx in (
-        #     (np.argsort(gs_jac.sum(axis=1)), np.argsort(mj_jac.sum(axis=1))),
-        #     (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
-        # ):
-        #     try:
-        #         np.testing.assert_allclose(gs_jac[gs_sidx][:, gs_dof_idcs], mj_jac[mj_sidx][:, mj_dof_idcs], atol=atol)
-        #         np.testing.assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], atol=atol)
-        #         np.testing.assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], atol=atol)
-        #         break
-        #     except AssertionError:
-        #         pass
-        # else:
-        #     assert False
+        for gs_sidx, mj_sidx in (
+            (np.argsort(gs_jac.sum(axis=1)), np.argsort(mj_jac.sum(axis=1))),
+            (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
+        ):
+            try:
+                np.testing.assert_allclose(gs_jac[gs_sidx][:, gs_dof_idcs], mj_jac[mj_sidx][:, mj_dof_idcs], atol=atol)
+                np.testing.assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], atol=atol)
+                np.testing.assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], atol=atol)
+                break
+            except AssertionError:
+                pass
+        else:
+            assert False
 
         mj_iter = mj_sim.data.solver_niter[0] - 1
         if gs_n_constraints and mj_iter > 0:
@@ -578,7 +578,12 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
 
     # Run the simulation for a few steps
     qvel_prev = None
+    import time
+
     for i in range(num_steps):
+        gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+        time.sleep(0.1)
+        print("==============================================", i, gs_qpos)
         # Make sure that all "dynamic" quantities are matching before stepping
         check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, atol=atol)
 
