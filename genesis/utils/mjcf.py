@@ -169,9 +169,9 @@ def parse_link(mj, i_l, scale):
                             mj.actuator_trntype == mujoco.mjtTrn.mjTRN_TENDON
                         )
                         (i_a,) = np.nonzero(actuator_mask_t)[0]
-                        gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for '{j_info["name"]}'")
+                        gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for `{j_info['name']}`")
         except ValueError:
-            gs.logger.warning(f"(MJCF) Failed to parse actuator for joint '{j_info["name"]}'.")
+            gs.logger.warning(f"(MJCF) Failed to parse actuator for joint `{j_info['name']}`.")
 
         if i_a >= 0:
             if mj.actuator_dyntype[i_a] != mujoco.mjtDyn.mjDYN_NONE:
@@ -220,7 +220,7 @@ def parse_link(mj, i_l, scale):
                     j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                 )
         else:
-            gs.logger.debug(f"(MJCF) No actuator found for joint '{j_info["name"]}'")
+            gs.logger.debug(f"(MJCF) No actuator found for joint `{j_info['name']}`")
 
         j_infos.append(j_info)
 
