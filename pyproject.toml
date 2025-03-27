@@ -11,6 +11,7 @@ description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    "torch",
     "psutil",
     "scikit-image",
     "taichi >= 1.7.2",
