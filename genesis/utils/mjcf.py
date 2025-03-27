@@ -1,4 +1,5 @@
 import os
+from bisect import bisect_right
 
 import numpy as np
 import trimesh
@@ -160,11 +161,11 @@ def parse_link(mj, i_l, scale):
             if actuator_mask_j.any():
                 (i_a,) = np.nonzero(actuator_mask_j)[0]
             else:  # No actuator directly attached to the joint via mechanical transmission
-                # Special case where all tendon are attached to joint
+                # Special case where all tendon are attached to joint. Very common in practice.
                 if (mj.wrap_type == mujoco.mjtWrap.mjWRAP_JOINT).all():
-                    tendon_to_jnts = mj.wrap_objid.reshape((-1, 2))
-                    if i_j in tendon_to_jnts:
-                        (i_t,) = np.nonzero(tendon_to_jnts == i_j)[0]
+                    if i_j in mj.wrap_objid:
+                        (m,) = np.nonzero(mj.wrap_objid == i_j)[0]
+                        i_t = bisect_right(np.cumsum(mj.tendon_num), m)
                         actuator_mask_t = (mj.actuator_trnid[:, 0] == i_t) & (
                             mj.actuator_trntype == mujoco.mjtTrn.mjTRN_TENDON
                         )
