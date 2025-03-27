@@ -112,6 +112,22 @@ def _build_chain_capsule_hinge(asset_tmp_path, enable_mesh):
 
 
 @pytest.fixture(scope="session")
+def two_aligned_hinges():
+    mjcf = ET.Element("mujoco", model="two_aligned_hinges")
+    ET.SubElement(mjcf, "option", timestep="0.05")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    link0 = ET.SubElement(worldbody, "body", name="body0")
+    ET.SubElement(link0, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+    ET.SubElement(link0, "joint", type="hinge", name="joint0", axis="0 0 1")
+    link1 = ET.SubElement(link0, "body", name="body1", pos="0.5 0 0")
+    ET.SubElement(link1, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+    ET.SubElement(link1, "joint", type="hinge", name="joint1", axis="0 0 1")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def chain_capsule_hinge_mesh(asset_tmp_path):
     return _build_chain_capsule_hinge(asset_tmp_path, enable_mesh=True)
 
@@ -135,6 +151,70 @@ def test_box_plan_dynamics(gs_sim, mj_sim):
     qpos = np.concatenate((cube_pos, cube_quat))
     qvel = np.random.rand(6) * 0.2
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150)
+
+
+@pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_link_velocity(gs_sim):
+    # Check the velocity for a few "easy" special cases
+    init_simulators(gs_sim, qvel=np.array([0.0, 1.0]))
+    np.testing.assert_allclose(gs_sim.rigid_solver.links_state.vel.to_numpy(), 0, atol=1e-9)
+
+    init_simulators(gs_sim, qvel=np.array([1.0, 0.0]))
+    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    np.testing.assert_allclose(cvel_0, np.array([0.0, 0.5, 0.0]), atol=1e-9)
+    np.testing.assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), atol=1e-9)
+
+    init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
+    COM = gs_sim.rigid_solver.links_state[0, 0].COM
+    np.testing.assert_allclose(COM, np.array([0.375, 0.125, 0.0]), atol=1e-9)
+    xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
+    np.testing.assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), atol=1e-9)
+    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    np.testing.assert_allclose(cvel_0, 0, atol=1e-9)
+    np.testing.assert_allclose(cvel_1, np.array([-1.2 * (0.125 - 0.0), 1.2 * (0.375 - 0.5), 0.0]), atol=1e-9)
+
+    # Check that the velocity is valid for a random configuration
+    init_simulators(gs_sim, qpos=np.array([-0.7, 0.2]), qvel=np.array([3.0, 13.0]))
+    xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
+    theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    np.testing.assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), atol=1e-9)
+    np.testing.assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), atol=1e-9)
+    COM = gs_sim.rigid_solver.links_state[0, 0].COM
+    COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
+    COM_1 = np.array(
+        [
+            0.5 * np.cos(theta_0) + 0.25 * np.cos(theta_0 + theta_1),
+            0.5 * np.sin(theta_0) + 0.25 * np.sin(theta_0 + theta_1),
+            0.0,
+        ]
+    )
+    np.testing.assert_allclose(COM, 0.5 * (COM_0 + COM_1), atol=1e-9)
+
+    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    omega_0, omega_1 = gs_sim.rigid_solver.links_state.ang.to_numpy()[:, 0, 2]
+    np.testing.assert_allclose(omega_0, 3.0, atol=1e-9)
+    np.testing.assert_allclose(omega_1 - omega_0, 13.0, atol=1e-9)
+    cvel_0_ = omega_0 * np.array([-COM[1], COM[0], 0.0])
+    np.testing.assert_allclose(cvel_0, cvel_0_, atol=1e-9)
+    cvel_1_ = cvel_0 + (omega_1 - omega_0) * np.array([xanchor[1] - COM[1], COM[0] - xanchor[0], 0.0])
+    np.testing.assert_allclose(cvel_1, cvel_1_, atol=1e-9)
+
+    xpos_0, xpos_1 = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
+    np.testing.assert_allclose(xpos_0, 0.0, atol=1e-9)
+    np.testing.assert_allclose(xpos_1, xanchor, atol=1e-9)
+    xvel_0, xvel_1 = gs_sim.rigid_solver.get_links_vel()
+    np.testing.assert_allclose(xvel_0, 0.0, atol=1e-9)
+    xvel_1_ = omega_0 * np.array([-xpos_1[1], xpos_1[0], 0.0])
+    np.testing.assert_allclose(xvel_1, xvel_1_, atol=1e-9)
+    civel_0, civel_1 = gs_sim.rigid_solver.get_links_vel(ref="link_com")
+    civel_0_ = omega_0 * np.array([-COM_0[1], COM_0[0], 0.0])
+    np.testing.assert_allclose(civel_0, civel_0_, atol=1e-9)
+    civel_1_ = omega_0 * np.array([-COM_1[1], COM_1[0], 0.0]) + (omega_1 - omega_0) * np.array(
+        [xanchor[1] - COM_1[1], COM_1[0] - xanchor[0], 0.0]
+    )
+    np.testing.assert_allclose(civel_1, civel_1_, atol=1e-9)
 
 
 @pytest.mark.parametrize("model_name", ["box_box"])
