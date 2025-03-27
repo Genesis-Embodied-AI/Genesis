@@ -264,30 +264,6 @@ class RigidEntity(Entity):
         )
 
     def _load_terrain(self, morph, surface):
-        link, (joint,) = self._add_by_info(
-            l_info=dict(
-                name="baselink",
-                pos=np.array(morph.pos),
-                quat=np.array(morph.quat),
-                inertial_pos=None,
-                inertial_quat=gu.identity_quat(),
-                inertial_i=None,
-                inertial_mass=None,
-                parent_idx=-1,
-                invweight=None,
-            ),
-            j_infos=[
-                dict(
-                    name="joint_baselink",
-                    n_qs=0,
-                    n_dofs=0,
-                    type=gs.JOINT_TYPE.FIXED,
-                )
-            ],
-            morph=morph,
-            surface=surface,
-        )
-
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array([morph.horizontal_scale, morph.vertical_scale])
 
@@ -310,6 +286,31 @@ class RigidEntity(Entity):
                     sol_params=gu.default_solver_params(n=1)[0],
                 )
             )
+
+        link, (joint,) = self._add_by_info(
+            l_info=dict(
+                name="baselink",
+                pos=np.array(morph.pos),
+                quat=np.array(morph.quat),
+                inertial_pos=None,
+                inertial_quat=gu.identity_quat(),
+                inertial_i=None,
+                inertial_mass=None,
+                parent_idx=-1,
+                invweight=None,
+            ),
+            j_infos=[
+                dict(
+                    name="joint_baselink",
+                    n_qs=0,
+                    n_dofs=0,
+                    type=gs.JOINT_TYPE.FIXED,
+                )
+            ],
+            g_infos=g_infos,
+            morph=morph,
+            surface=surface,
+        )
 
     def _load_MJCF(self, morph, surface):
         mj = mju.parse_mjcf(morph.file)

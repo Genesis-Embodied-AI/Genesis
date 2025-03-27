@@ -57,16 +57,7 @@ def main():
     ########################## build ##########################
     scene.build(n_envs=100)
 
-    ball.set_pos(
-        torch.cat(
-            [
-                torch.range(1, 10, 1).unsqueeze(1).repeat(1, 10).unsqueeze(-1),
-                torch.range(1, 10, 1).unsqueeze(0).repeat(10, 1).unsqueeze(-1),
-                torch.ones(10, 10, 1),
-            ],
-            dim=-1,
-        ).reshape(-1, 3)
-    )
+    ball.set_pos(torch.cartesian_prod(*(torch.arange(1, 11),) * 2, torch.tensor((1,))))
 
     height_field = terrain.geoms[0].metadata["height_field"]
     rows = horizontal_scale * torch.range(0, height_field.shape[0] - 1, 1).unsqueeze(1).repeat(
@@ -80,7 +71,6 @@ def main():
     poss = torch.cat([rows, cols, heights], dim=-1).reshape(-1, 3)
     scene.draw_debug_spheres(poss=poss, radius=0.05, color=(0, 0, 1, 0.7))
     for _ in range(1000):
-        time.sleep(0.5)
         scene.step()
 
 
