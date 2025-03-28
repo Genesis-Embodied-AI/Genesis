@@ -24,7 +24,7 @@ class ConstraintSolver:
         self.len_constraints = (
             5 * self._collider._max_contact_pairs
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
-            + self._solver.n_equalities * 3
+            + self._solver.n_equalities * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
 
@@ -356,6 +356,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_weld(self, i_b, i_e):
+        # TODO: sparse mode
         # Get equality info for this constraint
         eq_info = self._solver.equality_info[i_e]
         link1_idx = eq_info.eq_obj1id
@@ -386,8 +387,6 @@ class ConstraintSolver:
         )
 
         pos_error = global_anchor1 - global_anchor2
-        print("global_anchor1", global_anchor1)
-        print("global_anchor2", global_anchor2)
 
         # Compute orientation error.
         # For weld: compute q = body1_quat * relpose, then error = (inv(body2_quat) * q)
@@ -401,9 +400,6 @@ class ConstraintSolver:
 
         all_error = gs.ti_vec6([pos_error[0], pos_error[1], pos_error[2], rot_error[0], rot_error[1], rot_error[2]])
         pos_imp = all_error.norm()
-
-        print("pos_error * 1e9", pos_error * 1e9)
-        print("rot_error * 1e9", rot_error * 1e9)
 
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
         link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
@@ -436,20 +432,16 @@ class ConstraintSolver:
                 # (Assuming similar structure to equality_connect.)
                 while link > -1:
                     link_maybe_batch = [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
-                    # con_n_relevant_dofs should be defined before use; here we initialize it for each row.
 
                     for i_d_ in range(self._solver.links_info[link_maybe_batch].n_dofs):
                         i_d = self._solver.links_info[link_maybe_batch].dof_end - 1 - i_d_
                         cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang
                         cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
-                        # For position, we transform the motion induced by this dof.
                         t_quat = gu.ti_identity_quat()
                         t_pos = pos_anchor - self._solver.links_state[link, i_b].root_COM
-                        # Transform the angular dof contribution to a linear velocity.
                         ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                         diff = sign * vel
-                        # Accumulate the contribution for component i.
                         jac = diff[i]
                         jac_qvel += jac * self._solver.dofs_state[i_d, i_b].vel
                         self.jac[n_con, i_d, i_b] += jac
@@ -457,13 +449,11 @@ class ConstraintSolver:
                         if ti.static(self.sparse_solve):
                             self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
                             con_n_relevant_dofs += 1
-                    # Move up the kinematic tree.
                     link = self._solver.links_info[link_maybe_batch].parent_idx
 
             if ti.static(self.sparse_solve):
                 self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
 
-            # Compute constraint error magnitude for this component.
             err_val = pos_error[i]
             imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, err_val)
             diag = invweight * (1.0 - imp) / (imp + gs.EPS)
@@ -473,14 +463,10 @@ class ConstraintSolver:
 
         # --- Orientation part (next 3 constraints) ---
 
-        ## compute basic jac diff
         n_con = ti.atomic_add(self.n_constraints[i_b], 3)
         ti.atomic_add(self.n_constraints_equality[i_b], 3)
         con_n_relevant_dofs = 0
         for i_con in range(n_con, n_con + 3):
-            # for i_d_ in range(self.jac_n_relevant_dofs[i_con, i_b]):
-            #     i_d = self.jac_relevant_dofs[i_con, i_d_, i_b]
-            #     self.jac[i_con, i_d, i_b] = gs.ti_float(0.0)
             for i_d in range(self._solver.n_dofs):
                 self.jac[i_con, i_d, i_b] = gs.ti_float(0.0)
 
@@ -498,116 +484,37 @@ class ConstraintSolver:
 
                     for i_con in range(n_con, n_con + 3):
                         self.jac[i_con, i_d, i_b] = self.jac[i_con, i_d, i_b] + jac[i_con - n_con]
-                        # self.jac_relevant_dofs[i_con, con_n_relevant_dofs, i_b] = i_d
-                    # con_n_relevant_dofs = con_n_relevant_dofs + 1
                 link = self._solver.links_info[link_maybe_batch].parent_idx
 
         jac_qvel = ti.Vector([0.0, 0.0, 0.0])
         for i_d in range(self._solver.n_dofs):
-            # mju_mulQuatAxis(quat2, quat1, axis);    // quat2 = neg(q1)*(jac0-jac1)
-            # mju_mulQuat(quat3, quat2, quat);        // quat3 = neg(q1)*(jac0-jac1)*q0*relpose
+            # quat2 = neg(q1)*(jac0-jac1)
+            # quat3 = neg(q1)*(jac0-jac1)*q0*relpose
             jac_diff_r = ti.Vector(
                 [self.jac[n_con, i_d, i_b], self.jac[n_con + 1, i_d, i_b], self.jac[n_con + 2, i_d, i_b]]
             )
             quat2 = gu.ti_quat_mul_axis(inv_quat_body2, jac_diff_r)
             quat3 = gu.ti_quat_mul(quat2, q)
-            print("---------", i_d)
-            print("axis", jac_diff_r)
-            print("quat", q)
-            print("quat1", inv_quat_body2)
-            print("quat2", quat2)
-            print("quat3", quat3)
-            # print("gs i_d", i_d, jac_diff_r, q, quat2, quat3)
+
             for i_con in range(n_con, n_con + 3):
                 self.jac[i_con, i_d, i_b] = 0.5 * quat3[i_con - n_con + 1]
-                print("jac", self.jac[i_con, i_d, i_b])
                 self.jac[i_con, i_d, i_b] = self.jac[i_con, i_d, i_b] * torquescale
                 jac_qvel[i_con - n_con] = (
                     jac_qvel[i_con - n_con] + self.jac[i_con, i_d, i_b] * self._solver.dofs_state[i_d, i_b].vel
                 )
-                # self.jac_relevant_dofs[i_con, con_n_relevant_dofs, i_b] = i_d
 
-        # for i_con in range(n_con, n_con + 3):
-        #     self.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
-        # Compute rotational error for component i.
+        for i_con in range(n_con, n_con + 3):
+            self.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
 
         for i_con in range(n_con, n_con + 3):
             err_val = rot_error[i_con - n_con]
             imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], err_val)
-            print("gs", aref, jac_qvel[i_con - n_con], err_val)
-            # TODO debug
-            invweight = 1.079253836055070405e-04
+            # TODO should use rotational invweight
             diag = invweight * (1.0 - imp) / (imp + gs.EPS)
 
             self.diag[i_con, i_b] = diag
             self.aref[i_con, i_b] = aref
             self.efc_D[i_con, i_b] = 1.0 / ti.max(diag, gs.EPS)
-
-            # for debug
-            # self.efc_D[i_con, i_b] = 83390.94751701
-            # self.diag[i_con, i_b] = 1.0 / self.efc_D[i_con, i_b]
-
-        # ###########
-        # for i in range(3):
-        #     n_con = ti.atomic_add(self.n_constraints[i_b], 1)
-        #     ti.atomic_add(self.n_constraints_equality[i_b], 1)
-
-        #     # Zero the jacobian row.
-        #     if ti.static(self.sparse_solve):
-        #         for i_d_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
-        #             i_d = self.jac_relevant_dofs[n_con, i_d_, i_b]
-        #             self.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
-        #     else:
-        #         for i_d in range(self._solver.n_dofs):
-        #             self.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
-
-        #     jac_qvel = gs.ti_float(0.0)
-        #     # Loop over the two bodies for rotational contributions.
-        #     for i_ab in range(2):
-        #         sign = gs.ti_float(1.0) if i_ab == 0 else gs.ti_float(-1.0)
-        #         link = link1_idx if i_ab == 0 else link2_idx
-        #         # For rotation, we use the body’s orientation (here we use its quaternion)
-        #         # and a suitable reference frame. (You may need a more detailed implementation.)
-        #         while link > -1:
-        #             link_maybe_batch = [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
-        #             con_n_relevant_dofs = 0
-        #             for i_d_ in range(self._solver.links_info[link_maybe_batch].n_dofs):
-        #                 i_d = self._solver.links_info[link_maybe_batch].dof_end - 1 - i_d_
-        #                 cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang * torquescale
-
-        #                 quat_mul_axis = gu.ti_quat_mul_axis(cdof_ang, inv_quat_body2)
-        #                 jac_fn = gu.ti_quat_mul(quat_mul_axis, q)
-        #                 jacdifr = sign * ti.Vector([jac_fn[1], jac_fn[2], jac_fn[3]])
-
-        #                 # Here we assume 'ang' is a vector of 3 components representing the rotational influence.
-        #                 # diff = sign * ang
-
-        #                 # Apply factor 0.5 to mimic the MuJoCo correction.
-        #                 # For rotational jacobian, we need to transform the dof’s contribution into the error space.
-        #                 # Here we use a similar transformation as for position but then apply a 0.5 factor.
-        #                 # correct rotation Jacobian: 0.5 * neg(q1) * (jac0-jac1) * q0 * relpose
-        #                 jac = jacdifr[i] * 0.5
-
-        #                 print("jac", n_con, i_d, jac, jacdifr[i])
-        #                 jac_qvel += jac * self._solver.dofs_state[i_d, i_b].vel
-        #                 self.jac[n_con, i_d, i_b] += jac
-
-        #                 if ti.static(self.sparse_solve):
-        #                     self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-        #                     con_n_relevant_dofs += 1
-        #             link = self._solver.links_info[link_maybe_batch].parent_idx
-
-        #         if ti.static(self.sparse_solve):
-        #             self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-
-        #     # Compute rotational error for component i.
-        #     err_val = rot_error[i]
-        #     imp, aref = gu.imp_aref(sol_params, -err_val, jac_qvel, err_val)
-        #     print("gs", aref, jac_qvel, err_val)
-        #     diag = invweight * (1.0 - imp) / (imp + gs.EPS)
-        #     self.diag[n_con, i_b] = diag
-        #     self.aref[n_con, i_b] = aref
-        #     self.efc_D[n_con, i_b] = 1.0 / ti.max(diag, gs.EPS)
 
     @ti.kernel
     def add_joint_limit_constraints(self):

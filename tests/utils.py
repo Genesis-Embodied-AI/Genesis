@@ -582,7 +582,6 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
 
     for i in range(num_steps):
         gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-        time.sleep(0.1)
         print("==============================================", i, gs_qpos)
         # Make sure that all "dynamic" quantities are matching before stepping
         check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, atol=atol)
