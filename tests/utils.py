@@ -507,6 +507,10 @@ def check_mujoco_data_consistency(
     mujoco.mj_fwdVelocity(mj_sim.model, mj_sim.data)
     gs_sim.rigid_solver._kernel_forward_kinematics_links_geoms(np.array([0]))
 
+    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[0, 0]
+    mj_com = mj_sim.data.subtree_com[0]
+    np.testing.assert_allclose(gs_com, mj_com, atol=atol)
+
     gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[:, 0]
     mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[0]
     np.testing.assert_allclose(gs_xipos[gs_body_idcs], mj_xipos[mj_body_idcs], atol=atol)
@@ -522,6 +526,8 @@ def check_mujoco_data_consistency(
     np.testing.assert_allclose(gs_xmat[gs_body_idcs], mj_xmat[mj_body_idcs], atol=atol)
 
     gs_cd_vel = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
+    gs_cd_vel_ = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    np.testing.assert_allclose(gs_cd_vel, gs_cd_vel_, atol=atol)
     mj_cd_vel = mj_sim.data.cvel[:, 3:]
     np.testing.assert_allclose(gs_cd_vel[gs_body_idcs], mj_cd_vel[mj_body_idcs], atol=atol)
     gs_cd_ang = gs_sim.rigid_solver.links_state.cd_ang.to_numpy()[:, 0]

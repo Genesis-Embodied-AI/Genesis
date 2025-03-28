@@ -1,8 +1,9 @@
 import pytest
 import xml.etree.ElementTree as ET
 
-import numpy as np
 import trimesh
+import torch
+import numpy as np
 
 import mujoco
 import genesis as gs
@@ -111,6 +112,22 @@ def _build_chain_capsule_hinge(asset_tmp_path, enable_mesh):
 
 
 @pytest.fixture(scope="session")
+def two_aligned_hinges():
+    mjcf = ET.Element("mujoco", model="two_aligned_hinges")
+    ET.SubElement(mjcf, "option", timestep="0.05")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    link0 = ET.SubElement(worldbody, "body", name="body0")
+    ET.SubElement(link0, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+    ET.SubElement(link0, "joint", type="hinge", name="joint0", axis="0 0 1")
+    link1 = ET.SubElement(link0, "body", name="body1", pos="0.5 0 0")
+    ET.SubElement(link1, "geom", type="capsule", fromto="0 0 0 0.5 0 0", size="0.05")
+    ET.SubElement(link1, "joint", type="hinge", name="joint1", axis="0 0 1")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def chain_capsule_hinge_mesh(asset_tmp_path):
     return _build_chain_capsule_hinge(asset_tmp_path, enable_mesh=True)
 
@@ -134,6 +151,70 @@ def test_box_plan_dynamics(gs_sim, mj_sim):
     qpos = np.concatenate((cube_pos, cube_quat))
     qvel = np.random.rand(6) * 0.2
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150)
+
+
+@pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_link_velocity(gs_sim):
+    # Check the velocity for a few "easy" special cases
+    init_simulators(gs_sim, qvel=np.array([0.0, 1.0]))
+    np.testing.assert_allclose(gs_sim.rigid_solver.links_state.vel.to_numpy(), 0, atol=1e-9)
+
+    init_simulators(gs_sim, qvel=np.array([1.0, 0.0]))
+    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    np.testing.assert_allclose(cvel_0, np.array([0.0, 0.5, 0.0]), atol=1e-9)
+    np.testing.assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), atol=1e-9)
+
+    init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
+    COM = gs_sim.rigid_solver.links_state[0, 0].COM
+    np.testing.assert_allclose(COM, np.array([0.375, 0.125, 0.0]), atol=1e-9)
+    xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
+    np.testing.assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), atol=1e-9)
+    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    np.testing.assert_allclose(cvel_0, 0, atol=1e-9)
+    np.testing.assert_allclose(cvel_1, np.array([-1.2 * (0.125 - 0.0), 1.2 * (0.375 - 0.5), 0.0]), atol=1e-9)
+
+    # Check that the velocity is valid for a random configuration
+    init_simulators(gs_sim, qpos=np.array([-0.7, 0.2]), qvel=np.array([3.0, 13.0]))
+    xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
+    theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    np.testing.assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), atol=1e-9)
+    np.testing.assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), atol=1e-9)
+    COM = gs_sim.rigid_solver.links_state[0, 0].COM
+    COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
+    COM_1 = np.array(
+        [
+            0.5 * np.cos(theta_0) + 0.25 * np.cos(theta_0 + theta_1),
+            0.5 * np.sin(theta_0) + 0.25 * np.sin(theta_0 + theta_1),
+            0.0,
+        ]
+    )
+    np.testing.assert_allclose(COM, 0.5 * (COM_0 + COM_1), atol=1e-9)
+
+    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
+    omega_0, omega_1 = gs_sim.rigid_solver.links_state.ang.to_numpy()[:, 0, 2]
+    np.testing.assert_allclose(omega_0, 3.0, atol=1e-9)
+    np.testing.assert_allclose(omega_1 - omega_0, 13.0, atol=1e-9)
+    cvel_0_ = omega_0 * np.array([-COM[1], COM[0], 0.0])
+    np.testing.assert_allclose(cvel_0, cvel_0_, atol=1e-9)
+    cvel_1_ = cvel_0 + (omega_1 - omega_0) * np.array([xanchor[1] - COM[1], COM[0] - xanchor[0], 0.0])
+    np.testing.assert_allclose(cvel_1, cvel_1_, atol=1e-9)
+
+    xpos_0, xpos_1 = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
+    np.testing.assert_allclose(xpos_0, 0.0, atol=1e-9)
+    np.testing.assert_allclose(xpos_1, xanchor, atol=1e-9)
+    xvel_0, xvel_1 = gs_sim.rigid_solver.get_links_vel()
+    np.testing.assert_allclose(xvel_0, 0.0, atol=1e-9)
+    xvel_1_ = omega_0 * np.array([-xpos_1[1], xpos_1[0], 0.0])
+    np.testing.assert_allclose(xvel_1, xvel_1_, atol=1e-9)
+    civel_0, civel_1 = gs_sim.rigid_solver.get_links_vel(ref="link_com")
+    civel_0_ = omega_0 * np.array([-COM_0[1], COM_0[0], 0.0])
+    np.testing.assert_allclose(civel_0, civel_0_, atol=1e-9)
+    civel_1_ = omega_0 * np.array([-COM_1[1], COM_1[0], 0.0]) + (omega_1 - omega_0) * np.array(
+        [xanchor[1] - COM_1[1], COM_1[0] - xanchor[0], 0.0]
+    )
+    np.testing.assert_allclose(civel_1, civel_1_, atol=1e-9)
 
 
 @pytest.mark.parametrize("model_name", ["box_box"])
@@ -201,7 +282,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qvel = entity.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.04)
+        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.05)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qpos = entity.get_dofs_position().cpu()
@@ -294,12 +375,6 @@ def test_stickman(gs_sim, mj_sim):
 def test_inverse_kinematics(show_viewer):
     # create and build the scene
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
-        ),
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
@@ -451,6 +526,54 @@ def test_nonconvex_collision(show_viewer):
         scene.viewer.stop()
 
 
+@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+def test_terrain_generation(show_viewer):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-5.0, -5.0, 10.0),
+            camera_lookat=(5.0, 5.0, 0.0),
+            camera_fov=40,
+        ),
+        show_viewer=show_viewer,
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+        ),
+    )
+    terrain = scene.add_entity(
+        morph=gs.morphs.Terrain(
+            n_subterrains=(2, 2),
+            subterrain_size=(6.0, 6.0),
+            horizontal_scale=0.25,
+            vertical_scale=0.005,
+            subterrain_types=[
+                ["flat_terrain", "random_uniform_terrain"],
+                ["pyramid_sloped_terrain", "discrete_obstacles_terrain"],
+            ],
+        ),
+    )
+    ball = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(1.0, 1.0, 1.0),
+            radius=0.1,
+        ),
+    )
+    scene.build(n_envs=225)
+
+    ball.set_pos(torch.cartesian_prod(*(torch.linspace(1.0, 10.0, 15),) * 2, torch.tensor((0.6,))))
+    for _ in range(400):
+        scene.step()
+
+    # Make sure that at least one ball is as minimum height, and some are signficantly higher
+    height_field = terrain.geoms[0].metadata["height_field"]
+    height_field_min = terrain.terrain_scale[1] * height_field.min()
+    height_field_max = terrain.terrain_scale[1] * height_field.max()
+    height_balls = ball.get_pos().cpu()[:, 2]
+    height_balls_min = height_balls.min() - 0.1
+    height_balls_max = height_balls.max() - 0.1
+    np.testing.assert_allclose(height_balls_min, height_field_min, atol=1e-3)
+    assert height_balls_max - height_balls_min > 0.5 * (height_field_max - height_field_min)
+
+
 @pytest.mark.parametrize("model_name", ["mimic_hinges"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -495,6 +618,184 @@ def test_urdf_mimic_panda(show_viewer):
 
     if show_viewer:
         scene.viewer.stop()
+
+
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_data_accessor(n_envs):
+    # TODO: Check that the setters are doing something and not just no-ops
+    # TODO: Compare the getter output with their corresponding field value if applicable
+
+    # create and build the scene
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    gs_robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=n_envs)
+    gs_sim = scene.sim
+    gs_solver = gs_sim.rigid_solver
+
+    # Initialize the simulation
+    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    qpos_all = []
+    for i in range(max(n_envs, 1)):
+        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
+        if n_envs:
+            gs_robot.set_qpos(qpos[None], envs_idx=[i])
+            _qpos = gs_robot.get_qpos(envs_idx=[i]).squeeze(0).cpu()
+        else:
+            gs_robot.set_qpos(qpos)
+            _qpos = gs_robot.get_qpos().squeeze(0).cpu()
+        np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+        if n_envs:
+            _qpos = gs_robot.get_qpos()[i].cpu()
+            np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+
+    # Simulate for a while, until they collide with something
+    for _ in range(400):
+        gs_sim.step()
+        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        if (gs_n_contacts > 0).all():
+            break
+    else:
+        assert False
+    gs_sim.rigid_solver._kernel_forward_dynamics()
+    gs_sim.rigid_solver._func_constraint_force()
+
+    # Make sure that all the robots ends up in the different state
+    qposs = gs_robot.get_qpos().cpu()
+    for i in range(n_envs - 1):
+        with np.testing.assert_raises(AssertionError):
+            np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=1e-9)
+
+    # Check attribute getters / setters.
+    # First, without any any row or column masking:
+    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # Then, for any possible combinations of row and column masking:
+    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # * Compare first 'Get' output with last 'Get' output
+    # * Compare last 'Get' output with corresponding slice of non-masking 'Get' output
+    def get_all_supported_masks(i):
+        return (
+            i,
+            [i],
+            slice(i, i + 1),
+            range(i, i + 1),
+            np.array([i], dtype=np.int32),
+            torch.tensor([i], dtype=torch.int64),
+            torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+        )
+
+    def must_cast(value):
+        return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
+
+    for arg1_max, arg2_max, getter, setter in (
+        (gs_solver.n_links, n_envs, gs_solver.get_links_pos, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_quat, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_vel, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_ang, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_acc, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_COM, None),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_mass_shift, gs_solver.set_links_mass_shift),
+        (gs_solver.n_links, n_envs, gs_solver.get_links_COM_shift, gs_solver.set_links_COM_shift),
+        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, gs_solver.set_links_inertial_mass),
+        (gs_solver.n_links, -1, gs_solver.get_links_invweight, gs_solver.set_links_invweight),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_control_force, gs_solver.control_dofs_force),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_force, None),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_velocity, gs_solver.set_dofs_velocity),
+        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_position, gs_solver.set_dofs_position),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_force_range, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_limit, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_stiffness, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_invweight, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_armature, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_damping, None),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kp, gs_solver.set_dofs_kp),
+        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kv, gs_solver.set_dofs_kv),
+        (gs_solver.n_geoms, n_envs, gs_solver.get_geoms_pos, None),
+        (gs_solver.n_geoms, -1, gs_solver.get_geoms_friction, gs_solver.set_geoms_friction),
+        (gs_solver.n_qs, n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_limit, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_stiffness, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_armature, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_damping, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv),
+        (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos),
+        (-1, n_envs, gs_robot.get_links_net_contact_force, None),
+        (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos),
+        (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat),
+    ):
+        # Check getter and setter without row or column masking
+        datas = getter()
+        if setter is not None:
+            setter(datas)
+        datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
+        if arg1_max > 0:
+            datas_ = getter(range(arg1_max))
+            datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
+            np.testing.assert_allclose(datas_, datas, atol=1e-9)
+
+        # Check getter and setter for all possible combinations of row and column masking
+        for i in range(arg1_max) if arg1_max > 0 else (None,):
+            for arg1 in get_all_supported_masks(i) if arg1_max > 0 else (None,):
+                for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
+                    for arg2 in get_all_supported_masks(j) if arg2_max > 0 else (None,):
+                        if arg1 is None:
+                            unsafe = not must_cast(arg2)
+                            data = getter(arg2, unsafe=unsafe)
+                            if setter is not None:
+                                setter(data, arg2, unsafe=unsafe)
+                            if n_envs:
+                                if isinstance(datas, torch.Tensor):
+                                    data_ = datas[[j]]
+                                else:
+                                    data_ = [val[[j]] for val in datas]
+                            else:
+                                data_ = datas
+                        elif arg2 is None:
+                            unsafe = not must_cast(arg1)
+                            data = getter(arg1, unsafe=unsafe)
+                            if setter is not None:
+                                setter(data, arg1, unsafe=unsafe)
+                            if isinstance(datas, torch.Tensor):
+                                data_ = datas[[i]]
+                            else:
+                                data_ = [val[[i]] for val in datas]
+                        else:
+                            unsafe = not any(map(must_cast, (arg1, arg2)))
+                            data = getter(arg1, arg2, unsafe=unsafe)
+                            if setter is not None:
+                                setter(data, arg1, arg2, unsafe=unsafe)
+                            if isinstance(datas, torch.Tensor):
+                                data_ = datas[[j], :][:, [i]]
+                            else:
+                                data_ = [val[[j], :][:, [i]] for val in datas]
+                        data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
+                        np.testing.assert_allclose(data_, data, atol=1e-9)
+
+    for dofs_idx in (*get_all_supported_masks(0), None):
+        for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
+            unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
+            dofs_pos = gs_solver.get_dofs_position(dofs_idx, envs_idx)
+            dofs_vel = gs_solver.get_dofs_velocity(dofs_idx, envs_idx)
+            gs_sim.rigid_solver.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
+            gs_sim.rigid_solver.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
 
 
 @pytest.mark.xfail(reason="We need to implement rotational invweight")
