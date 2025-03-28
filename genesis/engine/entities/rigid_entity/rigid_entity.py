@@ -2,6 +2,7 @@ from itertools import chain
 from typing import Literal
 
 import numpy as np
+import trimesh
 import taichi as ti
 import torch
 
@@ -86,19 +87,12 @@ class RigidEntity(Entity):
 
         if isinstance(self._morph, gs.morphs.Mesh):
             self._load_mesh(self._morph, self._surface)
-
         elif isinstance(self._morph, gs.morphs.MJCF):
             self._load_MJCF(self._morph, self._surface)
-
-        elif isinstance(self._morph, gs.morphs.URDF):
+        elif isinstance(self._morph, (gs.morphs.URDF, gs.morphs.Drone)):
             self._load_URDF(self._morph, self._surface)
-
-        elif isinstance(self._morph, gs.morphs.Drone):
-            self._load_URDF(self._morph, self._surface)
-
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
-
         elif isinstance(self._morph, gs.morphs.Terrain):
             self._load_terrain(self._morph, self._surface)
         else:
@@ -214,19 +208,29 @@ class RigidEntity(Entity):
             n_dofs = 6
             init_qpos = np.concatenate([morph.pos, morph.quat])
 
-        vmeshes, meshes = mu.parse_visual_and_col_mesh(morph, surface)
+        # Load meshes
+        meshes = gs.Mesh.from_morph_surface(morph, surface)
 
         g_infos = []
         if morph.visualization:
-            for vmesh in vmeshes:
+            for mesh in meshes:
                 g_infos.append(
                     dict(
                         contype=0,
                         conaffinity=0,
-                        vmesh=vmesh,
+                        vmesh=mesh,
                     )
                 )
         if morph.collision:
+            # Merge them as a single one if requested
+            if morph.merge_submeshes_for_collision and len(meshes) > 1:
+                tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
+                mesh = gs.Mesh.from_trimesh(
+                    mesh=tmesh,
+                    surface=gs.surfaces.Collision(),
+                )
+                meshes = (mesh,)
+
             for mesh in meshes:
                 g_infos.append(
                     dict(
@@ -322,7 +326,7 @@ class RigidEntity(Entity):
             gs.logger.warning("(MJCF) Tendon not supported")
 
         # Parse all geometries grouped by parent joint (or world)
-        world_g_info, *links_g_infos = mju.parse_geoms(mj, morph.scale, morph.convexify, surface, morph.file)
+        world_g_info, *links_g_infos = mju.parse_geoms(mj, morph.scale, surface, morph.file)
 
         # Parse all bodies (links and joints)
         (world_l_info, *l_infos), (world_j_info, *links_j_infos) = mju.parse_links(mj, morph.scale)
@@ -563,19 +567,34 @@ class RigidEntity(Entity):
                 friction = gu.default_friction()
             g_info.setdefault("pos", gu.zero_pos())
             g_info.setdefault("quat", gu.identity_quat())
+
             if morph.collision and is_col:
-                link._add_geom(
-                    mesh=g_info["mesh"],
-                    init_pos=g_info["pos"],
-                    init_quat=g_info["quat"],
-                    type=g_info["type"],
-                    friction=friction,
-                    sol_params=g_info["sol_params"],
-                    data=g_info.get("data"),
-                    needs_coup=self.material.needs_coup,
-                    contype=g_info["contype"],
-                    conaffinity=g_info["conaffinity"],
-                )
+                if isinstance(morph, gs.options.morphs.FileMorph):
+                    meshes = mu.postprocess_mesh(
+                        g_info["mesh"],
+                        morph.decimate,
+                        morph.decimate_face_num,
+                        morph.convexify,
+                        morph.decompose_error_threshold,
+                        morph.coacd_options,
+                    )
+                else:
+                    meshes = (g_info["mesh"],)
+
+                for mesh in meshes:
+                    link._add_geom(
+                        mesh=mesh,
+                        init_pos=g_info["pos"],
+                        init_quat=g_info["quat"],
+                        type=g_info["type"],
+                        friction=friction,
+                        sol_params=g_info["sol_params"],
+                        data=g_info.get("data"),
+                        needs_coup=self.material.needs_coup,
+                        contype=g_info["contype"],
+                        conaffinity=g_info["conaffinity"],
+                    )
+
             if morph.visualization and not is_col:
                 link._add_vgeom(
                     vmesh=g_info["vmesh"],
