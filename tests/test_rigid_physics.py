@@ -502,6 +502,7 @@ def test_nonconvex_collision(show_viewer):
             scale=5.0,
             fixed=True,
             euler=(90, 0, 0),
+            convexify=False,
         ),
     )
     ball = scene.add_entity(
@@ -521,6 +522,50 @@ def test_nonconvex_collision(show_viewer):
 
     qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
     np.testing.assert_allclose(qvel, 0, atol=0.1)
+
+    if show_viewer:
+        scene.viewer.stop()
+
+
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_convexify(show_viewer):
+    # The test check that the volume difference is under a given threshold and
+    # that convex decomposition is only used whenever it is necessary.
+    # Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.005,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    tank = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/tank.obj",
+            scale=5.0,
+            fixed=True,
+            euler=(90, 0, 90),
+        ),
+        vis_mode="collision",
+    )
+    objs = []
+    for i, asset_name in enumerate(("apple_15", "mug_1", "donut_0", "cup_2")):
+        obj = scene.add_entity(
+            gs.morphs.MJCF(
+                file=f"meshes/{asset_name}/output.xml",
+                pos=(0.0, 0.15 * (i - 1.5), 0.4),
+            ),
+            surface=gs.surfaces.Default(
+                color=(*np.random.rand(3), 1.0),
+            ),
+            vis_mode="collision",
+        )
+        objs.append(obj)
+    scene.build()
+
+    for i in range(2000):
+        scene.step()
 
     if show_viewer:
         scene.viewer.stop()
