@@ -297,7 +297,7 @@ class RigidSolver(Solver):
 
         for i in range(self.n_links):
             j = i
-            while j > -1:
+            while j >= 0:
                 for i_d in range(self.links[i].dof_start, self.links[i].dof_end):
                     for j_d in range(self.links[j].dof_start, self.links[j].dof_end):
                         mass_parent_mask[i_d, j_d] = 1.0
@@ -1810,6 +1810,9 @@ class RigidSolver(Solver):
                 i_l = self.awake_links[i_l_, i_b]
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
+
                 i_p = l_info.parent_idx
 
                 _i_j = self.links_info[I_l].joint_start
@@ -1851,8 +1854,10 @@ class RigidSolver(Solver):
                 i_l = self.awake_links[i_l_, i_b]
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
 
-                i_j = self.links_info[I_l].joint_start
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
@@ -1982,11 +1987,12 @@ class RigidSolver(Solver):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l in range(self.n_links):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
                 i_p = l_info.parent_idx
 
-                _i_j = self.links_info[I_l].joint_start
+                _i_j = l_info.joint_start
                 _I_j = [_i_j, i_b] if ti.static(self._options.batch_joints_info) else _i_j
                 joint_type = self.joints_info[_I_j].type
 
@@ -2121,8 +2127,10 @@ class RigidSolver(Solver):
                 i_l = self.awake_links[i_l_, i_b]
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
 
-                i_j = self.links_info[I_l].joint_start
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
@@ -2169,8 +2177,10 @@ class RigidSolver(Solver):
             for i_l in range(self.n_links):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
 
-                i_j = self.links_info[I_l].joint_start
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
@@ -2724,8 +2734,10 @@ class RigidSolver(Solver):
                 force = gs.ti_float(0.0)
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
 
-                i_j = self.links_info[I_l].joint_start
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
@@ -2809,8 +2821,10 @@ class RigidSolver(Solver):
                     i_l = self.awake_links[i_l_, i_b]
                     I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                     l_info = self.links_info[I_l]
+                    if l_info.n_dofs == 0:
+                        continue
 
-                    i_j = self.links_info[I_l].joint_start
+                    i_j = l_info.joint_start
                     I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                     joint_type = self.joints_info[I_j].type
 
@@ -2839,8 +2853,10 @@ class RigidSolver(Solver):
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
 
-                i_j = self.links_info[I_l].joint_start
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
@@ -3258,11 +3274,15 @@ class RigidSolver(Solver):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-                dof_start = self.links_info[I_l].dof_start
-                q_start = self.links_info[I_l].q_start
-                q_end = self.links_info[I_l].q_end
+                l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
 
-                i_j = self.links_info[I_l].joint_start
+                dof_start = l_info.dof_start
+                q_start = l_info.q_start
+                q_end = l_info.q_end
+
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
@@ -3312,8 +3332,10 @@ class RigidSolver(Solver):
         for i_l in range(e_info.link_start, e_info.link_end):
             I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
             l_info = self.links_info[I_l]
+            if l_info.n_dofs == 0:
+                continue
 
-            i_j = self.links_info[I_l].joint_start
+            i_j = l_info.joint_start
             I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
             joint_type = self.joints_info[I_j].type
 
@@ -4221,10 +4243,13 @@ class RigidSolver(Solver):
             for i_l in range(self.entities_info[i_e].link_start, self.entities_info[i_e].link_end):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
+                if l_info.n_dofs == 0:
+                    continue
+
                 dof_start = l_info.dof_start
                 q_start = l_info.q_start
 
-                i_j = self.links_info[I_l].joint_start
+                i_j = l_info.joint_start
                 I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
                 joint_type = self.joints_info[I_j].type
 
