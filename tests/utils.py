@@ -428,15 +428,6 @@ def check_mujoco_data_consistency(
         gs_efc_aref = gs_sim.rigid_solver.constraint_solver.aref.to_numpy()[:gs_n_constraints, 0]
         mj_efc_aref = mj_sim.data.efc_aref
 
-        # pos_error * 1e9 [-0.000001110223, 0.000000444089, -0.000005329071]
-        # rot_error * 1e9 [-0.000000003469, -0.000000020817, 0.000000000000]
-        # mj_sim.data.efc_pos [-1.11022302e-15 -1.11022302e-15 -3.55271368e-15 -3.46944695e-18
-        # -2.77555756e-17  0.00000000e+00]
-        print("mj_sim.data.efc_pos", mj_sim.data.efc_pos)
-        print("gs_efc_aref", gs_efc_aref)
-        print("mj_efc_aref", mj_efc_aref)
-        # pos_error * 1e9 [-0.001451283538, 0.003197664356, -0.000794031507]
-        # rot_error * 1e9 [-0.000000003469, -0.000000027756, 0.000000000000]
         for gs_sidx, mj_sidx in (
             (np.argsort(gs_jac.sum(axis=1)), np.argsort(mj_jac.sum(axis=1))),
             (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
@@ -581,8 +572,6 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
     import time
 
     for i in range(num_steps):
-        gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-        print("==============================================", i, gs_qpos)
         # Make sure that all "dynamic" quantities are matching before stepping
         check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, atol=atol)
 

@@ -351,12 +351,7 @@ class RigidEntity(Entity):
 
         for i_e in range(mj.neq):
             e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
-            # only those two types of equality are supported
-            if (
-                e_info["type"] == gs.EQUALITY_TYPE.CONNECT
-                or e_info["type"] == gs.EQUALITY_TYPE.JOINT
-                or e_info["type"] == gs.EQUALITY_TYPE.WELD
-            ):
+            if e_info["type"] in (gs.EQUALITY_TYPE.CONNECT, gs.EQUALITY_TYPE.JOINT, gs.EQUALITY_TYPE.WELD):
                 self._add_equality(
                     name=e_info["name"],
                     type=e_info["type"],
@@ -386,8 +381,7 @@ class RigidEntity(Entity):
             self._add_by_info(l_info, (j_info,), l_info["g_infos"], morph, surface)
 
         for e_info in equalities:
-            # only those two types of equality are supported
-            if e_info["type"] == gs.EQUALITY_TYPE.CONNECT or e_info["type"] == gs.EQUALITY_TYPE.JOINT:
+            if e_info["type"] in (gs.EQUALITY_TYPE.CONNECT, gs.EQUALITY_TYPE.JOINT, gs.EQUALITY_TYPE.WELD):
                 self._add_equality(
                     name=e_info["name"],
                     type=e_info["type"],

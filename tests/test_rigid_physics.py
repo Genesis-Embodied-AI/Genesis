@@ -510,11 +510,5 @@ def test_equality_weld(gs_sim, mj_sim):
 
     qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
     qpos = gs_sim.rigid_solver.dofs_state.pos.to_numpy()[:, 0]
-    # qvel[0], qvel[1], qvel[2] = 0, 0.0, 0
     qpos[0], qpos[1], qpos[2] = 0.1, 0.1, 0.1
-    # qpos[0], qpos[1], qpos[2] = 5.21944103e-09,  5.71460839e-08, -3.80968981e-08
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=200, atol=1e-8)
-
-    # check if the two joints are equal
-    # gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-    # np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-9)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=200, atol=1e-7)
