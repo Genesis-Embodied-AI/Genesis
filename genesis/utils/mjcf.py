@@ -496,6 +496,8 @@ def parse_equality(mj, i_e, scale, ordered_links_idx):
         e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
     elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
         e_info["type"] = gs.EQUALITY_TYPE.WELD
+        e_info["eq_obj1id"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
+        e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
     elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
         e_info["eq_obj1id"] = mj.eq_obj1id[i_e]
         e_info["eq_obj2id"] = mj.eq_obj2id[i_e]

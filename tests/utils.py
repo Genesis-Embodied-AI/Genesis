@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import mujoco
 import genesis as gs
+import genesis.utils.geom as gu
 
 
 @dataclass
@@ -517,6 +518,11 @@ def check_mujoco_data_consistency(
     mj_xpos = mj_sim.data.xpos
     np.testing.assert_allclose(gs_xpos[gs_body_idcs], mj_xpos[mj_body_idcs], atol=atol)
 
+    gs_xquat = gs_sim.rigid_solver.links_state.quat.to_numpy()[:, 0]
+    gs_xmat = gu.quat_to_R(gs_xquat).reshape([-1, 9])
+    mj_xmat = mj_sim.data.xmat
+    np.testing.assert_allclose(gs_xmat[gs_body_idcs], mj_xmat[mj_body_idcs], atol=atol)
+
     gs_cd_vel = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
     gs_cd_vel_ = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
     np.testing.assert_allclose(gs_cd_vel, gs_cd_vel_, atol=atol)
@@ -567,6 +573,7 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
 
     # Run the simulation for a few steps
     qvel_prev = None
+
     for i in range(num_steps):
         # Make sure that all "dynamic" quantities are matching before stepping
         check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, atol=atol)

@@ -22,6 +22,11 @@ def ti_transform_quat_by_quat(v, u):
 
 
 @ti.func
+def ti_quat_mul(u, v):
+    return ti_transform_quat_by_quat(v, u)
+
+
+@ti.func
 def ti_rotvec_to_quat(rotvec):
     theta = rotvec.norm()
     v = ti.Vector.zero(gs.ti_float, 3)
@@ -341,6 +346,18 @@ def get_face_norm(v0, v1, v2):
     face_norm = edge0.cross(edge1)
     face_norm = face_norm.normalized()
     return face_norm
+
+
+@ti.func
+def ti_quat_mul_axis(q, axis):
+    return ti.Vector(
+        [
+            -q[1] * axis[0] - q[2] * axis[1] - q[3] * axis[2],
+            q[0] * axis[0] + q[2] * axis[2] - q[3] * axis[1],
+            q[0] * axis[1] + q[3] * axis[0] - q[1] * axis[2],
+            q[0] * axis[2] + q[1] * axis[1] - q[2] * axis[0],
+        ]
+    )
 
 
 # ------------------------------------------------------------------------------------

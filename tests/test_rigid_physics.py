@@ -796,3 +796,20 @@ def test_data_accessor(n_envs):
             dofs_vel = gs_solver.get_dofs_velocity(dofs_idx, envs_idx)
             gs_sim.rigid_solver.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
             gs_sim.rigid_solver.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
+
+
+@pytest.mark.xfail(reason="We need to implement rotational invweight")
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+def test_equality_weld(gs_sim, mj_sim):
+    # there is an equality constraint
+    assert gs_sim.rigid_solver.n_equalities == 1
+    gs_sim.rigid_solver._enable_collision = False
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
+
+    qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    qpos = gs_sim.rigid_solver.dofs_state.pos.to_numpy()[:, 0]
+    qpos[0], qpos[1], qpos[2] = 0.1, 0.1, 0.1
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=200, atol=1e-7)
