@@ -235,7 +235,12 @@ def postprocess_mesh(mesh, decimate, decimate_face_num, convexify, decompose_err
         # Compute convex hull approximation error.
         # If not that bad then use the convex hull directly, it would save a lot of time!
         cmesh = trimesh.convex.convex_hull(tmesh)
-        if cmesh.volume / tmesh.volume > 1.0 + decompose_error_threshold:
+        volume_err = cmesh.volume / tmesh.volume - 1.0
+        if volume_err > decompose_error_threshold:
+            gs.logger.info(
+                f"Convex hull is not accurate enough for collision detection ({volume_err:.3f}). "
+                "Falling back to more expensive convex decomposition (see FileMorph options)."
+            )
             tmeshes = convex_decompose(tmesh, decimate, decimate_face_num, coacd_options)
 
     # Process of meshes sequentially

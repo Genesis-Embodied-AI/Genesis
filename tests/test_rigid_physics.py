@@ -527,7 +527,7 @@ def test_nonconvex_collision(show_viewer):
         scene.viewer.stop()
 
 
-@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
 def test_convexify(show_viewer):
     # The test check that the volume difference is under a given threshold and
     # that convex decomposition is only used whenever it is necessary.
@@ -549,7 +549,7 @@ def test_convexify(show_viewer):
         vis_mode="collision",
     )
     objs = []
-    for i, asset_name in enumerate(("apple_15", "mug_1", "donut_0", "cup_2")):
+    for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"meshes/{asset_name}/output.xml",
@@ -562,9 +562,28 @@ def test_convexify(show_viewer):
         )
         objs.append(obj)
     scene.build()
+    gs_sim = scene.sim
 
-    for i in range(2000):
+    # Make sure that all the geometries in the scene are convex
+    assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
+
+    # There should be only one geometry for the apple as it can be convexify without decomposition,
+    # but for the others it is hard to tell... Let's use some reasonable guess.
+    mug, donut, cup, apple = objs
+    assert len(apple.geoms) == 1
+    assert len(cup.geoms) > 5
+    assert len(mug.geoms) > 15
+    assert len(donut.geoms) > 30
+
+    for i in range(4000):
         scene.step()
+
+    for obj in objs:
+        qvel = obj.get_dofs_velocity().cpu()
+        np.testing.assert_allclose(qvel, 0, atol=5e-2)
+        qpos = obj.get_dofs_position().cpu()
+        np.testing.assert_array_less(0, qpos[2])
+        np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
 
     if show_viewer:
         scene.viewer.stop()

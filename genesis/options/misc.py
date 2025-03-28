@@ -20,7 +20,10 @@ class CoacdOptions(Options):
     Reference: https://github.com/SarahWeiii/CoACD
     """
 
-    threshold: float = 0.05
+    # Main parameter to tune to improve the accuracy.
+    # As a rule of thumbs, dividing the threshold by two would double the number of convex hulls.
+    threshold: float = 0.1
+
     max_convex_hull: int = -1
     preprocess_mode: str = "auto"  # ['on', 'off', 'auto']
     preprocess_resolution: int = 30
