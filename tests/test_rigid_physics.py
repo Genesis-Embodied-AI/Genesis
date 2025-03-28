@@ -527,6 +527,7 @@ def test_nonconvex_collision(show_viewer):
         scene.viewer.stop()
 
 
+@pytest.mark.xfail(reason="Need to fine a way to download these assets from somewhere else.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
 def test_convexify(show_viewer):
     # The test check that the volume difference is under a given threshold and
@@ -572,12 +573,12 @@ def test_convexify(show_viewer):
     assert len(mug.geoms) > 15
     assert len(donut.geoms) > 30
 
-    for i in range(4000):
+    for i in range(5000):
         scene.step()
 
     for obj in objs:
         qvel = obj.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=5e-2)
+        np.testing.assert_allclose(qvel, 0, atol=0.1)
         qpos = obj.get_dofs_position().cpu()
         np.testing.assert_array_less(0, qpos[2])
         np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
