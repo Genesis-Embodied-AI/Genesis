@@ -51,5 +51,5 @@ def main_equality_weld():
 
 
 if __name__ == "__main__":
-    # main_equality_weld()
-    main_equality_connect()
+    main_equality_weld()
+    # main_equality_connect()
