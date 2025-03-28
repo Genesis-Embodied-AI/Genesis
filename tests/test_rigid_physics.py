@@ -555,9 +555,6 @@ def test_convexify(show_viewer):
                 file=f"meshes/{asset_name}/output.xml",
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
-            surface=gs.surfaces.Default(
-                color=(*np.random.rand(3), 1.0),
-            ),
             vis_mode="collision",
         )
         objs.append(obj)
