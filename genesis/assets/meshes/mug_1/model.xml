@@ -1,0 +1,81 @@
+<mujoco model="mug_14">
+  <asset>
+    <mesh file="visual/model_normalized_0.obj" name="model_normalized_0_vis" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_22.obj" name="model_normalized_collision_22._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_23.obj" name="model_normalized_collision_23._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_21.obj" name="model_normalized_collision_21._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_20.obj" name="model_normalized_collision_20._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_24.obj" name="model_normalized_collision_24._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_30.obj" name="model_normalized_collision_30._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_18.obj" name="model_normalized_collision_18._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_19.obj" name="model_normalized_collision_19._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_31.obj" name="model_normalized_collision_31._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_25.obj" name="model_normalized_collision_25._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_27.obj" name="model_normalized_collision_27._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_26.obj" name="model_normalized_collision_26._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_9.obj" name="model_normalized_collision_9._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_8.obj" name="model_normalized_collision_8._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_6.obj" name="model_normalized_collision_6._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_7.obj" name="model_normalized_collision_7._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_5.obj" name="model_normalized_collision_5._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_4.obj" name="model_normalized_collision_4._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_0.obj" name="model_normalized_collision_0._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_1.obj" name="model_normalized_collision_1._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_3.obj" name="model_normalized_collision_3._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_2.obj" name="model_normalized_collision_2._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_17.obj" name="model_normalized_collision_17._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_16.obj" name="model_normalized_collision_16._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_28.obj" name="model_normalized_collision_28._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_14.obj" name="model_normalized_collision_14._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_15.obj" name="model_normalized_collision_15._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_29.obj" name="model_normalized_collision_29._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_11.obj" name="model_normalized_collision_11._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_10.obj" name="model_normalized_collision_10._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_12.obj" name="model_normalized_collision_12._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <mesh file="collision/model_normalized_collision_13.obj" name="model_normalized_collision_13._coll" scale="0.115 0.115 0.115" refquat="-0.7071067811865477 0.0 0.0 0.7071067811865474"/>
+    <texture type="2d" name="image0" file="visual/image0.png"/>
+    <material name="canecaTex" texture="image0" specular="0.5" shininess="0.321677441"/>
+  </asset>
+  <worldbody>
+    <body>
+      <body name="object">
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_0_vis" conaffinity="0" contype="0" group="1" material="canecaTex"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_22._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_23._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_21._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_20._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_24._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_30._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_18._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_19._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_31._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_25._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_27._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_26._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_9._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_8._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_6._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_7._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_5._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_4._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_0._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_1._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_3._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_2._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_17._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_16._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_28._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_14._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_15._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_29._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_11._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_10._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_12._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_collision_13._coll" group="0" rgba="0.8 0.8 0.8 0.0"/>
+      </body>
+      <site rgba="0 0 0 0" size="0.005" pos="0.0 0.0001344689249999985 -0.045172274850000006" name="bottom_site"/>
+      <site rgba="0 0 0 0" size="0.005" pos="0.0 0.0001344689249999985 0.0451647504" name="top_site"/>
+      <site rgba="0 0 0 0" size="0.005" pos="0.0392806811 0.056769187650000004 -3.7622249999987034e-06" name="horizontal_radius_site"/>
+    </body>
+  </worldbody>
+</mujoco>

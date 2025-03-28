@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="cup_2">
+  <asset>
+    <mesh file="visual/model_normalized_0.obj" name="model_normalized_0_vis" scale="0.11499999999999996 0.11499999999999996 0.11499999999999996" refquat="1.0 0.0 0.0 0.0" />
+    <texture type="2d" name="image0" file="visual/image0.png" />
+    <material name="lambert3SG" texture="image0" specular="0.5" shininess="0.0" />
+  </asset>
+  <worldbody>
+    <body>
+      <body name="object">
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_0_vis" conaffinity="0" contype="0" group="1" material="lambert3SG" />
+        <geom solimp="0.998 0.998 0.001" solref="0.001 1" density="100" friction="0.95 0.3 0.1" type="mesh" mesh="model_normalized_0_vis" group="0" rgba="0.8 0.8 0.8 0.0" /></body>
+      <site rgba="0 0 0 0" size="0.005" pos="0.00028806177499999814 -0.0002481435500000003 -0.05749999999999998" name="bottom_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.00028806177499999814 -0.0002481435500000003 0.05749999884999999" name="top_site" />
+      <site rgba="0 0 0 0" size="0.005" pos="0.03678336639999999 0.03622832004999999 -5.749999996973452e-10" name="horizontal_radius_site" />
+    <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free" /></body>
+  </worldbody>
+</mujoco>
