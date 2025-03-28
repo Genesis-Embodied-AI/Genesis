@@ -20,8 +20,8 @@ class CoacdOptions(Options):
     Reference: https://github.com/SarahWeiii/CoACD
     """
 
-    threshold: float = 0.1
-    max_convex_hull: int = 40
+    threshold: float = 0.05
+    max_convex_hull: int = -1
     preprocess_mode: str = "auto"  # ['on', 'off', 'auto']
     preprocess_resolution: int = 30
     resolution: int = 1000
@@ -33,7 +33,7 @@ class CoacdOptions(Options):
     decimate: bool = False
     max_ch_vertex: int = 256
     extrude: bool = False
-    extrude_margin: float = 0.05
+    extrude_margin: float = 0.1
     apx_mode: str = "ch"  # ['ch', 'box']
     seed: int = 0
 

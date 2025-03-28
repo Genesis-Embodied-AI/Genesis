@@ -527,7 +527,7 @@ def test_nonconvex_collision(show_viewer):
         scene.viewer.stop()
 
 
-@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
+@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
 def test_convexify(show_viewer):
     # The test check that the volume difference is under a given threshold and
     # that convex decomposition is only used whenever it is necessary.
@@ -539,7 +539,6 @@ def test_convexify(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(gs.morphs.Plane())
     tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
