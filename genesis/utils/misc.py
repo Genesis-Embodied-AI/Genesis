@@ -1,25 +1,28 @@
 import datetime
 import functools
 import os
+import types
 import platform
 import random
 import shutil
 import subprocess
+from dataclasses import dataclass
+from collections import OrderedDict
+from typing import Any
 
 import numpy as np
 import psutil
 import torch
-from taichi.lang import runtime_ops
-from taichi._kernels import matrix_to_ext_arr
+
+import taichi as ti
+from taichi.lang.util import to_pytorch_type
+from taichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
+from taichi.lang import impl
+from taichi.types import primitive_types
+from taichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
-
-
-ALLOCATE_TENSOR_WARNING = (
-    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
-    "impede performance if it occurs in the critical path of your application."
-)
 
 
 class DeprecationError(Exception):
@@ -247,7 +250,109 @@ def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
 
 
-def ti_mat_field_to_torch(
+# -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
+
+ALLOCATE_TENSOR_WARNING = (
+    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
+    "impede performance if it occurs in the critical path of your application."
+)
+
+FIELD_CACHE: dict[int, "FieldMetadata"] = OrderedDict()
+MAX_CACHE_SIZE = 1000
+
+
+@dataclass
+class FieldMetadata:
+    shape: tuple[int, ...]
+    dtype: ti._lib.core.DataType
+    mapping_key: Any
+
+
+def _ensure_compiled(self, *args):
+    # Note that the field is enough to determine the key because all the other arguments depends on it.
+    # This may not be the case anymore if the output is no longer dynamically allocated at some point.
+    field_meta = FIELD_CACHE[id(args[0])]
+    key = field_meta.mapping_key
+    if key is None:
+        extracted = []
+        for arg, kernel_arg in zip(args, self.mapper.arguments):
+            anno = kernel_arg.annotation
+            if isinstance(anno, ti.template):
+                subkey = arg
+            else:
+                needs_grad = getattr(arg, "requires_grad", False) if anno.needs_grad is None else anno.needs_grad
+                subkey = (arg.dtype, arg.ndim, needs_grad, anno.boundary)
+            extracted.append(subkey)
+        key = tuple(extracted)
+        field_meta.mapping_key = key
+
+    instance_id = self.mapper.mapping.get(key)
+    if instance_id is None:
+        key = ti.lang.kernel_impl.Kernel.ensure_compiled(self, *args)
+    else:
+        key = (self.func, instance_id, self.autodiff_mode)
+    return key
+
+
+def _launch_kernel(self, t_kernel, *args):
+    launch_ctx = t_kernel.make_launch_context()
+
+    template_num = 0
+    for i, v in enumerate(args):
+        needed = self.arguments[i].annotation
+        if isinstance(needed, ti.template):
+            template_num += 1
+            continue
+
+        array_shape = v.shape
+        if needed.dtype is None or id(needed.dtype) in primitive_types.type_ids:
+            element_dim = 0
+        else:
+            is_soa = needed.layout == ti.Layout.SOA
+            element_dim = needed.dtype.ndim
+            array_shape = v.shape[element_dim:] if is_soa else v.shape[:-element_dim]
+
+        if v.requires_grad and v.grad is None:
+            v.grad = torch.zeros_like(v)
+        if v.requires_grad:
+            if not isinstance(v.grad, torch.Tensor):
+                raise ValueError(
+                    f"Expecting torch.Tensor for gradient tensor, but getting {v.grad.__class__.__name__} instead"
+                )
+            if not v.grad.is_contiguous():
+                raise ValueError(
+                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() before passing it into taichi kernel."
+                )
+
+        launch_ctx.set_arg_external_array_with_shape(
+            (i - template_num,),
+            int(v.data_ptr()),
+            v.element_size() * v.nelement(),
+            array_shape,
+            int(v.grad.data_ptr()) if v.grad is not None else 0,
+        )
+
+    try:
+        prog = impl.get_runtime().prog
+        compiled_kernel_data = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
+        prog.launch_kernel(compiled_kernel_data, launch_ctx)
+    except Exception as e:
+        e = handle_exception_from_cpp(e)
+        if impl.get_runtime().print_full_traceback:
+            raise e
+        raise e from None
+
+
+_to_pytorch_type_fast = functools.lru_cache(maxsize=None)(to_pytorch_type)
+_tensor_to_ext_arr_fast = ti.kernel(tensor_to_ext_arr._primal.func)
+_tensor_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _tensor_to_ext_arr_fast._primal)
+_tensor_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _tensor_to_ext_arr_fast._primal)
+_matrix_to_ext_arr_fast = ti.kernel(matrix_to_ext_arr._primal.func)
+_matrix_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _matrix_to_ext_arr_fast._primal)
+_matrix_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _matrix_to_ext_arr_fast._primal)
+
+
+def ti_field_to_torch(
     field,
     row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
     col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
@@ -256,10 +361,10 @@ def ti_mat_field_to_torch(
     *,
     unsafe=False,
 ) -> torch.Tensor:
-    """Converts a Taichi matrix field instance to a PyTorch tensor.
+    """Converts a Taichi field instance to a PyTorch tensor.
 
     Args:
-        field (ti.Matrix): Matrix field to convert to Pytorch tensor.
+        field (ti.Field): Field to convert to Pytorch tensor.
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
         col_mask (optional): Columns to extract from batch dimension field after transpose if requested.
         keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
@@ -269,12 +374,20 @@ def ti_mat_field_to_torch(
     Returns:
         torch.tensor: The result torch tensor.
     """
+    # Get field metadata
+    field_id = id(field)
+    field_meta = FIELD_CACHE.get(field_id)
+    if field_meta is None:
+        field_meta = FieldMetadata(field.shape, field.dtype, None)
+        if len(FIELD_CACHE) == MAX_CACHE_SIZE:
+            FIELD_CACHE.popitem(last=False)
+        FIELD_CACHE[field_id] = field_meta
+
     # Make sure that the user-arguments are valid if requested
-    field_shape = field.shape
+    field_shape = field_meta.shape
     is_1D_batch = len(field_shape) == 1
     if not unsafe:
-        if transpose:
-            field_shape = field_shape[::-1]
+        _field_shape = field_shape[::-1] if transpose else field_shape
         if is_1D_batch:
             if transpose and row_mask is not None:
                 gs.raise_exception("Cannot specify row mask for fields with 1D batch and `transpose=True`.")
@@ -286,7 +399,7 @@ def ti_mat_field_to_torch(
                 is_out_of_bounds = False
             elif isinstance(mask, int):
                 # Do not allow negative indexing for consistency with Taichi
-                is_out_of_bounds = not (0 <= mask < field_shape[i])
+                is_out_of_bounds = not (0 <= mask < _field_shape[i])
             elif isinstance(mask, torch.Tensor):
                 if not mask.ndim <= 1:
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
@@ -298,7 +411,7 @@ def ti_mat_field_to_torch(
                     mask_start, mask_end = int(mask_start), int(mask_end)
                 except ValueError:
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
-                is_out_of_bounds = not (0 <= mask_start <= mask_end < field_shape[i])
+                is_out_of_bounds = not (0 <= mask_start <= mask_end < _field_shape[i])
             if is_out_of_bounds:
                 gs.raise_exception("Masks are out-of-range.")
 
@@ -320,13 +433,23 @@ def ti_mat_field_to_torch(
 
     # Extract field as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.
-    tensor = field.to_torch(device=gs.device)
+    # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
+    tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
+    if isinstance(field, ti.lang.ScalarField):
+        out = torch.zeros(size=field_shape, dtype=tc_dtype, device=gs.device)
+        _tensor_to_ext_arr_fast(field, out)
+    else:
+        as_vector = field.m == 1
+        shape_ext = (field.n,) if as_vector else (field.n, field.m)
+        out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device=gs.device)
+        _matrix_to_ext_arr_fast(field, out, as_vector)
+    ti.sync()
 
     # Transpose if necessary and requested.
     # Note that it is worth transposing here rather than outside this function, as it preserve row-major memory
     # alignment in case of advanced masking, which would spare computation later on if expected from the user.
     if transpose and not is_1D_batch:
-        tensor = tensor.transpose(1, 0)
+        out = out.transpose(1, 0)
 
     # Extract slice if necessary.
     # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions,
@@ -336,14 +459,14 @@ def ti_mat_field_to_torch(
     try:
         if is_col_mask_tensor and is_row_mask_tensor:
             if not is_single_col and not is_single_row:
-                tensor = tensor[row_mask.unsqueeze(1), col_mask]
+                out = out[row_mask.unsqueeze(1), col_mask]
             else:
-                tensor = tensor[row_mask, col_mask]
+                out = out[row_mask, col_mask]
         else:
             if col_mask is not None:
-                tensor = tensor[col_mask] if is_1D_batch else tensor[:, col_mask]
+                out = out[col_mask] if is_1D_batch else out[:, col_mask]
             if row_mask is not None:
-                tensor = tensor[row_mask]
+                out = out[row_mask]
     except IndexError as e:
         if not unsafe and is_out_of_bounds is None:
             for i, mask in enumerate((col_mask if transpose else row_mask,) if is_1D_batch else (row_mask, col_mask)):
@@ -354,8 +477,8 @@ def ti_mat_field_to_torch(
     # Make sure that masks are 1D if all dimensions must be kept
     if keepdim:
         if is_single_row:
-            tensor = tensor.unsqueeze(0)
+            out = out.unsqueeze(0)
         if is_single_col:
-            tensor = tensor.unsqueeze(0 if is_1D_batch else 1)
+            out = out.unsqueeze(0 if is_1D_batch else 1)
 
-    return tensor
+    return out
