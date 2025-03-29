@@ -559,48 +559,61 @@ class RigidEntity(Entity):
             )
             joints.append(joint)
 
-        # geoms
+        # Separate collision from visual geometry for post-processing
+        cg_infos, vg_infos = [], []
         for g_info in g_infos:
             is_col = g_info["contype"] or g_info["conaffinity"]
+            if morph.collision and is_col:
+                cg_infos.append(g_info)
+            if morph.visualization and not is_col:
+                vg_infos.append(g_info)
+
+        # Post-process all collision meshes at once.
+        # Destroying the original geometries should be avoided if possible as it will change the way objects
+        # interact with the world due to only computing one contact point per convex geometry. The idea is to
+        # check if each geometry can be convexified independently without resorting on convex decomposition.
+        # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
+        # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
+        # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
+        # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
+        # both cases, this improves runtime performance, numerical stability and compilation time.
+        if isinstance(morph, gs.options.morphs.FileMorph):
+            cg_infos = mu.postprocess_collision_geoms(
+                cg_infos,
+                morph.decimate,
+                morph.decimate_face_num,
+                morph.convexify,
+                morph.decompose_error_threshold,
+                morph.coacd_options,
+            )
+
+        # Add visual geometries
+        for g_info in vg_infos:
+            link._add_vgeom(
+                vmesh=g_info["vmesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+            )
+
+        # Add collision geometries
+        for g_info in cg_infos:
             friction = g_info.get("friction", self.material.friction)
             if friction is None:
                 friction = gu.default_friction()
-            g_info.setdefault("pos", gu.zero_pos())
-            g_info.setdefault("quat", gu.identity_quat())
-
-            if morph.collision and is_col:
-                if isinstance(morph, gs.options.morphs.FileMorph):
-                    meshes = mu.postprocess_mesh(
-                        g_info["mesh"],
-                        morph.decimate,
-                        morph.decimate_face_num,
-                        morph.convexify,
-                        morph.decompose_error_threshold,
-                        morph.coacd_options,
-                    )
-                else:
-                    meshes = (g_info["mesh"],)
-
-                for mesh in meshes:
-                    link._add_geom(
-                        mesh=mesh,
-                        init_pos=g_info["pos"],
-                        init_quat=g_info["quat"],
-                        type=g_info["type"],
-                        friction=friction,
-                        sol_params=g_info["sol_params"],
-                        data=g_info.get("data"),
-                        needs_coup=self.material.needs_coup,
-                        contype=g_info["contype"],
-                        conaffinity=g_info["conaffinity"],
-                    )
-
-            if morph.visualization and not is_col:
-                link._add_vgeom(
-                    vmesh=g_info["vmesh"],
-                    init_pos=g_info["pos"],
-                    init_quat=g_info["quat"],
-                )
+            pos = g_info.get("pos", gu.zero_pos())
+            quat = g_info.get("quat", gu.identity_quat())
+            link._add_geom(
+                mesh=g_info["mesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+                type=g_info["type"],
+                friction=friction,
+                sol_params=g_info["sol_params"],
+                data=g_info.get("data"),
+                needs_coup=self.material.needs_coup,
+                contype=g_info["contype"],
+                conaffinity=g_info["conaffinity"],
+            )
 
         return link, joints
 
