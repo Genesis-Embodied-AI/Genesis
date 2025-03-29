@@ -276,7 +276,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
                 ]
             ),
         )
-        geom_size = np.array([0.0, 0.0, 1.0])
+        geom_data = np.array([0.0, 0.0, 1.0])
         gs_type = gs.GEOM_TYPE.PLANE
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -286,6 +286,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             tmesh = trimesh.creation.icosphere(radius=radius)
         gs_type = gs.GEOM_TYPE.SPHERE
+        geom_data = np.array([radius])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
         if is_col:
@@ -294,27 +295,27 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             tmesh = trimesh.creation.icosphere(radius=1.0)
         tmesh.apply_transform(np.diag([*geom_size, 1]))
         gs_type = gs.GEOM_TYPE.ELLIPSOID
+        geom_data = geom_size
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CAPSULE:
         radius = geom_size[0]
-        halflength = geom_size[1]
+        height = geom_size[1] * 2
         if is_col:
-            tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2, count=(8, 12))
+            tmesh = trimesh.creation.capsule(radius=radius, height=height, count=(8, 12))
         else:
-            tmesh = trimesh.creation.capsule(radius=radius, height=halflength * 2)
-        geom_size[1] *= 2
+            tmesh = trimesh.creation.capsule(radius=radius, height=height)
         gs_type = gs.GEOM_TYPE.CAPSULE
+        geom_data = np.array([radius, height])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CYLINDER:
         radius = geom_size[0]
-        halflength = geom_size[1]
-        geom_size[1] *= 2
-        tmesh = trimesh.creation.cylinder(radius=radius, height=halflength * 2)
+        height = geom_size[1] * 2
+        tmesh = trimesh.creation.cylinder(radius=radius, height=height)
         gs_type = gs.GEOM_TYPE.CYLINDER
+        geom_data = np.array([radius, height])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_BOX:
         tmesh = trimesh.creation.box(extents=geom_size * 2)
-        geom_size *= 2
         gs_type = gs.GEOM_TYPE.BOX
         if mj_geom.matid >= 0:
             mj_mat = mj.mat(mj_geom.matid[0])
@@ -332,6 +333,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
                 uv_coordinates = uv_coordinates * mj_mat.texrepeat
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
+        geom_data = 2 * geom_size
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
         mj_mesh = mj.mesh(mj_geom.dataid[0])
@@ -383,6 +385,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             visual=visual,
         )
         gs_type = gs.GEOM_TYPE.MESH
+        geom_data = None
 
     else:
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
@@ -407,7 +410,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         "contype": mj_geom.contype[0],
         "conaffinity": mj_geom.conaffinity[0],
         "group": mj_geom.group[0],
-        "data": geom_size,
+        "data": geom_data,
         "friction": mj_geom.friction[0],
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
