@@ -20,7 +20,10 @@ def fake_print(*args, **kwargs):
 with patch("builtins.print", fake_print):
     import taichi as ti
 
-import torch
+try:
+    import torch
+except 
+    raise Exception("torch module was not found. Please install pytorch: https://pytorch.org/get-started/locally/")
 import trimesh
 import numpy as np
 
