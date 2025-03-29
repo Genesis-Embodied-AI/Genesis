@@ -502,6 +502,7 @@ def test_nonconvex_collision(show_viewer):
             scale=5.0,
             fixed=True,
             euler=(90, 0, 0),
+            convexify=False,
         ),
     )
     ball = scene.add_entity(
@@ -521,6 +522,66 @@ def test_nonconvex_collision(show_viewer):
 
     qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
     np.testing.assert_allclose(qvel, 0, atol=0.1)
+
+    if show_viewer:
+        scene.viewer.stop()
+
+
+@pytest.mark.xfail(reason="Need to fine a way to download these assets from somewhere else.")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
+def test_convexify(show_viewer):
+    # The test check that the volume difference is under a given threshold and
+    # that convex decomposition is only used whenever it is necessary.
+    # Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.005,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    tank = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/tank.obj",
+            scale=5.0,
+            fixed=True,
+            euler=(90, 0, 90),
+        ),
+        vis_mode="collision",
+    )
+    objs = []
+    for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
+        obj = scene.add_entity(
+            gs.morphs.MJCF(
+                file=f"meshes/{asset_name}/output.xml",
+                pos=(0.0, 0.15 * (i - 1.5), 0.4),
+            ),
+            vis_mode="collision",
+        )
+        objs.append(obj)
+    scene.build()
+    gs_sim = scene.sim
+
+    # Make sure that all the geometries in the scene are convex
+    assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
+
+    # There should be only one geometry for the apple as it can be convexify without decomposition,
+    # but for the others it is hard to tell... Let's use some reasonable guess.
+    mug, donut, cup, apple = objs
+    assert len(apple.geoms) == 1
+    assert len(cup.geoms) > 5
+    assert len(mug.geoms) > 15
+    assert len(donut.geoms) > 30
+
+    for i in range(5000):
+        scene.step()
+
+    for obj in objs:
+        qvel = obj.get_dofs_velocity().cpu()
+        np.testing.assert_allclose(qvel, 0, atol=0.1)
+        qpos = obj.get_dofs_position().cpu()
+        np.testing.assert_array_less(0, qpos[2])
+        np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
 
     if show_viewer:
         scene.viewer.stop()

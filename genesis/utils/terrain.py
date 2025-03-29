@@ -345,14 +345,10 @@ def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale
     # This a uniformly-distributed full mesh, which gives faster sdf generation
     sdf_mesh = trimesh.Trimesh(vertices, triangles, process=False)
 
-    # This is the mesh used for non-sdf purposes
+    # This is the mesh used for non-sdf purposes.
+    # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
     mesh = trimesh.Trimesh(
-        *fast_simplification.simplify(
-            sdf_mesh.vertices,
-            sdf_mesh.faces,
-            target_count=0,
-            lossless=True,
-        )
+        *fast_simplification.simplify(sdf_mesh.vertices, sdf_mesh.faces, target_count=0, lossless=True)
     )
 
     return mesh, sdf_mesh

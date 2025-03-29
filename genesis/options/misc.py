@@ -20,20 +20,23 @@ class CoacdOptions(Options):
     Reference: https://github.com/SarahWeiii/CoACD
     """
 
+    # Main parameter to tune to improve the accuracy.
+    # As a rule of thumbs, dividing the threshold by two would double the number of convex hulls.
     threshold: float = 0.1
+
     max_convex_hull: int = -1
     preprocess_mode: str = "auto"  # ['on', 'off', 'auto']
     preprocess_resolution: int = 30
-    resolution: int = 2000
+    resolution: int = 1000
     mcts_nodes: int = 20
-    mcts_iterations: int = 150
+    mcts_iterations: int = 100
     mcts_max_depth: int = 3
     pca: int = False
     merge: bool = True
     decimate: bool = False
     max_ch_vertex: int = 256
     extrude: bool = False
-    extrude_margin: float = 0.01
+    extrude_margin: float = 0.1
     apx_mode: str = "ch"  # ['ch', 'box']
     seed: int = 0
 

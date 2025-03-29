@@ -17,7 +17,7 @@ class MPR:
         self._para_level = rigid_solver._para_level
 
         if gs.ti_float == ti.f32:
-            self.CCD_EPS = 1e-6
+            self.CCD_EPS = 1e-7
         else:
             self.CCD_EPS = 1e-10
         self.CCD_TOLERANCE = 1e-6

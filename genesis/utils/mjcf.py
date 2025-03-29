@@ -252,7 +252,7 @@ def parse_links(mj, scale):
     return l_infos, j_infos
 
 
-def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
+def parse_geom(mj, i_g, scale, surface, xml_path):
     mj_geom = mj.geom(i_g)
 
     geom_size = mj_geom.size
@@ -388,18 +388,9 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
-    # Turn on convexify for all primitive shapes
-    if mj_geom.type != mujoco.mjtGeom.mjGEOM_MESH:
-        convexify = True
-
-    # Disable convexify for visual geometries
-    if not is_col:
-        convexify = False
-
     mesh = gs.Mesh.from_trimesh(
         tmesh,
         scale=scale,
-        convexify=convexify,
         surface=gs.surfaces.Collision() if is_col else surface,
     )
 
@@ -416,7 +407,6 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
         "contype": mj_geom.contype[0],
         "conaffinity": mj_geom.conaffinity[0],
         "group": mj_geom.group[0],
-        "is_convex": convexify,
         "data": geom_size,
         "friction": mj_geom.friction[0],
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
@@ -429,7 +419,7 @@ def parse_geom(mj, i_g, scale, convexify, surface, xml_path):
     return info
 
 
-def parse_geoms(mj, scale, convexify, surface, xml_path):
+def parse_geoms(mj, scale, surface, xml_path):
     links_g_info = [[] for _ in range(mj.nbody)]
 
     # Loop over all geometries sequentially
@@ -439,7 +429,7 @@ def parse_geoms(mj, scale, convexify, surface, xml_path):
             continue
 
         # try parsing a given geometry
-        g_info = parse_geom(mj, i_g, scale, convexify, surface, xml_path)
+        g_info = parse_geom(mj, i_g, scale, surface, xml_path)
         if g_info is None:
             continue
 

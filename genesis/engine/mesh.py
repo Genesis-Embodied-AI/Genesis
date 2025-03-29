@@ -77,17 +77,17 @@ class Mesh(RBC):
             self._mesh = trimesh.convex.convex_hull(self._mesh)
         self.clear_visuals()
 
-    def decimate(self, target_face_num, convexify):
+    def decimate(self, decimate_face_num, convexify):
         """
         Decimate the mesh.
         """
-        if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > target_face_num:
+        if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > decimate_face_num:
             self._mesh = trimesh.Trimesh(
                 *fast_simplification.simplify(
-                    sdf_mesh.vertices,
-                    sdf_mesh.faces,
-                    target_count=target_face_num,
-                    lossless=True,
+                    self._mesh.vertices,
+                    self._mesh.faces,
+                    target_count=decimate_face_num,
+                    agg=0,
                 )
             )
 
