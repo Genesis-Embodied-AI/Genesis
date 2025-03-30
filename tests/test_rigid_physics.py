@@ -569,9 +569,9 @@ def test_convexify(show_viewer):
     # but for the others it is hard to tell... Let's use some reasonable guess.
     mug, donut, cup, apple = objs
     assert len(apple.geoms) == 1
-    assert len(cup.geoms) > 5
-    assert len(mug.geoms) > 15
-    assert len(donut.geoms) > 30
+    assert 5 <= len(donut.geoms) <= 10
+    assert 5 <= len(cup.geoms) <= 20
+    assert 5 <= len(mug.geoms) <= 40
 
     for i in range(5000):
         scene.step()
@@ -581,6 +581,7 @@ def test_convexify(show_viewer):
         np.testing.assert_allclose(qvel, 0, atol=0.1)
         qpos = obj.get_dofs_position().cpu()
         np.testing.assert_array_less(0, qpos[2])
+        np.testing.assert_array_less(qpos[2], 0.15)
         np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
 
     if show_viewer:
