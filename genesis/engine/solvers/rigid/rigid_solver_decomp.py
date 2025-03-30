@@ -3635,8 +3635,8 @@ class RigidSolver(Solver):
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        inputs_start, inputs_end = inputs_idx[0], inputs_idx[-1]
-        if not (0 <= inputs_start <= inputs_end < input_max):
+        inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
+        if inputs_start < 0 or input_max <= inputs_end:
             gs.raise_exception("`{idx_name}` is out-of-range.")
 
         if is_preallocated:
@@ -3717,8 +3717,8 @@ class RigidSolver(Solver):
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        inputs_start, inputs_end = inputs_idx[0], inputs_idx[-1]
-        if not (0 <= inputs_start <= inputs_end < input_max):
+        inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
+        if inputs_start < 0 or input_max <= inputs_end:
             gs.raise_exception("`{idx_name}` is out-of-range.")
 
         if is_preallocated:
