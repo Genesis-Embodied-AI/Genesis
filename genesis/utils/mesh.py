@@ -294,9 +294,17 @@ def postprocess_collision_geoms(
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            tmeshes = convex_decompose(tmesh, decimate, decimate_face_num, coacd_options)
-            meshes = [gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()) for tmesh in tmeshes]
-            _g_infos += [{**g_info, **dict(mesh=mesh)} for mesh in meshes]
+            if tmesh.is_convex:
+                volume_err = 0.0
+            else:
+                cmesh = trimesh.convex.convex_hull(tmesh)
+                volume_err = cmesh.volume / tmesh.volume - 1.0
+            if volume_err > decompose_error_threshold:
+                tmeshes = convex_decompose(tmesh, decimate, decimate_face_num, coacd_options)
+                meshes = [gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()) for tmesh in tmeshes]
+                _g_infos += [{**g_info, **dict(mesh=mesh)} for mesh in meshes]
+            else:
+                _g_infos.append(g_info)
         g_infos = _g_infos
 
     # Process of meshes sequentially

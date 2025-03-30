@@ -347,6 +347,9 @@ class FileMorph(Morph):
                 "`decompose_nonconvex` is deprecated. Please use 'convexify' and 'decompose_error_threshold' instead."
             )
 
+        # Make sure that this threshold is positive to avoid decomposition of convex and primivie shapes
+        self.decompose_error_threshold = max(self.decompose_error_threshold, gs.EPS)
+
         if self.decimate and self.decimate_face_num < 100:
             gs.raise_exception(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
