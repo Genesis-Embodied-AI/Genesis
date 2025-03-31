@@ -462,10 +462,6 @@ def move_cube(use_suction, show_viewer):
         for i in range(50):
             scene.step()
     else:
-        rigid.add_weld_constraint(
-            np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int),
-            np.array([franka.get_link("hand").idx], dtype=gs.np_int),
-        )
         link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
         link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
         rigid.add_weld_constraint(link_cube, link_franka)
