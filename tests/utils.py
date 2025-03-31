@@ -207,7 +207,7 @@ def check_mujoco_model_consistency(
     joint_names: list[str] | None = None,
     body_names: list[str] | None = None,
     *,
-    atol: float = 1e-9,
+    atol: float,
 ):
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joint_names, body_names)
@@ -359,7 +359,7 @@ def check_mujoco_data_consistency(
     body_names: list[str] | None = None,
     *,
     qvel_prev: np.ndarray | None = None,
-    atol: float = 1e-9,
+    atol: float,
 ):
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joint_names, body_names)
@@ -561,7 +561,7 @@ def check_mujoco_data_consistency(
     np.testing.assert_allclose(gs_cinr_mass[gs_body_idcs], mj_cinr_mass[mj_body_idcs], atol=atol)
 
 
-def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, atol=1e-9, *, num_steps):
+def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, atol, num_steps):
     # Get mapping between Mujoco and Genesis
     _, (_, _, mj_q_idcs, mj_dof_idcs, _) = _get_model_mappings(gs_sim, mj_sim)
 

@@ -14,6 +14,10 @@ from genesis.utils.mesh import get_assets_dir
 from .utils import MjSim
 
 
+TOL_SINGLE = 5e-5
+TOL_DOUBLE = 5e-8
+
+
 def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
@@ -47,6 +51,11 @@ def backend(pytestconfig, request):
             return getattr(gs.constants.backend, backend)
         return backend
     return pytestconfig.getoption("--backend")
+
+
+@pytest.fixture
+def atol():
+    return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
 @pytest.fixture(scope="session")

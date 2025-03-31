@@ -144,43 +144,43 @@ def chain_capsule_hinge_capsule(asset_tmp_path):
 )
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
-def test_box_plan_dynamics(gs_sim, mj_sim):
+def test_box_plan_dynamics(gs_sim, mj_sim, atol):
     cube_pos = np.array([0.0, 0.0, 0.6])
     cube_quat = np.random.rand(4)
     cube_quat /= np.linalg.norm(cube_quat)
     qpos = np.concatenate((cube_pos, cube_quat))
     qvel = np.random.rand(6) * 0.2
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, atol=atol, num_steps=150)
 
 
 @pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
-def test_link_velocity(gs_sim):
+def test_link_velocity(gs_sim, atol):
     # Check the velocity for a few "easy" special cases
     init_simulators(gs_sim, qvel=np.array([0.0, 1.0]))
-    np.testing.assert_allclose(gs_sim.rigid_solver.links_state.vel.to_numpy(), 0, atol=1e-9)
+    np.testing.assert_allclose(gs_sim.rigid_solver.links_state.vel.to_numpy(), 0, atol=atol)
 
     init_simulators(gs_sim, qvel=np.array([1.0, 0.0]))
     cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
-    np.testing.assert_allclose(cvel_0, np.array([0.0, 0.5, 0.0]), atol=1e-9)
-    np.testing.assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), atol=1e-9)
+    np.testing.assert_allclose(cvel_0, np.array([0.0, 0.5, 0.0]), atol=atol)
+    np.testing.assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), atol=atol)
 
     init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
     COM = gs_sim.rigid_solver.links_state[0, 0].COM
-    np.testing.assert_allclose(COM, np.array([0.375, 0.125, 0.0]), atol=1e-9)
+    np.testing.assert_allclose(COM, np.array([0.375, 0.125, 0.0]), atol=atol)
     xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
-    np.testing.assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), atol=1e-9)
+    np.testing.assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), atol=atol)
     cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
-    np.testing.assert_allclose(cvel_0, 0, atol=1e-9)
-    np.testing.assert_allclose(cvel_1, np.array([-1.2 * (0.125 - 0.0), 1.2 * (0.375 - 0.5), 0.0]), atol=1e-9)
+    np.testing.assert_allclose(cvel_0, 0, atol=atol)
+    np.testing.assert_allclose(cvel_1, np.array([-1.2 * (0.125 - 0.0), 1.2 * (0.375 - 0.5), 0.0]), atol=atol)
 
     # Check that the velocity is valid for a random configuration
     init_simulators(gs_sim, qpos=np.array([-0.7, 0.2]), qvel=np.array([3.0, 13.0]))
     xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
     theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-    np.testing.assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), atol=1e-9)
-    np.testing.assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), atol=1e-9)
+    np.testing.assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), atol=atol)
+    np.testing.assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), atol=atol)
     COM = gs_sim.rigid_solver.links_state[0, 0].COM
     COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
     COM_1 = np.array(
@@ -190,31 +190,31 @@ def test_link_velocity(gs_sim):
             0.0,
         ]
     )
-    np.testing.assert_allclose(COM, 0.5 * (COM_0 + COM_1), atol=1e-9)
+    np.testing.assert_allclose(COM, 0.5 * (COM_0 + COM_1), atol=atol)
 
     cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
     omega_0, omega_1 = gs_sim.rigid_solver.links_state.ang.to_numpy()[:, 0, 2]
-    np.testing.assert_allclose(omega_0, 3.0, atol=1e-9)
-    np.testing.assert_allclose(omega_1 - omega_0, 13.0, atol=1e-9)
+    np.testing.assert_allclose(omega_0, 3.0, atol=atol)
+    np.testing.assert_allclose(omega_1 - omega_0, 13.0, atol=atol)
     cvel_0_ = omega_0 * np.array([-COM[1], COM[0], 0.0])
-    np.testing.assert_allclose(cvel_0, cvel_0_, atol=1e-9)
+    np.testing.assert_allclose(cvel_0, cvel_0_, atol=atol)
     cvel_1_ = cvel_0 + (omega_1 - omega_0) * np.array([xanchor[1] - COM[1], COM[0] - xanchor[0], 0.0])
-    np.testing.assert_allclose(cvel_1, cvel_1_, atol=1e-9)
+    np.testing.assert_allclose(cvel_1, cvel_1_, atol=atol)
 
     xpos_0, xpos_1 = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
-    np.testing.assert_allclose(xpos_0, 0.0, atol=1e-9)
-    np.testing.assert_allclose(xpos_1, xanchor, atol=1e-9)
+    np.testing.assert_allclose(xpos_0, 0.0, atol=atol)
+    np.testing.assert_allclose(xpos_1, xanchor, atol=atol)
     xvel_0, xvel_1 = gs_sim.rigid_solver.get_links_vel()
-    np.testing.assert_allclose(xvel_0, 0.0, atol=1e-9)
+    np.testing.assert_allclose(xvel_0, 0.0, atol=atol)
     xvel_1_ = omega_0 * np.array([-xpos_1[1], xpos_1[0], 0.0])
-    np.testing.assert_allclose(xvel_1, xvel_1_, atol=1e-9)
+    np.testing.assert_allclose(xvel_1, xvel_1_, atol=atol)
     civel_0, civel_1 = gs_sim.rigid_solver.get_links_vel(ref="link_com")
     civel_0_ = omega_0 * np.array([-COM_0[1], COM_0[0], 0.0])
-    np.testing.assert_allclose(civel_0, civel_0_, atol=1e-9)
+    np.testing.assert_allclose(civel_0, civel_0_, atol=atol)
     civel_1_ = omega_0 * np.array([-COM_1[1], COM_1[0], 0.0]) + (omega_1 - omega_0) * np.array(
         [xanchor[1] - COM_1[1], COM_1[0] - xanchor[0], 0.0]
     )
-    np.testing.assert_allclose(civel_1, civel_1_, atol=1e-9)
+    np.testing.assert_allclose(civel_1, civel_1_, atol=atol)
 
 
 @pytest.mark.parametrize("model_name", ["box_box"])
@@ -242,7 +242,7 @@ def test_box_box_dynamics(gs_sim):
 
 @pytest.mark.parametrize("box_box_detection", [False, True])
 @pytest.mark.parametrize("dynamics", [False, True])
-@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)  # TODO: Add GPU once tests run in parrallel
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
 def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -306,28 +306,28 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
 )
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
-def test_simple_kinematic_chain(gs_sim, mj_sim):
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=200)
+def test_simple_kinematic_chain(gs_sim, mj_sim, atol):
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, atol=atol, num_steps=200)
 
 
 @pytest.mark.parametrize("xml_path", ["xml/walker.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
-def test_walker(gs_sim, mj_sim):
+def test_walker(gs_sim, mj_sim, atol):
     (gs_robot,) = gs_sim.entities
     qpos = np.zeros((gs_robot.n_qs,))
     qpos[2] += 0.5
     qvel = np.random.rand(gs_robot.n_dofs) * 0.2
     # Cannot simulate any longer because collision detection is very sensitive
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=90)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, atol=atol, num_steps=90)
 
 
 @pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
-def test_robot_kinematics(gs_sim, mj_sim):
+def test_robot_kinematics(gs_sim, mj_sim, atol):
     # Disable all constraints and actuation
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
@@ -336,14 +336,14 @@ def test_robot_kinematics(gs_sim, mj_sim):
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
 
-    check_mujoco_model_consistency(gs_sim, mj_sim)
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
 
     (gs_robot,) = gs_sim.entities
     dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
     for _ in range(100):
         qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
         init_simulators(gs_sim, mj_sim, qpos)
-        check_mujoco_data_consistency(gs_sim, mj_sim, atol=(1e-9 if gs.np_float == np.float64 else 5e-5))
+        check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
 
 
 @pytest.mark.dof_damping(True)
@@ -351,9 +351,9 @@ def test_robot_kinematics(gs_sim, mj_sim):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
-def test_stickman(gs_sim, mj_sim):
+def test_stickman(gs_sim, mj_sim, atol):
     # Make sure that "static" model information are matching
-    check_mujoco_model_consistency(gs_sim, mj_sim)
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
 
     # Initialize the simulation
     init_simulators(gs_sim)
@@ -662,21 +662,21 @@ def test_terrain_generation(show_viewer):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
-def test_equality_joint(gs_sim, mj_sim):
+def test_equality_joint(gs_sim, mj_sim, atol):
     # there is an equality constraint
     assert gs_sim.rigid_solver.n_equalities == 1
 
     qpos = np.array((0.0, -1.0))
     qvel = np.array((1, -0.3))
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, atol=1e-8)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, atol=atol, num_steps=300)
 
     # check if the two joints are equal
     gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-    np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=1e-9)
+    np.testing.assert_allclose(gs_qpos[0], gs_qpos[1], atol=atol)
 
 
-@pytest.mark.parametrize("backend", [gs.cpu], indirect=True)
-def test_urdf_mimic_panda(show_viewer):
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
+def test_urdf_mimic_panda(show_viewer, atol):
     # create and build the scene
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -698,7 +698,7 @@ def test_urdf_mimic_panda(show_viewer):
         scene.step()
 
     gs_qpos = rigid.qpos.to_numpy()[:, 0]
-    np.testing.assert_allclose(gs_qpos[-1], gs_qpos[-2], atol=1e-9)
+    np.testing.assert_allclose(gs_qpos[-1], gs_qpos[-2], atol=atol)
 
     if show_viewer:
         scene.viewer.stop()
@@ -706,7 +706,7 @@ def test_urdf_mimic_panda(show_viewer):
 
 @pytest.mark.parametrize("n_envs", [0, 3])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
-def test_data_accessor(n_envs):
+def test_data_accessor(n_envs, atol):
     # create and build the scene
     scene = gs.Scene(
         show_viewer=False,
@@ -749,7 +749,7 @@ def test_data_accessor(n_envs):
     qposs = gs_robot.get_qpos().cpu()
     for i in range(n_envs - 1):
         with np.testing.assert_raises(AssertionError):
-            np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=1e-9)
+            np.testing.assert_allclose(qposs[i], qposs[i + 1], atol=atol)
 
     # Check attribute getters / setters.
     # First, without any any row or column masking:
@@ -835,7 +835,7 @@ def test_data_accessor(n_envs):
             else:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]
-            np.testing.assert_allclose(datas, true, atol=1e-6)
+            np.testing.assert_allclose(datas, true, atol=atol)
         if setter is not None:
             if isinstance(datas, torch.Tensor):
                 # Make sure that the vector is normalized and positive just in case it is a quaternion
@@ -849,7 +849,7 @@ def test_data_accessor(n_envs):
         if arg1_max > 0:
             datas_ = getter(range(arg1_max))
             datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
-            np.testing.assert_allclose(datas_, datas, atol=1e-6)
+            np.testing.assert_allclose(datas_, datas, atol=atol)
 
         # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
@@ -887,7 +887,7 @@ def test_data_accessor(n_envs):
                             else:
                                 data_ = [val[[j], :][:, [i]] for val in datas]
                         data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
-                        np.testing.assert_allclose(data_, data, atol=1e-6)
+                        np.testing.assert_allclose(data_, data, atol=atol)
 
     for dofs_idx in (*get_all_supported_masks(0), None):
         for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
