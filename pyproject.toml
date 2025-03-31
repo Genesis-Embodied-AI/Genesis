@@ -77,6 +77,8 @@ addopts = [
     "--exitfirst",
     "--numprocesses=auto",
     "--dist=loadgroup",
+    "--random-order-bucket=global",
+    "--random-order-seed=0",
     "-m not benchmarks",
 ]
 filterwarnings = [
@@ -99,6 +101,7 @@ dev = [
     "black",
     "pytest",
     "pytest-xdist",
+    "pytest-random-order",
     "huggingface_hub",
 ]
 docs = [
