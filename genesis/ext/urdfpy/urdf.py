@@ -107,7 +107,7 @@ class URDFType(object):
         return kwargs
 
     @classmethod
-    def _parse_simple_elements(cls, node, path):
+    def _parse_simple_elements(cls, node, root, path):
         """Parse all elements in the _ELEMENTS array from the children of
         this node.
 
@@ -131,7 +131,7 @@ class URDFType(object):
             if not m:
                 v = node.find(t._TAG)
                 if r or v is not None:
-                    v = t._from_xml(v, path)
+                    v = t._from_xml(v, root, path)
             else:
                 vs = node.findall(t._TAG)
                 if len(vs) == 0 and r:
@@ -139,12 +139,12 @@ class URDFType(object):
                         "Missing required subelement(s) of type {} when "
                         "parsing an object of type {}".format(t.__name__, cls.__name__)
                     )
-                v = [t._from_xml(n, path) for n in vs]
+                v = [t._from_xml(n, node, path) for n in vs]
             kwargs[a] = v
         return kwargs
 
     @classmethod
-    def _parse(cls, node, path):
+    def _parse(cls, node, root, path):
         """Parse all elements and attributes in the _ELEMENTS and _ATTRIBS
         arrays for a node.
 
@@ -163,11 +163,11 @@ class URDFType(object):
             and elements in the class arrays.
         """
         kwargs = cls._parse_simple_attribs(node)
-        kwargs.update(cls._parse_simple_elements(node, path))
+        kwargs.update(cls._parse_simple_elements(node, root, path))
         return kwargs
 
     @classmethod
-    def _from_xml(cls, node, path):
+    def _from_xml(cls, node, root, path):
         """Create an instance of this class from an XML node.
 
         Parameters
@@ -183,7 +183,7 @@ class URDFType(object):
         obj : :class:`URDFType`
             An instance of this class parsed from the node.
         """
-        return cls(**cls._parse(node, path))
+        return cls(**cls._parse(node, root, path))
 
     def _unparse_attrib(self, val_type, val):
         """Convert a Python value into a string for storage in an
@@ -564,13 +564,17 @@ class Mesh(URDFType):
         self._meshes = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
 
         # Load the mesh, combining collision geometry meshes but keeping
         # visual ones separate to preserve colors and textures
         fn = get_filename(path, kwargs["filename"])
-        combine = node.getparent().getparent().tag == Collision._TAG
+        parent = next((p for p in root.iter() if node in p))
+        grandparent = next((p for p in root.iter() if parent in p))
+        assert grandparent.tag in (Visual._TAG, Collision._TAG)
+        combine = grandparent.tag == Collision._TAG
+
         meshes = load_meshes(fn)
         if combine:
             # Delete visuals for simplicity
@@ -798,8 +802,8 @@ class Texture(URDFType):
         self._image = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
 
         # Load image
         fn = get_filename(path, kwargs["filename"])
@@ -894,8 +898,8 @@ class Material(URDFType):
         self._texture = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
 
         # Extract the color -- it's weirdly an attribute of a subelement
         color = node.find("color")
@@ -995,8 +999,8 @@ class Collision(URDFType):
         self._origin = configure_origin(value)
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
         kwargs["origin"] = parse_origin(node)
         return Collision(**kwargs)
 
@@ -1103,8 +1107,8 @@ class Visual(URDFType):
         self._material = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
         kwargs["origin"] = parse_origin(node)
         return Visual(**kwargs)
 
@@ -1191,7 +1195,7 @@ class Inertial(URDFType):
         self._origin = configure_origin(value)
 
     @classmethod
-    def _from_xml(cls, node, path):
+    def _from_xml(cls, node, root, path):
         origin = parse_origin(node)
         mass = float(node.find("mass").attrib["value"])
         n = node.find("inertia")
@@ -1720,8 +1724,8 @@ class Actuator(URDFType):
         self._hardwareInterfaces = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
         mr = node.find("mechanicalReduction")
         if mr is not None:
             mr = float(mr.text)
@@ -1810,8 +1814,8 @@ class TransmissionJoint(URDFType):
         self._hardwareInterfaces = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
         hi = node.findall("hardwareInterface")
         if len(hi) > 0:
             hi = [h.text for h in hi]
@@ -1935,8 +1939,8 @@ class Transmission(URDFType):
         self._actuators = value
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
         kwargs["trans_type"] = node.find("type").text
         return Transmission(**kwargs)
 
@@ -2319,8 +2323,8 @@ class Joint(URDFType):
             raise ValueError("Invalid configuration")
 
     @classmethod
-    def _from_xml(cls, node, path):
-        kwargs = cls._parse(node, path)
+    def _from_xml(cls, node, root, path):
+        kwargs = cls._parse(node, root, path)
         kwargs["joint_type"] = str(node.attrib["type"])
         kwargs["parent"] = node.find("parent").attrib["link"]
         kwargs["child"] = node.find("child").attrib["link"]
@@ -3627,7 +3631,7 @@ class URDF(URDFType):
             if os.path.isfile(file_obj):
                 with open(file_obj, "r") as f:
                     file_str = f.read()
-                tree = ET.parse(io.BytesIO(file_str))
+                tree = ET.parse(io.StringIO(file_str))
                 path, _ = os.path.split(file_obj)
             else:
                 raise ValueError("{} is not a file".format(file_obj))
@@ -3636,7 +3640,7 @@ class URDF(URDFType):
             path, _ = os.path.split(file_obj.name)
 
         node = tree.getroot()
-        return URDF._from_xml(node, path)
+        return URDF._from_xml(node, node, path)
 
     def _validate_joints(self):
         """Raise an exception of any joints are invalidly specified.
@@ -3820,9 +3824,9 @@ class URDF(URDFType):
         return joint_cfg, n_cfgs
 
     @classmethod
-    def _from_xml(cls, node, path):
+    def _from_xml(cls, node, root, path):
         valid_tags = set(["joint", "link", "transmission", "material"])
-        kwargs = cls._parse(node, path)
+        kwargs = cls._parse(node, root, path)
 
         extra_xml_node = ET.Element("extra")
         for child in node:
