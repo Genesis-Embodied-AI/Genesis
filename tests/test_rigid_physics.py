@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 import trimesh
 import torch
 import numpy as np
+from huggingface_hub import snapshot_download
 
 import mujoco
 import genesis as gs
@@ -549,7 +550,6 @@ def test_nonconvex_collision(show_viewer):
         scene.viewer.stop()
 
 
-@pytest.mark.xfail(reason="Need to fine a way to download these assets from somewhere else.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(show_viewer):
     # The test check that the volume difference is under a given threshold and
@@ -573,9 +573,15 @@ def test_convexify(show_viewer):
     )
     objs = []
     for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
+        asset_path = snapshot_download(
+            repo_type="dataset",
+            repo_id="Genesis-Intelligence/assets",
+            allow_patterns=f"{asset_name}/*",
+            max_workers=1,
+        )
         obj = scene.add_entity(
             gs.morphs.MJCF(
-                file=f"meshes/{asset_name}/output.xml",
+                file=f"{asset_path}/{asset_name}/output.xml",
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
