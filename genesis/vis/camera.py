@@ -266,12 +266,10 @@ class Camera(RBC):
     def render_pointcloud(self, world_frame=True):
         """
         Render a partial point cloud from the camera view. Returns a (res[0], res[1], 3) numpy array representing the point cloud in each pixel.
-
         Parameters
         ----------
         world_frame : bool, optional
             Whether the point cloud is on camera frame or world frame.
-
         Returns
         -------
         pc : np.ndarray
@@ -284,6 +282,7 @@ class Camera(RBC):
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                 self, False, True, False, normal=False
             )
+
             def opengl_projection_matrix_to_intrinsics(P: np.ndarray, width: int, height: int):
                 """Convert OpenGL projection matrix to camera intrinsics.
                 Args:
@@ -301,7 +300,7 @@ class Camera(RBC):
 
                 K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
                 return K
-            
+
             def backproject_depth_to_pointcloud(K: np.ndarray, depth: np.ndarray, pose, world):
                 """Convert depth image to pointcloud given camera intrinsics.
                 Args:
@@ -342,12 +341,12 @@ class Camera(RBC):
                     return point_cloud, mask
 
             intrinsic_K = opengl_projection_matrix_to_intrinsics(
-                self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(), width=self.res[0], height=self.res[1]
+                self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(),
+                width=self.res[0],
+                height=self.res[1],
             )
 
-            T_OPENGL_TO_OPENCV = np.array(
-                [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
-            )
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
             cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
             pc, mask = backproject_depth_to_pointcloud(intrinsic_K, depth_arr, cam_pose, world_frame)
