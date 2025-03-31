@@ -705,6 +705,7 @@ def test_urdf_mimic_panda(show_viewer):
 
 
 @pytest.mark.parametrize("n_envs", [0, 3])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
 def test_data_accessor(n_envs):
     # TODO: Check that the setters are doing something and not just no-ops
     # TODO: Compare the getter output with their corresponding field value if applicable
