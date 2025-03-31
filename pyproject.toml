@@ -80,7 +80,7 @@ addopts = [
     "-m not benchmarks",
 ]
 filterwarnings = [
-    "ignore:.*PytestUnknownMarkWarning",
+    "ignore::_pytest.warning_types.PytestUnknownMarkWarning",
     "ignore::DeprecationWarning",
 ]
 markers = [

@@ -2643,7 +2643,7 @@ class RigidSolver(Solver):
 
     def apply_links_external_force(self, force, links_idx=None, envs_idx=None, *, unsafe=False):
         force, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            force, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+            force, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         self._kernel_apply_links_external_force(force, links_idx, envs_idx)
 
@@ -2661,7 +2661,7 @@ class RigidSolver(Solver):
 
     def apply_links_external_torque(self, torque, links_idx=None, envs_idx=None, *, unsafe=False):
         torque, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+            torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         self._kernel_apply_links_external_torque(torque, links_idx, envs_idx)
 
@@ -3770,7 +3770,7 @@ class RigidSolver(Solver):
         if links_idx is None:
             links_idx = self._base_links_idx
         pos, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            pos, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+            pos, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             pos = pos.unsqueeze(0)
@@ -3804,7 +3804,7 @@ class RigidSolver(Solver):
         if links_idx is None:
             links_idx = self._base_links_idx
         quat, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            quat, links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", unsafe=unsafe
+            quat, links_idx, self.n_links, 4, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             quat = quat.unsqueeze(0)
@@ -3833,7 +3833,7 @@ class RigidSolver(Solver):
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
-            mass, links_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+            mass, links_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             mass = mass.unsqueeze(0)
@@ -3852,7 +3852,7 @@ class RigidSolver(Solver):
 
     def set_links_COM_shift(self, com, links_idx=None, envs_idx=None, *, unsafe=False):
         com, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            com, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+            com, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             com = com.unsqueeze(0)
@@ -3871,12 +3871,13 @@ class RigidSolver(Solver):
                 self.links_state[links_idx[i_l_], envs_idx[i_b_]].i_pos_shift[i] = com[i_b_, i_l_, i]
 
     def _set_links_info(self, tensor, links_idx, name, envs_idx=None, *, unsafe=False):
-        tensor, links_idx, envs_idx = self._sanitize_1D_io_variables(
+        _, links_idx, envs_idx = self._sanitize_1D_io_variables(
             tensor,
             links_idx,
             self.n_links,
             envs_idx,
             batched=self._options.batch_links_info,
+            skip_allocation=True,
             idx_name="links_idx",
             unsafe=unsafe,
         )
@@ -3927,7 +3928,7 @@ class RigidSolver(Solver):
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None, *, unsafe=False):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
-            friction_ratio, geoms_idx, self.n_geoms, envs_idx, idx_name="geoms_idx", unsafe=unsafe
+            friction_ratio, geoms_idx, self.n_geoms, envs_idx, idx_name="geoms_idx", skip_allocation=True, unsafe=unsafe
         )
         self._kernel_set_geoms_friction_ratio(friction_ratio, geoms_idx, envs_idx)
 
@@ -3944,7 +3945,7 @@ class RigidSolver(Solver):
 
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         qpos, qs_idx, envs_idx = self._sanitize_1D_io_variables(
-            qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", unsafe=unsafe
+            qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             qpos = qpos.unsqueeze(0)
@@ -4000,9 +4001,16 @@ class RigidSolver(Solver):
                 self.dofs_info[I].sol_params[j] = sol_params[j]
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None, *, unsafe=False):
+        tensor_list = list(tensor_list)
         for i, tensor in enumerate(tensor_list):
             tensor_list[i], dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-                tensor, dofs_idx, self.n_dofs, envs_idx, batched=self._options.batch_dofs_info, unsafe=unsafe
+                tensor,
+                dofs_idx,
+                self.n_dofs,
+                envs_idx,
+                batched=self._options.batch_dofs_info,
+                skip_allocation=True,
+                unsafe=unsafe,
             )
         if name == "kp":
             self._kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx)
@@ -4175,7 +4183,7 @@ class RigidSolver(Solver):
 
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            velocity, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe, skip_allocation=True
+            velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
 
         if velocity is None:
@@ -4211,7 +4219,7 @@ class RigidSolver(Solver):
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            position, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
+            position, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             position = position.unsqueeze(0)
@@ -4275,7 +4283,7 @@ class RigidSolver(Solver):
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None, *, unsafe=False):
         force, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            force, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
+            force, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             force = force.unsqueeze(0)
@@ -4295,7 +4303,7 @@ class RigidSolver(Solver):
 
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False):
         velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            velocity, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
+            velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             velocity = velocity.unsqueeze(0)
@@ -4315,7 +4323,7 @@ class RigidSolver(Solver):
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            position, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
+            position, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             position = position.unsqueeze(0)
@@ -4625,7 +4633,14 @@ class RigidSolver(Solver):
 
     def set_geoms_friction(self, friction, geoms_idx=None, *, unsafe=False):
         friction, geoms_idx, _ = self._sanitize_1D_io_variables(
-            friction, geoms_idx, self.n_geoms, None, batched=False, idx_name="geoms_idx", unsafe=unsafe
+            friction,
+            geoms_idx,
+            self.n_geoms,
+            None,
+            batched=False,
+            idx_name="geoms_idx",
+            skip_allocation=True,
+            unsafe=unsafe,
         )
         self._kernel_set_geoms_friction(friction, geoms_idx)
 

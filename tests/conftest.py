@@ -15,7 +15,7 @@ from .utils import MjSim
 
 
 TOL_SINGLE = 5e-5
-TOL_DOUBLE = 5e-8
+TOL_DOUBLE = 1e-9
 
 
 def pytest_make_parametrize_id(config, val, argname):
