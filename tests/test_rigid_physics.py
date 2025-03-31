@@ -371,8 +371,7 @@ def test_stickman(gs_sim, mj_sim):
     np.testing.assert_array_less(0, body_z)
 
 
-@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
-def test_inverse_kinematics(show_viewer):
+def move_cube(use_suction, show_viewer):
     # create and build the scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -454,11 +453,18 @@ def test_inverse_kinematics(show_viewer):
     for i in range(50):
         scene.step()
 
+    rigid = scene.sim.rigid_solver
+
     # grasp
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-    franka.control_dofs_force(np.array([-0.5, -0.5]), fingers_dof)
-    for i in range(50):
-        scene.step()
+    if not use_suction:
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-0.5, -0.5]), fingers_dof)
+        for i in range(50):
+            scene.step()
+    else:
+        link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
+        link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
+        rigid.add_weld_constraint(link_cube, link_franka)
 
     # lift
     qpos = franka.inverse_kinematics(
@@ -481,7 +487,11 @@ def test_inverse_kinematics(show_viewer):
         scene.step()
 
     # release
-    franka.control_dofs_position(np.array([0.4, 0.4]), fingers_dof)
+    if not use_suction:
+        franka.control_dofs_position(np.array([0.4, 0.4]), fingers_dof)
+    else:
+        rigid.delete_weld_constraint(link_cube, link_franka)
+
     for i in range(400):
         scene.step()
 
@@ -492,6 +502,18 @@ def test_inverse_kinematics(show_viewer):
 
     if show_viewer:
         scene.viewer.stop()
+
+
+@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+def test_inverse_kinematics(show_viewer):
+    use_suction = False
+    move_cube(use_suction, show_viewer)
+
+
+@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+def test_suction_cup(show_viewer):
+    use_suction = True
+    move_cube(use_suction, show_viewer)
 
 
 def test_nonconvex_collision(show_viewer):

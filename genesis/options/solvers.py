@@ -176,6 +176,8 @@ class RigidOptions(Options):
         Velocity threshold for hibernation. Defaults to 1e-3.
     hibernation_thresh_acc : float, optional
         Acceleration threshold for hibernation. Defaults to 1e-2.
+    max_dynamic_constraints : int, optional
+        Maximum number of dynamic constraints (like suction cup). Defaults to 8.
 
     Warning
     -------
@@ -217,6 +219,9 @@ class RigidOptions(Options):
     hibernation_thresh_vel: float = 1e-3
     hibernation_thresh_acc: float = 1e-2
 
+    # for dynamic properties
+    max_dynamic_constraints: int = 8
+
     def __init__(self, **data):
         super().__init__(**data)
 
@@ -239,6 +244,8 @@ class AvatarOptions(Options):
         Maximum number of collision pairs. Defaults to 100.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage. Defaults to 6.
+    max_dynamic_constraints : int, optional
+        Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     """
 
     dt: Optional[float] = None
@@ -247,6 +254,9 @@ class AvatarOptions(Options):
     enable_adjacent_collision: bool = False
     max_collision_pairs: int = 100
     IK_max_targets: int = 6  # Increasing this doesn't affect IK solving speed, but will increase memory usage
+
+    # for dynamic properties
+    max_dynamic_constraints: int = 8
 
 
 class MPMOptions(Options):

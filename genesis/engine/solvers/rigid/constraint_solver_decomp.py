@@ -24,9 +24,11 @@ class ConstraintSolver:
         self.len_constraints = (
             5 * self._collider._max_contact_pairs
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
-            + self._solver.n_equalities * 6
+            + self._solver.n_equalities_candidate * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
+        self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+        self.ti_n_equalities.from_numpy(np.ones([self._solver._B]) * self._solver.n_equalities)
 
         self.jac = ti.field(
             dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
@@ -192,7 +194,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_connect(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e]
+        eq_info = self._solver.equality_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         anchor1_pos = gs.ti_vec3([eq_info.eq_data[0], eq_info.eq_data[1], eq_info.eq_data[2]])
@@ -281,7 +283,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_joint(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e]
+        eq_info = self._solver.equality_info[i_e, i_b]
 
         sol_params = eq_info.sol_params
 
@@ -346,19 +348,19 @@ class ConstraintSolver:
     def add_equality_constraints(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
-            for i_e in range(self._solver.n_equalities):
-                if self._solver.equality_info[i_e].eq_type == gs.EQUALITY_TYPE.CONNECT:
+            for i_e in range(self.ti_n_equalities[i_b]):
+                if self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
                     self._func_equality_connect(i_b, i_e)
-                elif self._solver.equality_info[i_e].eq_type == gs.EQUALITY_TYPE.WELD:
+                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
                     self._func_equality_weld(i_b, i_e)
-                elif self._solver.equality_info[i_e].eq_type == gs.EQUALITY_TYPE.JOINT:
+                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
                     self._func_equality_joint(i_b, i_e)
 
     @ti.func
     def _func_equality_weld(self, i_b, i_e):
         # TODO: sparse mode
         # Get equality info for this constraint
-        eq_info = self._solver.equality_info[i_e]
+        eq_info = self._solver.equality_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
 
@@ -462,7 +464,6 @@ class ConstraintSolver:
             self.efc_D[n_con, i_b] = 1.0 / ti.max(diag, gs.EPS)
 
         # --- Orientation part (next 3 constraints) ---
-
         n_con = ti.atomic_add(self.n_constraints[i_b], 3)
         ti.atomic_add(self.n_constraints_equality[i_b], 3)
         con_n_relevant_dofs = 0
@@ -747,8 +748,7 @@ class ConstraintSolver:
 
     def handle_constraints(self):
         if not self._solver._disable_constraint:
-            if self._solver.n_equalities > 0:
-                self.add_equality_constraints()
+            self.add_equality_constraints()
 
             if self._solver._enable_collision:
                 self.add_collision_constraints()
