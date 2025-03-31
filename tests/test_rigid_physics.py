@@ -707,41 +707,37 @@ def test_urdf_mimic_panda(show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 3])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
 def test_data_accessor(n_envs):
-    # TODO: Check that the setters are doing something and not just no-ops
-    # TODO: Compare the getter output with their corresponding field value if applicable
-
     # create and build the scene
     scene = gs.Scene(
         show_viewer=False,
     )
     scene.add_entity(gs.morphs.Plane())
     gs_robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            pos=(0.0, 0.0, 0.5),
+        ),
     )
     scene.build(n_envs=n_envs)
     gs_sim = scene.sim
     gs_s = gs_sim.rigid_solver
 
     # Initialize the simulation
-    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
-    qpos_all = []
+    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_torch(device="cpu")
+    dof_bounds[..., :2, :] = torch.tensor((-1.0, 1.0))
+    dof_bounds[..., 2, :] = torch.tensor((0.7, 1.0))
+    dof_bounds[..., 3:6, :] = torch.tensor((-np.pi / 2, np.pi / 2))
     for i in range(max(n_envs, 1)):
-        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
+        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_dofs)
         if n_envs:
-            gs_robot.set_qpos(qpos[None], envs_idx=[i])
-            _qpos = gs_robot.get_qpos(envs_idx=[i]).squeeze(0).cpu()
+            gs_robot.set_dofs_position(qpos[None], envs_idx=[i])
         else:
-            gs_robot.set_qpos(qpos)
-            _qpos = gs_robot.get_qpos().squeeze(0).cpu()
-        np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
-        if n_envs:
-            _qpos = gs_robot.get_qpos()[i].cpu()
-            np.testing.assert_allclose(qpos, _qpos, atol=1e-9)
+            gs_robot.set_dofs_position(qpos)
 
     # Simulate for a while, until they collide with something
     for _ in range(400):
         gs_sim.step()
-        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_torch(device="cpu")
         if (gs_n_contacts > 0).all():
             break
     else:
@@ -757,7 +753,8 @@ def test_data_accessor(n_envs):
 
     # Check attribute getters / setters.
     # First, without any any row or column masking:
-    # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
+    # * Call 'Get' -> Call 'Set' with random value -> Call 'Get'
+    # * Compare first 'Get' ouput with field value
     # Then, for any possible combinations of row and column masking:
     # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
     # * Compare first 'Get' output with last 'Get' output
@@ -828,8 +825,11 @@ def test_data_accessor(n_envs):
     ):
         # Check getter and setter without row or column masking
         datas = getter()
+        datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
         if field is not None:
             true = field.to_torch(device="cpu")
+            if true.ndim > 1 and true.shape[1] == n_envs:
+                true = true.transpose(1, 0)
             if isinstance(datas, torch.Tensor):
                 true = true.reshape(datas.shape)
             else:
@@ -837,8 +837,15 @@ def test_data_accessor(n_envs):
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]
             np.testing.assert_allclose(datas, true, atol=1e-9)
         if setter is not None:
+            if isinstance(datas, torch.Tensor):
+                # Make sure that the vector is normalized and positive just in case it is a quaternion
+                datas = torch.abs(torch.randn(datas.shape, dtype=datas.dtype))
+                datas /= torch.linalg.norm(datas, dim=-1, keepdims=True)
+            else:
+                for val in datas:
+                    val[:] = torch.abs(torch.randn(val.shape, dtype=val.dtype))
+                    val[:] /= torch.linalg.norm(vals, dim=-1, keepdims=True)
             setter(datas)
-        datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
         if arg1_max > 0:
             datas_ = getter(range(arg1_max))
             datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
