@@ -4660,14 +4660,11 @@ class RigidSolver(Solver):
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
         _, link1_idx, _ = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
-
-        link1_idx = link1_idx.to(gs.tc_int)
-
         self._kernel_add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     @ti.kernel
@@ -4720,13 +4717,11 @@ class RigidSolver(Solver):
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
         _, link1_idx, _ = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
         _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
-
-        link1_idx = link1_idx.to(gs.tc_int)
         self._kernel_delete_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     @ti.kernel
