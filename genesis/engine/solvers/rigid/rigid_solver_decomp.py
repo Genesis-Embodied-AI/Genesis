@@ -174,7 +174,9 @@ class RigidSolver(Solver):
         self.n_vfaces_ = max(1, self.n_vfaces)
         self.n_vverts_ = max(1, self.n_vverts)
         self.n_entities_ = max(1, self.n_entities)
-        self.n_equalities_ = max(1, self.n_equalities)
+
+        n_reserved_equality = 8  # TODO: made this a parameter
+        self.n_equalities_potential = max(1, self.n_equalities + n_reserved_equality)
 
         if self.is_active():
             self._init_mass_mat()
@@ -1175,16 +1177,14 @@ class RigidSolver(Solver):
 
     def _init_equality_fields(self):
         struct_equality_info = ti.types.struct(
-            equality_type=gs.ti_int,
             eq_obj1id=gs.ti_int,
             eq_obj2id=gs.ti_int,
             eq_data=gs.ti_vec11,
             eq_type=gs.ti_int,
-            entity_idx=gs.ti_int,
             sol_params=gs.ti_vec7,
         )
         self.equality_info = struct_equality_info.field(
-            shape=self.n_equalities_, needs_grad=False, layout=ti.Layout.SOA
+            shape=self._batch_shape(self.n_equalities_potential), needs_grad=False, layout=ti.Layout.SOA
         )
         if self.n_equalities > 0:
             equalities = self.equalities
@@ -1215,16 +1215,16 @@ class RigidSolver(Solver):
         equalities_eq_type: ti.types.ndarray(),
         equalities_sol_params: ti.types.ndarray(),
     ):
+
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i in range(self.n_equalities):
-            self.equality_info[i].equality_type = equalities_type[i]
-            self.equality_info[i].eq_obj1id = equalities_eq_obj1id[i]
-            self.equality_info[i].eq_obj2id = equalities_eq_obj2id[i]
-            self.equality_info[i].eq_type = equalities_eq_type[i]
+        for i, b in ti.ndrange(self.n_equalities, self._B):
+            self.equality_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
+            self.equality_info[i, b].eq_obj2id = equalities_eq_obj2id[i]
+            self.equality_info[i, b].eq_type = equalities_eq_type[i]
             for j in ti.static(range(11)):
-                self.equality_info[i].eq_data[j] = equalities_eq_data[i, j]
+                self.equality_info[i, b].eq_data[j] = equalities_eq_data[i, j]
             for j in ti.static(range(7)):
-                self.equality_info[i].sol_params[j] = equalities_sol_params[i, j]
+                self.equality_info[i, b].sol_params[j] = equalities_sol_params[i, j]
 
     def _init_envs_offset(self):
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
@@ -1644,6 +1644,13 @@ class RigidSolver(Solver):
         if ti.static(self._use_hibernation):
             self._func_hibernate()
             self._func_aggregate_awake_entities()
+
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(self._B):
+            self._func_forward_kinematics(i_b)
+            self._func_transform_COM(i_b)
+            self._func_forward_velocity(i_b)
+            self._func_update_geoms(i_b)
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -4651,6 +4658,79 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_g_ in ti.ndrange(geoms_idx.shape[0]):
             self.geoms_info[geoms_idx[i_g_]].friction = friction[i_g_]
+
+    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
+        link1_idx, link2_idx, envs_idx = self._sanitize_1D_io_variables(
+            link1_idx, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+        )
+        link1_idx = link1_idx.to(gs.tc_int)
+
+        self._kernel_add_weld_constraint(link1_idx, link2_idx, envs_idx)
+
+    def delete_weld_constraint(self):
+        self._kernel_delete_weld_constraint(np.array([0], dtype=gs.np_int))
+
+    @ti.kernel
+    def _kernel_delete_weld_constraint(
+        self,
+        envs_idx: ti.types.ndarray(),
+    ):
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] - 1
+
+    @ti.kernel
+    def _kernel_add_weld_constraint(
+        self,
+        link1_idx: ti.types.ndarray(),
+        link2_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b_ in ti.ndrange(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            i_e = self.constraint_solver.ti_n_equalities[i_b]
+            l1 = link1_idx[i_b]
+            l2 = link2_idx[i_b]
+
+            shared_pos = self.links_state[l1, i_b].pos
+            pos1 = gu.ti_inv_transform_by_trans_quat(
+                shared_pos, self.links_state[l1, i_b].pos, self.links_state[l1, i_b].quat
+            )
+            pos2 = gu.ti_inv_transform_by_trans_quat(
+                shared_pos, self.links_state[l2, i_b].pos, self.links_state[l2, i_b].quat
+            )
+
+            self.equality_info[i_e, i_b].eq_type = gs.ti_int(gs.EQUALITY_TYPE.WELD)
+            self.equality_info[i_e, i_b].eq_obj1id = l1
+            self.equality_info[i_e, i_b].eq_obj2id = l2
+
+            for i_3 in range(3):
+                self.equality_info[i_e, i_b].eq_data[i_3 + 3] = pos1[i_3]
+                self.equality_info[i_e, i_b].eq_data[i_3] = pos2[i_3]
+
+            relpose = gu.ti_quat_mul(gu.ti_inv_quat(self.links_state[l1, i_b].quat), self.links_state[l2, i_b].quat)
+            # relpose = gu.ti_quat_mul(gu.ti_inv_quat(self.links_state[link1_idx[i_b], i_b].quat), self.links_state[link2_idx[i_b], i_b].quat)
+
+            self.equality_info[i_e, i_b].eq_data[6] = relpose[0]
+            self.equality_info[i_e, i_b].eq_data[7] = relpose[1]
+            self.equality_info[i_e, i_b].eq_data[8] = relpose[2]
+            self.equality_info[i_e, i_b].eq_data[9] = relpose[3]
+
+            self.equality_info[i_e, i_b].eq_data[10] = 1.0
+            self.equality_info[i_e, i_b].sol_params = ti.Vector(
+                [2 * self._substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
+            )
+
+            # trans=self._solver.links_state[link2_idx, i_b].pos,
+            # quat=self._solver.links_state[link2_idx, i_b].quat,
+            self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
+
+            # eq_obj1id=gs.ti_int,
+            # eq_obj2id=gs.ti_int,
+            # eq_data=gs.ti_vec11,
+            # eq_type=gs.ti_int,
+            # sol_params=gs.ti_vec7,
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

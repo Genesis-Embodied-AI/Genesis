@@ -23,7 +23,12 @@ def ti_transform_quat_by_quat(v, u):
 
 @ti.func
 def ti_quat_mul(u, v):
-    return ti_transform_quat_by_quat(v, u)
+    terms = v.outer_product(u)
+    w = terms[0, 0] - terms[1, 1] - terms[2, 2] - terms[3, 3]
+    x = terms[0, 1] + terms[1, 0] - terms[2, 3] + terms[3, 2]
+    y = terms[0, 2] + terms[1, 3] + terms[2, 0] - terms[3, 1]
+    z = terms[0, 3] - terms[1, 2] + terms[2, 1] + terms[3, 0]
+    return ti.Vector([w, x, y, z])
 
 
 @ti.func
