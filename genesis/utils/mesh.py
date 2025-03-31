@@ -240,7 +240,7 @@ def postprocess_collision_geoms(
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            if tmesh.is_convex:
+            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.volume < gs.EPS:
                 continue
             cmesh = trimesh.convex.convex_hull(tmesh)
             volume_err = cmesh.volume / tmesh.volume - 1.0
@@ -294,7 +294,7 @@ def postprocess_collision_geoms(
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            if tmesh.is_convex:
+            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.volume < gs.EPS:
                 volume_err = 0.0
             else:
                 cmesh = trimesh.convex.convex_hull(tmesh)

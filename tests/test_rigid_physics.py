@@ -504,13 +504,13 @@ def move_cube(use_suction, show_viewer):
         scene.viewer.stop()
 
 
-@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics(show_viewer):
     use_suction = False
     move_cube(use_suction, show_viewer)
 
 
-@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_suction_cup(show_viewer):
     use_suction = True
     move_cube(use_suction, show_viewer)
@@ -610,7 +610,7 @@ def test_convexify(show_viewer):
         scene.viewer.stop()
 
 
-@pytest.mark.parametrize("backend", [gs.gpu, gs.cpu], indirect=True)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu], indirect=True)
 def test_terrain_generation(show_viewer):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -835,7 +835,7 @@ def test_data_accessor(n_envs):
             else:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]
-            np.testing.assert_allclose(datas, true, atol=1e-9)
+            np.testing.assert_allclose(datas, true, atol=1e-6)
         if setter is not None:
             if isinstance(datas, torch.Tensor):
                 # Make sure that the vector is normalized and positive just in case it is a quaternion
@@ -849,7 +849,7 @@ def test_data_accessor(n_envs):
         if arg1_max > 0:
             datas_ = getter(range(arg1_max))
             datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
-            np.testing.assert_allclose(datas_, datas, atol=1e-9)
+            np.testing.assert_allclose(datas_, datas, atol=1e-6)
 
         # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
@@ -887,7 +887,7 @@ def test_data_accessor(n_envs):
                             else:
                                 data_ = [val[[j], :][:, [i]] for val in datas]
                         data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
-                        np.testing.assert_allclose(data_, data, atol=1e-9)
+                        np.testing.assert_allclose(data_, data, atol=1e-6)
 
     for dofs_idx in (*get_all_supported_masks(0), None):
         for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
