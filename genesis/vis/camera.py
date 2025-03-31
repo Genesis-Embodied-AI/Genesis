@@ -261,7 +261,6 @@ class Camera(RBC):
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
-
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
         """
