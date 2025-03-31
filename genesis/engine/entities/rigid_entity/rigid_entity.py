@@ -1844,8 +1844,6 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
 
-        if self.base_link.is_fixed:
-            gs.logger.warning("Base link is fixed. Overriding base link pose.")
         self._solver.set_base_links_pos(
             pos.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
         )
@@ -1867,8 +1865,6 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
 
-        if self.base_link.is_fixed:
-            gs.logger.warning("Base link is fixed. Overriding base link pose.")
         self._solver.set_base_links_quat(
             quat.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
         )

@@ -720,7 +720,7 @@ def test_data_accessor(n_envs):
     )
     scene.build(n_envs=n_envs)
     gs_sim = scene.sim
-    gs_solver = gs_sim.rigid_solver
+    gs_s = gs_sim.rigid_solver
 
     # Initialize the simulation
     dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
@@ -776,58 +776,66 @@ def test_data_accessor(n_envs):
     def must_cast(value):
         return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
 
-    for arg1_max, arg2_max, getter, setter in (
-        (gs_solver.n_links, n_envs, gs_solver.get_links_pos, None),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_quat, None),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_vel, None),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_ang, None),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_acc, None),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_COM, None),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_mass_shift, gs_solver.set_links_mass_shift),
-        (gs_solver.n_links, n_envs, gs_solver.get_links_COM_shift, gs_solver.set_links_COM_shift),
-        (gs_solver.n_links, -1, gs_solver.get_links_inertial_mass, gs_solver.set_links_inertial_mass),
-        (gs_solver.n_links, -1, gs_solver.get_links_invweight, gs_solver.set_links_invweight),
-        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_control_force, gs_solver.control_dofs_force),
-        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_force, None),
-        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_velocity, gs_solver.set_dofs_velocity),
-        (gs_solver.n_dofs, n_envs, gs_solver.get_dofs_position, gs_solver.set_dofs_position),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_force_range, None),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_limit, None),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_stiffness, None),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_invweight, None),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_armature, None),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_damping, None),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kp, gs_solver.set_dofs_kp),
-        (gs_solver.n_dofs, -1, gs_solver.get_dofs_kv, gs_solver.set_dofs_kv),
-        (gs_solver.n_geoms, n_envs, gs_solver.get_geoms_pos, None),
-        (gs_solver.n_geoms, -1, gs_solver.get_geoms_friction, gs_solver.set_geoms_friction),
-        (gs_solver.n_qs, n_envs, gs_solver.get_qpos, gs_solver.set_qpos),
-        (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None),
-        (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None),
-        (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None),
-        (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None),
-        (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None),
-        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass),
-        (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight),
-        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None),
-        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None),
-        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity),
-        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_limit, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_stiffness, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_armature, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_damping, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv),
-        (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos),
-        (-1, n_envs, gs_robot.get_links_net_contact_force, None),
-        (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos),
-        (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat),
+    for arg1_max, arg2_max, getter, setter, field in (
+        (gs_s.n_links, n_envs, gs_s.get_links_pos, None, gs_s.links_state.pos),
+        (gs_s.n_links, n_envs, gs_s.get_links_quat, None, gs_s.links_state.quat),
+        (gs_s.n_links, n_envs, gs_s.get_links_vel, None, None),
+        (gs_s.n_links, n_envs, gs_s.get_links_ang, None, gs_s.links_state.ang),
+        (gs_s.n_links, n_envs, gs_s.get_links_acc, None, None),
+        (gs_s.n_links, n_envs, gs_s.get_links_COM, None, gs_s.links_state.COM),
+        (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.links_state.mass_shift),
+        (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.links_state.i_pos_shift),
+        (gs_s.n_links, -1, gs_s.get_links_inertial_mass, gs_s.set_links_inertial_mass, gs_s.links_info.inertial_mass),
+        (gs_s.n_links, -1, gs_s.get_links_invweight, gs_s.set_links_invweight, gs_s.links_info.invweight),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_control_force, gs_s.control_dofs_force, None),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_force, None, gs_s.dofs_state.force),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_velocity, gs_s.set_dofs_velocity, gs_s.dofs_state.vel),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_position, gs_s.set_dofs_position, gs_s.dofs_state.pos),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_force_range, None, gs_s.dofs_info.force_range),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_limit, None, gs_s.dofs_info.limit),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, None, gs_s.dofs_info.stiffness),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dofs_info.invweight),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_armature, None, gs_s.dofs_info.armature),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_damping, None, gs_s.dofs_info.damping),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.kp),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, gs_s.dofs_info.kv),
+        (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
+        (gs_s.n_geoms, -1, gs_s.get_geoms_friction, gs_s.set_geoms_friction, gs_s.geoms_info.friction),
+        (gs_s.n_qs, n_envs, gs_s.get_qpos, gs_s.set_qpos, gs_s.qpos),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None, None),
+        (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity, None),
+        (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_limit, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_stiffness, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_armature, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_damping, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv, None),
+        (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos, None),
+        (-1, n_envs, gs_robot.get_links_net_contact_force, None, None),
+        (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
+        (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
     ):
         # Check getter and setter without row or column masking
         datas = getter()
+        if field is not None:
+            true = field.to_torch(device="cpu")
+            if isinstance(datas, torch.Tensor):
+                true = true.reshape(datas.shape)
+            else:
+                true = torch.unbind(true, dim=-1)
+                true = [val.reshape(data.shape) for data, val in zip(datas, true)]
+            np.testing.assert_allclose(datas, true, atol=1e-9)
         if setter is not None:
             setter(datas)
         datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
@@ -877,8 +885,8 @@ def test_data_accessor(n_envs):
     for dofs_idx in (*get_all_supported_masks(0), None):
         for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
             unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
-            dofs_pos = gs_solver.get_dofs_position(dofs_idx, envs_idx)
-            dofs_vel = gs_solver.get_dofs_velocity(dofs_idx, envs_idx)
+            dofs_pos = gs_s.get_dofs_position(dofs_idx, envs_idx)
+            dofs_vel = gs_s.get_dofs_velocity(dofs_idx, envs_idx)
             gs_sim.rigid_solver.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
             gs_sim.rigid_solver.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
 

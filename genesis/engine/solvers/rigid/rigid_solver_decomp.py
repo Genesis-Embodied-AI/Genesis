@@ -154,11 +154,11 @@ class RigidSolver(Solver):
         self._joints = self.joints
         self._equalities = self.equalities
 
-        base_links_idx = {link.idx for link in self.links if link.is_fixed}
-        for joint in tuple(chain.from_iterable(self.joints)):
+        base_links_idx = []
+        for joint in chain.from_iterable(self.joints):
             if joint.type == gs.JOINT_TYPE.FREE:
-                base_links_idx.add(joint.link.idx)
-        self._base_links_idx = torch.tensor(tuple(base_links_idx), dtype=gs.tc_int, device=gs.device)
+                base_links_idx.append(joint.link.idx)
+        self._base_links_idx = torch.tensor(base_links_idx, dtype=gs.tc_int, device=gs.device)
 
         # used for creating dummy fields for compilation to work
         self.n_qs_ = max(1, self.n_qs)
@@ -3775,7 +3775,7 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             pos = pos.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
-            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+            gs.raise_exception("`links_idx` contains at least one link that is not a free-floating base link.")
         self._kernel_set_links_pos(pos, links_idx, envs_idx)
         if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3791,14 +3791,11 @@ class RigidSolver(Solver):
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             i_l = links_idx[i_l_]
             I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
-            if self.links_info[I_l].is_fixed:  # change links_state directly as the link's pose is not contained in qpos
-                for i in ti.static(range(3)):
-                    self.links_state[i_l, envs_idx[i_b_]].pos[i] = pos[i_b_, i_l_, i]
-
-            else:  # free base link's pose is reflected in qpos, and links_state will be computed automatically
-                q_start = self.links_info[I_l].q_start
-                for i in ti.static(range(3)):
-                    self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
+            for i in ti.static(range(3)):
+                self.links_state[i_l, envs_idx[i_b_]].pos[i] = pos[i_b_, i_l_, i]
+            q_start = self.links_info[I_l].q_start
+            for i in ti.static(range(3)):
+                self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
@@ -3812,7 +3809,7 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             quat = quat.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
-            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+            gs.raise_exception("`links_idx` contains at least one link that is not a free-floating base link.")
         self._kernel_set_links_quat(quat, links_idx, envs_idx)
         if skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3828,14 +3825,11 @@ class RigidSolver(Solver):
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             i_l = links_idx[i_l_]
             I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
-            if self.links_info[I_l].is_fixed:  # change links_state directly as the link's pose is not contained in qpos
-                for i in ti.static(range(4)):
-                    self.links_state[i_l, envs_idx[i_b_]].quat[i] = quat[i_b_, i_l_, i]
-
-            else:  # free base link's pose is reflected in qpos, and links_state will be computed automatically
-                q_start = self.links_info[I_l].q_start
-                for i in ti.static(range(4)):
-                    self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
+            for i in ti.static(range(4)):
+                self.links_state[i_l, envs_idx[i_b_]].quat[i] = quat[i_b_, i_l_, i]
+            q_start = self.links_info[I_l].q_start
+            for i in ti.static(range(4)):
+                self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -4471,37 +4465,24 @@ class RigidSolver(Solver):
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        return self._get_dofs_state(dofs_idx, "control_force", envs_idx, unsafe=unsafe)
+        _tensor, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
+            None, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
+        )
+        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
+        self._kernel_get_dofs_control_force(tensor, dofs_idx, envs_idx)
+        return _tensor
 
     def get_dofs_force(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        return self._get_dofs_state(dofs_idx, "force", envs_idx, unsafe=unsafe)
+        tensor = ti_field_to_torch(self.dofs_state.force, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_dofs_velocity(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        return self._get_dofs_state(dofs_idx, "velocity", envs_idx, unsafe=unsafe)
+        tensor = ti_field_to_torch(self.dofs_state.vel, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_dofs_position(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        return self._get_dofs_state(dofs_idx, "position", envs_idx, unsafe=unsafe)
-
-    def _get_dofs_state(self, dofs_idx, type, envs_idx=None, *, unsafe=False):
-        if type == "control_force":
-            _tensor, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-                None, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe
-            )
-            tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-            self._kernel_get_dofs_control_force(tensor, dofs_idx, envs_idx)
-        else:
-            if type == "force":
-                field = self.dofs_state.force
-            elif type == "velocity":
-                field = self.dofs_state.vel
-            elif type == "position":
-                field = self.dofs_state.pos
-            else:
-                gs.raise_exception()
-            _tensor = ti_field_to_torch(field, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-            if self.n_envs == 0:
-                _tensor = _tensor.squeeze(0)
-        return _tensor
+        tensor = ti_field_to_torch(self.dofs_state.pos, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     @ti.kernel
     def _kernel_get_dofs_control_force(
