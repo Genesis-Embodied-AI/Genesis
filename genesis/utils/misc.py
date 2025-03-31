@@ -253,8 +253,8 @@ def is_approx_multiple(a, b, tol=1e-7):
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
 
 ALLOCATE_TENSOR_WARNING = (
-    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
-    "impede performance if it occurs in the critical path of your application."
+    "Tensor had to be re-allocated because of incorrect dtype/device or non-contiguous memory. This may "
+    "dramatically impede performance if it occurs in the critical path of your application."
 )
 
 FIELD_CACHE: dict[int, "FieldMetadata"] = OrderedDict()

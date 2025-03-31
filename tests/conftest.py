@@ -44,12 +44,7 @@ def show_viewer(pytestconfig):
 
 
 @pytest.fixture
-def backend(pytestconfig, request):
-    if hasattr(request, "param"):
-        backend = request.param
-        if isinstance(backend, str):
-            return getattr(gs.constants.backend, backend)
-        return backend
+def backend(pytestconfig):
     return pytestconfig.getoption("--backend")
 
 
