@@ -79,6 +79,8 @@ addopts = [
     "--dist=loadgroup",
     "--random-order-bucket=global",
     "--random-order-seed=0",
+    "--durations=0",
+    "--durations-min=10.0",
     "-m not benchmarks",
 ]
 filterwarnings = [
