@@ -175,8 +175,7 @@ class RigidSolver(Solver):
         self.n_vverts_ = max(1, self.n_vverts)
         self.n_entities_ = max(1, self.n_entities)
 
-        n_reserved_equality = 8  # TODO: made this a parameter
-        self.n_equalities_potential = max(1, self.n_equalities + n_reserved_equality)
+        self.n_equalities_potential = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
         if self.is_active():
             self._init_mass_mat()
@@ -4677,7 +4676,11 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b_ in ti.ndrange(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
+            if self.constraint_solver.ti_n_equalities[i_b] >= self.n_equalities_potential:
+                self.constraint_solver.ti_n_equalities[i_b] = self.n_equalities_potential - 1
+                print("Warning: too many constraints, delete the last one.")
             i_e = self.constraint_solver.ti_n_equalities[i_b]
+
             l1 = link1_idx[i_b]
             l2 = link2_idx[i_b]
 
