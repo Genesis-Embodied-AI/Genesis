@@ -1,11 +1,19 @@
 import genesis as gs
 import numpy as np
+import argparse
 
 
-def test_suction_cup():
-    gs.init()
-    show_viewer = True
-    # create and build the scene
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    args = parser.parse_args()
+
+    ########################## init ##########################
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+
+    ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -13,7 +21,7 @@ def test_suction_cup():
         rigid_options=gs.options.RigidOptions(
             box_box_detection=True,
         ),
-        show_viewer=show_viewer,
+        show_viewer=args.vis,
     )
     plane = scene.add_entity(
         gs.morphs.Plane(),
@@ -117,13 +125,6 @@ def test_suction_cup():
     for i in range(400):
         scene.step()
 
-    qvel = cube.get_dofs_velocity().cpu()
-    np.testing.assert_allclose(qvel, 0, atol=0.05)
-    qpos = cube.get_dofs_position().cpu()
-    np.testing.assert_allclose(qpos[2], 0.06, atol=1e-3)
 
-    if show_viewer:
-        scene.viewer.stop()
-
-
-test_suction_cup()
+if __name__ == "__main__":
+    main()

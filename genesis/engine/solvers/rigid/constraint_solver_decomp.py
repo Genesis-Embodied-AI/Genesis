@@ -24,7 +24,7 @@ class ConstraintSolver:
         self.len_constraints = (
             5 * self._collider._max_contact_pairs
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
-            + self._solver.n_equalities_potential * 6
+            + self._solver.n_equalities_candidate * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
         self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())

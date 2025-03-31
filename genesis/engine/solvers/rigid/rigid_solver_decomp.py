@@ -175,7 +175,7 @@ class RigidSolver(Solver):
         self.n_vverts_ = max(1, self.n_vverts)
         self.n_entities_ = max(1, self.n_entities)
 
-        self.n_equalities_potential = max(1, self.n_equalities + self._options.max_dynamic_constraints)
+        self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
         if self.is_active():
             self._init_mass_mat()
@@ -1183,7 +1183,7 @@ class RigidSolver(Solver):
             sol_params=gs.ti_vec7,
         )
         self.equality_info = struct_equality_info.field(
-            shape=self._batch_shape(self.n_equalities_potential), needs_grad=False, layout=ti.Layout.SOA
+            shape=self._batch_shape(self.n_equalities_candidate), needs_grad=False, layout=ti.Layout.SOA
         )
         if self.n_equalities > 0:
             equalities = self.equalities
@@ -4659,9 +4659,14 @@ class RigidSolver(Solver):
             self.geoms_info[geoms_idx[i_g_]].friction = friction[i_g_]
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        link1_idx, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            link1_idx, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+        original_envs_idx = envs_idx
+        _, link1_idx, envs_idx = self._sanitize_1D_io_variables(
+            None, link1_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
         )
+        _, link2_idx, _ = self._sanitize_1D_io_variables(
+            None, link2_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
+        )
+
         link1_idx = link1_idx.to(gs.tc_int)
 
         self._kernel_add_weld_constraint(link1_idx, link2_idx, envs_idx)
@@ -4676,8 +4681,8 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b_ in ti.ndrange(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            if self.constraint_solver.ti_n_equalities[i_b] >= self.n_equalities_potential:
-                self.constraint_solver.ti_n_equalities[i_b] = self.n_equalities_potential - 1
+            if self.constraint_solver.ti_n_equalities[i_b] >= self.n_equalities_candidate:
+                self.constraint_solver.ti_n_equalities[i_b] = self.n_equalities_candidate - 1
                 print("Warning: too many constraints, delete the last one.")
             i_e = self.constraint_solver.ti_n_equalities[i_b]
 
@@ -4715,9 +4720,14 @@ class RigidSolver(Solver):
             self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        link1_idx, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            link1_idx, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+        original_envs_idx = envs_idx
+        _, link1_idx, envs_idx = self._sanitize_1D_io_variables(
+            None, link1_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
         )
+        _, link2_idx, _ = self._sanitize_1D_io_variables(
+            None, link2_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
+        )
+
         link1_idx = link1_idx.to(gs.tc_int)
         self._kernel_delete_weld_constraint(link1_idx, link2_idx, envs_idx)
 
