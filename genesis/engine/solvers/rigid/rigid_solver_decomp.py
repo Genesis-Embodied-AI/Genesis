@@ -4659,12 +4659,11 @@ class RigidSolver(Solver):
             self.geoms_info[geoms_idx[i_g_]].friction = friction[i_g_]
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        original_envs_idx = envs_idx
-        _, link1_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
+        _, link1_idx, _ = self._sanitize_1D_io_variables(
+            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        _, link2_idx, _ = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
+        _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
+            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
 
         link1_idx = link1_idx.to(gs.tc_int)
@@ -4720,12 +4719,11 @@ class RigidSolver(Solver):
             self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        original_envs_idx = envs_idx
-        _, link1_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
+        _, link1_idx, _ = self._sanitize_1D_io_variables(
+            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        _, link2_idx, _ = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, original_envs_idx, idx_name="links_idx", unsafe=unsafe
+        _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
+            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
 
         link1_idx = link1_idx.to(gs.tc_int)
