@@ -628,7 +628,14 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = glb.textures[pbr_texture.baseColorTexture.index]
                     if pbr_texture.baseColorTexture.texCoord is not None:
                         uvs_used = pbr_texture.baseColorTexture.texCoord
-                    color_image = get_image(texture.source, "RGBA")
+                    source = texture.source
+                    if "KHR_texture_basisu" in texture.extensions:
+                        # source = texture.extensions["KHR_texture_basisu"]["source"]
+                        gs.logger.warning(
+                            f"Mesh file `{path}` uses 'KHR_texture_basisu' extension for supercompression of texture "
+                            "images, which is unsupported. Ignoring texture."
+                        )
+                    color_image = get_image(source, "RGBA")
 
                 # parse color
                 color_factor = None
@@ -644,7 +651,7 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     texture = extension_material["diffuseTexture"]
                     if texture.get("texCoord", None) is not None:
                         uvs_used = texture["texCoord"]
-                    color_image = get_image(texture.get("index", None), "RGBA")
+                    color_image = get_image(texture.get("index"), "RGBA")
 
                 color_factor = None
                 if "diffuseFactor" in extension_material:

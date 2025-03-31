@@ -12,34 +12,42 @@ readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "psutil",
-    "scikit-image",
     "taichi >= 1.7.2",
     "pydantic == 2.7.1",
     "numpy >= 1.26.4",
-    "six",
-    "PyOpenGL>=3.1.4",
-    "freetype-py",
-    "pyglet>=1.5",
+    "trimesh",
+    "scipy >= 1.14",
     "libigl",
-    "pygltflib == 1.16.0",
     # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
     "mujoco >= 3.3.0, < 3.4.0",
-    "pycollada",
-    "opencv-python",
-    "lxml",
-    "tetgen >= 0.6.4",
-    "PyGEL3D",
     "moviepy >= 2.0.0",
+    # Used by `pyrender` to manage onscreen graphical windows
+    "pyglet>=1.5",
+    # Used by `pyrender` to load fonts
+    "freetype-py",
+    # Used by `pyrender` to write low-level OpenGL rendering pipeline
+    "PyOpenGL>=3.1.4",
+    # Use by `pyrender` to compile low-level OpenGL rendering pipeline
     "numba",
+    # Use by `Mesh.remesh`, which is involve in `PBDTetEntity.sample`
     "pymeshlab",
+    # Optional `trimesh` dependency for loading `.dae` mesh files
+    "pycollada",
+    # Used for parsing `.glb` mesh files
+    "pygltflib == 1.16.0",
+    # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
+    "tetgen >= 0.6.4",
+    # Used for some advanced mesh processing such as `skeletonization`
+    "PyGEL3D",
+    # Use to display camera images
+    "opencv-python",
+    # Use by `RigidGeom.visualize_sdf` to render SDF as level 0 marching cubes
+    "scikit-image",
+    # Convex decomposition library
     "coacd",
+    # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
-    "black",
-    "trimesh",
-    "pytest",
-    "pytest-xdist",
-    "scipy >= 1.14",
 ]
 
 [tool.setuptools.packages.find]
@@ -86,6 +94,12 @@ gs = "genesis._main:main"
 [project.optional-dependencies]
 gen = [
     "openai",
+]
+dev = [
+    "black",
+    "pytest",
+    "pytest-xdist",
+    "huggingface_hub",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. See https://github.com/kivy/kivy/issues/8230 which tracks this issue. Once fixed we can use a later version

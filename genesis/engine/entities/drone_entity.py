@@ -1,5 +1,5 @@
 import os
-import xml.etree.ElementTree as etxml
+import xml.etree.ElementTree as ET
 
 import torch
 import taichi as ti
@@ -16,7 +16,7 @@ class DroneEntity(RigidEntity):
         super()._load_URDF(morph, surface)
 
         # additional drone specific attributes
-        properties = etxml.parse(os.path.join(mu.get_assets_dir(), morph.file)).getroot()[0].attrib
+        properties = ET.parse(os.path.join(mu.get_assets_dir(), morph.file)).getroot()[0].attrib
         self._KF = float(properties["kf"])
         self._KM = float(properties["km"])
 

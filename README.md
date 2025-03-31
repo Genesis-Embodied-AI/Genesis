@@ -89,7 +89,7 @@ Users seeking to edit the source code of Genesis are encourage to install Genesi
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Docker

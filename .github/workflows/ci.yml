@@ -49,7 +49,7 @@ jobs:
             | while IFS= read -r URL; do wget -q -c \"\$URL\"; done && \
             pyenv shell "${{ matrix.python-version }}" && \
             python -m pip install --no-index --find-links . ompl && \
-            pip install -e . && \
+            pip install -e ".[dev]" && \
             pytest -v tests && \
             pytest -v -m 'benchmarks' tests"
 

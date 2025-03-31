@@ -2,15 +2,14 @@ import copy
 import io
 import os
 import time
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from typing import List
 
 import networkx as nx
 import numpy as np
 import PIL
-import six
 import trimesh
-from lxml import etree as ET
 from scipy.spatial.transform import Rotation
 
 from .utils import (
@@ -80,7 +79,7 @@ class URDFType(object):
 
         Parameters
         ----------
-        node : :class:`lxml.etree.Element`
+        node : :class:`xml.etree.ElementTree.Element`
             The node to parse attributes for.
 
         Returns
@@ -114,7 +113,7 @@ class URDFType(object):
 
         Parameters
         ----------
-        node : :class:`lxml.etree.Element`
+        node : :class:`xml.etree.ElementTree.Element`
             The node to parse children for.
         path : str
             The string path where the XML file is located (used for resolving
@@ -151,7 +150,7 @@ class URDFType(object):
 
         Parameters
         ----------
-        node : :class:`lxml.etree.Element`
+        node : :class:`xml.etree.ElementTree.Element`
             The node to parse.
         path : str
             The string path where the XML file is located (used for resolving
@@ -173,7 +172,7 @@ class URDFType(object):
 
         Parameters
         ----------
-        node : :class:`lxml.etree.Element`
+        node : :class:`xml.etree.ElementTree.Element`
             The node to parse.
         path : str
             The string path where the XML file is located (used for resolving
@@ -259,7 +258,7 @@ class URDFType(object):
 
         Returns
         -------
-        node : :class:`lxml.etree.Element`
+        node : :class:`xml.etree.ElementTree.Element`
             The newly-created node.
         """
         node = ET.Element(self._TAG)
@@ -272,7 +271,7 @@ class URDFType(object):
 
         Parameters
         ----------
-        parent : :class:`lxml.etree.Element`
+        parent : :class:`xml.etree.ElementTree.Element`
             The parent node that this element will eventually be added to.
             This base implementation doesn't use this information, but
             classes that override this function may use it.
@@ -282,7 +281,7 @@ class URDFType(object):
 
         Returns
         -------
-        node : :class:`lxml.etree.Element`
+        node : :class:`xml.etree.ElementTree.Element`
             The newly-created node.
         """
         return self._unparse(path)
@@ -549,7 +548,7 @@ class Mesh(URDFType):
 
     @meshes.setter
     def meshes(self, value):
-        if isinstance(value, six.string_types):
+        if isinstance(value, str):
             value = load_meshes(value)
         elif isinstance(value, (list, tuple, set, np.ndarray)):
             value = list(value)
@@ -887,7 +886,7 @@ class Material(URDFType):
     @texture.setter
     def texture(self, value):
         if value is not None:
-            if isinstance(value, six.string_types):
+            if isinstance(value, str):
                 image = PIL.Image.open(value)
                 value = Texture(filename=value, image=image)
             elif not isinstance(value, Texture):
@@ -2912,13 +2911,13 @@ class URDF(URDFType):
         # Process link set
         link_set = set()
         if link is not None:
-            if isinstance(link, six.string_types):
+            if isinstance(link, str):
                 link_set.add(self._link_map[link])
             elif isinstance(link, Link):
                 link_set.add(link)
         elif links is not None:
             for lnk in links:
-                if isinstance(lnk, six.string_types):
+                if isinstance(lnk, str):
                     link_set.add(self._link_map[lnk])
                 elif isinstance(lnk, Link):
                     link_set.add(lnk)
@@ -2956,7 +2955,7 @@ class URDF(URDFType):
             fk[lnk] = pose
 
         if link:
-            if isinstance(link, six.string_types):
+            if isinstance(link, str):
                 return fk[self._link_map[link]]
             else:
                 return fk[link]
@@ -2996,13 +2995,13 @@ class URDF(URDFType):
         # Process link set
         link_set = set()
         if link is not None:
-            if isinstance(link, six.string_types):
+            if isinstance(link, str):
                 link_set.add(self._link_map[link])
             elif isinstance(link, Link):
                 link_set.add(link)
         elif links is not None:
             for lnk in links:
-                if isinstance(lnk, six.string_types):
+                if isinstance(lnk, str):
                     link_set.add(self._link_map[lnk])
                 elif isinstance(lnk, Link):
                     link_set.add(lnk)
@@ -3039,7 +3038,7 @@ class URDF(URDFType):
             fk[lnk] = poses
 
         if link:
-            if isinstance(link, six.string_types):
+            if isinstance(link, str):
                 return fk[self._link_map[link]]
             else:
                 return fk[link]
@@ -3528,7 +3527,7 @@ class URDF(URDFType):
         urdf : :class:`.URDF`
             The parsed URDF.
         """
-        if isinstance(file_obj, six.string_types):
+        if isinstance(file_obj, str):
             path, _ = os.path.split(file_obj)
         else:
             path, _ = os.path.split(os.path.realpath(file_obj.name))
@@ -3624,20 +3623,16 @@ class URDF(URDFType):
         urdf : :class:`.URDF`
             The parsed URDF.
         """
-        if isinstance(file_obj, six.string_types):
+        if isinstance(file_obj, str):
             if os.path.isfile(file_obj):
-                parser = ET.XMLParser(remove_comments=True, remove_blank_text=True)
                 with open(file_obj, "r") as f:
                     file_str = f.read()
-                # version 0.0 cannot be parsed by lxml
-                file_str = file_str.replace('<?xml version="0.0" ?>', "").encode()
-                tree = ET.parse(io.BytesIO(file_str), parser=parser)
+                tree = ET.parse(io.BytesIO(file_str))
                 path, _ = os.path.split(file_obj)
             else:
                 raise ValueError("{} is not a file".format(file_obj))
         else:
-            parser = ET.XMLParser(remove_comments=True, remove_blank_text=True)
-            tree = ET.parse(file_obj, parser=parser)
+            tree = ET.parse(file_obj)
             path, _ = os.path.split(file_obj.name)
 
         node = tree.getroot()
@@ -3768,7 +3763,7 @@ class URDF(URDFType):
             return joint_cfg
         if isinstance(cfg, dict):
             for joint in cfg:
-                if isinstance(joint, six.string_types):
+                if isinstance(joint, str):
                     joint_cfg[self._joint_map[joint]] = cfg[joint]
                 elif isinstance(joint, Joint):
                     joint_cfg[joint] = cfg[joint]
@@ -3792,7 +3787,7 @@ class URDF(URDFType):
         n_cfgs = None
         if isinstance(cfgs, dict):
             for joint in cfgs:
-                if isinstance(joint, six.string_types):
+                if isinstance(joint, str):
                     joint_cfg[self._joint_map[joint]] = cfgs[joint]
                 else:
                     joint_cfg[joint] = cfgs[joint]
@@ -3803,7 +3798,7 @@ class URDF(URDFType):
             if isinstance(cfgs[0], dict):
                 for cfg in cfgs:
                     for joint in cfg:
-                        if isinstance(joint, six.string_types):
+                        if isinstance(joint, str):
                             joint_cfg[self._joint_map[joint]].append(cfg[joint])
                         else:
                             joint_cfg[joint].append(cfg[joint])
