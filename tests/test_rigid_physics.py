@@ -466,6 +466,9 @@ def move_cube(use_suction, show_viewer):
             np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int),
             np.array([franka.get_link("hand").idx], dtype=gs.np_int),
         )
+        link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
+        link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
+        rigid.add_weld_constraint(link_cube, link_franka)
 
     # lift
     qpos = franka.inverse_kinematics(
@@ -491,7 +494,7 @@ def move_cube(use_suction, show_viewer):
     if not use_suction:
         franka.control_dofs_position(np.array([0.4, 0.4]), fingers_dof)
     else:
-        rigid.delete_weld_constraint()
+        rigid.delete_weld_constraint(link_cube, link_franka)
 
     for i in range(400):
         scene.step()

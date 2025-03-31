@@ -4667,18 +4667,6 @@ class RigidSolver(Solver):
 
         self._kernel_add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
-    def delete_weld_constraint(self):
-        self._kernel_delete_weld_constraint(np.array([0], dtype=gs.np_int))
-
-    @ti.kernel
-    def _kernel_delete_weld_constraint(
-        self,
-        envs_idx: ti.types.ndarray(),
-    ):
-        for i_b_ in range(envs_idx.shape[0]):
-            i_b = envs_idx[i_b_]
-            self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] - 1
-
     @ti.kernel
     def _kernel_add_weld_constraint(
         self,
@@ -4710,7 +4698,6 @@ class RigidSolver(Solver):
                 self.equality_info[i_e, i_b].eq_data[i_3] = pos2[i_3]
 
             relpose = gu.ti_quat_mul(gu.ti_inv_quat(self.links_state[l1, i_b].quat), self.links_state[l2, i_b].quat)
-            # relpose = gu.ti_quat_mul(gu.ti_inv_quat(self.links_state[link1_idx[i_b], i_b].quat), self.links_state[link2_idx[i_b], i_b].quat)
 
             self.equality_info[i_e, i_b].eq_data[6] = relpose[0]
             self.equality_info[i_e, i_b].eq_data[7] = relpose[1]
@@ -4722,15 +4709,36 @@ class RigidSolver(Solver):
                 [2 * self._substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
             )
 
-            # trans=self._solver.links_state[link2_idx, i_b].pos,
-            # quat=self._solver.links_state[link2_idx, i_b].quat,
             self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
-            # eq_obj1id=gs.ti_int,
-            # eq_obj2id=gs.ti_int,
-            # eq_data=gs.ti_vec11,
-            # eq_type=gs.ti_int,
-            # sol_params=gs.ti_vec7,
+    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
+        link1_idx, link2_idx, envs_idx = self._sanitize_1D_io_variables(
+            link1_idx, link2_idx, self.n_links, envs_idx, idx_name="links_idx", unsafe=unsafe
+        )
+        link1_idx = link1_idx.to(gs.tc_int)
+        self._kernel_delete_weld_constraint(link1_idx, link2_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_delete_weld_constraint(
+        self,
+        link1_idx: ti.types.ndarray(),
+        link2_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b_ in ti.ndrange(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            for i_e in range(self.n_equalities, self.constraint_solver.ti_n_equalities[i_b]):
+                if (
+                    self.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD
+                    and self.equality_info[i_e, i_b].eq_obj1id == link1_idx[i_b]
+                    and self.equality_info[i_e, i_b].eq_obj2id == link2_idx[i_b]
+                ):
+                    if i_e < self.constraint_solver.ti_n_equalities[i_b] - 1:
+                        self.equality_info[i_e, i_b] = self.equality_info[
+                            self.constraint_solver.ti_n_equalities[i_b] - 1, i_b
+                        ]
+                    self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] - 1
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
