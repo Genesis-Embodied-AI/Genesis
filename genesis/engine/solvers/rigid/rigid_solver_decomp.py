@@ -23,13 +23,20 @@ IMP_MIN = 0.0001
 # maximum constraint impedance
 IMP_MAX = 0.9999
 
+TIME_CONSTANT_TO_SUBSTEP_RATIO = 3.0
+
 
 def _sanitize_sol_params(sol_params, substep_dt, default_resolve_time=None):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.T
     if default_resolve_time is not None:
         # Use default default resolve time if and only if solref is not set
         timeconst[timeconst == 0.0] = default_resolve_time
-    timeconst = np.maximum(timeconst, 2 * substep_dt)
+    if (timeconst < TIME_CONSTANT_TO_SUBSTEP_RATIO * substep_dt).any():
+        gs.logger.warning(
+            "Constraint solver time constant was increased to avoid numerical instability. Decrease simulation "
+            "timestep to avoid altering the original value."
+        )
+    timeconst = np.maximum(timeconst, TIME_CONSTANT_TO_SUBSTEP_RATIO * substep_dt)
     dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
     dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
     mid = np.clip(mid, IMP_MIN, IMP_MAX)

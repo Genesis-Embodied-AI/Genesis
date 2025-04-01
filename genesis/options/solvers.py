@@ -191,7 +191,7 @@ class RigidOptions(Options):
     enable_self_collision: bool = False
     enable_adjacent_collision: bool = False
     disable_constraint: bool = False
-    max_collision_pairs: int = 100
+    max_collision_pairs: int = 300
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
 
@@ -252,7 +252,7 @@ class AvatarOptions(Options):
     enable_collision: bool = False
     enable_self_collision: bool = False
     enable_adjacent_collision: bool = False
-    max_collision_pairs: int = 100
+    max_collision_pairs: int = 300
     IK_max_targets: int = 6  # Increasing this doesn't affect IK solving speed, but will increase memory usage
 
     # for dynamic properties

@@ -178,7 +178,7 @@ class Collider:
 
         ##---------------- box box
         if self._solver._box_box_detection:
-            self.box_MAXCONPAIR = 32
+            self.box_MAXCONPAIR = 8
             self.box_depth = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
             self.box_points = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
             self.box_pts = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(6))
@@ -1053,7 +1053,6 @@ class Collider:
                         contact_pos = pos_neighbor - normal * penetration * 0.5
 
                         if (contact_pos - contact_pos_0).norm() > tolerance:
-
                             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
                             n_con = n_con + 1
 
@@ -1094,7 +1093,7 @@ class Collider:
     def _func_compute_tolerance(self, i_ga, i_gb, i_b):
         aabb_size_a = self._solver.geoms_state[i_ga, i_b].aabb_max - self._solver.geoms_state[i_ga, i_b].aabb_min
         aabb_size_b = self._solver.geoms_state[i_gb, i_b].aabb_max - self._solver.geoms_state[i_gb, i_b].aabb_min
-        tolerance = self._mc_tolerance * ti.min(aabb_size_a.norm(), aabb_size_b.norm()) / 2
+        tolerance = self._mc_tolerance * ti.min(aabb_size_a.norm(), aabb_size_b.norm())
         return tolerance
 
     ## only one mpr
