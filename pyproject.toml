@@ -76,7 +76,6 @@ addopts = [
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
     "--exitfirst",
     "--numprocesses=auto",
-    "--dist=loadgroup",
     "--random-order-bucket=global",
     "--random-order-seed=0",
     "--durations=0",
