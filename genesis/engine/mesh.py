@@ -88,7 +88,7 @@ class Mesh(RBC):
                     self._mesh.vertices,
                     self._mesh.faces,
                     target_count=decimate_face_num,
-                    agg=0,
+                    agg=2,
                 )
             )
 
