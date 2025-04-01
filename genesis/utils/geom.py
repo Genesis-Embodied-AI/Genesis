@@ -677,7 +677,7 @@ def quat_to_T(quat):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
-def quat_to_xyz(quat, rpy=True, degrees=True):
+def quat_to_xyz(quat, rpy=False, degrees=False):
     if isinstance(quat, torch.Tensor):
         # Extract quaternion components
         qw, qx, qy, qz = quat.unbind(-1)
@@ -722,7 +722,7 @@ def quat_to_xyz(quat, rpy=True, degrees=True):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
-def xyz_to_quat(euler_xyz, rpy=True, degrees=True):
+def xyz_to_quat(euler_xyz, rpy=False, degrees=False):
     if isinstance(euler_xyz, torch.Tensor):
         if degrees:
             euler_xyz *= torch.pi / 180.0

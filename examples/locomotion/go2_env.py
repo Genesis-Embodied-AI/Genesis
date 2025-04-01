@@ -129,7 +129,9 @@ class Go2Env:
         self.base_pos[:] = self.robot.get_pos()
         self.base_quat[:] = self.robot.get_quat()
         self.base_euler = quat_to_xyz(
-            transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat)
+            transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat),
+            rpy=True,
+            degrees=True,
         )
         inv_base_quat = inv_quat(self.base_quat)
         self.base_lin_vel[:] = transform_by_quat(self.robot.get_vel(), inv_base_quat)

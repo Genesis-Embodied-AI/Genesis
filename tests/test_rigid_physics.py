@@ -229,7 +229,7 @@ def test_box_box_dynamics(gs_sim):
         cube1_quat = np.array([1.0, 0.0, 0.0, 0.0])
         cube2_pos = np.array([0.0, 0.0, 0.65 + 0.1 * np.random.rand()])
         cube2_quat = gs.utils.geom.xyz_to_quat(
-            np.array([*(0.15 * np.random.rand(2)), np.pi * np.random.rand()]), degrees=False
+            np.array([*(0.15 * np.random.rand(2)), np.pi * np.random.rand()]),
         )
         init_simulators(gs_sim, qpos=np.concatenate((cube1_pos, cube1_quat, cube2_pos, cube2_quat)))
         for i in range(100):

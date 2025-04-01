@@ -93,6 +93,6 @@ class RayTracer(Renderer):
 
         if self.env_euler is not None:
             if self.env_quat is None:
-                self.env_quat = gs.utils.geom.xyz_to_quat(np.array(self.env_euler))
+                self.env_quat = gs.utils.geom.xyz_to_quat(np.array(self.env_euler), rpy=True, degrees=True)
             else:
                 gs.logger.warning("`env_euler` is ignored when `env_quat` is specified.")

@@ -158,7 +158,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         # rotate entity
         t += dt
         if rotate:
-            entity.set_quat(gs.utils.geom.xyz_to_quat(np.array([0, 0, t * 50])))
+            entity.set_quat(gs.utils.geom.xyz_to_quat(np.array([0, 0, t * 50]), rpy=True, degrees=True))
 
         entity.set_dofs_position(
             position=torch.tensor(gui_joint_positions),
