@@ -204,7 +204,6 @@ def cubes(solver, n_envs, n_cubes, is_island):
     return total_fps
 
 
-@pytest.mark.xdist_group(name="serial")
 @pytest.mark.parametrize(
     "runnable",
     ["random", "anymal_c", "batched_franka"],
@@ -214,8 +213,8 @@ def cubes(solver, n_envs, n_cubes, is_island):
     [gs.constraint_solver.CG, gs.constraint_solver.Newton],
 )
 @pytest.mark.parametrize("n_envs", [30000])
-@pytest.mark.parametrize("backend", [gs.gpu], indirect=True)
-def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs, backend):
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs):
     total_fps = request.getfixturevalue(runnable)
     msg = f"{runnable} \t| {solver} \t| {total_fps:,.2f} fps \t| {n_envs} envs\n"
     if pytestconfig.getoption("-v"):
@@ -225,7 +224,6 @@ def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs, backend)
         file.write(msg)
 
 
-@pytest.mark.xdist_group(name="serial")
 @pytest.mark.parametrize(
     "solver",
     [gs.constraint_solver.CG, gs.constraint_solver.Newton],
@@ -233,8 +231,8 @@ def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs, backend)
 @pytest.mark.parametrize("n_cubes", [1, 10])
 @pytest.mark.parametrize("is_island", [False, True])
 @pytest.mark.parametrize("n_envs", [8192])
-@pytest.mark.parametrize("backend", [gs.gpu], indirect=True)
-def test_cubes(capsys, request, pytestconfig, solver, n_cubes, is_island, n_envs, backend):
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_cubes(capsys, request, pytestconfig, solver, n_cubes, is_island, n_envs):
     total_fps = request.getfixturevalue("cubes")
     msg = f"{is_island} island \t| {n_cubes} cubes \t| {solver} \t| {total_fps:,.2f} fps \t| {n_envs} envs\n"
     if pytestconfig.getoption("-v"):

@@ -68,7 +68,7 @@ class Morph(Options):
 
         if self.euler is not None:
             if self.quat is None:
-                self.quat = tuple(gs.utils.geom.xyz_to_quat(np.array(self.euler)))
+                self.quat = tuple(gs.utils.geom.xyz_to_quat(np.array(self.euler), rpy=True, degrees=True))
 
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")

@@ -1,5 +1,7 @@
 import argparse
 
+from huggingface_hub import snapshot_download
+
 import genesis as gs
 
 
@@ -32,9 +34,12 @@ def main():
         # vis_mode="collision",
     )
     for i, asset_name in enumerate(("donut_0", "mug_1", "cup_2", "apple_15")):
+        asset_path = snapshot_download(
+            repo_type="dataset", repo_id="Genesis-Intelligence/assets", allow_patterns=f"{asset_name}/*"
+        )
         scene.add_entity(
             gs.morphs.MJCF(
-                file=f"meshes/{asset_name}/output.xml",
+                file=f"{asset_path}/{asset_name}/output.xml",
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
             # vis_mode="collision",

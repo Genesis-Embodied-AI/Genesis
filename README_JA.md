@@ -87,7 +87,7 @@ pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Docker

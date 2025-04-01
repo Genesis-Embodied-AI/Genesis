@@ -49,13 +49,13 @@ jobs:
             | while IFS= read -r URL; do wget -q -c \"\$URL\"; done && \
             pyenv shell "${{ matrix.python-version }}" && \
             python -m pip install --no-index --find-links . ompl && \
-            pip install -e . && \
+            pip install -e ".[dev]" && \
             pytest -v tests && \
             pytest -v -m 'benchmarks' tests"
 
           mkdir -p ./artifacts
           docker cp "$container_id:/app/speed_test.txt" "./artifacts/speed_test_${artifacts_id}.txt"
-          docker rm "$container_id"
+          docker rm -f "$container_id"
 
       - name: Display Speed Test
         run: |

@@ -6,6 +6,7 @@ import numpy as np
 import pyvista as pv
 import tetgen
 import trimesh
+import pymeshlab
 
 import genesis as gs
 import genesis.utils.mesh as mu
@@ -115,8 +116,6 @@ class Mesh(RBC):
 
         if not is_cached_loaded:
             gs.logger.info("Remeshing for tetrahedralization...")
-            with open(os.devnull, "w") as stdout, redirect_stdout(stdout):
-                import pymeshlab
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(vertex_matrix=self.verts, face_matrix=self.faces))
             if edge_len_abs is not None:

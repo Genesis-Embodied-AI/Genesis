@@ -4,6 +4,7 @@ import os
 import types
 import platform
 import random
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -23,6 +24,9 @@ from taichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DeprecationError(Exception):
@@ -144,7 +148,8 @@ def get_device(backend: gs_backend):
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
-            gs.logger.warning("Vulkan support only available on Intel XPU device. Falling back to CPU.")
+            # logger may not be configured at this point
+            (gs.logger or LOGGER).warning("Vulkan support only available on Intel XPU device. Falling back to CPU.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
@@ -253,8 +258,8 @@ def is_approx_multiple(a, b, tol=1e-7):
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
 
 ALLOCATE_TENSOR_WARNING = (
-    "Tensor had to converted because dtype or device are incorrect or memory is not contiguous. This may dramatically "
-    "impede performance if it occurs in the critical path of your application."
+    "Tensor had to be re-allocated because of incorrect dtype/device or non-contiguous memory. This may "
+    "dramatically impede performance if it occurs in the critical path of your application."
 )
 
 FIELD_CACHE: dict[int, "FieldMetadata"] = OrderedDict()
@@ -434,15 +439,24 @@ def ti_field_to_torch(
     # Extract field as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.
     # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
+    is_metal = gs.device.type == "mps"
     tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
     if isinstance(field, ti.lang.ScalarField):
-        out = torch.zeros(size=field_shape, dtype=tc_dtype, device=gs.device)
+        if is_metal:
+            out = torch.zeros(size=field_shape, dtype=tc_dtype, device="cpu")
+        else:
+            out = torch.zeros(size=field_shape, dtype=tc_dtype, device=gs.device)
         _tensor_to_ext_arr_fast(field, out)
     else:
         as_vector = field.m == 1
         shape_ext = (field.n,) if as_vector else (field.n, field.m)
-        out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device=gs.device)
+        if is_metal:
+            out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu")
+        else:
+            out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device=gs.device)
         _matrix_to_ext_arr_fast(field, out, as_vector)
+    if is_metal:
+        out = out.to(gs.device)
     ti.sync()
 
     # Transpose if necessary and requested.

@@ -3,15 +3,20 @@ from itertools import chain
 from enum import Enum
 
 import psutil
-import pytest
 import pyglet
 import numpy as np
+import pytest
+from _pytest.mark import Expression, MarkMatcher
 
 import mujoco
 import genesis as gs
 from genesis.utils.mesh import get_assets_dir
 
 from .utils import MjSim
+
+
+TOL_SINGLE = 5e-5
+TOL_DOUBLE = 1e-9
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -21,11 +26,23 @@ def pytest_make_parametrize_id(config, val, argname):
 
 
 def pytest_xdist_auto_num_workers(config):
+    # Determine whether 'benchmarks' marker is selected
+    expr = Expression.compile(config.option.markexpr)
+    is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+
     if config.option.numprocesses == "auto":
+        # Disable multi-processing for benchmarks
+        if is_benchmarks:
+            return 0
+
+        # Compute the default number of workers based on available RAM, VRAM, and number of physical cores
         physical_core_count = psutil.cpu_count(logical=False)
         _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
         _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
         return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
+    elif is_benchmarks and config.option.numprocesses > 0:
+        raise RuntimeError("Enabling multi-processing for benchmarks is forbidden.")
+
     return config.option.numprocesses
 
 
@@ -40,13 +57,13 @@ def show_viewer(pytestconfig):
 
 
 @pytest.fixture
-def backend(pytestconfig, request):
-    if hasattr(request, "param"):
-        backend = request.param
-        if isinstance(backend, str):
-            return getattr(gs.constants.backend, backend)
-        return backend
+def backend(pytestconfig):
     return pytestconfig.getoption("--backend")
+
+
+@pytest.fixture
+def atol():
+    return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
 @pytest.fixture(scope="session")

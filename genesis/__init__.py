@@ -20,8 +20,12 @@ def fake_print(*args, **kwargs):
 with patch("builtins.print", fake_print):
     import taichi as ti
 
-import torch
-import trimesh
+try:
+    import torch
+except ImportError as e:
+    raise ImportError(
+        "'torch' module not available. Please install pytorch manually: https://pytorch.org/get-started/locally/"
+    ) from e
 import numpy as np
 
 from .constants import GS_ARCH, TI_ARCH
@@ -60,6 +64,8 @@ def dll_loader(lib, path):
     # Fallback to site-packages
     if not os.path.isfile(fpath):
         for sitepackagedir in site.getsitepackages():
+            if not os.path.exists(sitepackagedir):
+                continue
             for _fname in os.listdir(sitepackagedir):
                 _fpath = os.path.join(sitepackagedir, _fname)
                 if os.path.isfile(_fpath):
@@ -98,10 +104,21 @@ def init(
     _initialized = True
 
     # genesis._theme
-    if theme not in ["dark", "light", "dumb"]:
-        raise_exception(f"Unsupported theme: {theme}")
     global _theme
-    _theme = theme
+    is_theme_valid = theme in ("dark", "light", "dumb")
+    # Set fallback theme if necessary to be able to initialize logger
+    _theme = theme if is_theme_valid else "dark"
+
+    # genesis.logger
+    global logger
+    if logging_level is None:
+        logging_level = _logging.DEBUG if debug else _logging.INFO
+    logger = Logger(logging_level, logger_verbose_time)
+    atexit.register(_gs_exit)
+
+    # Must delay raising exception after logger initialization
+    if not is_theme_valid:
+        raise_exception(f"Unsupported theme: {theme}")
 
     # Dealing with default backend
     global platform
@@ -115,13 +132,6 @@ def init(
     # verbose repr
     global _verbose
     _verbose = False
-
-    # genesis.logger
-    global logger
-    if logging_level is None:
-        logging_level = _logging.DEBUG if debug else _logging.INFO
-    logger = Logger(logging_level, logger_verbose_time)
-    atexit.register(_gs_exit)
 
     # greeting message
     _display_greeting(logger.INFO_length)

@@ -79,7 +79,7 @@ pip install genesis-world  # Python>=3.10,<3.13 필요
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Docker
