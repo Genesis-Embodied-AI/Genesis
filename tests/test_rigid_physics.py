@@ -556,7 +556,7 @@ def test_convexify(show_viewer):
     # Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            dt=0.005,
+            dt=0.004,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -566,7 +566,7 @@ def test_convexify(show_viewer):
             file="meshes/tank.obj",
             scale=5.0,
             fixed=True,
-            euler=(90, 0, 90),
+            euler=(75, 15, 90),
         ),
         vis_mode="collision",
     )
@@ -591,6 +591,7 @@ def test_convexify(show_viewer):
 
     # Make sure that all the geometries in the scene are convex
     assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
+    assert not gs_sim.rigid_solver.collider._has_nonconvex_nonterrain
 
     # There should be only one geometry for the apple as it can be convexify without decomposition,
     # but for the others it is hard to tell... Let's use some reasonable guess.
@@ -600,15 +601,15 @@ def test_convexify(show_viewer):
     assert 5 <= len(cup.geoms) <= 20
     assert 5 <= len(mug.geoms) <= 40
 
-    for i in range(6000):
+    for i in range(1000):
         scene.step()
 
     for obj in objs:
         qvel = obj.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.5)
+        np.testing.assert_allclose(qvel, 0, atol=0.05)
         qpos = obj.get_dofs_position().cpu()
-        np.testing.assert_array_less(0, qpos[2])
-        np.testing.assert_array_less(qpos[2], 0.15)
+        np.testing.assert_array_less(-0.1, qpos[2])
+        np.testing.assert_array_less(qpos[2], 0.1)
         np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
 
     if show_viewer:
