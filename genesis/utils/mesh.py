@@ -4,14 +4,15 @@ import pickle as pkl
 from io import BytesIO
 from urllib import request
 
+import numpy as np
+import trimesh
+from PIL import Image
+
 import coacd
 import igl
-import numpy as np
 import pygltflib
 import pyvista as pv
 import tetgen
-import trimesh
-from PIL import Image
 
 import genesis as gs
 from genesis.ext import fast_simplification
@@ -326,6 +327,8 @@ def postprocess_collision_geoms(
             decimate_face_num=decimate_face_num,
             surface=gs.surfaces.Collision(),
         )
+        # Randomize collision mesh colors. The is especially useful to check convex decomposition.
+        mesh.set_color((*np.random.rand(3), 1.0))
         _g_infos.append({**g_info, **dict(mesh=mesh)})
 
     return _g_infos
