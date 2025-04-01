@@ -178,7 +178,11 @@ class Collider:
 
         ##---------------- box box
         if self._solver._box_box_detection:
-            self.box_MAXCONPAIR = 8
+            # With the existing Box-Box collision detection algorithm, it is not clear where the contact points are
+            # located depending of the pose and size of each box. In practice, up to 11 contact points have been
+            # observed. The theoretical worst case scenario would be 2 cubes roughly the same size and same center,
+            # with transform RPY = (45, 45, 45), resulting in 3 contact points per faces for a total of 16 points.
+            self.box_MAXCONPAIR = 16
             self.box_depth = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
             self.box_points = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(self.box_MAXCONPAIR))
             self.box_pts = ti.field(gs.ti_vec3, shape=self._solver._batch_shape(6))
@@ -1093,7 +1097,7 @@ class Collider:
     def _func_compute_tolerance(self, i_ga, i_gb, i_b):
         aabb_size_a = self._solver.geoms_state[i_ga, i_b].aabb_max - self._solver.geoms_state[i_ga, i_b].aabb_min
         aabb_size_b = self._solver.geoms_state[i_gb, i_b].aabb_max - self._solver.geoms_state[i_gb, i_b].aabb_min
-        tolerance = self._mc_tolerance * ti.min(aabb_size_a.norm(), aabb_size_b.norm())
+        tolerance = self._mc_tolerance * ti.min(aabb_size_a.norm(), aabb_size_b.norm()) / 2
         return tolerance
 
     ## only one mpr

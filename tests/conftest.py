@@ -173,7 +173,6 @@ def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, 
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,
-            constraint_resolve_time=0.02,
             iterations=mj_sim.model.opt.iterations,
             tolerance=mj_sim.model.opt.tolerance,
             ls_iterations=mj_sim.model.opt.ls_iterations,
@@ -186,6 +185,11 @@ def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, 
         gs.morphs.MJCF(file=xml_path),
         visualize_contact=True,
     )
+    gs_sim = scene.sim
+
+    # Force matching Mujoco safety factor for constraint time constant.
+    # Note that this time constant affects the penetration depth at rest.
+    gs_sim.rigid_solver._sol_constraint_min_resolve_time = 2.0 * scene.sim._substep_dt
 
     # Joint damping is not properly supported in Genesis for now
     if not dof_damping:
@@ -194,7 +198,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, 
 
     scene.build()
 
-    yield scene.sim
+    yield gs_sim
 
     if show_viewer:
         scene.viewer.stop()

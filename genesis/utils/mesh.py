@@ -310,8 +310,7 @@ def postprocess_collision_geoms(
         if not decimate and num_vertices > 5000:
             gs.logger.warning(
                 f"At least one of the meshes contain many vertices ({num_vertices}). Consider setting "
-                "'morph.decimate=True' or 'morph.convexify=True' to speed up collision detection and improve numerical "
-                "stability."
+                "'morph.decimate=True' to speed up collision detection and improve numerical stability."
             )
         if decimate and decimate_face_num < 100:
             gs.logger.warning(
