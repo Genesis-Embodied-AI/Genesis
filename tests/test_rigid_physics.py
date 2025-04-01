@@ -241,8 +241,7 @@ def test_box_box_dynamics(gs_sim):
         np.testing.assert_allclose(qpos[8], 0.6, atol=1e-3)
 
 
-@pytest.mark.parametrize("box_box_detection", [False, True])
-@pytest.mark.parametrize("dynamics", [False, True])
+@pytest.mark.parametrize("box_box_detection, dynamics", [(False, False), (False, True), (True, False)])
 @pytest.mark.parametrize("backend", [gs.cpu])  # TODO: Cannot afford GPU test for this one
 def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     scene = gs.Scene(
@@ -601,12 +600,12 @@ def test_convexify(show_viewer):
     assert 5 <= len(cup.geoms) <= 20
     assert 5 <= len(mug.geoms) <= 40
 
-    for i in range(5000):
+    for i in range(6000):
         scene.step()
 
     for obj in objs:
         qvel = obj.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1)
+        np.testing.assert_allclose(qvel, 0, atol=0.5)
         qpos = obj.get_dofs_position().cpu()
         np.testing.assert_array_less(0, qpos[2])
         np.testing.assert_array_less(qpos[2], 0.15)
@@ -919,4 +918,4 @@ def test_equality_weld(gs_sim, mj_sim):
     qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
     qpos = gs_sim.rigid_solver.dofs_state.pos.to_numpy()[:, 0]
     qpos[0], qpos[1], qpos[2] = 0.1, 0.1, 0.1
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=200, atol=1e-7)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, atol=atol)

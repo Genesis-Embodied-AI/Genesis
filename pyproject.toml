@@ -80,7 +80,7 @@ addopts = [
     "--random-order-bucket=global",
     "--random-order-seed=0",
     "--durations=0",
-    "--durations-min=10.0",
+    "--durations-min=20.0",
     "-m not benchmarks",
 ]
 filterwarnings = [

@@ -115,6 +115,10 @@ class URDFType(object):
         ----------
         node : :class:`xml.etree.ElementTree.Element`
             The node to parse children for.
+        node : :class:`xml.etree.ElementTree.Element`
+            The root node of the xml URDF file to parse, in case the parsing
+            logics of a given node depends on its ancestors. Unlike `lxml`,
+            the standard module `xml` does not track parents at node-level.
         path : str
             The string path where the XML file is located (used for resolving
             the location of mesh or image files).
@@ -152,6 +156,10 @@ class URDFType(object):
         ----------
         node : :class:`xml.etree.ElementTree.Element`
             The node to parse.
+        node : :class:`xml.etree.ElementTree.Element`
+            The root node of the xml URDF file to parse, in case the parsing
+            logics of a given node depends on its ancestors. Unlike `lxml`,
+            the standard module `xml` does not track parents at node-level.
         path : str
             The string path where the XML file is located (used for resolving
             the location of mesh or image files).
@@ -174,6 +182,10 @@ class URDFType(object):
         ----------
         node : :class:`xml.etree.ElementTree.Element`
             The node to parse.
+        node : :class:`xml.etree.ElementTree.Element`
+            The root node of the xml URDF file to parse, in case the parsing
+            logics of a given node depends on its ancestors. Unlike `lxml`,
+            the standard module `xml` does not track parents at node-level.
         path : str
             The string path where the XML file is located (used for resolving
             the location of mesh or image files).

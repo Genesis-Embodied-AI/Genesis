@@ -55,7 +55,7 @@ jobs:
 
           mkdir -p ./artifacts
           docker cp "$container_id:/app/speed_test.txt" "./artifacts/speed_test_${artifacts_id}.txt"
-          docker rm "$container_id"
+          docker rm -f "$container_id"
 
       - name: Display Speed Test
         run: |

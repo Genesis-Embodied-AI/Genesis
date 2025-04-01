@@ -4,6 +4,7 @@ import os
 import types
 import platform
 import random
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -23,6 +24,9 @@ from taichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DeprecationError(Exception):
@@ -144,7 +148,8 @@ def get_device(backend: gs_backend):
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
-            gs.logger.warning("Vulkan support only available on Intel XPU device. Falling back to CPU.")
+            # logger may not be configured at this point
+            (gs.logger or LOGGER).warning("Vulkan support only available on Intel XPU device. Falling back to CPU.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
