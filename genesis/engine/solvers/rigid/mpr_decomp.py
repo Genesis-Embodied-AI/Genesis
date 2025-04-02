@@ -93,12 +93,11 @@ class MPR:
         t = AP_AB / AB_AB
         if t < 0.0 or ti.abs(t) < self.CCD_EPS:
             t = gs.ti_float(0.0)
-        elif t > 1.0:
+        elif t > 1.0 or ti.abs(t - 1.0) < self.CCD_EPS:
             t = gs.ti_float(1.0)
         Q = A + AB * t
-        pdir = Q
 
-        return (P - Q).norm() ** 2, pdir
+        return ((P - Q) ** 2).sum(), Q
 
     @ti.func
     def mpr_point_tri_depth(self, P, x0, B, C):
@@ -129,9 +128,8 @@ class MPR:
             and (ti.abs(t + s - 1.0) < self.CCD_EPS or t + s < 1.0)
         ):
             pdir = x0 + d1 * s + d2 * t
-            dist = (P - pdir).norm() ** 2
+            dist = ((P - pdir) ** 2).sum()
         else:
-
             dist, pdir = self.mpr_point_segment_dist2(P, x0, B)
             dist2, pdir2 = self.mpr_point_segment_dist2(P, x0, C)
             if dist2 < dist:

@@ -874,7 +874,7 @@ class Collider:
     @ti.kernel
     def _func_narrow_phase(self):
         """
-        NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
+        NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collision_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
         Therefore, for a big non-batched scene, users are encouraged to simply use `gs.cpu` backend.
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
@@ -992,8 +992,18 @@ class Collider:
                                                 break
 
                                         if valid:
-                                            n_valid += 1
-                                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration_0, i_b)
+                                            # Apply first-order penetration depth correction: compensate effect of small rotation
+                                            res = contact_pos - contact_pos_0
+                                            axis_dist = ti.sqrt(res.dot(res) - res.dot(axis) ** 2)
+                                            penetration = ti.min(
+                                                penetration_0, penetration - 2 * self._mc_perturbation * axis_dist
+                                            )
+
+                                            if penetration > 0.0:
+                                                self._func_add_contact(
+                                                    i_ga, i_gb, normal, contact_pos, penetration, i_b
+                                                )
+                                                n_valid += 1
 
                                     self._solver.geoms_state[i_ga, i_b].pos = ga_pos
                                     self._solver.geoms_state[i_ga, i_b].quat = ga_quat
@@ -1178,8 +1188,14 @@ class Collider:
                             if (contact_pos - prev_contact).norm() < tolerance:
                                 repeat = True
                     if not repeat:
-                        self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration_0, i_b)
-                        n_con = n_con + 1
+                        # Apply first-order penetration depth correction: revert effect of small rotation
+                        res = contact_pos - contact_pos_0
+                        axis_dist = ti.sqrt(res.dot(res) - res.dot(axis) ** 2)
+                        penetration = ti.min(penetration_0, penetration - 2 * self._mc_perturbation * axis_dist)
+
+                        if penetration > 0.0:
+                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                            n_con = n_con + 1
 
                     self._solver.geoms_state[i_ga, i_b].pos = ga_pos
                     self._solver.geoms_state[i_ga, i_b].quat = ga_quat
