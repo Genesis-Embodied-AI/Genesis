@@ -826,7 +826,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
         # only load mesh under the default prim
         if UsdGeom.Mesh(prim) and (default_prim_path in prim.GetPath().pathString):
             # check surface
-            surface = gs.surfaces.Default() if surface is None else surface.copy()
+            mesh_surface = gs.surfaces.Default() if surface is None else surface.copy()
 
             # load mesh basic information
             mesh = UsdGeom.Mesh(prim)
@@ -980,7 +980,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                                 gs.logger.info(f"Loading Metallic texture: {metallic_texture_path}")
 
                         # update surface texture
-                        surface.update_texture(
+                        mesh_surface.update_texture(
                             color_texture=color_texture,
                             normal_texture=normal_texture_path,
                             opacity_texture=opacity_texture,
@@ -1042,7 +1042,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                                     metallic_texture = create_texture(orm_image[:, :, 2], None, "linear")
                                     gs.logger.info(f"Get ORM texture: {orm_texture_path}")
 
-                                surface.update_texture(
+                                mesh_surface.update_texture(
                                     color_texture=color_texture,
                                     normal_texture=normal_texture,
                                     opacity_texture=opacity_texture,
@@ -1055,7 +1055,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                     verts=verts,
                     faces=faces,
                     normals=normals,
-                    surface=surface,
+                    surface=mesh_surface,
                     uvs=uvs,
                     scale=scale,
                 )
