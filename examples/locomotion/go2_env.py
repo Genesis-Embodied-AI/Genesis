@@ -181,12 +181,12 @@ class Go2Env:
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
 
-        self.extras['observations']['critic'] = self.obs_buf
+        self.extras["observations"]["critic"] = self.obs_buf
 
         return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def get_observations(self):
-        self.extras['observations']['critic'] = self.obs_buf
+        self.extras["observations"]["critic"] = self.obs_buf
         return self.obs_buf, self.extras
 
     def get_privileged_observations(self):

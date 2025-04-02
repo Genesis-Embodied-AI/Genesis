@@ -33,7 +33,7 @@ def get_train_cfg(exp_name, max_iterations):
             "actor_hidden_dims": [512, 256, 128],
             "critic_hidden_dims": [512, 256, 128],
             "init_noise_std": 1.0,
-            "class_name": "ActorCritic"
+            "class_name": "ActorCritic",
         },
         "runner": {
             "checkpoint": -1,
@@ -142,7 +142,7 @@ def main():
     parser.add_argument("--max_iterations", type=int, default=101)
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(logging_level="warning")
 
     log_dir = f"logs/{args.exp_name}"
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
