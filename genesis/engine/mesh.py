@@ -333,6 +333,9 @@ class Mesh(RBC):
                 else:
                     meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
+            elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
+                meshes = mu.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
+
             elif hasattr(morph, "files") and len(morph.files) > 0:  # for meshset
                 meshes = morph.files
                 assert all([isinstance(v, trimesh.Trimesh) for v in meshes])
