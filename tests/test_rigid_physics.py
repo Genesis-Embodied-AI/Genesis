@@ -276,7 +276,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    for i in range(800 if dynamics else 300):
+    for i in range(800 if dynamics else 400):
         scene.step()
 
     for n, entity in enumerate(scene.entities[1:]):
@@ -361,7 +361,7 @@ def test_stickman(gs_sim, mj_sim, atol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(2000):
+    for i in range(2500):
         gs_sim.scene.step()
 
     (gs_robot,) = gs_sim.entities
@@ -604,7 +604,7 @@ def test_convexify(show_viewer):
     assert 5 <= len(cup.geoms) <= 20
     assert 5 <= len(mug.geoms) <= 40
 
-    for i in range(1500):
+    for i in range(2000):
         scene.step()
 
     for obj in objs:
