@@ -4,14 +4,15 @@ import pickle as pkl
 from io import BytesIO
 from urllib import request
 
+import numpy as np
+import trimesh
+from PIL import Image
+
 import coacd
 import igl
-import numpy as np
 import pygltflib
 import pyvista as pv
 import tetgen
-import trimesh
-from PIL import Image
 
 import genesis as gs
 from genesis.ext import fast_simplification
@@ -171,14 +172,7 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     return visual
 
 
-def convex_decompose(mesh, decimate, decimate_face_num, coacd_options):
-    if decimate:
-        if mesh.vertices.shape[0] > 3:
-            if len(mesh.faces) > decimate_face_num:
-                mesh = trimesh.Trimesh(
-                    *fast_simplification.simplify(mesh.vertices, mesh.faces, target_count=decimate_face_num, agg=0)
-                )
-
+def convex_decompose(mesh, coacd_options):
     # compute file name via hashing for caching
     cvx_path = get_cvx_path(mesh.vertices, mesh.faces, coacd_options)
 
@@ -300,7 +294,7 @@ def postprocess_collision_geoms(
                 cmesh = trimesh.convex.convex_hull(tmesh)
                 volume_err = cmesh.volume / tmesh.volume - 1.0
             if volume_err > decompose_error_threshold:
-                tmeshes = convex_decompose(tmesh, decimate, decimate_face_num, coacd_options)
+                tmeshes = convex_decompose(tmesh, coacd_options)
                 meshes = [gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()) for tmesh in tmeshes]
                 _g_infos += [{**g_info, **dict(mesh=mesh)} for mesh in meshes]
             else:
@@ -313,11 +307,14 @@ def postprocess_collision_geoms(
         mesh = g_info["mesh"]
         tmesh = mesh.trimesh
         num_vertices = len(tmesh.vertices)
-        if not convexify and not decimate and num_vertices > 5000:
+        if not decimate and num_vertices > 5000:
             gs.logger.warning(
                 f"At least one of the meshes contain many vertices ({num_vertices}). Consider setting "
-                "'morph.decimate=True' or 'morph.convexify=True' to speed up collision detection and improve numerical "
-                "stability."
+                "'morph.decimate=True' to speed up collision detection and improve numerical stability."
+            )
+        if decimate and decimate_face_num < 100:
+            gs.logger.warning(
+                "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
         mesh = gs.Mesh.from_trimesh(
             mesh=tmesh,
@@ -326,6 +323,8 @@ def postprocess_collision_geoms(
             decimate_face_num=decimate_face_num,
             surface=gs.surfaces.Collision(),
         )
+        # Randomize collision mesh colors. The is especially useful to check convex decomposition.
+        mesh.set_color((*np.random.rand(3), 1.0))
         _g_infos.append({**g_info, **dict(mesh=mesh)})
 
     return _g_infos

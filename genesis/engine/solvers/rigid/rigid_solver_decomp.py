@@ -23,13 +23,21 @@ IMP_MIN = 0.0001
 # maximum constraint impedance
 IMP_MAX = 0.9999
 
+# Minimum ratio between simulation timestep `_substep_dt` and time constant of constraints
+TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
-def _sanitize_sol_params(sol_params, substep_dt, default_resolve_time=None):
+
+def _sanitize_sol_params(sol_params, min_resolve_time, force_resolve_time=None):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.T
-    if default_resolve_time is not None:
-        # Use default default resolve time if and only if solref is not set
-        timeconst[timeconst == 0.0] = default_resolve_time
-    timeconst = np.maximum(timeconst, 2 * substep_dt)
+    if force_resolve_time is not None:
+        timeconst = np.full_like(timeconst, force_resolve_time)
+    min_timeconst = np.min(timeconst)
+    if (min_timeconst + 1e-6 < min_resolve_time).any():
+        gs.logger.warning(
+            f"Constraint solver time constant was increased to avoid numerical instability (from `{min_timeconst:0.6g}` "
+            f"to `{min_resolve_time:0.6g}`). Decrease simulation timestep to avoid altering the original value."
+        )
+    timeconst = np.maximum(timeconst, min_resolve_time)
     dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
     dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
     mid = np.clip(mid, IMP_MIN, IMP_MAX)
@@ -67,10 +75,8 @@ class RigidSolver(Solver):
         self._hibernation_thresh_vel = options.hibernation_thresh_vel
         self._hibernation_thresh_acc = options.hibernation_thresh_acc
 
-        if options.constraint_resolve_time is None:
-            self._sol_constraint_resolve_time = 2 * self._substep_dt
-        else:
-            self._sol_constraint_resolve_time = options.constraint_resolve_time
+        self._sol_constraint_min_resolve_time = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
+        self._sol_constraint_resolve_time = options.constraint_resolve_time
 
         if options.contact_resolve_time is not None:
             self._sol_contact_resolve_time = options.contact_resolve_time
@@ -372,7 +378,9 @@ class RigidSolver(Solver):
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             # Make sure that the constraints parameters are valid
             dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
-            dofs_sol_params = _sanitize_sol_params(dofs_sol_params, self._substep_dt, self._sol_constraint_resolve_time)
+            dofs_sol_params = _sanitize_sol_params(
+                dofs_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
+            )
 
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
@@ -562,7 +570,9 @@ class RigidSolver(Solver):
         # Make sure that the constraints parameters are valid
         joints = tuple(chain.from_iterable(self.joints))
         joints_sol_params = np.concatenate([joint.sol_params for joint in joints], dtype=gs.np_float)
-        joints_sol_params = _sanitize_sol_params(joints_sol_params, self._substep_dt)
+        joints_sol_params = _sanitize_sol_params(
+            joints_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
+        )
 
         self._kernel_init_joint_fields(
             joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
@@ -881,7 +891,7 @@ class RigidSolver(Solver):
             geoms = self.geoms
             geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
             geoms_sol_params = _sanitize_sol_params(
-                geoms_sol_params, self._substep_dt, self._sol_constraint_resolve_time
+                geoms_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
             )
 
             self._kernel_init_geom_fields(
@@ -1190,7 +1200,9 @@ class RigidSolver(Solver):
 
             equalities_sol_params = np.array([equality.sol_params for equality in equalities], dtype=gs.np_float)
             equalities_sol_params = _sanitize_sol_params(
-                equalities_sol_params, self._substep_dt, self._sol_constraint_resolve_time
+                equalities_sol_params,
+                self._sol_constraint_min_resolve_time,
+                self._sol_constraint_resolve_time,
             )
 
             self._kernel_init_equality_fields(
@@ -3977,7 +3989,9 @@ class RigidSolver(Solver):
         assert len(sol_params) == 7
 
         # Make sure that the constraints parameters are valid
-        sol_params = _sanitize_sol_params(sol_params)
+        sol_params = _sanitize_sol_params(
+            sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
+        )
 
         self._kernel_set_global_sol_params(sol_params)
 

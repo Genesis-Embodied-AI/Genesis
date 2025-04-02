@@ -343,13 +343,21 @@ class RigidEntity(Entity):
             if l_info["parent_idx"] < 0:
                 for j_info in link_j_infos:
                     if j_info["type"] != gs.JOINT_TYPE.FIXED:  # base link
-                        if morph.pos is not None:
-                            l_info["pos"] = np.array(morph.pos)
-                            gs.logger.warning("Overriding base link's pos with user provided value in morph.")
-                        if morph.quat is not None:
-                            l_info["quat"] = np.array(morph.quat)
-                            gs.logger.warning("Overriding base link's quat with user provided value in morph.")
-
+                        if morph.pos is not None or morph.quat is not None:
+                            gs.logger.info("Applying offset to base link's pose with user provided value in morph.")
+                            pos = np.asarray(l_info.get("pos", (0.0, 0.0, 0.0)))
+                            quat = np.asarray(l_info.get("quat", (1.0, 0.0, 0.0, 0.0)))
+                            if morph.pos is None:
+                                pos_offset = np.zeros((3,))
+                            else:
+                                pos_offset = np.asarray(morph.pos)
+                            if morph.quat is None:
+                                quat_offset = np.array((1.0, 0.0, 0.0, 0.0))
+                            else:
+                                quat_offset = np.asarray(morph.quat)
+                            l_info["pos"], l_info["quat"] = gu.transform_pos_quat_by_trans_quat(
+                                pos, quat, pos_offset, quat_offset
+                            )
                     if j_info["type"] == gs.JOINT_TYPE.FREE:
                         # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver,
                         # but this initial value will be reflected

@@ -633,12 +633,14 @@ class Reflective(Plastic):
 
 class Collision(Plastic):
     """
-    Default surface type for collision geometry with a grey color.
+    Default surface type for collision geometry with a grey color by default.
     """
+
+    color: tuple = (0.5, 0.5, 0.5)
 
     def __init__(self, **data):
         super().__init__(**data)
-        self.diffuse_texture = ColorTexture(color=(0.5, 0.5, 0.5))
+        self.diffuse_texture = ColorTexture(color=self.color)
 
 
 class Water(Glass):

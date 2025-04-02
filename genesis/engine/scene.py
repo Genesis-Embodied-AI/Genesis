@@ -350,6 +350,10 @@ class Scene(RBC):
             else:
                 morph.convexify = False
 
+        # Decimate if convexify by default
+        if hasattr(morph, "decimate") and morph.decimate is None:
+            morph.decimate = morph.convexify
+
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity

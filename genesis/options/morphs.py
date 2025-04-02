@@ -299,7 +299,7 @@ class FileMorph(Morph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the mesh. If not given, it defaults to `convexify`. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     convexify : bool, optional
@@ -325,9 +325,9 @@ class FileMorph(Morph):
 
     file: Any = ""
     scale: Union[float, tuple] = 1.0
-    decimate: bool = False
+    decimate: Optional[bool] = None
     decimate_face_num: int = 500
-    convexify: bool = True
+    convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
     decompose_error_threshold: float = 0.15
     coacd_options: Optional[CoacdOptions] = None
@@ -349,11 +349,6 @@ class FileMorph(Morph):
 
         # Make sure that this threshold is positive to avoid decomposition of convex and primivie shapes
         self.decompose_error_threshold = max(self.decompose_error_threshold, gs.EPS)
-
-        if self.decimate and self.decimate_face_num < 100:
-            gs.raise_exception(
-                "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
-            )
 
         if self.coacd_options is None:
             self.coacd_options = CoacdOptions()
