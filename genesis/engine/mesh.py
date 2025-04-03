@@ -11,6 +11,7 @@ import pymeshlab
 import genesis as gs
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
+import genesis.utils.usd as uu
 from genesis.ext import fast_simplification
 from genesis.repr_base import RBC
 
@@ -334,7 +335,7 @@ class Mesh(RBC):
                     meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
-                meshes = mu.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
+                meshes = uu.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif hasattr(morph, "files") and len(morph.files) > 0:  # for meshset
                 meshes = morph.files
