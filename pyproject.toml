@@ -48,6 +48,8 @@ dependencies = [
     "coacd",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
+    # OpenUSD support
+    "usd-core",
 ]
 
 [tool.setuptools.packages.find]
