@@ -39,7 +39,7 @@ def main():
     with torch.no_grad():
         while True:
             actions = policy(obs)
-            obs, _, rews, dones, infos = env.step(actions)
+            obs, rews, dones, infos = env.step(actions)
 
 
 if __name__ == "__main__":
