@@ -285,30 +285,8 @@ def orthogonals(a):
     if -0.5 < a[1] and a[1] < 0.5:
         b = y
     b = b - a * a.dot(b)
-    # make b a normal vector. however if a is a zero vector, zero b as well.
     b = b.normalized()
-    if a.norm() < gs.EPS:
-        b = b * 0.0
     return b, a.cross(b)
-
-
-@ti.func
-def orthogonals2(a):
-    """Returns orthogonal vectors `b` and `c`, given a normal vector `a`."""
-    y, z = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float), ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
-    b = z
-    if -0.5 < a[1] and a[1] < 0.5:
-        b = y
-    b = b - a * a.dot(b)
-    # make b a normal vector. however if a is a zero vector, zero b as well.
-    b = b.normalized()
-    if a.norm() < gs.EPS:
-        b = b * 0.0
-
-    # perturb with some noise so that they do not align with world axes
-    c = (a.cross(b) + 0.1 * b).normalized()
-    b = c.cross(a).normalized()
-    return b, c
 
 
 @ti.func

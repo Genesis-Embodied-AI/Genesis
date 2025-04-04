@@ -596,6 +596,7 @@ def test_convexify(show_viewer):
             scale=5.0,
             fixed=True,
             euler=(75, 15, 90),
+            pos=(0.05, -0.1, 0.0),
         ),
         vis_mode="collision",
     )
@@ -613,6 +614,7 @@ def test_convexify(show_viewer):
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
+            visualize_contact=True,
         )
         objs.append(obj)
     scene.build()
@@ -630,12 +632,15 @@ def test_convexify(show_viewer):
     assert 5 <= len(cup.geoms) <= 20
     assert 5 <= len(mug.geoms) <= 40
 
-    for i in range(2000):
+    # Check resting conditions repeateadly rather not just once, for numerical robustness
+    for i in range(800):
         scene.step()
+        if i > 700:
+            for obj in objs:
+                qvel = obj.get_dofs_velocity().cpu()
+                np.testing.assert_allclose(qvel, 0, atol=0.02)
 
     for obj in objs:
-        qvel = obj.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.05)
         qpos = obj.get_dofs_position().cpu()
         np.testing.assert_array_less(-0.1, qpos[2])
         np.testing.assert_array_less(qpos[2], 0.15)

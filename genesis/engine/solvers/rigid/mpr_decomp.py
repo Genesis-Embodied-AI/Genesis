@@ -18,8 +18,9 @@ class MPR:
 
         if gs.ti_float == ti.f32:
             # It has been observed in practice that increasing this threshold makes collision detection instable,
-            # which is surprising since 1e-8 is above single precision (which has only 7 digits of precision).
-            self.CCD_EPS = 1e-8
+            # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
+            # The simulation is "stable" for 1e-8 but the contact is still jumping sporadically from time to time.
+            self.CCD_EPS = 1e-9
         else:
             self.CCD_EPS = 1e-10
         self.CCD_TOLERANCE = 1e-6

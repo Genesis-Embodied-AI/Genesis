@@ -37,7 +37,7 @@ class Collider:
 
         # multi contact perturbation and tolerance
         self._mc_perturbation = 1e-3
-        self._mc_tolerance = 1e-3
+        self._mc_tolerance = 1e-3  # Scale by geom's AABB max half-size
 
     def _init_verts_connectivity(self):
         vert_neighbors = []
@@ -949,7 +949,7 @@ class Collider:
 
                             if is_col_0 and self._solver._enable_multi_contact:
                                 # perturb geom_a around two orthogonal axes to find multiple contacts
-                                axis_0, axis_1 = gu.orthogonals2(normal_0)
+                                axis_0, axis_1 = gu.orthogonals(normal_0)
 
                                 ga_state = self._solver.geoms_state[i_ga, i_b]
                                 gb_state = self._solver.geoms_state[i_gb, i_b]
@@ -995,10 +995,10 @@ class Collider:
 
                                         if valid:
                                             # Apply first-order penetration depth correction: compensate effect of small rotation
-                                            res = contact_pos - contact_pos_0
-                                            axis_dist = ti.sqrt(res.dot(res) - res.dot(axis) ** 2)
+                                            contact_shift = contact_pos - contact_pos_0
+                                            depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
                                             penetration = ti.min(
-                                                penetration_0, penetration - 2 * self._mc_perturbation * axis_dist
+                                                penetration - 2 * self._mc_perturbation * depth_lever, penetration_0
                                             )
 
                                             if penetration > 0.0:
@@ -1185,7 +1185,7 @@ class Collider:
                     if is_col:
                         self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
                         if multi_contact:
-                            axis_0, axis_1 = gu.orthogonals2(normal_0)
+                            axis_0, axis_1 = gu.orthogonals(normal_0)
                             tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
                             n_con = 1
 
@@ -1195,14 +1195,14 @@ class Collider:
                         if not repeat:
                             idx_prev = self.n_contacts[i_b] - 1 - i_con
                             prev_contact = self.contact_data[idx_prev, i_b].pos
-
                             if (contact_pos - prev_contact).norm() < tolerance:
                                 repeat = True
+
                     if not repeat:
-                        # Apply first-order penetration depth correction: revert effect of small rotation
-                        res = contact_pos - contact_pos_0
-                        axis_dist = ti.sqrt(res.dot(res) - res.dot(axis) ** 2)
-                        penetration = ti.min(penetration_0, penetration - 2 * self._mc_perturbation * axis_dist)
+                        # Apply first-order penetration depth correction: compensate effect of small rotation
+                        contact_shift = contact_pos - contact_pos_0
+                        depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
+                        penetration = ti.min(penetration - 2 * self._mc_perturbation * depth_lever, penetration_0)
 
                         if penetration > 0.0:
                             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
