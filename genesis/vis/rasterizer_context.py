@@ -720,11 +720,14 @@ class RasterizerContext:
         self.add_external_node(node, pose=pose)
         return node
 
-    def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
+    def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
         poses = gu.trans_to_T(tensor_to_array(poss))
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_spheres_{gs.UID()}", smooth=True, poses=poses)
-        self.add_external_node(node)
+        if persistent:
+            self.add_external_node(node)
+        else:
+            self.add_dynamic_node(node)
         return node
 
     def draw_debug_box(self, bounds, color=(1.0, 0.0, 0.0, 1.0), wireframe=True, wireframe_radius=0.002):

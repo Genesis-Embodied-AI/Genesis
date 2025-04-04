@@ -189,7 +189,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, 
 
     # Force matching Mujoco safety factor for constraint time constant.
     # Note that this time constant affects the penetration depth at rest.
-    gs_sim.rigid_solver._sol_constraint_min_resolve_time = 2.0 * scene.sim._substep_dt
+    gs_sim.rigid_solver._sol_constraint_min_resolve_time = 2.0 * gs_sim._substep_dt
 
     # Joint damping is not properly supported in Genesis for now
     if not dof_damping:
