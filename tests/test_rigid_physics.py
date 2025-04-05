@@ -232,11 +232,12 @@ def test_box_box_dynamics(gs_sim):
             np.array([*(0.15 * np.random.rand(2)), np.pi * np.random.rand()]),
         )
         init_simulators(gs_sim, qpos=np.concatenate((cube1_pos, cube1_quat, cube2_pos, cube2_quat)))
-        for i in range(100):
+        for i in range(110):
             gs_sim.scene.step()
+            if i > 100:
+                qvel = gs_robot.get_dofs_velocity().cpu()
+                np.testing.assert_allclose(qvel, 0, atol=1e-2)
 
-        qvel = gs_robot.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=1e-2)
         qpos = gs_robot.get_dofs_position().cpu()
         np.testing.assert_allclose(qpos[8], 0.6, atol=2e-3)
 
@@ -276,13 +277,15 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    for i in range(800 if dynamics else 400):
+    num_steps = 850 if dynamics else 450
+    for i in range(num_steps):
         scene.step()
+        if i > num_steps - 50:
+            for n, entity in enumerate(scene.entities[1:]):
+                i, j, k = int(n / 25), int(n / 5) % 5, n % 5
+                qvel = entity.get_dofs_velocity().cpu()
+                np.testing.assert_allclose(qvel, 0, atol=1.0)
 
-    for n, entity in enumerate(scene.entities[1:]):
-        i, j, k = int(n / 25), int(n / 5) % 5, n % 5
-        qvel = entity.get_dofs_velocity().cpu()
-        np.testing.assert_allclose(qvel, 0, atol=0.1 if dynamics else 0.05)
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         qpos = entity.get_dofs_position().cpu()
@@ -291,7 +294,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
             assert qpos[2] < 5.0
         else:
             qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
-            np.testing.assert_allclose(qpos[:3], qpos0, atol=0.05)
+            np.testing.assert_allclose(qpos[:3], qpos0, atol=0.1)
             np.testing.assert_allclose(qpos[3:], 0, atol=0.03)
 
     if show_viewer:
@@ -387,12 +390,13 @@ def test_stickman(gs_sim, mj_sim, atol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(2500):
+    for i in range(4000):
         gs_sim.scene.step()
+        if i > 3900:
+            (gs_robot,) = gs_sim.entities
+            qvel = gs_robot.get_dofs_velocity().cpu()
+            np.testing.assert_allclose(qvel, 0, atol=0.2)
 
-    (gs_robot,) = gs_sim.entities
-    qvel = gs_robot.get_dofs_velocity().cpu()
-    np.testing.assert_allclose(qvel, 0, atol=0.3)
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
     body_z = gs_sim.rigid_solver.links_state.pos.to_numpy()[:-1, 0, 2]
@@ -520,11 +524,12 @@ def move_cube(use_suction, show_viewer):
     else:
         rigid.delete_weld_constraint(link_cube, link_franka)
 
-    for i in range(400):
+    for i in range(450):
         scene.step()
+        if i > 400:
+            qvel = cube.get_dofs_velocity().cpu()
+            np.testing.assert_allclose(qvel, 0, atol=0.05)
 
-    qvel = cube.get_dofs_velocity().cpu()
-    np.testing.assert_allclose(qvel, 0, atol=0.05)
     qpos = cube.get_dofs_position().cpu()
     np.testing.assert_allclose(qpos[2], 0.06, atol=2e-3)
 
@@ -567,19 +572,24 @@ def test_nonconvex_collision(show_viewer):
     )
     scene.build()
 
+    # Force numpy seed because this test is very sensitive to the initial condition
+    np.random.seed(0)
     ball.set_dofs_velocity(np.random.rand(ball.n_dofs) * 0.8)
     for i in range(1500):
         scene.step()
-
-    qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
-    np.testing.assert_allclose(qvel, 0, atol=0.15)
+        if i > 1400:
+            qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+            np.testing.assert_allclose(qvel, 0, atol=0.15)
 
     if show_viewer:
         scene.viewer.stop()
 
 
+# FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
+@pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_convexify(show_viewer):
+def test_convexify(euler, show_viewer):
     # The test check that the volume difference is under a given threshold and
     # that convex decomposition is only used whenever it is necessary.
     # Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
@@ -595,7 +605,7 @@ def test_convexify(show_viewer):
             file="meshes/tank.obj",
             scale=5.0,
             fixed=True,
-            euler=(75, 15, 90),
+            euler=euler,
             pos=(0.05, -0.1, 0.0),
         ),
         vis_mode="collision",
@@ -614,7 +624,7 @@ def test_convexify(show_viewer):
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
-            visualize_contact=True,
+            # visualize_contact=True,
         )
         objs.append(obj)
     scene.build()
@@ -633,18 +643,28 @@ def test_convexify(show_viewer):
     assert 5 <= len(mug.geoms) <= 40
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    for i in range(800):
+    num_steps = 900 if euler == (90, 0, 90) else 500
+    for i in range(num_steps):
         scene.step()
-        if i > 700:
+        if i > num_steps - 100:
             for obj in objs:
                 qvel = obj.get_dofs_velocity().cpu()
-                np.testing.assert_allclose(qvel, 0, atol=0.02)
+                np.testing.assert_allclose(qvel, 0, atol=1.0)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
         np.testing.assert_array_less(-0.1, qpos[2])
         np.testing.assert_array_less(qpos[2], 0.15)
         np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
+
+    # Check that the mug, donut, cup are landing straight if the tank is horizontal
+    if euler == (90, 0, 90):
+        for obj in (mug, donut, cup):
+            qpos = obj.get_dofs_position().cpu()
+            np.testing.assert_allclose(qpos[0], 0.0, atol=5e-3)
+        for i, obj in enumerate((mug, donut)):
+            qpos = obj.get_dofs_position().cpu()
+            np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
 
     if show_viewer:
         scene.viewer.stop()

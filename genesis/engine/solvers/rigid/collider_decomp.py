@@ -37,7 +37,7 @@ class Collider:
 
         # multi contact perturbation and tolerance
         self._mc_perturbation = 1e-3
-        self._mc_tolerance = 1e-3  # Scale by geom's AABB max half-size
+        self._mc_tolerance = 1e-3
         self._mpr_to_sdf_overlap_ratio = 0.5
 
     def _init_verts_connectivity(self):
@@ -999,6 +999,7 @@ class Collider:
                         penetration = gs.ti_float(0.0)
                         normal = ti.Vector.zero(gs.ti_float, 3)
                         contact_pos = ti.Vector.zero(gs.ti_float, 3)
+                        tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
                         for i in range(2):
                             if i == 1:
                                 i_ga, i_gb = i_gb, i_ga
@@ -1016,7 +1017,7 @@ class Collider:
                             if is_col_0:
                                 self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
 
-                            if is_col_0 and self._solver._enable_multi_contact:
+                            if is_col_0 and ti.static(self._solver._enable_multi_contact):
                                 # perturb geom_a around two orthogonal axes to find multiple contacts
                                 axis_0, axis_1 = gu.orthogonals(normal_0)
 
@@ -1025,8 +1026,6 @@ class Collider:
 
                                 ga_pos, ga_quat = ga_state.pos, ga_state.quat
                                 gb_pos, gb_quat = gb_state.pos, gb_state.quat
-
-                                tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
                                 n_valid = 1
                                 for i_rot in range(4):
@@ -1199,12 +1198,13 @@ class Collider:
         i_lb = self._solver.geoms_info[i_gb].link_idx
 
         multi_contact = (
-            self._solver._enable_multi_contact
+            ti.static(self._solver._enable_multi_contact)
             and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
         )
+        tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
         # Check if one geometry is partially enclosed in the other
         overlap_ratio_a = self._func_geom_overlap_ratio(i_ga, i_gb, i_b)
@@ -1224,7 +1224,6 @@ class Collider:
             contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
             n_con = gs.ti_int(0)
-            tolerance = gs.ti_float(0.0)
             axis_0 = ti.Vector.zero(gs.ti_float, 3)
             axis_1 = ti.Vector.zero(gs.ti_float, 3)
             axis = ti.Vector.zero(gs.ti_float, 3)
@@ -1267,24 +1266,28 @@ class Collider:
                             i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].mpr_direction
                         )
 
-                        # Fallback on SDF systematically if collision is detected by MPR but no collision direction was
-                        # cached, because the contact information provided by MPR may be unreliable in such a case.
-                        # This pattern is based on the assumption that generic SDF is much slower than MPR, so it is
-                        # faster in average to first make sure that the geometries are truly colliding and only after to
-                        # run SDF if necessary. This would probably not be the case anymore if it was possible to rely
-                        # on specialized SDF implementation for convex-convex collision detection in the first place.
-                        is_direction_cached = (ti.abs(self.contact_cache[i_ga, i_gb, i_b].mpr_direction) > gs.EPS).any()
-                        if is_col and not is_direction_cached:
-                            is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
-                                i_ga, i_gb, i_b
-                            )
-                            if not is_col_:
+                        # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
+                        # initial penetration is already quite large, because the contact information provided by MPR
+                        # may be unreliable in such a case.
+                        # Here it is assulmed that generic SDF is much slower than MPR, so it is faster in average to
+                        # first make sure that the geometries are truly colliding and only after to run SDF if
+                        # necessary. This would probably not be the case anymore if it was possible to rely on
+                        # specialized SDF implementation for convex-convex collision detection in the first place.
+                        if ti.static(not self._solver._enable_mpr_vanilla):
+                            is_mpr_guess_direction_available = (
+                                ti.abs(self.contact_cache[i_ga, i_gb, i_b].mpr_direction) > gs.EPS
+                            ).any()
+                            if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
                                 is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
-                                    i_gb, i_ga, i_b
+                                    i_ga, i_gb, i_b
                                 )
-                                normal_ = -normal_
-                            if is_col_:
-                                normal, penetration, contact_pos = normal_, penetration_, contact_pos_
+                                if not is_col_:
+                                    is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
+                                        i_gb, i_ga, i_b
+                                    )
+                                    normal_ = -normal_
+                                if is_col_:
+                                    normal, penetration, contact_pos = normal_, penetration_, contact_pos_
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
@@ -1292,23 +1295,10 @@ class Collider:
                         self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
                         if multi_contact:
                             axis_0, axis_1 = gu.orthogonals(normal_0)
-                            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
                             n_con = 1
 
-                        # Compute the linear velocity between the two geometries at the contact point.
-                        # This would be used as contact search direction for large velocities.
-                        # l_state_a = self._solver.links_state[i_la, i_b]
-                        # l_state_b = self._solver.links_state[i_lb, i_b]
-                        # contact_vel = (l_state_a.vel + l_state_a.ang.cross(contact_pos_0 - l_state_a.COM)) - (
-                        #     l_state_b.vel + l_state_b.ang.cross(contact_pos_0 - l_state_b.COM)
-                        # )
-                        # contact_vel_norm = contact_vel.norm()
-                        # if contact_vel_norm * self._solver._substep_dt > tolerance:
-                        #     self.contact_cache[i_ga, i_gb, i_b].mpr_direction = contact_vel / contact_vel_norm
-                        # else:
-                        #     self.contact_cache[i_ga, i_gb, i_b].mpr_direction = normal
-
-                        self.contact_cache[i_ga, i_gb, i_b].mpr_direction = normal
+                        if ti.static(not self._solver._enable_mpr_vanilla):
+                            self.contact_cache[i_ga, i_gb, i_b].mpr_direction = normal
                     else:
                         # Clear collision normal cache if not in contact
                         self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)

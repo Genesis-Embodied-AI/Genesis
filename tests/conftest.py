@@ -29,19 +29,17 @@ def pytest_xdist_auto_num_workers(config):
     # Determine whether 'benchmarks' marker is selected
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+    show_viewer = config.getoption("--vis")
 
-    if config.option.numprocesses == "auto":
-        # Disable multi-processing for benchmarks
-        if is_benchmarks:
-            return 0
+    # Disable multi-processing for benchmarks
+    if is_benchmarks or show_viewer:
+        return 0
 
-        # Compute the default number of workers based on available RAM, VRAM, and number of physical cores
-        physical_core_count = psutil.cpu_count(logical=False)
-        _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
-        _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
-        return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
-    elif is_benchmarks and config.option.numprocesses > 0:
-        raise RuntimeError("Enabling multi-processing for benchmarks is forbidden.")
+    # Compute the default number of workers based on available RAM, VRAM, and number of physical cores
+    physical_core_count = psutil.cpu_count(logical=False)
+    _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
+    _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
+    return min(int(ram_memory / 3.0), int(vram_memory / 1.0), physical_core_count)
 
     return config.option.numprocesses
 
@@ -56,19 +54,19 @@ def show_viewer(pytestconfig):
     return pytestconfig.getoption("--vis")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def backend(pytestconfig):
     return pytestconfig.getoption("--backend")
-
-
-@pytest.fixture
-def atol():
-    return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
 @pytest.fixture(scope="session")
 def asset_tmp_path(tmp_path_factory):
     return tmp_path_factory.mktemp("assets")
+
+
+@pytest.fixture
+def atol():
+    return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -192,6 +190,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision
             box_box_detection=True,
             enable_self_collision=True,
             enable_multi_contact=multi_contact,
+            enable_mpr_vanilla=True,
             enable_adjacent_collision=adjacent_collision,
             iterations=mj_sim.model.opt.iterations,
             tolerance=mj_sim.model.opt.tolerance,

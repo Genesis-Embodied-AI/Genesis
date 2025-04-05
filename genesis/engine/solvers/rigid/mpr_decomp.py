@@ -422,21 +422,20 @@ class MPR:
                 #
                 # The original paper introducing MPR algorithm is available here:
                 # https://archive.org/details/game-programming-gems-7
-                pdir = direction
-                depth = pdir.dot(self.simplex_support[i_ga, i_gb, 1, i_b].v)
-
-                # depth, pdir = self.mpr_point_tri_depth(
-                #     gs.ti_vec3([0.0, 0.0, 0.0]),
-                #     self.simplex_support[i_ga, i_gb, 1, i_b].v,
-                #     self.simplex_support[i_ga, i_gb, 2, i_b].v,
-                #     self.simplex_support[i_ga, i_gb, 3, i_b].v,
-                # )
-                # pdir = pdir.normalized()
+                if ti.static(self._solver._enable_mpr_vanilla):
+                    penetration, pdir = self.mpr_point_tri_depth(
+                        gs.ti_vec3([0.0, 0.0, 0.0]),
+                        self.simplex_support[i_ga, i_gb, 1, i_b].v,
+                        self.simplex_support[i_ga, i_gb, 2, i_b].v,
+                        self.simplex_support[i_ga, i_gb, 3, i_b].v,
+                    )
+                    normal = -pdir.normalized()
+                else:
+                    penetration = direction.dot(self.simplex_support[i_ga, i_gb, 1, i_b].v)
+                    normal = -direction
 
                 is_col = True
                 pos = self.mpr_find_pos(i_ga, i_gb, i_b)
-                normal = -pdir
-                penetration = depth
                 break
 
             self.mpr_expand_portal(v, v1, v2, i_ga, i_gb, i_b)

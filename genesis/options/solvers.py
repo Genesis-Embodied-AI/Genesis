@@ -187,7 +187,6 @@ class RigidOptions(Options):
     dt: Optional[float] = None
     gravity: Optional[tuple] = None
     enable_collision: bool = True
-    enable_multi_contact: bool = True
     enable_joint_limit: bool = True
     enable_self_collision: bool = False
     enable_adjacent_collision: bool = False
@@ -222,6 +221,10 @@ class RigidOptions(Options):
 
     # for dynamic properties
     max_dynamic_constraints: int = 8
+
+    # Experimental options mainly intended for debug purpose and unit tests
+    enable_multi_contact: bool = True
+    enable_mpr_vanilla: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
