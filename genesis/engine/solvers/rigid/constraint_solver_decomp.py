@@ -821,10 +821,8 @@ class ConstraintSolver:
             # this safeguard seems not necessary in normal execution
             # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
             if self.n_constraints[i_b] > 0:
-                # cnt = 0
                 tol_scaled = (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs)) * self.tolerance
                 for it in range(self.iterations):
-                    # cnt += 1
                     self._func_solve_body(i_b)
                     if self.improved[i_b] < 1:
                         break
@@ -837,7 +835,6 @@ class ConstraintSolver:
                     improvement = self.prev_cost[i_b] - self.cost[i_b]
                     if gradient < tol_scaled or improvement < tol_scaled:
                         break
-                # print(cnt)
 
     @ti.func
     def _func_ls_init(self, i_b):

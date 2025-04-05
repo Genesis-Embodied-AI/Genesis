@@ -289,6 +289,51 @@ class Collider:
         )
 
     @ti.func
+    def _func_is_geom_enclosed(self, i_ga, i_gb, i_b, tolerance):
+        # Check if one geom 'i_ga' is likely fully (1) or partially (2) enclosed in another geom 'i_gb'.
+        # 1. 'Broad phase': Check if bounding box 'i_ga' is fully enclosed into the other bounding box
+        # 2. 'Mid phase': Check if rotated bounding box 'i_ga' is fully enclosed into the other bounding box
+        # 3. 'Narrow phase': Check if all corners of rotated bounding box 'i_ga' are inside the other true geom
+
+        is_enclosed_dims = (
+            self._solver.geoms_state[i_gb, i_b].aabb_min < self._solver.geoms_state[i_ga, i_b].aabb_min
+        ) & (self._solver.geoms_state[i_ga, i_b].aabb_max < self._solver.geoms_state[i_gb, i_b].aabb_max)
+
+        if is_enclosed_dims.all():
+            for i_corner in ti.static((0, 7)):
+                corner_pos = gu.ti_inv_transform_by_trans_quat(
+                    gu.ti_transform_by_trans_quat(
+                        self._solver.geoms_init_AABB[i_ga, i_corner],
+                        self._solver.geoms_state[i_ga, i_b].pos,
+                        self._solver.geoms_state[i_ga, i_b].quat,
+                    ),
+                    self._solver.geoms_state[i_gb, i_b].pos,
+                    self._solver.geoms_state[i_gb, i_b].quat,
+                )
+                if i_corner == 0:
+                    is_enclosed_dims &= self._solver.geoms_init_AABB[i_gb, i_corner] < corner_pos
+                else:
+                    is_enclosed_dims &= corner_pos < self._solver.geoms_init_AABB[i_gb, i_corner]
+
+        is_enclosed = 0
+        if is_enclosed_dims.all():
+            is_enclosed = 1
+            for i_corner in range(8):
+                if is_enclosed:
+                    corner_pos = gu.ti_transform_by_trans_quat(
+                        self._solver.geoms_init_AABB[i_ga, i_corner],
+                        self._solver.geoms_state[i_ga, i_b].pos,
+                        self._solver.geoms_state[i_ga, i_b].quat,
+                    )
+                    dist = self._solver.sdf.sdf_world(corner_pos, i_gb, i_b)
+                    if dist > tolerance:
+                        is_enclosed = 0
+        elif is_enclosed_dims.any():
+            is_enclosed = 2
+
+        return is_enclosed
+
+    @ti.func
     def _func_find_intersect_midpoint(self, i_ga, i_gb):
         # return the center of the intersecting AABB of AABBs of two geoms
         intersect_lower = ti.max(self._solver.geoms_state[i_ga].aabb_min, self._solver.geoms_state[i_gb].aabb_min)
@@ -316,13 +361,10 @@ class Collider:
         return is_col, normal, penetration, contact_pos
 
     @ti.func
-    def _func_contact_vertex_sdf(self, i_ga, i_gb, i_b, ga_quat_rot):
+    def _func_contact_vertex_sdf(self, i_ga, i_gb, i_b):
         ga_info = self._solver.geoms_info[i_ga]
         ga_pos = self._solver.geoms_state[i_ga, i_b].pos
         ga_quat = self._solver.geoms_state[i_ga, i_b].quat
-
-        # rotate ga with small purturbation
-        ga_quat = gu.ti_transform_quat_by_quat(ga_quat, ga_quat_rot)
 
         is_col = False
         penetration = gs.ti_float(0.0)
@@ -934,9 +976,10 @@ class Collider:
                         for i in range(2):
                             if i == 1:
                                 i_ga, i_gb = i_gb, i_ga
+
                             # initial point
                             is_col_0, normal_0, penetration_0, contact_pos_0 = self._func_contact_vertex_sdf(
-                                i_ga, i_gb, i_b, gu.ti_identity_quat()
+                                i_ga, i_gb, i_b
                             )
 
                             penetrated = normal_0.dot(self.contact_cache[i_ga, i_gb, i_b].normal) >= 0
@@ -974,7 +1017,7 @@ class Collider:
                                     self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
                                     is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(
-                                        i_ga, i_gb, i_b, gu.ti_identity_quat()
+                                        i_ga, i_gb, i_b
                                     )
 
                                     if penetrated:
@@ -1126,12 +1169,11 @@ class Collider:
         if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
             i_gb, i_ga = i_ga, i_gb
 
-        is_plane = self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
         I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
         I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+
         multi_contact = (
             self._solver._enable_multi_contact
             and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
@@ -1139,7 +1181,22 @@ class Collider:
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
         )
-        if is_plane:
+
+        # Check if one geometry is partially enclosed in the other.
+        # Note that it is necessary to take into account some safety margins if multi-contact is enabled.
+        tolerance = gs.ti_float(0.0)
+        if multi_contact:
+            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+        is_a_enclosed = self._func_is_geom_enclosed(i_ga, i_gb, i_b, tolerance)
+        is_b_enclosed = self._func_is_geom_enclosed(i_gb, i_ga, i_b, tolerance)
+        if is_a_enclosed == 2 and is_b_enclosed == 2:
+            print(
+                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Geometries are partially enclosed between each other. "
+                "Please reduce the simulation timestep to avoid numerical instability of collision detection."
+                f"{formats.RESET}"
+            )
+
+        if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
             self._func_plane_contact(i_ga, i_gb, multi_contact, i_b)
         else:
             is_col_0 = False
@@ -1153,7 +1210,6 @@ class Collider:
             contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
             n_con = gs.ti_int(0)
-            tolerance = gs.ti_float(0.0)
             axis_0 = ti.Vector.zero(gs.ti_float, 3)
             axis_1 = ti.Vector.zero(gs.ti_float, 3)
             axis = ti.Vector.zero(gs.ti_float, 3)
@@ -1178,15 +1234,22 @@ class Collider:
                     self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
                 if i_detection == 0 or (is_col_0 > 0 and multi_contact):
-                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(i_ga, i_gb, i_b)
+                    # MPR cannot handle collision detection for fully enclosed geometries.
+                    # Falling back to SDF in last resort.
+                    if is_a_enclosed == 1:
+                        is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_ga, i_gb, i_b)
+                    elif is_b_enclosed == 1:
+                        is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_gb, i_ga, i_b)
+                        normal = -normal
+                    else:
+                        is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(i_ga, i_gb, i_b)
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
-                    if is_col:
+                    if is_col_0:
                         self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
                         if multi_contact:
                             axis_0, axis_1 = gu.orthogonals(normal_0)
-                            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
                             n_con = 1
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
