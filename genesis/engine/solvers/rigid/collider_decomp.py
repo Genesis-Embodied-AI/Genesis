@@ -38,6 +38,7 @@ class Collider:
         # multi contact perturbation and tolerance
         self._mc_perturbation = 1e-3
         self._mc_tolerance = 1e-3  # Scale by geom's AABB max half-size
+        self._mpr_to_sdf_overlap_ratio = 0.5
 
     def _init_verts_connectivity(self):
         vert_neighbors = []
@@ -156,9 +157,10 @@ class Collider:
 
         # contact caching for warmstart collision detection
         struct_contact_cache = ti.types.struct(
-            i_va_0=gs.ti_int,
+            i_va_ws=gs.ti_int,
             penetration=gs.ti_float,
             normal=gs.ti_vec3,
+            mpr_direction=gs.ti_vec3,
         )
         self.contact_cache = struct_contact_cache.field(
             shape=self._solver._batch_shape((self._solver.n_geoms_, self._solver.n_geoms_)),
@@ -208,13 +210,14 @@ class Collider:
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
-            b = envs_idx[i_b_]
-            self.first_time[b] = 1
-            for i in range(self._solver.n_geoms):
-                for j in range(self._solver.n_geoms):
-                    self.contact_cache.i_va_0[i, j, b] = -1
-                    self.contact_cache.penetration[i, j, b] = 0
-                    self.contact_cache.normal[i, j, b] = 0
+            i_b = envs_idx[i_b_]
+            self.first_time[i_b] = 1
+            for i_ga in range(self._solver.n_geoms):
+                for i_gb in range(self._solver.n_geoms):
+                    self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
+                    self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
+                    self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                    self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -242,7 +245,8 @@ class Collider:
                     I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
 
                     # pair of hibernated-fixed links -> hibernated contact
-                    # TODO: we should also include hibernated-hibernated links and wake up the whole contact island once a new collision is detected
+                    # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
+                    # once a new collision is detected
                     if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
                         self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
                     ):
@@ -255,8 +259,6 @@ class Collider:
 
             else:
                 self.n_contacts[i_b] = 0
-
-            # self.n_contacts[i_b] = 0
 
     def detection(self):
         from genesis.utils.tools import create_timer
@@ -289,16 +291,19 @@ class Collider:
         )
 
     @ti.func
-    def _func_is_geom_enclosed(self, i_ga, i_gb, i_b, tolerance):
+    def _func_geom_overlap_ratio(self, i_ga, i_gb, i_b):
         # Check if one geom 'i_ga' is likely fully (1) or partially (2) enclosed in another geom 'i_gb'.
         # 1. 'Broad phase': Check if bounding box 'i_ga' is fully enclosed into the other bounding box
         # 2. 'Mid phase': Check if rotated bounding box 'i_ga' is fully enclosed into the other bounding box
         # 3. 'Narrow phase': Check if all corners of rotated bounding box 'i_ga' are inside the other true geom
+        overlap_ratio = gs.ti_float(0.0)
 
+        # Broad phase 1
         is_enclosed_dims = (
             self._solver.geoms_state[i_gb, i_b].aabb_min < self._solver.geoms_state[i_ga, i_b].aabb_min
         ) & (self._solver.geoms_state[i_ga, i_b].aabb_max < self._solver.geoms_state[i_gb, i_b].aabb_max)
 
+        # Mid phase 2
         if is_enclosed_dims.all():
             for i_corner in ti.static((0, 7)):
                 corner_pos = gu.ti_inv_transform_by_trans_quat(
@@ -315,23 +320,41 @@ class Collider:
                 else:
                     is_enclosed_dims &= corner_pos < self._solver.geoms_init_AABB[i_gb, i_corner]
 
-        is_enclosed = 0
+        # Narrow phase 3
+        dists = ti.Vector.zero(gs.ti_float, 8)
         if is_enclosed_dims.all():
-            is_enclosed = 1
+            # Check whether the bound box 'i_ga' is fully enclosed
+            is_enclosed = True
             for i_corner in range(8):
-                if is_enclosed:
-                    corner_pos = gu.ti_transform_by_trans_quat(
-                        self._solver.geoms_init_AABB[i_ga, i_corner],
-                        self._solver.geoms_state[i_ga, i_b].pos,
-                        self._solver.geoms_state[i_ga, i_b].quat,
-                    )
-                    dist = self._solver.sdf.sdf_world(corner_pos, i_gb, i_b)
-                    if dist > tolerance:
-                        is_enclosed = 0
-        elif is_enclosed_dims.any():
-            is_enclosed = 2
+                corner_pos = gu.ti_transform_by_trans_quat(
+                    self._solver.geoms_init_AABB[i_ga, i_corner],
+                    self._solver.geoms_state[i_ga, i_b].pos,
+                    self._solver.geoms_state[i_ga, i_b].quat,
+                )
+                dists[i_corner] = self._solver.sdf.sdf_world(corner_pos, i_gb, i_b)
+                if dists[i_corner] > 0.0:
+                    is_enclosed = False
 
-        return is_enclosed
+            # Approximate the overlapping ratio.
+            # It is defined as the ratio between the average signed distance of all the corners of the bounding box
+            # 'i_ga' from the true convex geometry 'i_gb', and the length of the box along this specific direction.
+            if is_enclosed:
+                overlap_ratio = 1.0
+            else:
+                box_size = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
+                dist_diff = ti.Vector(
+                    [
+                        dists[4] + dists[5] + dists[6] + dists[7] - dists[0] - dists[1] - dists[2] - dists[3],
+                        dists[2] + dists[3] + dists[6] + dists[7] - dists[0] - dists[1] - dists[4] - dists[5],
+                        dists[1] + dists[3] + dists[5] + dists[7] - dists[0] - dists[2] - dists[4] - dists[6],
+                    ],
+                    dt=gs.ti_float,
+                )
+                overlap_dir = (dist_diff / box_size).normalized()
+                overlap_length = ti.abs(box_size.dot(overlap_dir))
+                overlap_ratio = ti.math.clamp(0.5 - (dists.sum() / 8) / overlap_length, 0.0, 1.0)
+
+        return overlap_ratio
 
     @ti.func
     def _func_find_intersect_midpoint(self, i_ga, i_gb):
@@ -441,7 +464,7 @@ class Collider:
         return is_col, normal, penetration, contact_pos
 
     @ti.func
-    def _func_sdf_contact_convex_convex(self, i_ga, i_gb, i_b, i_va_ws):
+    def _func_contact_convex_convex_sdf(self, i_ga, i_gb, i_b, i_va_ws):
         gb_vert_start = self._solver.geoms_info[i_gb].vert_start
         ga_pos = self._solver.geoms_state[i_ga, i_b].pos
         ga_quat = self._solver.geoms_state[i_ga, i_b].quat
@@ -511,10 +534,8 @@ class Collider:
                 normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
 
                 if normal_edge_0.dot(sdf_grad_0_b) < 0 or normal_edge_1.dot(sdf_grad_1_b) < 0:
-
                     # check if closest point is between the two points
                     if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
-
                         cur_length = (p_1 - p_0).norm()
                         ga_sdf_cell_size = self._solver.sdf.geoms_info[i_ga].sdf_cell_size
                         while cur_length > ga_sdf_cell_size:
@@ -541,7 +562,6 @@ class Collider:
 
     @ti.func
     def _func_contact_mpr_terrain(self, i_ga, i_gb, i_b):
-
         ga_pos, ga_quat = self._solver.geoms_state[i_ga, i_b].pos, self._solver.geoms_state[i_ga, i_b].quat
         gb_pos, gb_quat = self._solver.geoms_state[i_gb, i_b].pos, self._solver.geoms_state[i_gb, i_b].quat
         margin = gs.ti_float(0.0)
@@ -624,7 +644,7 @@ class Collider:
                                     self._solver.geoms_state[i_gb, i_b].quat = gu.ti_identity_quat()
 
                                     is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                        i_ga, i_gb, i_b
+                                        i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
                                     )
                                     if is_col:
                                         normal = gu.ti_transform_by_quat(normal, gb_quat)
@@ -785,10 +805,12 @@ class Collider:
                             if i_ga > i_gb:
                                 i_ga, i_gb = i_gb, i_ga
 
-                            if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                            if not self._func_check_collision_valid(i_ga, i_gb, i_b):
                                 continue
 
-                            if not self._func_check_collision_valid(i_ga, i_gb, i_b):
+                            if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                                # Clear collision normal cache if not in contact
+                                self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
@@ -832,10 +854,12 @@ class Collider:
                                 if i_ga > i_gb:
                                     i_ga, i_gb = i_gb, i_ga
 
-                                if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                                if not self._func_check_collision_valid(i_ga, i_gb, i_b):
                                     continue
 
-                                if not self._func_check_collision_valid(i_ga, i_gb, i_b):
+                                if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                                    # Clear collision normal cache if not in contact
+                                    self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
                                     continue
 
                                 self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
@@ -850,10 +874,12 @@ class Collider:
                                     if i_ga > i_gb:
                                         i_ga, i_gb = i_gb, i_ga
 
-                                    if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                                    if not self._func_check_collision_valid(i_ga, i_gb, i_b):
                                         continue
 
-                                    if not self._func_check_collision_valid(i_ga, i_gb, i_b):
+                                    if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                                        # Clear collision normal cache if not in contact
+                                        self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
                                         continue
 
                                     self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
@@ -1171,8 +1197,6 @@ class Collider:
 
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
-        I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
-        I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
 
         multi_contact = (
             self._solver._enable_multi_contact
@@ -1182,19 +1206,9 @@ class Collider:
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
         )
 
-        # Check if one geometry is partially enclosed in the other.
-        # Note that it is necessary to take into account some safety margins if multi-contact is enabled.
-        tolerance = gs.ti_float(0.0)
-        if multi_contact:
-            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
-        is_a_enclosed = self._func_is_geom_enclosed(i_ga, i_gb, i_b, tolerance)
-        is_b_enclosed = self._func_is_geom_enclosed(i_gb, i_ga, i_b, tolerance)
-        if is_a_enclosed == 2 and is_b_enclosed == 2:
-            print(
-                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Geometries are partially enclosed between each other. "
-                "Please reduce the simulation timestep to avoid numerical instability of collision detection."
-                f"{formats.RESET}"
-            )
+        # Check if one geometry is partially enclosed in the other
+        overlap_ratio_a = self._func_geom_overlap_ratio(i_ga, i_gb, i_b)
+        overlap_ratio_b = self._func_geom_overlap_ratio(i_gb, i_ga, i_b)
 
         if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
             self._func_plane_contact(i_ga, i_gb, multi_contact, i_b)
@@ -1210,6 +1224,7 @@ class Collider:
             contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
             n_con = gs.ti_int(0)
+            tolerance = gs.ti_float(0.0)
             axis_0 = ti.Vector.zero(gs.ti_float, 3)
             axis_1 = ti.Vector.zero(gs.ti_float, 3)
             axis = ti.Vector.zero(gs.ti_float, 3)
@@ -1234,15 +1249,42 @@ class Collider:
                     self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
                 if i_detection == 0 or (is_col_0 > 0 and multi_contact):
-                    # MPR cannot handle collision detection for fully enclosed geometries.
-                    # Falling back to SDF in last resort.
-                    if is_a_enclosed == 1:
+                    # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
+                    if overlap_ratio_a > self._mpr_to_sdf_overlap_ratio:
+                        # FIXME: It is impossible to rely on `_func_contact_convex_convex_sdf` to get the contact
+                        # information because the compilation times skyrockets from 42s for `_func_contact_vertex_sdf`
+                        # to 2min51s on Apple Silicon M4 Max, which is not acceptable.
+                        # is_col, normal, penetration, contact_pos, i_va = self._func_contact_convex_convex_sdf(
+                        #     i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].i_va_ws
+                        # )
+                        # i_va = self.contact_cache[i_ga, i_gb, i_b].i_va_ws
                         is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_ga, i_gb, i_b)
-                    elif is_b_enclosed == 1:
+                    elif overlap_ratio_b > self._mpr_to_sdf_overlap_ratio:
                         is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_gb, i_ga, i_b)
                         normal = -normal
                     else:
-                        is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(i_ga, i_gb, i_b)
+                        is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
+                            i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].mpr_direction
+                        )
+
+                        # Fallback on SDF systematically if collision is detected by MPR but no collision direction was
+                        # cached, because the contact information provided by MPR may be unreliable in such a case.
+                        # This pattern is based on the assumption that generic SDF is much slower than MPR, so it is
+                        # faster in average to first make sure that the geometries are truly colliding and only after to
+                        # run SDF if necessary. This would probably not be the case anymore if it was possible to rely
+                        # on specialized SDF implementation for convex-convex collision detection in the first place.
+                        is_direction_cached = (ti.abs(self.contact_cache[i_ga, i_gb, i_b].mpr_direction) > gs.EPS).any()
+                        if is_col and not is_direction_cached:
+                            is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
+                                i_ga, i_gb, i_b
+                            )
+                            if not is_col_:
+                                is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
+                                    i_gb, i_ga, i_b
+                                )
+                                normal_ = -normal_
+                            if is_col_:
+                                normal, penetration, contact_pos = normal_, penetration_, contact_pos_
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
@@ -1250,7 +1292,26 @@ class Collider:
                         self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
                         if multi_contact:
                             axis_0, axis_1 = gu.orthogonals(normal_0)
+                            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
                             n_con = 1
+
+                        # Compute the linear velocity between the two geometries at the contact point.
+                        # This would be used as contact search direction for large velocities.
+                        # l_state_a = self._solver.links_state[i_la, i_b]
+                        # l_state_b = self._solver.links_state[i_lb, i_b]
+                        # contact_vel = (l_state_a.vel + l_state_a.ang.cross(contact_pos_0 - l_state_a.COM)) - (
+                        #     l_state_b.vel + l_state_b.ang.cross(contact_pos_0 - l_state_b.COM)
+                        # )
+                        # contact_vel_norm = contact_vel.norm()
+                        # if contact_vel_norm * self._solver._substep_dt > tolerance:
+                        #     self.contact_cache[i_ga, i_gb, i_b].mpr_direction = contact_vel / contact_vel_norm
+                        # else:
+                        #     self.contact_cache[i_ga, i_gb, i_b].mpr_direction = normal
+
+                        self.contact_cache[i_ga, i_gb, i_b].mpr_direction = normal
+                    else:
+                        # Clear collision normal cache if not in contact
+                        self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
                     repeat = False

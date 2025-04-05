@@ -991,7 +991,9 @@ class RigidSolver(Solver):
 
             self.geoms_info[i].is_free = geoms_is_free[i]
 
-            # compute init AABB
+            # compute init AABB.
+            # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
+            # in the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes.
             lower = gu.ti_vec3(ti.math.inf)
             upper = gu.ti_vec3(-ti.math.inf)
             for i_v in range(geoms_vert_start[i], geoms_vert_end[i]):
