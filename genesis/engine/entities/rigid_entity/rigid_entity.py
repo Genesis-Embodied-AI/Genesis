@@ -595,6 +595,11 @@ class RigidEntity(Entity):
                 morph.coacd_options,
             )
 
+        # Randomize collision mesh colors. The is especially useful to check convex decomposition.
+        for g_info in cg_infos:
+            mesh = g_info["mesh"]
+            mesh.set_color((*np.random.rand(3), 1.0))
+
         # Add visual geometries
         for g_info in vg_infos:
             link._add_vgeom(
