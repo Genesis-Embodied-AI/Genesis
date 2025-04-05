@@ -530,7 +530,7 @@ class Collider:
                 direction = ti.Vector([i_axis == 0, i_axis == 1, i_axis == 2], dt=gs.ti_float)
                 direction = direction * sign
 
-                v1, vid = self._mpr.support_driver(direction, i_ga, i_b)
+                v1 = self._mpr.support_driver(direction, i_ga, i_b)
                 self.xyz_max_min[i, i_b] = v1[i_axis]
 
             for i in range(3):
@@ -945,6 +945,9 @@ class Collider:
                                 self.contact_cache[i_ga, i_gb, i_b].normal = normal_0
 
                             if is_col_0:
+                                self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
+
+                            if is_col_0 and self._solver._enable_multi_contact:
                                 # perturb geom_a around two orthogonal axes to find multiple contacts
                                 axis_0, axis_1 = gu.orthogonals2(normal_0)
 
@@ -954,10 +957,9 @@ class Collider:
                                 ga_pos, ga_quat = ga_state.pos, ga_state.quat
                                 gb_pos, gb_quat = gb_state.pos, gb_state.quat
 
-                                self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
-                                n_valid = 1
-
                                 tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+
+                                n_valid = 1
                                 for i_rot in range(4):
                                     axis = axis_0
                                     if i_rot == 1:
@@ -1026,7 +1028,15 @@ class Collider:
         gb_state = self._solver.geoms_state[i_gb, i_b]
         plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
         plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat).normalized()
-        v1, vid = self._mpr.support_driver(-plane_dir, i_gb, i_b)
+
+        # For multi-contact, falling back to vertex-based support computation is necessary.
+        v1 = ti.Vector.zero(gs.ti_float, 3)
+        vid = gs.ti_int(0)
+        if multi_contact:
+            v1, vid = self._mpr.support_driver_vertex(-plane_dir, i_gb, i_b)
+        else:
+            v1 = self._mpr.support_driver(-plane_dir, i_gb, i_b)
+
         dist_vec = v1 - ga_state.pos
         cdist = plane_dir.dot(dist_vec)
         is_col = cdist < 0
@@ -1123,7 +1133,8 @@ class Collider:
         I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
         I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
         multi_contact = (
-            self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
+            self._solver._enable_multi_contact
+            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID

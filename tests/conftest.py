@@ -103,6 +103,19 @@ def adjacent_collision(request):
 
 
 @pytest.fixture
+def multi_contact(request):
+    multi_contact = None
+    for mark in request.node.iter_markers("multi_contact"):
+        if mark.args:
+            if multi_contact is not None:
+                pytest.fail("'multi_contact' can only be specified once.")
+            (multi_contact,) = mark.args
+    if multi_contact is None:
+        multi_contact = True
+    return multi_contact
+
+
+@pytest.fixture
 def dof_damping(request):
     dof_damping = None
     for mark in request.node.iter_markers("dof_damping"):
@@ -116,7 +129,7 @@ def dof_damping(request):
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping):
+def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
     elif gs_solver == gs.constraint_solver.Newton:
@@ -141,7 +154,10 @@ def mj_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping):
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
     model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
-    model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    if multi_contact:
+        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    else:
+        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
     if adjacent_collision:
         model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     else:
@@ -156,7 +172,7 @@ def mj_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping):
 
 
 @pytest.fixture
-def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, show_viewer, mj_sim):
+def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping, show_viewer, mj_sim):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -175,6 +191,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, adjacent_collision, dof_damping, 
             constraint_solver=gs_solver,
             box_box_detection=True,
             enable_self_collision=True,
+            enable_multi_contact=multi_contact,
             enable_adjacent_collision=adjacent_collision,
             iterations=mj_sim.model.opt.iterations,
             tolerance=mj_sim.model.opt.tolerance,

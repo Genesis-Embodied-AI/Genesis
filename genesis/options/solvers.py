@@ -187,6 +187,7 @@ class RigidOptions(Options):
     dt: Optional[float] = None
     gravity: Optional[tuple] = None
     enable_collision: bool = True
+    enable_multi_contact: bool = True
     enable_joint_limit: bool = True
     enable_self_collision: bool = False
     enable_adjacent_collision: bool = False

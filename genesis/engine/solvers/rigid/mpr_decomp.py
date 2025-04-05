@@ -153,12 +153,12 @@ class MPR:
     @ti.func
     def mpr_portal_encapsules_origin(self, direction, i_ga, i_gb, i_b):
         dot = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(direction)
-        return ti.abs(dot) < self.CCD_EPS or dot > 0.0
+        return dot > -self.CCD_EPS
 
     @ti.func
     def mpr_portal_can_encapsule_origin(self, v, direction):
         dot = v.dot(direction)
-        return dot >= 0
+        return dot > -self.CCD_EPS
 
     @ti.func
     def mpr_portal_reach_tolerance(self, v, direction, i_ga, i_gb, i_b):
@@ -249,16 +249,12 @@ class MPR:
         return v, vid
 
     @ti.func
-    def support_driver(self, direction, i_g, i_b):
+    def support_driver_vertex(self, direction, i_g, i_b):
         v = ti.Vector.zero(gs.ti_float, 3)
         vid = 0
         geom_type = self._solver.geoms_info[i_g].type
         if geom_type == gs.GEOM_TYPE.SPHERE:
             v = self.support_sphere(direction, i_g, i_b)
-        if geom_type == gs.GEOM_TYPE.ELLIPSOID:
-            v = self.support_ellipsoid(direction, i_g, i_b)
-        elif geom_type == gs.GEOM_TYPE.CAPSULE:
-            v = self.support_capsule(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.BOX:
             v, vid = self.support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
@@ -266,13 +262,31 @@ class MPR:
                 v, vid = self.support_prism(direction, i_g, i_b)
         else:
             v, vid = self.support_field._func_support_world(direction, i_g, i_b)
-
         return v, vid
 
     @ti.func
+    def support_driver(self, direction, i_g, i_b):
+        v = ti.Vector.zero(gs.ti_float, 3)
+        geom_type = self._solver.geoms_info[i_g].type
+        if geom_type == gs.GEOM_TYPE.SPHERE:
+            v = self.support_sphere(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+            v = self.support_ellipsoid(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.CAPSULE:
+            v = self.support_capsule(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.BOX:
+            v, _ = self.support_box(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.TERRAIN:
+            if ti.static(self._solver.collider._has_terrain):
+                v, _ = self.support_prism(direction, i_g, i_b)
+        else:
+            v, _ = self.support_field._func_support_world(direction, i_g, i_b)
+        return v
+
+    @ti.func
     def compute_support(self, direction, i_ga, i_gb, i_b):
-        v1, vid = self.support_driver(direction, i_ga, i_b)
-        v2, vid = self.support_driver(-direction, i_gb, i_b)
+        v1 = self.support_driver(direction, i_ga, i_b)
+        v2 = self.support_driver(-direction, i_gb, i_b)
 
         v = v1 - v2
         return v, v1, v2
@@ -400,7 +414,7 @@ class MPR:
 
                 is_col = True
                 pos = self.mpr_find_pos(i_ga, i_gb, i_b)
-                normal = pdir * -1.0
+                normal = -pdir
                 penetration = depth
                 break
 
@@ -458,10 +472,10 @@ class MPR:
         self.simplex_support[i_ga, i_gb, 0, i_b].v = center_a - center_b
         self.simplex_size[i_ga, i_gb, i_b] = 1
 
-        if self.simplex_support[i_ga, i_gb, 0, i_b].v.norm() < self.CCD_EPS:
-            self.simplex_support[i_ga, i_gb, 0, i_b].v += gs.ti_vec3([10.0 * self.CCD_EPS, 0.0, 0.0])
+        if (ti.abs(self.simplex_support[i_ga, i_gb, 0, i_b].v) < self.CCD_EPS).all():
+            self.simplex_support[i_ga, i_gb, 0, i_b].v[0] += 10.0 * self.CCD_EPS
 
-        direction = (self.simplex_support[i_ga, i_gb, 0, i_b].v * -1).normalized()
+        direction = -self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
 
         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
 
@@ -472,7 +486,7 @@ class MPR:
 
         dot = v.dot(direction)
 
-        if ti.abs(dot) < self.CCD_EPS or dot < 0:
+        if dot < self.CCD_EPS:
             ret = -1
         else:
             direction = self.simplex_support[i_ga, i_gb, 0, i_b].v.cross(self.simplex_support[i_ga, i_gb, 1, i_b].v)
@@ -485,7 +499,7 @@ class MPR:
                 direction = direction.normalized()
                 v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                 dot = v.dot(direction)
-                if ti.abs(dot) < self.CCD_EPS or dot < 0:
+                if dot < self.CCD_EPS:
                     ret = -1
                 else:
                     self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
@@ -501,12 +515,12 @@ class MPR:
                     dot = direction.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
                     if dot > 0:
                         self.mpr_swap(1, 2, i_ga, i_gb, i_b)
-                        direction = direction * -1.0
+                        direction = -direction
 
                     while self.simplex_size[i_ga, i_gb, i_b] < 4:
                         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
-                        if ti.abs(dot) < self.CCD_EPS or dot < 0:
+                        if dot < self.CCD_EPS:
                             ret = -1
                             break
 
@@ -514,7 +528,7 @@ class MPR:
 
                         va = self.simplex_support[i_ga, i_gb, 1, i_b].v.cross(v)
                         dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-                        if dot < 0 and ti.abs(dot) > self.CCD_EPS:
+                        if dot < -self.CCD_EPS:
                             self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
                             self.simplex_support[i_ga, i_gb, 2, i_b].v2 = v2
                             self.simplex_support[i_ga, i_gb, 2, i_b].v = v
@@ -523,7 +537,7 @@ class MPR:
                         if not cont:
                             va = v.cross(self.simplex_support[i_ga, i_gb, 2, i_b].v)
                             dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-                            if dot < 0 and ti.abs(dot) > self.CCD_EPS:
+                            if dot < -self.CCD_EPS:
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v = v
@@ -548,8 +562,8 @@ class MPR:
         res = self.mpr_discover_portal(i_ga, i_gb, i_b)
 
         is_col = False
-        pos = gs.ti_vec3([1.0, 0.0, 0.0])
-        normal = gs.ti_vec3([1.0, 0.0, 0.0])
+        pos = gs.ti_vec3([0.0, 0.0, 0.0])
+        normal = gs.ti_vec3([0.0, 0.0, 0.0])
         penetration = gs.ti_float(0.0)
 
         if res == 1:

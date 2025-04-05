@@ -310,6 +310,8 @@ def test_simple_kinematic_chain(gs_sim, mj_sim, atol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, atol=atol, num_steps=200)
 
 
+# Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
+@pytest.mark.multi_contact(False)
 @pytest.mark.parametrize("xml_path", ["xml/walker.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -321,6 +323,7 @@ def test_walker(gs_sim, mj_sim, atol):
     qpos = np.zeros((gs_robot.n_qs,))
     qpos[2] += 0.5
     qvel = np.random.rand(gs_robot.n_dofs) * 0.2
+
     # Cannot simulate any longer because collision detection is very sensitive
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, atol=atol, num_steps=90)
 
