@@ -91,9 +91,9 @@ class MPR:
         AB_AB = AB.dot(AB)
         AP_AB = AP.dot(AB)
         t = AP_AB / AB_AB
-        if t < 0.0 or ti.abs(t) < self.CCD_EPS:
+        if t < self.CCD_EPS:
             t = gs.ti_float(0.0)
-        elif t > 1.0 or ti.abs(t - 1.0) < self.CCD_EPS:
+        elif t > 1.0 - self.CCD_EPS:
             t = gs.ti_float(1.0)
         Q = A + AB * t
 
@@ -121,11 +121,11 @@ class MPR:
             t = (-s * r - q) / w
 
         if (
-            (ti.abs(s) < self.CCD_EPS or s > 0.0)
-            and (ti.abs(s - 1.0) < self.CCD_EPS or s < 1.0)
-            and (ti.abs(t) < self.CCD_EPS or t > 0.0)
-            and (ti.abs(t - 1.0) < self.CCD_EPS or t < 1.0)
-            and (ti.abs(t + s - 1.0) < self.CCD_EPS or t + s < 1.0)
+            (s > -self.CCD_EPS)
+            and (s < 1.0 + self.CCD_EPS)
+            and (t > -self.CCD_EPS)
+            and (t < 1.0 + self.CCD_EPS)
+            and (t + s < 1.0 + self.CCD_EPS)
         ):
             pdir = x0 + d1 * s + d2 * t
             dist = ((P - pdir) ** 2).sum()
@@ -373,9 +373,9 @@ class MPR:
 
     @ti.func
     def mpr_find_penetr_touch(self, i_ga, i_gb, i_b):
-        is_col = False
+        is_col = True
         penetration = gs.ti_float(0.0)
-        normal = gs.ti_vec3([1.0, 0.0, 0.0])
+        normal = -self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
         pos = (self.simplex_support[i_ga, i_gb, 1, i_b].v1 + self.simplex_support[i_ga, i_gb, 1, i_b].v2) * 0.5
         return is_col, normal, penetration, pos
 
@@ -383,7 +383,7 @@ class MPR:
     def mpr_find_penetr_segment(self, i_ga, i_gb, i_b):
         is_col = True
         penetration = self.simplex_support[i_ga, i_gb, 1, i_b].v.norm()
-        normal = self.simplex_support[i_ga, i_gb, 1, i_b].v * -1.0
+        normal = -self.simplex_support[i_ga, i_gb, 1, i_b].v.normalized()
         pos = (self.simplex_support[i_ga, i_gb, 1, i_b].v1 + self.simplex_support[i_ga, i_gb, 1, i_b].v2) * 0.5
 
         return is_col, normal, penetration, pos
@@ -393,8 +393,8 @@ class MPR:
         iterations = 0
 
         is_col = False
-        pos = gs.ti_vec3([1.0, 0.0, 0.0])
-        normal = gs.ti_vec3([1.0, 0.0, 0.0])
+        pos = gs.ti_vec3([0.0, 0.0, 0.0])
+        normal = gs.ti_vec3([0.0, 0.0, 0.0])
         penetration = gs.ti_float(0.0)
 
         while True:
@@ -431,10 +431,7 @@ class MPR:
                 #     self.simplex_support[i_ga, i_gb, 2, i_b].v,
                 #     self.simplex_support[i_ga, i_gb, 3, i_b].v,
                 # )
-                # if depth < self.CCD_EPS:
-                #     pdir = gs.ti_vec3([0.0, 0.0, 0.0])
-                # else:
-                #     pdir = pdir.normalized()
+                # pdir = pdir.normalized()
 
                 is_col = True
                 pos = self.mpr_find_pos(i_ga, i_gb, i_b)
