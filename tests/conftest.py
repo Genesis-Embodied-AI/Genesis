@@ -81,6 +81,9 @@ def initialize_genesis(request, backend):
         precision = "32"
         debug = False
     gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+    if backend != gs.cpu and gs.backend == gs.cpu:
+        gs.destroy()
+        pytest.skip("No GPU available on this machine")
     yield
     pyglet.app.exit()
     gs.destroy()

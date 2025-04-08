@@ -150,7 +150,7 @@ def get_device(backend: gs_backend):
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
             (gs.logger or LOGGER).warning("Vulkan support only available on Intel XPU device. Falling back to CPU.")
-            device, device_name, total_mem, _ = get_device(gs_backend.cpu)
+            return get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
         if torch.cuda.is_available():
