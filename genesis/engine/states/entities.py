@@ -43,36 +43,36 @@ class MPMEntityState(RBC):
         self._s_global = s_global
 
         self._pos = gs.zeros(
-            (self._entity.n_particles, 3),
+            (self.entity.sim._B, self._entity.n_particles, 3),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
         )
         self._vel = gs.zeros(
-            (self._entity.n_particles, 3),
+            (self.entity.sim._B, self._entity.n_particles, 3),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
         )
         self._C = gs.zeros(
-            (self._entity.n_particles, 3, 3),
+            (self.entity.sim._B, self._entity.n_particles, 3, 3),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
         )
         self._F = gs.zeros(
-            (self._entity.n_particles, 3, 3),
+            (self.entity.sim._B, self._entity.n_particles, 3, 3),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
         )
         self._Jp = gs.zeros(
-            (self._entity.n_particles,),
+            (self.entity.sim._B, self._entity.n_particles,),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
         )
-        self._active = gs.zeros((self._entity.n_particles,), dtype=int, requires_grad=False, scene=self._entity.scene)
+        self._active = gs.zeros((self.entity.sim._B, self._entity.n_particles,), dtype=int, requires_grad=False, scene=self._entity.scene)
 
     def serializable(self):
         self._entity = None
@@ -126,8 +126,8 @@ class SPHEntityState(RBC):
         self._entity = entity
         self._s_global = s_global
 
-        self._pos = gs.zeros((self._entity.n_particles, 3), dtype=float, requires_grad=False, scene=self._entity.scene)
-        self._vel = gs.zeros((self._entity.n_particles, 3), dtype=float, requires_grad=False, scene=self._entity.scene)
+        self._pos = gs.zeros((self.entity.sim._B, self._entity.n_particles, 3), dtype=float, requires_grad=False, scene=self._entity.scene)
+        self._vel = gs.zeros((self.entity.sim._B, self._entity.n_particles, 3), dtype=float, requires_grad=False, scene=self._entity.scene)
 
     @property
     def entity(self):
@@ -155,9 +155,9 @@ class FEMEntityState:
         self._entity = entity
         self._s_global = s_global
 
-        self._pos = gs.zeros((self.entity.n_vertices, 3), dtype=float, requires_grad=False, scene=self.entity.scene)
-        self._vel = gs.zeros((self.entity.n_vertices, 3), dtype=float, requires_grad=False, scene=self.entity.scene)
-        self._active = gs.zeros((self.entity.n_elements,), dtype=int, requires_grad=False, scene=self.entity.scene)
+        self._pos = gs.zeros((self.entity.sim._B, self.entity.n_vertices, 3), dtype=float, requires_grad=False, scene=self.entity.scene)
+        self._vel = gs.zeros((self.entity.sim._B, self.entity.n_vertices, 3), dtype=float, requires_grad=False, scene=self.entity.scene)
+        self._active = gs.zeros((self.entity.sim._B, self.entity.n_elements,), dtype=int, requires_grad=False, scene=self.entity.scene)
 
     def serializable(self):
         self._entity = None

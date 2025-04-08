@@ -33,6 +33,17 @@ class FEMSolver(Solver):
         # boundary
         self.setup_boundary()
 
+    def _batch_shape(self, shape=None, first_dim=False, B=None):
+        if B is None:
+            B = self._B
+
+        if shape is None:
+            return (B,)
+        elif type(shape) in [list, tuple]:
+            return (B,) + shape if first_dim else shape + (B,)
+        else:
+            return (B, shape) if first_dim else (shape, B)
+
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self._floor_height)
 
@@ -68,17 +79,17 @@ class FEMSolver(Solver):
 
         # construct field
         self.elements_v = element_state_v.field(
-            shape=(self.sim.substeps_local + 1, self.n_vertices),
+            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_vertices)),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.elements_el = element_state_el.field(
-            shape=(self.sim.substeps_local + 1, self.n_elements),
+            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_elements)),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.elements_el_ng = element_state_el_ng.field(
-            shape=(self.sim.substeps_local + 1, self.n_elements),
+            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_elements)),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -117,7 +128,7 @@ class FEMSolver(Solver):
         )
 
         self.surface_render_v = surface_state_render_v.field(
-            shape=(n_vertices_max),
+            shape=self._batch_shape((n_vertices_max)),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -138,6 +149,8 @@ class FEMSolver(Solver):
             entity.reset_grad()
 
     def build(self):
+        self.n_envs = self.sim.n_envs
+        self._B = self.sim._B
         # elements and bodies
         self._n_elements_max = self.n_elements
         self._n_vertices_max = self.n_vertices
@@ -188,19 +201,20 @@ class FEMSolver(Solver):
 
     @ti.kernel
     def init_pos_and_vel(self, f: ti.i32):
-        for i in range(self.n_vertices):
-            self.elements_v[f + 1, i].pos = self.elements_v[f, i].pos
-            self.elements_v[f + 1, i].vel = self.elements_v[f, i].vel
+        for i, b in ti.ndrange(self.n_vertices, self._B):
+            self.elements_v[f + 1, i, b].pos = self.elements_v[f, i, b].pos
+            self.elements_v[f + 1, i, b].vel = self.elements_v[f, i, b].vel
+
 
     @ti.kernel
     def compute_vel(self, f: ti.i32):
-        for i in range(self.n_elements):
+        for i, b in ti.ndrange(self.n_elements, self._B):
             ia, ib, ic, id = self.elements_i[i].el2v
-            a = self.elements_v[f, ia].pos
-            b = self.elements_v[f, ib].pos
-            c = self.elements_v[f, ic].pos
-            d = self.elements_v[f, id].pos
-            D = ti.Matrix.cols([a - d, b - d, c - d])
+            a = self.elements_v[f, ia, b].pos
+            bb = self.elements_v[f, ib, b].pos
+            c = self.elements_v[f, ic, b].pos
+            d = self.elements_v[f, id, b].pos
+            D = ti.Matrix.cols([a - d, bb - d, c - d])
 
             V_scaled = ti.abs(D.determinant()) / 6.0 * self._vol_scale
             B = self.elements_i[i].B
@@ -215,7 +229,7 @@ class FEMSolver(Solver):
                         lam=self.elements_i[i].lam,
                         J=J,
                         F=F,
-                        actu=self.elements_el[f, i].actu,
+                        actu=self.elements_el[f, i, b].actu,
                         m_dir=self.elements_i[i].muscle_direction,
                     )
 
@@ -227,26 +241,29 @@ class FEMSolver(Solver):
                 force_scaled = ti.Vector([H_scaled[j, k] for j in range(3)])
                 # scaling equivalent to dt * force / (mass_scaled / self._vol_scale) = dt * (force_scaled / self._vol_scale) / (mass_scaled / self._vol_scale)
                 dv = dt * force_scaled / mass_scaled
-                self.elements_v[f + 1, verts[k]].vel += dv
-                self.elements_v[f + 1, verts[3]].vel -= dv
+                self.elements_v[f + 1, verts[k], b].vel += dv
+                self.elements_v[f + 1, verts[3], b].vel -= dv
+
 
     @ti.kernel
     def apply_uniform_force(self, f: ti.i32):
-        for i in range(self.n_vertices):
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             dt = self.substep_dt
 
             # NOTE: damping should only be applied to velocity from internal force and thus come first here
             #       given the immediate previous function call is compute_internal_vel --> however, shouldn't
             #       be done at dv only and need to wait for all elements updated (cannot be in the compute_internal_vel kernel)
             #       however, this inevitably damp the gravity.
-            self.elements_v[f + 1, i].vel *= ti.exp(-dt * self.damping)
-            self.elements_v[f + 1, i].vel += dt * self._gravity[None]  # avoid applying damping to gravity
+            self.elements_v[f + 1, i, b].vel *= ti.exp(-dt * self.damping)
+            # Add gravity (avoiding damping on gravity)
+            self.elements_v[f + 1, i, b].vel += dt * self._gravity[None]
 
     @ti.kernel
     def compute_pos(self, f: ti.i32):
-        for i in range(self.n_vertices):
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             dt = self.substep_dt
-            self.elements_v[f + 1, i].pos += dt * self.elements_v[f + 1, i].vel
+            self.elements_v[f + 1, i, b].pos += dt * self.elements_v[f + 1, i, b].vel
+
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -282,30 +299,40 @@ class FEMSolver(Solver):
 
     @ti.kernel
     def copy_frame(self, source: ti.i32, target: ti.i32):
-        for i in range(self.n_vertices_max):
-            self.elements_v[target, i].pos = self.elements_v[source, i].pos
-            self.elements_v[target, i].vel = self.elements_v[source, i].vel
+        # Copy pos/vel for all vertices and all batch indices
+        for i, b in ti.ndrange(self.n_vertices_max, self._B):
+            self.elements_v[target, i, b].pos = self.elements_v[source, i, b].pos
+            self.elements_v[target, i, b].vel = self.elements_v[source, i, b].vel
 
-        for i in range(self.n_elements_max):
-            self.elements_el_ng[target, i].active = self.elements_el_ng[source, i].active
+        # Copy 'active' for all elements and all batch indices
+        for i, b in ti.ndrange(self.n_elements_max, self._B):
+            self.elements_el_ng[target, i, b].active = self.elements_el_ng[source, i, b].active
+
 
     @ti.kernel
     def copy_grad(self, source: ti.i32, target: ti.i32):
-        for i in range(self.n_vertices_max):
-            self.elements_v.grad[target, i].pos = self.elements_v.grad[source, i].pos
-            self.elements_v.grad[target, i].vel = self.elements_v.grad[source, i].vel
+        # Copy gradients for vertices
+        for i, b in ti.ndrange(self.n_vertices_max, self._B):
+            self.elements_v.grad[target, i, b].pos = self.elements_v.grad[source, i, b].pos
+            self.elements_v.grad[target, i, b].vel = self.elements_v.grad[source, i, b].vel
 
-        for i in range(self.n_elements_max):
-            self.elements_el_ng[target, i].active = self.elements_el_ng[source, i].active
+        # Copy something for elements (if you truly need to copy the .active or .grad; 
+        # the original code wasn’t 100% clear):
+        for i, b in ti.ndrange(self.n_elements_max, self._B):
+            self.elements_el_ng[target, i, b].active = self.elements_el_ng[source, i, b].active
+
 
     @ti.kernel
     def reset_grad_till_frame(self, f: ti.i32):
-        for i, j in ti.ndrange(f, self.n_vertices_max):
-            self.elements_v.grad[i, j].pos = 0
-            self.elements_v.grad[i, j].vel = 0
+        # Zero out v.grad in frame 0..(f-1) for all vertices, all batch indices
+        for frame_i, vert_i, b in ti.ndrange((0, f), self.n_vertices_max, self._B):
+            self.elements_v.grad[frame_i, vert_i, b].pos = 0
+            self.elements_v.grad[frame_i, vert_i, b].vel = 0
 
-        for i in range(self.n_elements_max):
-            self.elements_el.grad[i, i].actu = 0
+        # Zero out elements_el.grad in frame 0..(f-1) for all elements, all batch indices
+        for frame_i, elem_i, b in ti.ndrange((0, f), self.n_elements_max, self._B):
+            self.elements_el.grad[frame_i, elem_i, b].actu = 0
+
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- gradient ---------------------------------------
@@ -329,9 +356,9 @@ class FEMSolver(Solver):
         if self.is_active():
             if not ckpt_name in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
-                self._ckpt[ckpt_name]["pos"] = torch.zeros((self.n_vertices, 3), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["vel"] = torch.zeros((self.n_vertices, 3), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["active"] = torch.zeros((self.n_elements,), dtype=gs.tc_int)
+                self._ckpt[ckpt_name]["pos"] = torch.zeros(self._batch_shape((self.n_vertices, 3), first_dim=True), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["vel"] = torch.zeros(self._batch_shape((self.n_vertices, 3), first_dim=True), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["active"] = torch.zeros(self._batch_shape((self.n_elements,), first_dim=True), dtype=gs.tc_int)
 
             self._kernel_get_state(
                 0,
@@ -399,26 +426,22 @@ class FEMSolver(Solver):
         tri2v: ti.types.ndarray(),
         tri2el: ti.types.ndarray(),
     ):
-        for i in range(self.n_vertices):
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             i_global = i + v_start
             for j in ti.static(range(3)):
-                self.elements_v[f, i_global].pos[j] = verts[i, j]
-            self.elements_v[f, i_global].vel = ti.Vector.zero(gs.ti_float, 3)
+                self.elements_v[f, i_global, b].pos[j] = verts[i, j]
+            self.elements_v[f, i_global, b].vel = ti.Vector.zero(gs.ti_float, 3)
 
         for i in range(self.n_elements):
             i_global = i + el_start
 
-            a = self.elements_v[f, elems[i, 0] + v_start].pos
-            b = self.elements_v[f, elems[i, 1] + v_start].pos
-            c = self.elements_v[f, elems[i, 2] + v_start].pos
-            d = self.elements_v[f, elems[i, 3] + v_start].pos
+            a = self.elements_v[f, elems[i, 0] + v_start, 0].pos
+            b = self.elements_v[f, elems[i, 1] + v_start, 0].pos
+            c = self.elements_v[f, elems[i, 2] + v_start, 0].pos
+            d = self.elements_v[f, elems[i, 3] + v_start, 0].pos
             B_inv = ti.Matrix.cols([a - d, b - d, c - d])
             self.elements_i[i_global].B = B_inv.inverse()
             V_scaled = ti.abs(B_inv.determinant()) / 6 * self._vol_scale
-
-            self.elements_el[f, i_global].actu = 0.0
-
-            self.elements_el_ng[f, i_global].active = 1
 
             for j in ti.static(range(4)):
                 self.elements_i[i_global].el2v[j] = elems[i, j] + v_start
@@ -429,7 +452,12 @@ class FEMSolver(Solver):
             self.elements_i[i_global].muscle_group = 0
             self.elements_i[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
-        for i in range(n_surfaces):
+        for i, b in ti.ndrange(self.n_elements, self._B):
+            i_global = i + el_start
+            self.elements_el[f, i_global, b].actu = 0.0
+            self.elements_el_ng[f, i_global, b].active = 1
+
+        for i, b in ti.ndrange(n_surfaces, self._B):
             i_global = i + s_start
             for j in ti.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i, j] + v_start
@@ -444,10 +472,10 @@ class FEMSolver(Solver):
         n_vertices: ti.i32,
         pos: ti.types.ndarray(),
     ):
-        for i in range(n_vertices):
+        for i, b in ti.ndrange(n_vertices, self._B):
             i_global = i + element_v_start
             for k in ti.static(range(3)):
-                self.elements_v[f, i_global].pos[k] = pos[i, k]
+                self.elements_v[f, i_global, b].pos[k] = pos[b, i, k]
 
     @ti.kernel
     def _kernel_set_elements_pos_grad(
@@ -457,10 +485,10 @@ class FEMSolver(Solver):
         n_vertices: ti.i32,
         pos_grad: ti.types.ndarray(),
     ):
-        for i in range(n_vertices):
+        for i, b in ti.ndrange(n_vertices, self._B):
             i_global = i + element_v_start
             for k in ti.static(range(3)):
-                self.elements_v.grad[f, i_global].pos[k] = pos_grad[i, k]
+                self.elements_v.grad[f, i_global, b].pos[k] = pos_grad[b, i, k]
 
     @ti.kernel
     def _kernel_set_elements_vel(
@@ -468,12 +496,13 @@ class FEMSolver(Solver):
         f: ti.i32,
         element_v_start: ti.i32,
         n_vertices: ti.i32,
-        vel: ti.types.ndarray(),
+        vel: ti.types.ndarray(),  # shape [B, n_vertices, 3]
     ):
-        for i in range(n_vertices):
+        for i, b in ti.ndrange(n_vertices, self._B):
             i_global = i + element_v_start
             for k in ti.static(range(3)):
-                self.elements_v[f, i_global].vel[k] = vel[i, k]
+                self.elements_v[f, i_global, b].vel[k] = vel[b, i, k]
+
 
     @ti.kernel
     def _kernel_set_elements_vel_grad(
@@ -481,12 +510,13 @@ class FEMSolver(Solver):
         f: ti.i32,
         element_v_start: ti.i32,
         n_vertices: ti.i32,
-        vel_grad: ti.types.ndarray(),
+        vel_grad: ti.types.ndarray(),  # shape [B, n_vertices, 3]
     ):
-        for i in range(n_vertices):
+        for i, b in ti.ndrange(n_vertices, self._B):
             i_global = i + element_v_start
             for k in ti.static(range(3)):
-                self.elements_v.grad[f, i_global].vel[k] = vel_grad[i, k]
+                self.elements_v.grad[f, i_global, b].vel[k] = vel_grad[b, i, k]
+
 
     @ti.kernel
     def _kernel_set_elements_actu(
@@ -495,13 +525,12 @@ class FEMSolver(Solver):
         element_el_start: ti.i32,
         n_elements: ti.i32,
         n_groups: ti.i32,
-        actu: ti.types.ndarray(),
+        actu: ti.types.ndarray(),  # shape [B, n_elements, n_groups]
     ):
-        for i in range(n_elements):
+        for i, j, b in ti.ndrange(n_elements, n_groups, self._B):
             i_global = i + element_el_start
-            for j in range(n_groups):
-                if self.elements_i[i_global].muscle_group == j:
-                    self.elements_el[f, i_global].actu = actu[i, j]
+            if self.elements_i[i_global].muscle_group == j:
+                self.elements_el[f, i_global, b].actu = actu[b, j]
 
     @ti.kernel
     def _kernel_set_elements_actu_grad(
@@ -509,11 +538,11 @@ class FEMSolver(Solver):
         f: ti.i32,
         element_el_start: ti.i32,
         n_elements: ti.i32,
-        actu_grad: ti.types.ndarray(),
+        actu_grad: ti.types.ndarray(),  # shape [B, n_elements]
     ):
-        for i in range(n_elements):
+        for i, b in ti.ndrange(n_elements, self._B):
             i_global = i + element_el_start
-            self.elements_el.grad[f, i_global].actu = actu_grad[i]
+            self.elements_el.grad[f, i_global, b].actu = actu_grad[b, i]
 
     @ti.kernel
     def _kernel_set_active(
@@ -521,11 +550,11 @@ class FEMSolver(Solver):
         f: ti.i32,
         element_el_start: ti.i32,
         n_elements: ti.i32,
-        active: ti.types.ndarray(),
+        active: ti.types.ndarray(),  # shape [B, n_elements]
     ):
-        for i in range(n_elements):
+        for i, b in ti.ndrange(n_elements, self._B):
             i_global = i + element_el_start
-            self.elements_el_ng[f, i_global].active = active
+            self.elements_el_ng[f, i_global, b].active = active[b, i]
 
     @ti.kernel
     def _kernel_set_muscle_group(
@@ -566,55 +595,69 @@ class FEMSolver(Solver):
     def _kernel_get_state(
         self,
         f: ti.i32,
-        pos: ti.types.ndarray(),
-        vel: ti.types.ndarray(),
-        active: ti.types.ndarray(),
+        pos: ti.types.ndarray(),    # shape [B, n_vertices, 3]
+        vel: ti.types.ndarray(),    # shape [B, n_vertices, 3]
+        active: ti.types.ndarray(), # shape [B, n_elements]
     ):
-        for i in range(self.n_vertices):
+        # Copy pos/vel out of Taichi fields (with batch dim)
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
-                pos[i, j] = self.elements_v[f, i].pos[j]
-                vel[i, j] = self.elements_v[f, i].vel[j]
+                pos[b, i, j] = self.elements_v[f, i, b].pos[j]
+                vel[b, i, j] = self.elements_v[f, i, b].vel[j]
 
-        for i in range(self.n_elements):
-            active[i] = self.elements_el_ng[f, i].active
+        # Copy 'active' out of Taichi fields (with batch dim)
+        for i, b in ti.ndrange(self.n_elements, self._B):
+            active[b, i] = self.elements_el_ng[f, i, b].active
 
     @ti.kernel
     def get_state_render_kernel(self, f: ti.i32):
-        for i in range(self.n_vertices):
+        # Renders the geometry for a single batch index `b`.
+        # If your render buffers do not have a batch dimension,
+        # we just pick which batch we want to render.
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
-                self.surface_render_v[i].vertices[j] = ti.cast(self.elements_v[f, i].pos[j], gs.ti_float)
+                # Convert pos to float for rendering
+                self.surface_render_v[i, b].vertices[j] = \
+                    ti.cast(self.elements_v[f, i, b].pos[j], ti.f32)
 
-        for i in range(self.n_surfaces):
+        # Copy surface triangulation indices (if they are separate from your batch dimension)
+        for i, b in ti.ndrange(self.n_surfaces, self._B):
             for j in ti.static(range(3)):
-                self.surface_render_f[i * 3 + j].indices = ti.cast(self.surface[i].tri2v[j], gs.ti_int)
+                # This maps your tri2v to the final index buffer
+                self.surface_render_f[i * 3 + j].indices = \
+                    ti.cast(self.surface[i].tri2v[j], ti.i32)
 
     @ti.kernel
     def _kernel_set_state(
         self,
         f: ti.i32,
-        pos: ti.types.ndarray(),
-        vel: ti.types.ndarray(),
-        active: ti.types.ndarray(),
+        pos: ti.types.ndarray(),    # shape [B, n_vertices, 3]
+        vel: ti.types.ndarray(),    # shape [B, n_vertices, 3]
+        active: ti.types.ndarray(), # shape [B, n_elements]
     ):
-        for i in range(self.n_vertices):
+        # Copy pos/vel from ndarray into Taichi fields
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
-                self.elements_v[f, i].pos[j] = pos[i, j]
-                self.elements_v[f, i].vel[j] = vel[i, j]
+                self.elements_v[f, i, b].pos[j] = pos[b, i, j]
+                self.elements_v[f, i, b].vel[j] = vel[b, i, j]
 
-        for i in range(self.n_elements):
-            self.elements_el_ng[f, i].active = active[i]
+        # Copy 'active' from ndarray into Taichi fields
+        for i, b in ti.ndrange(self.n_elements, self._B):
+            self.elements_el_ng[f, i, b].active = active[b, i]
 
     @ti.kernel
     def _kernel_add_grad_from_pos(self, f: ti.i32, pos_grad: ti.types.ndarray()):
-        for i in range(self.n_vertices):
+        # shape [B, n_vertices, 3]
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
-                self.elements_v.grad[f, i].pos[j] += pos_grad[i, j]
+                self.elements_v.grad[f, i, b].pos[j] += pos_grad[b, i, j]
 
     @ti.kernel
     def _kernel_add_grad_from_vel(self, f: ti.i32, vel_grad: ti.types.ndarray()):
-        for i in range(self.n_vertices):
+        # shape [B, n_vertices, 3]
+        for i, b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
-                self.elements_v.grad[f, i].vel[j] += vel_grad[i, j]
+                self.elements_v.grad[f, i, b].vel[j] += vel_grad[b, i, j]
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

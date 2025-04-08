@@ -36,7 +36,7 @@ def main():
             camera_fov=30,
             max_FPS=60,
         ),
-        show_viewer=True,
+        show_viewer=False,
     )
 
     ########################## entities ##########################
@@ -69,7 +69,7 @@ def main():
         ),
     )
     ########################## build ##########################
-    scene.build()
+    scene.build(n_envs=5)
 
     for i in range(800):
         scene.step()
