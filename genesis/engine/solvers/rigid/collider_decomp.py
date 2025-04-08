@@ -160,7 +160,6 @@ class Collider:
             i_va_ws=gs.ti_int,
             penetration=gs.ti_float,
             normal=gs.ti_vec3,
-            mpr_direction=gs.ti_vec3,
         )
         self.contact_cache = struct_contact_cache.field(
             shape=self._solver._batch_shape((self._solver.n_geoms_, self._solver.n_geoms_)),
@@ -217,7 +216,6 @@ class Collider:
                     self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
                     self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
                     self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
-                    self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -810,7 +808,7 @@ class Collider:
 
                             if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                 # Clear collision normal cache if not in contact
-                                self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
+                                self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
@@ -859,7 +857,7 @@ class Collider:
 
                                 if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                     # Clear collision normal cache if not in contact
-                                    self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
+                                    self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
                                     continue
 
                                 self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
@@ -879,7 +877,7 @@ class Collider:
 
                                     if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
                                         # Clear collision normal cache if not in contact
-                                        self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
+                                        self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
                                         continue
 
                                     self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
@@ -1263,7 +1261,7 @@ class Collider:
                         normal = -normal
                     else:
                         is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                            i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].mpr_direction
+                            i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].normal
                         )
 
                         # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
@@ -1275,7 +1273,7 @@ class Collider:
                         # specialized SDF implementation for convex-convex collision detection in the first place.
                         if ti.static(not self._solver._enable_mpr_vanilla):
                             is_mpr_guess_direction_available = (
-                                ti.abs(self.contact_cache[i_ga, i_gb, i_b].mpr_direction) > gs.EPS
+                                ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
                             ).any()
                             if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
                                 is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
@@ -1298,10 +1296,10 @@ class Collider:
                             n_con = 1
 
                         if ti.static(not self._solver._enable_mpr_vanilla):
-                            self.contact_cache[i_ga, i_gb, i_b].mpr_direction = normal
+                            self.contact_cache[i_ga, i_gb, i_b].normal = normal
                     else:
                         # Clear collision normal cache if not in contact
-                        self.contact_cache[i_ga, i_gb, i_b].mpr_direction.fill(0.0)
+                        self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
                     repeat = False

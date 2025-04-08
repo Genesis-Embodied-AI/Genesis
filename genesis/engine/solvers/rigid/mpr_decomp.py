@@ -473,7 +473,7 @@ class MPR:
                 self.simplex_support[i_ga, i_gb, 1, i_b].v = v
 
     @ti.func
-    def mpr_discover_portal(self, i_ga, i_gb, i_b, guess_direction):
+    def mpr_discover_portal(self, i_ga, i_gb, i_b, normal_ws):
         # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
         # proposed to extend its application to collision detection as it can provide the contact normal and penetration
         # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
@@ -519,26 +519,29 @@ class MPR:
         self.simplex_size[i_ga, i_gb, i_b] = 1
 
         # Offset the center of each geometry based on the desired search direction if provided
-        if (ti.abs(guess_direction) > self.CCD_EPS).any():
+        # Skip if almost colinear already.
+        normal = self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
+        if (ti.abs(normal_ws) > self.CCD_EPS).any() or normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
             # Compute the target offset
             delta = self.simplex_support[i_ga, i_gb, 0, i_b].v
-            offset = delta.dot(guess_direction) * guess_direction - delta
+            offset = delta.dot(normal_ws) * normal_ws - delta
             offset_norm = offset.norm()
-            dir_offset = offset / offset_norm
 
-            # Compute the size of the bounding boxes along the target offset direction
-            box_size_a = self._solver.geoms_state[i_ga, i_b].aabb_max - self._solver.geoms_state[i_ga, i_b].aabb_min
-            box_size_b = self._solver.geoms_state[i_gb, i_b].aabb_max - self._solver.geoms_state[i_gb, i_b].aabb_min
-            length_a = ti.abs(box_size_a.dot(dir_offset))
-            length_b = ti.abs(box_size_b.dot(dir_offset))
+            if offset_norm > self.CCD_TOLERANCE:
+                # Compute the size of the bounding boxes along the target offset direction
+                dir_offset = offset / offset_norm
+                box_size_a = self._solver.geoms_state[i_ga, i_b].aabb_max - self._solver.geoms_state[i_ga, i_b].aabb_min
+                box_size_b = self._solver.geoms_state[i_gb, i_b].aabb_max - self._solver.geoms_state[i_gb, i_b].aabb_min
+                length_a = ti.abs(box_size_a.dot(dir_offset))
+                length_b = ti.abs(box_size_b.dot(dir_offset))
 
-            # Shift the center of each geometry
-            offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
-            self.simplex_support[i_ga, i_gb, 0, i_b].v1 += dir_offset * length_a * offset_ratio
-            self.simplex_support[i_ga, i_gb, 0, i_b].v2 -= dir_offset * length_b * offset_ratio
-            self.simplex_support[i_ga, i_gb, 0, i_b].v = (
-                self.simplex_support[i_ga, i_gb, 0, i_b].v1 - self.simplex_support[i_ga, i_gb, 0, i_b].v2
-            )
+                # Shift the center of each geometry
+                offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
+                self.simplex_support[i_ga, i_gb, 0, i_b].v1 += dir_offset * length_a * offset_ratio
+                self.simplex_support[i_ga, i_gb, 0, i_b].v2 -= dir_offset * length_b * offset_ratio
+                self.simplex_support[i_ga, i_gb, 0, i_b].v = (
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v1 - self.simplex_support[i_ga, i_gb, 0, i_b].v2
+                )
 
         if (ti.abs(self.simplex_support[i_ga, i_gb, 0, i_b].v) < self.CCD_EPS).all():
             self.simplex_support[i_ga, i_gb, 0, i_b].v[0] += 10.0 * self.CCD_EPS
@@ -625,8 +628,8 @@ class MPR:
         return ret
 
     @ti.func
-    def func_mpr_contact(self, i_ga, i_gb, i_b, guess_direction):
-        res = self.mpr_discover_portal(i_ga, i_gb, i_b, guess_direction)
+    def func_mpr_contact(self, i_ga, i_gb, i_b, normal_ws):
+        res = self.mpr_discover_portal(i_ga, i_gb, i_b, normal_ws)
 
         is_col = False
         pos = gs.ti_vec3([0.0, 0.0, 0.0])
