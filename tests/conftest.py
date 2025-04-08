@@ -39,7 +39,7 @@ def pytest_xdist_auto_num_workers(config):
     physical_core_count = psutil.cpu_count(logical=False)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
     _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
-    return min(int(ram_memory / 3.0), int(vram_memory / 1.0), physical_core_count)
+    return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
 
     return config.option.numprocesses
 
