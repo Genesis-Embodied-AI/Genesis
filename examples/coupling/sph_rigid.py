@@ -24,6 +24,7 @@ def main():
         ),
         vis_options=gs.options.VisOptions(
             visualize_sph_boundary=True,
+            rendered_envs_idx = [2]
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, -3.15, 2.42),
@@ -61,7 +62,7 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build()
+    scene.build(n_envs=5)
 
     for i in range(500):
         scene.step()

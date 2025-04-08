@@ -30,6 +30,7 @@ def main():
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
         ),
+        
         mpm_options=gs.options.MPMOptions(
             lower_bound=(0.55, -0.1, -0.05),
             upper_bound=(0.75, 0.1, 0.3),

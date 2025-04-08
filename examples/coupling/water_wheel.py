@@ -29,6 +29,9 @@ def main():
             camera_fov=35,
             max_FPS=120,
         ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx = [2]
+        ),
         show_viewer=args.vis,
         sph_options=gs.options.SPHOptions(
             particle_size=0.02,

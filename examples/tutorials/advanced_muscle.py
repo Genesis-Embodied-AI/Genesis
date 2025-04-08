@@ -29,7 +29,7 @@ scene = gs.Scene(
     vis_options=gs.options.VisOptions(
         show_world_frame=False,
     ),
-    show_viewer=False
+    show_viewer=True
 )
 
 ########################## entities ##########################
@@ -65,7 +65,7 @@ robot_fem = scene.add_entity(
 )
 
 ########################## build ##########################
-scene.build(n_envs=5)
+scene.build()
 
 ########################## run ##########################
 scene.reset()

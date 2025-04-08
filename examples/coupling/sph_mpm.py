@@ -21,6 +21,7 @@ def main():
         vis_options=gs.options.VisOptions(
             visualize_sph_boundary=True,
             visualize_mpm_boundary=True,
+            rendered_envs_idx = [2]
         ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(0.0, 0.0, -0.1),
@@ -36,7 +37,7 @@ def main():
             camera_fov=30,
             max_FPS=60,
         ),
-        show_viewer=False,
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################

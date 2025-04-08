@@ -487,7 +487,7 @@ class Coupler(RBC):
 
     @ti.kernel
     def pbd_rigid(self, f: ti.i32):
-        for i, b in ti.ndrange(self.sph_solver._n_particles, self.sph_solver._B):
+        for i, b in ti.ndrange(self.pbd_solver._n_particles, self.sph_solver._B):
             if self.pbd_solver.particles_ng_reordered[i, b].active:
                 # NOTE: Couldn't figure out a good way to handle collision with non-free particle. Such collision is not phsically plausible anyway.
                 ori_idx_i = self.pbd_solver.particles_ng_reordered[i, b].original_idx
