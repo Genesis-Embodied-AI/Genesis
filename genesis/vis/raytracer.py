@@ -15,7 +15,7 @@ LRP_PATH = os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin")
 try:
     sys.path.append(LRP_PATH)
     import LuisaRenderPy
-except Exception as e:
+except ImportError as e:
     gs.raise_exception(f"Failed to import LuisaRenderer. {e.__class__.__name__}: {e}")
 
 logging_class = {

@@ -535,9 +535,6 @@ class Viewer(pyglet.window.Window):
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
-        # Do not consider the viewer as active anymore
-        self._is_active = False
-
         if self._run_in_thread:
             while self._thread.is_alive():
                 time.sleep(1.0 / self.viewer_flags["refresh_rate"])
@@ -576,6 +573,9 @@ class Viewer(pyglet.window.Window):
         # Always consider the viewer initialized at this point to avoid being stuck if starting fails
         if not self._initialized_event.is_set():
             self._initialized_event.set()
+
+        # Do not consider the viewer as active anymore
+        self._is_active = False
 
         # Remove our camera and restore the prior one
         try:
