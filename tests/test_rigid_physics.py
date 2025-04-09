@@ -348,6 +348,29 @@ def test_robot_kinematics(gs_sim, mj_sim, atol):
         check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
 
 
+def test_mjcf_world_offset(show_viewer, atol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            pos=(0.0, 0.4, 0.1),
+            euler=(0, 0, 90),
+        ),
+    )
+    scene.build()
+
+    np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
+    np.testing.assert_allclose(
+        gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
+    )
+
+    if show_viewer:
+        scene.viewer.stop()
+
+
 @pytest.mark.dof_damping(True)
 @pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
