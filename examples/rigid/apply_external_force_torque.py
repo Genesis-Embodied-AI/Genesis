@@ -27,6 +27,7 @@ def main():
             dt=0.01,
         ),
         show_viewer=args.vis,
+        show_FPS=False,
     )
 
     ########################## entities ##########################
@@ -40,12 +41,13 @@ def main():
         ),
     )
     ########################## build ##########################
-    scene.build()
+    scene.build(n_envs=1)
 
     for solver in scene.sim.solvers:
         if not isinstance(solver, RigidSolver):
             continue
         rigid_solver = solver
+        break
 
     link_idx = [
         1,
@@ -53,7 +55,7 @@ def main():
     rotation_direction = 1
     for i in range(1000):
         cube_pos = rigid_solver.get_links_pos(link_idx)
-        cube_pos[:, 2] -= 1
+        cube_pos[:, :, 2] -= 1
         force = -100 * cube_pos
         rigid_solver.apply_links_external_force(
             force=force,
@@ -61,7 +63,9 @@ def main():
         )
 
         torque = [
-            [0, 0, rotation_direction * 5],
+            [
+                [0, 0, rotation_direction * 5],
+            ],
         ]
         rigid_solver.apply_links_external_torque(
             torque=torque,
