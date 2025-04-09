@@ -349,7 +349,7 @@ class Collider:
                     dt=gs.ti_float,
                 )
                 overlap_dir = (dist_diff / box_size).normalized()
-                overlap_length = ti.abs(box_size.dot(overlap_dir))
+                overlap_length = box_size.dot(ti.abs(overlap_dir))
                 overlap_ratio = ti.math.clamp(0.5 - (dists.sum() / 8) / overlap_length, 0.0, 1.0)
 
         return overlap_ratio

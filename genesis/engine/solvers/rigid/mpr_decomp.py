@@ -478,8 +478,8 @@ class MPR:
         # proposed to extend its application to collision detection as it can provide the contact normal and penetration
         # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
         # portal. Beyond this specific scenario, it only provides an approximation, that gets worst and worst as the
-        # ray casting and portal normal are unaligned.
-        # For convex shape, one can show that everything should be fine for low-penetration-to-size ratio for each
+        # ray casting and portal normal are misaligned.
+        # For convex shape, one can show that everything should be fine for low penetration-to-size ratio for each
         # geometry, and the probability to accurately estimate the contact point decreases as this ratio increases.
         #
         # This issue can be avoided by initializing the algorithm with the good seach direction, basically the one
@@ -504,44 +504,53 @@ class MPR:
         ret = 0
         self.simplex_size[i_ga, i_gb, i_b] = 0
 
-        g_info = self._solver.geoms_info[i_ga]
-        g_state = self._solver.geoms_state[i_ga, i_b]
+        # Completely different center logics depending on normal guess is provided or not
+        g_state_a = self._solver.geoms_state[i_ga, i_b]
+        g_state_b = self._solver.geoms_state[i_gb, i_b]
+        if (ti.abs(normal_ws) < self.CCD_EPS).all():
+            g_info = self._solver.geoms_info[i_ga]
+            center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
+            g_info = self._solver.geoms_info[i_gb]
+            center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
 
-        center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state.pos, g_state.quat)
+            self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a
+            self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b
+            self.simplex_support[i_ga, i_gb, 0, i_b].v = center_a - center_b
+            self.simplex_size[i_ga, i_gb, i_b] = 1
+        else:
+            # Start with the center of the bounding box. They will be shifted if necessary anyway.
+            center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
+            center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
+            center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
+            center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
+            delta = center_a - center_b
 
-        g_info = self._solver.geoms_info[i_gb]
-        g_state = self._solver.geoms_state[i_gb, i_b]
-        center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state.pos, g_state.quat)
+            # Offset the center of each geometry based on the desired search direction if provided
+            # Skip if almost colinear already.
+            normal = delta.normalized()
+            if (ti.abs(normal_ws) > self.CCD_EPS).any() or normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
+                # Compute the target offset
+                offset = delta.dot(normal_ws) * normal_ws - delta
+                offset_norm = offset.norm()
 
-        self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a
-        self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b
-        self.simplex_support[i_ga, i_gb, 0, i_b].v = center_a - center_b
-        self.simplex_size[i_ga, i_gb, i_b] = 1
+                if offset_norm > self.CCD_TOLERANCE:
+                    # Compute the size of the bounding boxes along the target offset direction.
+                    # First, move the direction in local box frame
+                    dir_offset = offset / offset_norm
+                    dir_offset_local_a = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_a.quat))
+                    dir_offset_local_b = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_b.quat))
+                    box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
+                    box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
+                    length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
+                    length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
 
-        # Offset the center of each geometry based on the desired search direction if provided
-        # Skip if almost colinear already.
-        normal = self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
-        if (ti.abs(normal_ws) > self.CCD_EPS).any() or normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
-            # Compute the target offset
-            delta = self.simplex_support[i_ga, i_gb, 0, i_b].v
-            offset = delta.dot(normal_ws) * normal_ws - delta
-            offset_norm = offset.norm()
-
-            if offset_norm > self.CCD_TOLERANCE:
-                # Compute the size of the bounding boxes along the target offset direction
-                dir_offset = offset / offset_norm
-                box_size_a = self._solver.geoms_state[i_ga, i_b].aabb_max - self._solver.geoms_state[i_ga, i_b].aabb_min
-                box_size_b = self._solver.geoms_state[i_gb, i_b].aabb_max - self._solver.geoms_state[i_gb, i_b].aabb_min
-                length_a = ti.abs(box_size_a.dot(dir_offset))
-                length_b = ti.abs(box_size_b.dot(dir_offset))
-
-                # Shift the center of each geometry
-                offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
-                self.simplex_support[i_ga, i_gb, 0, i_b].v1 += dir_offset * length_a * offset_ratio
-                self.simplex_support[i_ga, i_gb, 0, i_b].v2 -= dir_offset * length_b * offset_ratio
-                self.simplex_support[i_ga, i_gb, 0, i_b].v = (
-                    self.simplex_support[i_ga, i_gb, 0, i_b].v1 - self.simplex_support[i_ga, i_gb, 0, i_b].v2
-                )
+                    # Shift the center of each geometry
+                    offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a + dir_offset * length_a * offset_ratio
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b - dir_offset * length_b * offset_ratio
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v = (
+                        self.simplex_support[i_ga, i_gb, 0, i_b].v1 - self.simplex_support[i_ga, i_gb, 0, i_b].v2
+                    )
 
         if (ti.abs(self.simplex_support[i_ga, i_gb, 0, i_b].v) < self.CCD_EPS).all():
             self.simplex_support[i_ga, i_gb, 0, i_b].v[0] += 10.0 * self.CCD_EPS
@@ -644,7 +653,5 @@ class MPR:
             res = self.mpr_refine_portal(i_ga, i_gb, i_b)
             if res >= 0:
                 is_col, normal, penetration, pos = self.mpr_find_penetration(i_ga, i_gb, i_b)
-        else:
-            pass
 
         return is_col, normal, penetration, pos

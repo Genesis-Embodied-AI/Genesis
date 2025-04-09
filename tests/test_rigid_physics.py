@@ -643,13 +643,12 @@ def test_convexify(euler, show_viewer):
     assert 5 <= len(mug.geoms) <= 40
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 900 if euler == (90, 0, 90) else 500
+    num_steps = 1600 if euler == (90, 0, 90) else 500
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            # FIXME: Ideally the tolerance should be around 0.2.
-            np.testing.assert_allclose(qvel, 0, atol=6.0)
+            np.testing.assert_allclose(qvel, 0, atol=0.3)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
@@ -657,16 +656,13 @@ def test_convexify(euler, show_viewer):
         np.testing.assert_array_less(qpos[2], 0.15)
         np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
 
-    # Check that the mug, donut, cup are landing straight if the tank is horizontal
+    # Check that the mug and donut are landing straight if the tank is horizontal.
+    # The cup is tipping because it does not land flat due to convex decomposition error.
     if euler == (90, 0, 90):
-        for obj in (mug, donut, cup):
-            qpos = obj.get_dofs_position().cpu()
-            # FIXME: Ideally the tolerance should be around 5e-3.
-            np.testing.assert_allclose(qpos[0], 0.0, atol=0.02)
-        # FIXME: The cup should stay in place!
         for i, obj in enumerate((mug, donut)):
             qpos = obj.get_dofs_position().cpu()
-            np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=0.02)
+            np.testing.assert_allclose(qpos[0], 0.0, atol=6e-3)
+            np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
 
     if show_viewer:
         scene.viewer.stop()
