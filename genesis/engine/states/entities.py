@@ -11,10 +11,10 @@ class ToolEntityState:
         self.entity = entity
         self.s_global = s_global
 
-        self.pos = gs.zeros(3, dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
-        self.quat = gs.zeros(4, dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
-        self.vel = gs.zeros(3, dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
-        self.ang = gs.zeros(3, dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
+        self.pos = gs.zeros((self.entity.sim._B, 3), dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
+        self.quat = gs.zeros((self.entity.sim._B, 4), dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
+        self.vel = gs.zeros((self.entity.sim._B, 3), dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
+        self.ang = gs.zeros((self.entity.sim._B, 3), dtype=float, requires_grad=self.entity.scene.requires_grad, scene=self.entity.scene)
 
     def serializable(self):
         self.entity = None

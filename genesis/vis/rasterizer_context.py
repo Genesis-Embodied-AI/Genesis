@@ -236,7 +236,7 @@ class RasterizerContext:
                     )
                     mesh.visual = mu.surface_uvs_to_trimesh_visual(tool_entity.surface, n_verts=len(mesh.vertices))
 
-                    pose = gu.trans_quat_to_T(tool_entity.init_pos, tool_entity.init_quat)
+                    pose = gu.trans_quat_to_T(tool_entity.init_pos[0], tool_entity.init_quat[0])
                     double_sided = tool_entity.surface.double_sided
                     self.add_static_node(
                         tool_entity.uid, pyrender.Mesh.from_trimesh(mesh, double_sided=double_sided), pose=pose
@@ -245,8 +245,8 @@ class RasterizerContext:
     def update_tool(self, buffer_updates):
         if self.sim.tool_solver.is_active():
             for tool_entity in self.sim.tool_solver.entities:
-                pos = tool_entity.pos[self.sim.cur_substep_local].to_numpy()
-                quat = tool_entity.quat[self.sim.cur_substep_local].to_numpy()
+                pos = tool_entity.pos[self.sim.cur_substep_local, 0].to_numpy()
+                quat = tool_entity.quat[self.sim.cur_substep_local, 0].to_numpy()
                 pose = gu.trans_quat_to_T(pos, quat)
                 self.set_node_pose(self.static_nodes[tool_entity.uid], pose=pose)
 

@@ -65,7 +65,7 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build(n_envs=5)
+    scene.build()
 
     horizon = 500
 

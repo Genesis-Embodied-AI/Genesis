@@ -78,7 +78,6 @@ class SPHSolver(Solver):
         struct_particle_state_ng = ti.types.struct(
             reordered_idx=gs.ti_int,
             active=gs.ti_int,
-            original_idx=gs.ti_int
         )
 
         # static particle info
@@ -114,9 +113,9 @@ class SPHSolver(Solver):
         self.particles_ng_reordered = struct_particle_state_ng.field(
             shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
         )
-        # self.particles_info_reordered = struct_particle_info.field(
-        #     shape=(self._n_particles,), needs_grad=False, layout=ti.Layout.SOA
-        # )
+        self.particles_info_reordered = struct_particle_info.field(
+            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+        )
 
         self.particles_render = struct_particle_state_render.field(
             shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
@@ -188,9 +187,8 @@ class SPHSolver(Solver):
                 reordered_idx = self.particles_ng[i, b].reordered_idx
 
                 self.particles_reordered[reordered_idx, b] = self.particles[i, b]
-                # self.particles_info_reordered[reordered_idx] = self.particles_info[i]
+                self.particles_info_reordered[reordered_idx, b] = self.particles_info[i]
                 self.particles_ng_reordered[reordered_idx, b].active = self.particles_ng[i, b].active
-                self.particles_ng_reordered[reordered_idx, b].original_idx = i
 
         if ti.static(self._coupler._rigid_sph):
             for i, i_g, b in ti.ndrange(self._n_particles, self._coupler.rigid_solver.n_geoms, self._B):
@@ -237,26 +235,18 @@ class SPHSolver(Solver):
                 )
                 self.particles_reordered[i, b].rho += den
 
-                orig_idx = self.particles_ng_reordered[i, b].original_idx
-                self.particles_reordered[i, b].rho *= self.particles_info[orig_idx].rho
+                self.particles_reordered[i, b].rho *= self.particles_info_reordered[i, b].rho
+
     @ti.func
     def _task_compute_non_pressure_forces(self, i, j, ret: ti.template(), b: ti.i32):
-        # 1) Compute the distance vector between particles i and j in batch b
         d_ij = self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos
         dist = d_ij.norm()
 
-        # 2) Retrieve the original indices for i and j (if needed for looking up data)
-        orig_idx_i = self.particles_ng_reordered[i, b].original_idx
-        orig_idx_j = self.particles_ng_reordered[j, b].original_idx
+        gamma_i = self.particles_info_reordered[i, b].gamma
+        mass_i  = self.particles_info_reordered[i, b].mass
+        mu_i    = self.particles_info_reordered[i, b].mu
 
-        # 3) Grab the relevant properties from particles_info (assuming it is also batched)
-        gamma_i = self.particles_info[orig_idx_i].gamma
-        mass_i  = self.particles_info[orig_idx_i].mass
-        mu_i    = self.particles_info[orig_idx_i].mu
-
-        # Similarly, for the j particle:
-        mass_j  = self.particles_info[orig_idx_j].mass
-        # (Or if your info isn’t batched, do `self.particles_info[orig_idx_i].gamma` etc.)
+        mass_j  = self.particles_info_reordered[j, b].mass
 
         #-----------------------------
         # Surface Tension term
@@ -318,17 +308,16 @@ class SPHSolver(Solver):
     @ti.func
     def _task_compute_pressure_forces(self, i, j, ret: ti.template(), b):
         dp_i = self.particles_reordered[i, b].p / self.particles_reordered[i, b].rho ** 2
-        orig_idx_j = self.particles_ng_reordered[j, b].original_idx
         rho_j = (
             self.particles_reordered[j, b].rho
-            * self.particles_info[orig_idx_j].rho
-            / self.particles_info[orig_idx_j].rho
+            * self.particles_info_reordered[j, b].rho
+            / self.particles_info_reordered[j, b].rho
         )
         dp_j = self.particles_reordered[j, b].p / rho_j**2
 
         # Compute the pressure force contribution, Symmetric Formula
         ret += (
-            -self.particles_info[orig_idx_j].rho
+            -self.particles_info_reordered[j, b].rho
             * self._p_vol
             * (dp_i + dp_j)
             * self.cubic_kernel_derivative(self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos)
@@ -338,10 +327,9 @@ class SPHSolver(Solver):
     def _kernel_compute_pressure_forces(self, f:ti.i32):
         for i, b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng_reordered[i, b].active:
-                orig_idx = self.particles_ng_reordered[i, b].original_idx
-                rho0 = self.particles_info[orig_idx].rho
-                stiff = self.particles_info[orig_idx].stiffness
-                expnt = self.particles_info[orig_idx].exponent
+                rho0 = self.particles_info_reordered[i, b].rho
+                stiff = self.particles_info_reordered[i, b].stiffness
+                expnt = self.particles_info_reordered[i, b].exponent
 
                 self.particles_reordered[i, b].rho = ti.max(
                     self.particles_reordered[i, b].rho, 

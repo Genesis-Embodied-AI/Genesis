@@ -29,9 +29,9 @@ def main():
             camera_fov=35,
             max_FPS=120,
         ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx = [2]
-        ),
+        # vis_options=gs.options.VisOptions(
+        #     rendered_envs_idx = [2]
+        # ),
         show_viewer=args.vis,
         sph_options=gs.options.SPHOptions(
             particle_size=0.02,
@@ -56,7 +56,7 @@ def main():
             color=(0.7, 0.85, 1.0, 0.7),
         ),
     )
-    scene.build(n_envs=5)
+    scene.build()
 
     horizon = 500
     for i in range(horizon):

@@ -309,7 +309,7 @@ class ParticleEntity(Entity):
 
         elif len(vel.shape) == 2:
             assert vel.shape == (self._n_particles, 3)
-            self._tgt["vel"] = torch.tile(vel, [self._sim._B, 1])
+            self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
 
         elif len(vel.shape) == 3:
             assert vel.shape == (self._sim._B, self._n_particles, 3)
@@ -334,11 +334,11 @@ class ParticleEntity(Entity):
         if len(pos.shape) == 1:
             assert pos.shape == (3,)
             self._tgt["pos"] = self._init_particles_offset + pos
-            self._tgt["pos"] = torch.tile(self._tgt["pos"], [self._sim._B, 1])
+            self._tgt["pos"] = torch.tile(self._tgt["pos"][None], [self._sim._B, 1, 1])
 
         elif len(pos.shape) == 2:
             assert pos.shape == (self._n_particles, 3)
-            self._tgt["pos"] = torch.tile(pos, [self._sim._B, 1])
+            self._tgt["pos"] = torch.tile(pos[None], [self._sim._B, 1, 1])
 
         elif len(pos.shape) == 3:
             assert pos.shape == (self._sim._B, self._n_particles, 3)

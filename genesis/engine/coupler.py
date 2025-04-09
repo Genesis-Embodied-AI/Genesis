@@ -172,10 +172,10 @@ class Coupler(RBC):
         return vel
 
     @ti.func
-    def _func_mpm_tool(self, f, pos_world, vel):
+    def _func_mpm_tool(self, f, pos_world, vel, b):
         for entity in ti.static(self.tool_solver.entities):
             if ti.static(entity.material.collision):
-                vel = entity.collide(f, pos_world, vel)
+                vel = entity.collide(f, pos_world, vel, b)
         return vel
 
     @ti.kernel
@@ -203,7 +203,7 @@ class Coupler(RBC):
 
                 #################### MPM <-> Tool ####################
                 if ti.static(self.tool_solver.is_active()):
-                    vel_mpm = self._func_mpm_tool(f, pos, vel_mpm)
+                    vel_mpm = self._func_mpm_tool(f, pos, vel_mpm, b)
 
                 #################### MPM <-> Rigid ####################
                 if ti.static(self._rigid_mpm):
@@ -256,10 +256,9 @@ class Coupler(RBC):
                                     ti.abs(pos - self.sph_solver.particles_reordered.pos[i, b]).max()
                                     < self.mpm_solver.dx * 0.5
                                 ):
-                                    ori_idx_i = self.sph_solver.particles_ng_reordered[i, b].original_idx
                                     self.sph_solver.particles_reordered[i, b].vel = (
                                         self.sph_solver.particles_reordered[i, b].vel
-                                        - delta_mv / self.sph_solver.particles_info[ori_idx_i].mass
+                                        - delta_mv / self.sph_solver.particles_info[i, b].mass
                                     )
 
                 #################### MPM <-> PBD ####################
@@ -303,11 +302,10 @@ class Coupler(RBC):
                                     ti.abs(pos - self.pbd_solver.particles_reordered.pos[i, b]).max()
                                     < self.mpm_solver.dx * 0.5
                                 ):
-                                    ori_idx_i = self.pbd_solver.particles_ng_reordered[i, b].original_idx
                                     if self.pbd_solver.particles_reordered[i, b].free:
                                         self.pbd_solver.particles_reordered[i, b].vel = (
                                             self.pbd_solver.particles_reordered[i, b].vel
-                                            - delta_mv / self.pbd_solver.particles_info[ori_idx_i].mass
+                                            - delta_mv / self.pbd_solver.particles_info_reordered[i, b].mass
                                         )
 
                 #################### MPM boundary ####################
@@ -452,10 +450,9 @@ class Coupler(RBC):
                                     self.sph_solver.sh.slot_start[slot_idx, b] + self.sph_solver.sh.slot_size[slot_idx, b],
                                 ):
                                     if ti.abs(pos - self.sph_solver.particles_reordered.pos[k]).max() < dx * 0.5:
-                                        ori_idx_k = self.sph_solver.particles_ng_reordered[k, b].original_idx
                                         self.sph_solver.particles_reordered[k].vel = (
                                             self.sph_solver.particles_reordered[k].vel
-                                            - delta_mv / self.sph_solver.particles_info[ori_idx_k].mass
+                                            - delta_mv / self.sph_solver.particles_info_reordered[i, b].mass
                                         )
 
                             self.fem_solver.elements_v[f + 1, iv, b].vel = vel_fem_sv
@@ -471,14 +468,13 @@ class Coupler(RBC):
     def sph_rigid(self, f: ti.i32):
         for i, b in ti.ndrange(self.sph_solver._n_particles, self.sph_solver._B):
             if self.sph_solver.particles_ng_reordered[i, b].active:
-                ori_idx_i = self.sph_solver.particles_ng_reordered[i, b].original_idx
                 for i_g in range(self.rigid_solver.n_geoms):
                     if self.rigid_solver.geoms_info[i_g].needs_coup:
                         self.sph_solver.particles_reordered[i, b].vel, self.sph_rigid_normal_reordered[i, i_g, b] = (
                             self._func_collide_with_rigid_geom_robust(
                                 self.sph_solver.particles_reordered[i, b].pos,
                                 self.sph_solver.particles_reordered[i, b].vel,
-                                self.sph_solver.particles_info[ori_idx_i].mass,
+                                self.sph_solver.particles_info_reordered[i, b].mass,
                                 self.sph_rigid_normal_reordered[i, i_g, b],
                                 i_g,
                                 b,
@@ -490,7 +486,6 @@ class Coupler(RBC):
         for i, b in ti.ndrange(self.pbd_solver._n_particles, self.sph_solver._B):
             if self.pbd_solver.particles_ng_reordered[i, b].active:
                 # NOTE: Couldn't figure out a good way to handle collision with non-free particle. Such collision is not phsically plausible anyway.
-                ori_idx_i = self.pbd_solver.particles_ng_reordered[i, b].original_idx
                 for i_g in range(self.rigid_solver.n_geoms):
                     if self.rigid_solver.geoms_info[i_g].needs_coup:
                         (
@@ -501,7 +496,7 @@ class Coupler(RBC):
                             i,
                             self.pbd_solver.particles_reordered[i, b].pos,
                             self.pbd_solver.particles_reordered[i, b].vel,
-                            self.pbd_solver.particles_info[ori_idx_i].mass,
+                            self.pbd_solver.particles_info_reordered[i, b].mass,
                             self.pbd_rigid_normal_reordered[i, i_g, b],
                             i_g,
                             b,
