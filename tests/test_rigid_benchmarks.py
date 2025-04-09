@@ -21,9 +21,8 @@ def setup_txt_logging():
 
 
 @pytest.fixture
-def anymal_c(solver, n_envs):
+def anymal_c(solver, n_envs, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -33,6 +32,7 @@ def anymal_c(solver, n_envs):
             dt=0.01,
             constraint_solver=solver,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -80,9 +80,8 @@ def anymal_c(solver, n_envs):
 
 
 @pytest.fixture
-def batched_franka(solver, n_envs):
+def batched_franka(solver, n_envs, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -92,6 +91,7 @@ def batched_franka(solver, n_envs):
             dt=0.01,
             constraint_solver=solver,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -116,9 +116,8 @@ def batched_franka(solver, n_envs):
 
 
 @pytest.fixture
-def random(solver, n_envs):
+def random(solver, n_envs, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -128,6 +127,7 @@ def random(solver, n_envs):
             dt=0.01,
             constraint_solver=solver,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -160,9 +160,8 @@ def random(solver, n_envs):
 
 
 @pytest.fixture
-def cubes(solver, n_envs, n_cubes, is_island):
+def cubes(solver, n_envs, n_cubes, is_island, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -173,6 +172,7 @@ def cubes(solver, n_envs, n_cubes, is_island):
             constraint_solver=solver,
             use_contact_island=is_island,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################

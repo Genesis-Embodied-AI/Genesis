@@ -97,7 +97,7 @@ def init(
     theme="dark",
     logger_verbose_time=False,
 ):
-    # genesis._initialized
+    # Consider Genesis as initialized right away
     global _initialized
     if _initialized:
         raise_exception("Genesis already initialized.")
@@ -114,7 +114,7 @@ def init(
     if logging_level is None:
         logging_level = _logging.DEBUG if debug else _logging.INFO
     logger = Logger(logging_level, logger_verbose_time)
-    atexit.register(_gs_exit)
+    atexit.register(destroy)
 
     # Must delay raising exception after logger initialization
     if not is_theme_valid:
@@ -274,23 +274,48 @@ def destroy():
     A simple wrapper for ti.reset(). This call releases all gpu memories allocated and destroyes all runtime data, and also forces caching of compiled kernels.
     gs.init() needs to be called again to reinitialize the system after destroy.
     """
-    # genesis._initialized
+    # Early return if not initialized
     global _initialized
-    _initialized = False
-    ti.reset()
+    if not _initialized:
+        return
 
+    # Do not consider Genesis as initialized at this point
+    _initialized = False
+
+    # Unregister at-exit callback that is not longer relevant.
+    # This is important when `init` / `destory` is called multiple times, which is typically the case for unit tests.
+    atexit.unregister(destroy)
+
+    # Display any buffered error message if logger is configured
+    global logger
+    if logger:
+        if logger._error_msg is not None:
+            logger.error(logger._error_msg)
+            logger._error_msg = None
+
+        logger.info("💤 Exiting Genesis and caching compiled kernels...")
+
+    # Call all exit callbacks
+    for cb in exit_callbacks:
+        cb()
+    exit_callbacks.clear()
+
+    # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
         if scene._visualizer is not None:
             if scene._visualizer._rasterizer is not None:
                 scene._visualizer._rasterizer.destroy()
+                scene._visualizer._rasterizer = None
+            scene._visualizer = None
     global_scene_list.clear()
 
-    global logger
+    # Reset taichi
+    ti.reset()
+
+    # Delete logger
     logger.removeHandler(logger.handler)
     logger = None
-
-    atexit.unregister(_gs_exit)
 
 
 def _globalize_backend(_backend):
@@ -341,24 +366,6 @@ def _custom_excepthook(exctype, value, tb):
 # Set the custom excepthook to handle GenesisException
 sys.excepthook = _custom_excepthook
 
-
-def _gs_exit():
-    # display error if it exists
-    if logger._error_msg is not None:
-        logger.error(logger._error_msg)
-
-    # This might raise error during unit test
-    try:
-        logger.info("💤 Exiting Genesis and caching compiled kernels...")
-    except:
-        pass
-
-    for cb in exit_callbacks:
-        cb()
-
-    destroy()
-
-
 ########################## shortcut imports for users ##########################
 
 if sys.platform == "darwin":
@@ -371,6 +378,13 @@ if sys.platform == "darwin":
     libc.dup2(devnull.fileno(), stderr_fileno)
 
 from .ext import _trimesh_patch
+from .utils.misc import get_src_dir as _get_src_dir
+
+try:
+    sys.path.append(os.path.join(_get_src_dir(), "ext/LuisaRender/build/bin"))
+    import LuisaRenderPy as _LuisaRenderPy
+except ImportError:
+    pass
 
 from .constants import (
     IntEnum,
