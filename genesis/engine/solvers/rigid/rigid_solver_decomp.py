@@ -57,6 +57,8 @@ class RigidSolver(Solver):
 
         # options
         self._enable_collision = options.enable_collision
+        self._enable_multi_contact = options.enable_multi_contact
+        self._enable_mpr_vanilla = options.enable_mpr_vanilla
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
         self._enable_adjacent_collision = options.enable_adjacent_collision
@@ -894,8 +896,21 @@ class RigidSolver(Solver):
                 geoms_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
             )
 
+            # Accurately compute the center of mass of each geometry if possible.
+            # Note that the mean vertex position is a bad approximation, which is impeding the ability of MPR to
+            # estimate the exact contact information.
+            geoms_center = []
+            for geom in geoms:
+                tmesh = geom.mesh.trimesh
+                if tmesh.is_watertight:
+                    geoms_center.append(tmesh.center_mass)
+                else:
+                    # Still fallback to mean vertex position if no better option...
+                    geoms_center.append(np.mean(tmesh.vertices, axis=0))
+
             self._kernel_init_geom_fields(
                 geoms_pos=np.array([geom.init_pos for geom in geoms], dtype=gs.np_float),
+                geoms_center=np.array(geoms_center, dtype=gs.np_float),
                 geoms_quat=np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 geoms_link_idx=np.array([geom.link.idx for geom in geoms], dtype=gs.np_int),
                 geoms_type=np.array([geom.type for geom in geoms], dtype=gs.np_int),
@@ -924,6 +939,7 @@ class RigidSolver(Solver):
     def _kernel_init_geom_fields(
         self,
         geoms_pos: ti.types.ndarray(),
+        geoms_center: ti.types.ndarray(),
         geoms_quat: ti.types.ndarray(),
         geoms_link_idx: ti.types.ndarray(),
         geoms_type: ti.types.ndarray(),
@@ -951,6 +967,7 @@ class RigidSolver(Solver):
         for i in range(self.n_geoms):
             for j in ti.static(range(3)):
                 self.geoms_info[i].pos[j] = geoms_pos[i, j]
+                self.geoms_info[i].center[j] = geoms_center[i, j]
 
             for j in ti.static(range(4)):
                 self.geoms_info[i].quat[j] = geoms_quat[i, j]
@@ -990,7 +1007,9 @@ class RigidSolver(Solver):
 
             self.geoms_info[i].is_free = geoms_is_free[i]
 
-            # compute init AABB
+            # compute init AABB.
+            # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
+            # in the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes.
             lower = gu.ti_vec3(ti.math.inf)
             upper = gu.ti_vec3(-ti.math.inf)
             for i_v in range(geoms_vert_start[i], geoms_vert_end[i]):
@@ -1004,14 +1023,6 @@ class RigidSolver(Solver):
             self.geoms_init_AABB[i, 5] = ti.Vector([upper[0], lower[1], upper[2]], dt=gs.ti_float)
             self.geoms_init_AABB[i, 6] = ti.Vector([upper[0], upper[1], lower[2]], dt=gs.ti_float)
             self.geoms_init_AABB[i, 7] = ti.Vector([upper[0], upper[1], upper[2]], dt=gs.ti_float)
-
-            # compute geom center
-            self.geoms_info[i].center = ti.Vector.zero(gs.ti_float, 3)
-            for i_v in range(self.geoms_info[i].vert_start, self.geoms_info[i].vert_end):
-                pos = self.verts_info[i_v].init_pos
-                self.geoms_info[i].center += pos
-
-            self.geoms_info[i].center /= self.geoms_info[i].vert_end - self.geoms_info[i].vert_start
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
