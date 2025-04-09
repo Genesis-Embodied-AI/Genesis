@@ -535,14 +535,18 @@ class Viewer(pyglet.window.Window):
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
-        viewer_thread = self._thread or threading.main_thread()
-        if viewer_thread != threading.current_thread():
-            raise RuntimeError("'Viewer.close' can only be called from the thread that started the viewer.")
+        # Do not consider the viewer as active anymore
+        self._is_active = False
 
-        self.on_close()
         if self._run_in_thread:
-            while self._is_active:
+            while self._thread.is_alive():
                 time.sleep(1.0 / self.viewer_flags["refresh_rate"])
+        else:
+            viewer_thread = self._thread or threading.main_thread()
+            if viewer_thread != threading.current_thread():
+                raise RuntimeError("'Viewer.close' can only be called from the thread that started the viewer.")
+
+            self.on_close()
 
     def save_video(self, filename=None):
         """Save the stored frames to a video file.
@@ -573,21 +577,16 @@ class Viewer(pyglet.window.Window):
         if not self._initialized_event.is_set():
             self._initialized_event.set()
 
-        # Early return if already closed
-        if not self._is_active:
-            return
-
-        # Do not consider the viewer as active right away
-        self._is_active = False
-
         # Remove our camera and restore the prior one
         try:
             if self._camera_node is not None:
                 self.scene.remove_node(self._camera_node)
+            self._camera_node = None
         except Exception:
             pass
         if self._prior_main_camera_node is not None:
             self.scene.main_camera_node = self._prior_main_camera_node
+        self._prior_main_camera_node = None
 
         # Delete any lighting nodes that we've attached
         if self.viewer_flags["use_raymond_lighting"]:
@@ -1218,7 +1217,7 @@ class Viewer(pyglet.window.Window):
 
     def run(self):
         if self._run_in_thread:
-            raise RuntimeError("'Viewer.run' can only be called manually if the viewer is already running in thread.")
+            raise RuntimeError("'Viewer.run' cannot be called manually if the viewer is already running in thread.")
         elif threading.main_thread() != threading.current_thread():
             raise RuntimeError("'Viewer.run' can only be called manually from main thread on MacOS.")
 

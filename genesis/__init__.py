@@ -146,12 +146,6 @@ def init(
     global device
     device, device_name, total_mem, backend = get_device(backend)
 
-    _globalize_backend(backend)
-
-    logger.info(
-        f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
-    )
-
     # dtype
     global ti_float
     global np_float
@@ -249,6 +243,18 @@ def init(
             default_fp=ti_float,
             **taichi_kwargs,
         )
+
+    # Make sure that taichi arch is matching requirement
+    ti_runtime = ti.lang.impl.get_runtime()
+    taichi_arch = ti_runtime.prog.config().arch
+    if backend != gs.cpu and taichi_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+        device, device_name, total_mem, backend = get_device(gs.cpu)
+
+    _globalize_backend(backend)
+
+    logger.info(
+        f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
+    )
 
     for ti_output in _ti_outputs:
         logger.debug(ti_output)
