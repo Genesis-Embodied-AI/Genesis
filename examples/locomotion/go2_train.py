@@ -2,15 +2,25 @@ import argparse
 import os
 import pickle
 import shutil
+from importlib import metadata
 
-from go2_env import Go2Env
+try:
+    try:
+        if metadata.version("rsl-rl"):
+            raise ImportError
+    except metadata.PackageNotFoundError:
+        if metadata.version("rsl-rl-lib") != "2.2.4":
+            raise ImportError
+except (metadata.PackageNotFoundError, ImportError) as e:
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
 
+from go2_env import Go2Env
+
 
 def get_train_cfg(exp_name, max_iterations):
-
     train_cfg_dict = {
         "algorithm": {
             "class_name": "PPO",
