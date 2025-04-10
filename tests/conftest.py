@@ -217,7 +217,4 @@ def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision
 
     scene.build()
 
-    yield gs_sim
-
-    if show_viewer:
-        scene.viewer.stop()
+    return gs_sim

@@ -304,10 +304,8 @@ def destroy():
     global global_scene_list
     for scene in global_scene_list:
         if scene._visualizer is not None:
-            if scene._visualizer._rasterizer is not None:
-                scene._visualizer._rasterizer.destroy()
-                scene._visualizer._rasterizer = None
-            scene._visualizer = None
+            scene._visualizer.destroy()
+        del scene
     global_scene_list.clear()
 
     # Reset taichi
