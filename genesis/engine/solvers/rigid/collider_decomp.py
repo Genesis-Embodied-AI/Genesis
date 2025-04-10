@@ -1195,8 +1195,10 @@ class Collider:
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
 
+        # Disable multi-contact for pairs of decomposed geoms, as it is redundant and would significantly slowdown simu
         multi_contact = (
             ti.static(self._solver._enable_multi_contact)
+            and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
             and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
             and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
             and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE

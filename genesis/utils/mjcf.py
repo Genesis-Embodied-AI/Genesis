@@ -24,11 +24,8 @@ def parse_link(mj, i_l, scale):
     l_info = dict()
 
     name_start = mj.name_bodyadr[i_l]
-    if i_l + 1 < mj.nbody:
-        name_end = mj.name_bodyadr[i_l + 1]
-        l_info["name"] = mj.names[name_start:name_end].decode("utf-8").replace("\x00", "")
-    else:
-        l_info["name"] = mj.names[name_start:].decode("utf-8").split("\x00")[0]
+    name_end = mj.name_bodyadr[i_l + 1] if i_l + 1 < mj.nbody else len(mj.names)
+    l_info["name"], _ = mj.names[name_start:].decode("utf-8").split("\x00", 1)
 
     l_info["pos"] = mj.body_pos[i_l]
     l_info["quat"] = mj.body_quat[i_l]
@@ -60,11 +57,7 @@ def parse_link(mj, i_l, scale):
             j_info["n_dofs"] = 0
         else:
             name_start = mj.name_jntadr[i_j]
-            if i_j + 1 < mj.njnt:
-                name_end = mj.name_jntadr[i_j + 1]
-            else:
-                name_end = mj.name_geomadr[0]
-            j_info["name"] = mj.names[name_start:name_end].decode("utf-8").replace("\x00", "")
+            j_info["name"], _ = mj.names[name_start:].decode("utf-8").split("\x00", 1)
 
             j_info["pos"] = mj.jnt_pos[i_j]
 
@@ -259,6 +252,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     is_col = mj_geom.contype or mj_geom.conaffinity
 
     visual = None
+    metadata = {}
     if mj_geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
         length, width, _ = geom_size
         length = length or 1e3
@@ -387,14 +381,14 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         gs_type = gs.GEOM_TYPE.MESH
         geom_data = None
 
+        mesh_path_start = mj.mesh_pathadr[mj_mesh.id]
+        metadata["mesh_path"], _ = mj.paths[mesh_path_start:].decode("utf-8").split("\x00", 1)
     else:
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
     mesh = gs.Mesh.from_trimesh(
-        tmesh,
-        scale=scale,
-        surface=gs.surfaces.Collision() if is_col else surface,
+        tmesh, scale=scale, surface=gs.surfaces.Collision() if is_col else surface, metadata=metadata
     )
 
     if surface.diffuse_texture is None and visual is None:  # user input will override mjcf color

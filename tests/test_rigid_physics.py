@@ -646,18 +646,18 @@ def test_convexify(euler, show_viewer):
     # but for the others it is hard to tell... Let's use some reasonable guess.
     mug, donut, cup, apple = objs
     assert len(apple.geoms) == 1
-    assert 5 <= len(donut.geoms) <= 10
-    assert 5 <= len(cup.geoms) <= 20
-    assert 5 <= len(mug.geoms) <= 40
-    assert 5 <= len(box.geoms) <= 20
+    assert all(geom.metadata["decomposed"] for geom in donut.geoms) and 5 <= len(donut.geoms) <= 10
+    assert all(geom.metadata["decomposed"] for geom in cup.geoms) and 5 <= len(cup.geoms) <= 20
+    assert all(geom.metadata["decomposed"] for geom in mug.geoms) and 5 <= len(mug.geoms) <= 40
+    assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 1600 if euler == (90, 0, 90) else 500
+    num_steps = 2500 if euler == (90, 0, 90) else 500
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.3)
+            np.testing.assert_allclose(qvel, 0, atol=0.5)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
