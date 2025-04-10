@@ -252,6 +252,9 @@ def init(
 
     _globalize_backend(backend)
 
+    # Update torch default device
+    torch.set_default_device(device)
+
     logger.info(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
     )

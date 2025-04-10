@@ -171,7 +171,7 @@ def main():
         num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
 

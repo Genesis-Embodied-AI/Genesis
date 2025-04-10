@@ -147,7 +147,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     pickle.dump(
         [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
