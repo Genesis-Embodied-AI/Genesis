@@ -600,6 +600,14 @@ def test_convexify(euler, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    box = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/blue_box/model.urdf",
+            fixed=True,
+            pos=(0.0, 1.0, 0.0),
+        ),
+        vis_mode="collision",
+    )
     tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
@@ -641,6 +649,7 @@ def test_convexify(euler, show_viewer):
     assert 5 <= len(donut.geoms) <= 10
     assert 5 <= len(cup.geoms) <= 20
     assert 5 <= len(mug.geoms) <= 40
+    assert 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
     num_steps = 1600 if euler == (90, 0, 90) else 500

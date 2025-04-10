@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<robot name="blue_box">
+  <!-- Link part_1 -->
+  <link name="part_1">
+    <inertial>
+      <origin xyz="0.00317102 0.00792455 0.0478793" rpy="0 0 0"/>
+      <mass value="0.474486"/>
+      <inertia ixx="0.00897419" ixy="-4.82992e-09" ixz="3.18237e-09" iyy="0.0080455" iyz="-0.000699998" izz="0.0129012"/>
+    </inertial>
+    <!-- Part part_1 -->
+    <visual>
+      <origin xyz="0.00317106 -0.00783064 -0.00497648" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/part_1.stl"/>
+      </geometry>
+      <material name="part_1_material">
+        <color rgba="0 0 1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00317106 -0.00783064 -0.00497648" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/part_1.stl"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
