@@ -866,6 +866,7 @@ class RigidSolver(Solver):
             coup_softness=gs.ti_float,
             coup_restitution=gs.ti_float,
             is_free=gs.ti_int,
+            is_decomposed=gs.ti_int,
         )
         struct_geom_state = ti.types.struct(
             pos=gs.ti_vec3,
@@ -933,6 +934,7 @@ class RigidSolver(Solver):
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
                 geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
+                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_int),
             )
 
     @ti.kernel
@@ -962,6 +964,7 @@ class RigidSolver(Solver):
         geoms_coup_friction: ti.types.ndarray(),
         geoms_coup_restitution: ti.types.ndarray(),
         geoms_is_free: ti.types.ndarray(),
+        geoms_is_decomp: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_geoms):
@@ -1006,6 +1009,7 @@ class RigidSolver(Solver):
             self.geoms_info[i].coup_restitution = geoms_coup_restitution[i]
 
             self.geoms_info[i].is_free = geoms_is_free[i]
+            self.geoms_info[i].is_decomposed = geoms_is_decomp[i]
 
             # compute init AABB.
             # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
