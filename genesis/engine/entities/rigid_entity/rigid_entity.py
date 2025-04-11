@@ -1518,20 +1518,22 @@ class RigidEntity(Entity):
         space.setBounds(bounds)
         ss = og.SimpleSetup(space)
 
-        if not ignore_collision and len(self.detect_collision()) > 0:
-            ignore_collision = True
-            gs.logger.warning("Impossible to avoid collisions if already colliding right from start. Ignoring them.")
+        geom_indices = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
+        mask_collision_pairs = set(
+            (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geom_indices or i_gb in geom_indices
+        )
+        if not ignore_collision and mask_collision_pairs:
+            gs.logger.info("Ingoring collision pairs already active for starting pos.")
 
-        if ignore_collision:
-            ss.setStateValidityChecker(ob.StateValidityCheckerFn(lambda state: True))
-        else:
+        def is_ompl_state_valid(state):
+            if ignore_collision:
+                return True
+            qpos = torch.tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
+            self.set_qpos(qpos, zero_velocity=False)
+            collision_pairs = set(map(tuple, self.detect_collision()))
+            return not (collision_pairs - mask_collision_pairs)
 
-            def is_ompl_state_valid(state):
-                qpos = torch.tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-                self.set_qpos(qpos, zero_velocity=False)
-                return len(self.detect_collision()) == 0
-
-            ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
+        ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
 
         try:
             planner_cls = getattr(og, planner)

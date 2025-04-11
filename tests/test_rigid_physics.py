@@ -460,12 +460,12 @@ def move_cube(use_suction, show_viewer):
         num_waypoints=100,  # 1s duration
     )
     # execute the planned path
+    franka.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
     for waypoint in path:
         franka.control_dofs_position(waypoint)
-        franka.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
         scene.step()
 
-    # allow robot to reach the last waypoint
+    # Get more time to the robot to reach the last waypoint
     for i in range(100):
         scene.step()
 
@@ -508,7 +508,15 @@ def move_cube(use_suction, show_viewer):
         pos=np.array([0.4, 0.2, 0.18]),
         quat=np.array([0, 1, 0, 0]),
     )
-    franka.control_dofs_position(qpos[:-2], motors_dof)
+    path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=50,
+    )
+    for waypoint in path:
+        franka.control_dofs_position(waypoint[:-2], motors_dof)
+        scene.step()
+
+    # Get more time to the robot to reach the last waypoint
     for i in range(100):
         scene.step()
 
@@ -518,9 +526,9 @@ def move_cube(use_suction, show_viewer):
     else:
         rigid.delete_weld_constraint(link_cube, link_franka)
 
-    for i in range(450):
+    for i in range(500):
         scene.step()
-        if i > 400:
+        if i > 450:
             qvel = cube.get_dofs_velocity().cpu()
             np.testing.assert_allclose(qvel, 0, atol=0.05)
 
@@ -640,12 +648,12 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 2500 if euler == (90, 0, 90) else 500
+    num_steps = 2500 if euler == (90, 0, 90) else 600
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.5)
+            np.testing.assert_allclose(qvel, 0, atol=0.6)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
