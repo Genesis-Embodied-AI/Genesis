@@ -63,7 +63,7 @@ def mimic_hinges():
 def box_box():
     """Generate an XML model for two boxes."""
     mjcf = ET.Element("mujoco", model="one_box")
-    ET.SubElement(mjcf, "option", timestep="0.01")  # FIXME: It only works for 5ms
+    ET.SubElement(mjcf, "option", timestep="0.01")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
     worldbody = ET.SubElement(mjcf, "worldbody")

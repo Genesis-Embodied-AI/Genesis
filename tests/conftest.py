@@ -187,11 +187,11 @@ def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,
             constraint_solver=gs_solver,
+            enable_mpr_vanilla=True,
             box_box_detection=True,
             enable_self_collision=True,
-            enable_multi_contact=multi_contact,
-            enable_mpr_vanilla=True,
             enable_adjacent_collision=adjacent_collision,
+            enable_multi_contact=multi_contact,
             iterations=mj_sim.model.opt.iterations,
             tolerance=mj_sim.model.opt.tolerance,
             ls_iterations=mj_sim.model.opt.ls_iterations,
