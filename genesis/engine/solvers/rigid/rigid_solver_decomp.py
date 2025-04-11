@@ -4383,15 +4383,22 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "entity_com"] = "link_origin",
         unsafe: bool = False,
     ):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        assert ref in ("link_origin", "link_com")
-        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref=int(ref == "link_origin"))
+        if ref == "entity_com":
+            ref = 0
+        elif ref == "link_com":
+            ref = 1
+        elif ref == "link_origin":
+            ref = 2
+        else:
+            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'entity_com'.")
+        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref)
         return _tensor
 
     @ti.kernel
@@ -4408,11 +4415,11 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             l_state = self.links_state[links_idx[i_l_], envs_idx[i_b_]]
-            xvel = l_state.vel
-            if ti.static(ref == 1):  # link's origin
-                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
-            else:  # link's CoM
+            xvel = l_state.vel  # entity's CoM
+            if ti.static(ref == 1):  # link's CoM
                 xvel = xvel + l_state.ang.cross(l_state.i_pos)
+            if ti.static(ref == 2):  # link's origin
+                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = xvel[i]
 
