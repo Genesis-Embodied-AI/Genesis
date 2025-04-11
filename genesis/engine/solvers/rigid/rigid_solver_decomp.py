@@ -586,12 +586,27 @@ class RigidSolver(Solver):
             joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
         )
 
-        self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
-            self.qpos.from_numpy(init_qpos)
             self.qpos0.from_numpy(init_qpos)
+
+        # Check if the initial configuration is out-of-bounds
+        self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
+        is_init_qpos_out_of_bounds = False
+        if self.n_qs > 0:
+            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            for joint in chain.from_iterable(self._joints):
+                if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_idx]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_idx] > joint.dofs_limit[0, 1]).any()
+                    # init_qpos[joint.q_idx] = np.clip(init_qpos[joint.q_idx], *joint.dofs_limit[0])
+            self.qpos.from_numpy(init_qpos)
+        if is_init_qpos_out_of_bounds:
+            gs.logger.warning(
+                "Reference robot position exceeds joint limits."
+                # "Clipping initial position too make sure it is valid."
+            )
 
         # This is for IK use only
         # TODO: support IK with parallel envs
