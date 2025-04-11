@@ -50,10 +50,10 @@ def main():
         show_viewer=True,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
     resume_path = os.path.join(log_dir, f"model_{args.ckpt}.pt")
     runner.load(resume_path)
-    policy = runner.get_inference_policy(device="cuda:0")
+    policy = runner.get_inference_policy(device=gs.device)
 
     obs, _ = env.reset()
 

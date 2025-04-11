@@ -544,6 +544,7 @@ class RigidEntity(Entity):
                 entity=self,
                 name=j_info["name"],
                 idx=self.n_joints + self._joint_start,
+                link_idx=link.idx,
                 q_start=self.n_qs + self._q_start,
                 dof_start=self.n_dofs + self._dof_start,
                 n_qs=j_info["n_qs"],
@@ -1472,19 +1473,6 @@ class RigidEntity(Entity):
                 e,
             )
 
-        supported_planners = [
-            "PRM",
-            "RRT",
-            "RRTConnect",
-            "RRTstar",
-            "EST",
-            "FMT",
-            "BITstar",
-            "ABITstar",
-        ]
-        if planner not in supported_planners:
-            gs.raise_exception(f"Planner {planner} is not supported. Supported planners: {supported_planners}.")
-
         if self._solver.n_envs > 0:
             gs.raise_exception("Motion planning is not supported for batched envs (yet).")
 
@@ -1530,11 +1518,31 @@ class RigidEntity(Entity):
             bounds.setHigh(i_q, q_limit_upper[i_q])
         space.setBounds(bounds)
         ss = og.SimpleSetup(space)
-        if ignore_collision:
-            ss.setStateValidityChecker(ob.StateValidityCheckerFn(lambda state: True))
-        else:
-            ss.setStateValidityChecker(ob.StateValidityCheckerFn(self._is_ompl_state_valid))
-        ss.setPlanner(getattr(og, planner)(ss.getSpaceInformation()))
+
+        geom_indices = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
+        mask_collision_pairs = set(
+            (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geom_indices or i_gb in geom_indices
+        )
+        if not ignore_collision and mask_collision_pairs:
+            gs.logger.info("Ingoring collision pairs already active for starting pos.")
+
+        def is_ompl_state_valid(state):
+            if ignore_collision:
+                return True
+            qpos = torch.tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
+            self.set_qpos(qpos, zero_velocity=False)
+            collision_pairs = set(map(tuple, self.detect_collision()))
+            return not (collision_pairs - mask_collision_pairs)
+
+        ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
+
+        try:
+            planner_cls = getattr(og, planner)
+            if not issubclass(planner_cls, ob.Planner):
+                raise ValueError
+            ss.setPlanner(planner_cls(ss.getSpaceInformation()))
+        except (AttributeError, ValueError) as e:
+            gs.raise_exception_from(f"'{planner}' is not a valid planner. See OMPL documentation for details.", e)
 
         state_start = ob.State(space)
         state_goal = ob.State(space)
@@ -1544,7 +1552,6 @@ class RigidEntity(Entity):
         ss.setStartAndGoalStates(state_start, state_goal)
 
         ######### solve ##########
-        qpos_cur = self.get_qpos()
         solved = ss.solve(timeout)
         waypoints = []
         if solved:
@@ -1562,35 +1569,17 @@ class RigidEntity(Entity):
 
             if num_waypoints is not None:
                 path.interpolate(num_waypoints)
-            waypoints = self._ompl_states_to_tensor_list(path.getStates())
+            waypoints = [
+                torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
+                for state in path.getStates()
+            ]
         else:
             gs.logger.warning("Path planning failed. Returning empty path.")
 
         ########## restore original state #########
-        self.set_qpos(qpos_cur)
+        self.set_qpos(qpos_start, zero_velocity=False)
 
         return waypoints
-
-    def _is_ompl_state_valid(self, state):
-        self.set_qpos(self._ompl_state_to_tensor(state))
-        collision_pairs = self.detect_collision()
-
-        if len(collision_pairs) > 0:
-            return False
-        else:
-            return True
-
-    def _ompl_states_to_tensor_list(self, states):
-        tensor_list = []
-        for state in states:
-            tensor_list.append(self._ompl_state_to_tensor(state))
-        return tensor_list
-
-    def _ompl_state_to_tensor(self, state):
-        tensor = torch.empty(self.n_qs, dtype=gs.tc_float, device=gs.device)
-        for i in range(self.n_qs):
-            tensor[i] = state[i]
-        return tensor
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------

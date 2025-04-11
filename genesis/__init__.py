@@ -252,6 +252,9 @@ def init(
 
     _globalize_backend(backend)
 
+    # Update torch default device
+    torch.set_default_device(device)
+
     logger.info(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
     )
@@ -304,10 +307,8 @@ def destroy():
     global global_scene_list
     for scene in global_scene_list:
         if scene._visualizer is not None:
-            if scene._visualizer._rasterizer is not None:
-                scene._visualizer._rasterizer.destroy()
-                scene._visualizer._rasterizer = None
-            scene._visualizer = None
+            scene._visualizer.destroy()
+        del scene
     global_scene_list.clear()
 
     # Reset taichi
