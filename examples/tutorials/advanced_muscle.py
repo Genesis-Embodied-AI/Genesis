@@ -29,7 +29,7 @@ scene = gs.Scene(
     vis_options=gs.options.VisOptions(
         show_world_frame=False,
     ),
-    show_viewer=False
+    show_viewer=False,
 )
 
 ########################## entities ##########################

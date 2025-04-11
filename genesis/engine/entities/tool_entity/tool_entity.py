@@ -32,7 +32,6 @@ class ToolEntity(Entity):
         self._init_pos = np.array(morph.pos, dtype=gs.np_float)
         self._init_quat = np.array(morph.quat, dtype=gs.np_float)
 
-
         self.mesh = Mesh(
             entity=self,
             material=material,
@@ -168,7 +167,7 @@ class ToolEntity(Entity):
     #     # For visualization only. No need to compute grad.
     #     self.mesh.update_vertices(f)
 
-    @ti.func                 
+    @ti.func
     def collide(self, f, pos_world, vel_mat, b):
         return self.mesh.collide(f, pos_world, vel_mat, b)
 
@@ -183,7 +182,9 @@ class ToolEntity(Entity):
     @ti.kernel
     def advect(self, f: ti.i32):
         for b in range(self._sim._B):
-            self.pos[f + 1, b] = self._solver.boundary.impose_pos(self.pos[f, b] + self.vel[f, b] * self._solver.substep_dt)
+            self.pos[f + 1, b] = self._solver.boundary.impose_pos(
+                self.pos[f, b] + self.vel[f, b] * self._solver.substep_dt
+            )
             # rotate in world coordinates about itself.
             self.quat[f + 1, b] = ti_transform_quat_by_quat(
                 self.quat[f, b], ti_rotvec_to_quat(self.ang[f, b] * self._solver.substep_dt)

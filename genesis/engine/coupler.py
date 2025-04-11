@@ -46,15 +46,21 @@ class Coupler(RBC):
             # this field stores the geom index of the thin shell rigid object (if any) that separates particle and its surrounding grid cell
             self.cpic_flag = ti.field(gs.ti_int, shape=(self.mpm_solver.n_particles, 3, 3, 3, self.mpm_solver._B))
             self.mpm_rigid_normal = ti.Vector.field(
-                3, dtype=gs.ti_float, shape=(self.mpm_solver.n_particles, self.rigid_solver.n_geoms_, self.mpm_solver._B)
+                3,
+                dtype=gs.ti_float,
+                shape=(self.mpm_solver.n_particles, self.rigid_solver.n_geoms_, self.mpm_solver._B),
             )
 
         if self._rigid_sph:
             self.sph_rigid_normal = ti.Vector.field(
-                3, dtype=gs.ti_float, shape=(self.sph_solver.n_particles, self.rigid_solver.n_geoms_, self.sph_solver._B)
+                3,
+                dtype=gs.ti_float,
+                shape=(self.sph_solver.n_particles, self.rigid_solver.n_geoms_, self.sph_solver._B),
             )
             self.sph_rigid_normal_reordered = ti.Vector.field(
-                3, dtype=gs.ti_float, shape=(self.sph_solver.n_particles, self.rigid_solver.n_geoms_, self.sph_solver._B)
+                3,
+                dtype=gs.ti_float,
+                shape=(self.sph_solver.n_particles, self.rigid_solver.n_geoms_, self.sph_solver._B),
             )
 
         if self._rigid_pbd:
@@ -207,13 +213,7 @@ class Coupler(RBC):
 
                 #################### MPM <-> Rigid ####################
                 if ti.static(self._rigid_mpm):
-                    vel_mpm = self._func_collide_with_rigid(
-                        f,
-                        pos,
-                        vel_mpm,
-                        mass_mpm,
-                        b
-                    )
+                    vel_mpm = self._func_collide_with_rigid(f, pos, vel_mpm, mass_mpm, b)
 
                 #################### MPM <-> SPH ####################
                 if ti.static(self._mpm_sph):
@@ -317,7 +317,9 @@ class Coupler(RBC):
             if self.mpm_solver.particles_ng[f, i, b].active:
                 for i_g in range(self.rigid_solver.n_geoms):
                     if self.rigid_solver.geoms_info[i_g].needs_coup:
-                        sdf_normal = self.rigid_solver.sdf.sdf_normal_world(self.mpm_solver.particles[f, i, b].pos, i_g, b)
+                        sdf_normal = self.rigid_solver.sdf.sdf_normal_world(
+                            self.mpm_solver.particles[f, i, b].pos, i_g, b
+                        )
                         # we only update the normal if the particle does not the object
                         if sdf_normal.dot(self.mpm_rigid_normal[i, i_g, b]) >= 0:
                             self.mpm_rigid_normal[i, i_g, b] = sdf_normal
@@ -349,7 +351,7 @@ class Coupler(RBC):
                             self.fem_solver.elements_v[f, iv, b].pos,
                             self.fem_solver.elements_v[f + 1, iv, b].vel,
                             mass / 3.0,  # assume element mass uniformly distributed to vertices
-                            b
+                            b,
                         )
                         self.fem_solver.elements_v[f + 1, iv, b].vel = vel_fem_sv
 
@@ -447,7 +449,8 @@ class Coupler(RBC):
                                 slot_idx = self.sph_solver.sh.grid_to_slot(base + offset)
                                 for k in range(
                                     self.sph_solver.sh.slot_start[slot_idx, b],
-                                    self.sph_solver.sh.slot_start[slot_idx, b] + self.sph_solver.sh.slot_size[slot_idx, b],
+                                    self.sph_solver.sh.slot_start[slot_idx, b]
+                                    + self.sph_solver.sh.slot_size[slot_idx, b],
                                 ):
                                     if ti.abs(pos - self.sph_solver.particles_reordered.pos[k]).max() < dx * 0.5:
                                         self.sph_solver.particles_reordered[k].vel = (

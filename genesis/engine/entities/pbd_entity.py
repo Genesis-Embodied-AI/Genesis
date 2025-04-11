@@ -74,8 +74,8 @@ class PBDTetEntity(ParticleEntity):
             self.solver.particles_info[i_v].mass = self._particle_mass
             self.solver.particles_info[i_v].mu_s = self.material.static_friction
             self.solver.particles_info[i_v].mu_k = self.material.kinetic_friction
-            
-        for i_v_, b in ti.ndrange(self.n_particles, self._sim._B):  
+
+        for i_v_, b in ti.ndrange(self.n_particles, self._sim._B):
             i_v = i_v_ + self._particle_start
             for j in ti.static(range(3)):
                 self.solver.particles[i_v, b].pos[j] = particles[i_v_, j]

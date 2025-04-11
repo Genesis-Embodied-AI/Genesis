@@ -413,7 +413,9 @@ class RasterizerContext:
     def update_mpm(self, buffer_updates):
         if self.sim.mpm_solver.is_active():
             particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[:, self.rendered_envs_idx[0]]
+            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[
+                :, self.rendered_envs_idx[0]
+            ]
             vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0], :]
 
             for mpm_entity in self.sim.mpm_solver.entities:
@@ -482,7 +484,9 @@ class RasterizerContext:
     def update_sph(self, buffer_updates):
         if self.sim.sph_solver.is_active():
             particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[:, self.rendered_envs_idx[0]]
+            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[
+                :, self.rendered_envs_idx[0]
+            ]
 
             for sph_entity in self.sim.sph_solver.entities:
                 if sph_entity.surface.vis_mode == "recon":
@@ -563,7 +567,9 @@ class RasterizerContext:
         if self.sim.pbd_solver.is_active():
             particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
             particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[:, self.rendered_envs_idx[0]]
+            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[
+                :, self.rendered_envs_idx[0]
+            ]
             vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
 
             for pbd_entity in self.sim.pbd_solver.entities:

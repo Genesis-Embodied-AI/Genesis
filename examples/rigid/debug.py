@@ -12,8 +12,7 @@ import torch
 from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
-
-def save_2D_to_video(list_frames: List, filepath, fps: int=60):
+def save_2D_to_video(list_frames: List, filepath, fps: int = 60):
 
     # Convert frames to proper image format if needed (e.g., uint8)
     normalized_frames = [(1 - (frame - np.min(frame)) / (np.max(frame) - np.min(frame))) * 255 for frame in list_frames]
@@ -30,7 +29,7 @@ def save_2D_to_video(list_frames: List, filepath, fps: int=60):
     writer.close()
 
 
-def save_3D_to_video(list_frames: List, filepath, fps: int=60):
+def save_3D_to_video(list_frames: List, filepath, fps: int = 60):
 
     # Convert frames to proper image format if needed (e.g., uint8)
     converted_frames = [frame.astype(np.uint8) for frame in list_frames]
@@ -56,11 +55,11 @@ def save_tensor_to_image(frame: np.ndarray, filepath: str, normalize=False):
         cv2.imwrite(filepath, frame[..., [2, 1, 0]])
     else:
         cv2.imwrite(filepath, frame)
-    return 
+    return
 
 
 def point_to_box_distance(point, box_center, box_size):
-    """ Calculate the minimum distance from a point to a box. """
+    """Calculate the minimum distance from a point to a box."""
     box_min = box_center - box_size / 2
     box_max = box_center + box_size / 2
     max_dist = np.maximum(0, np.maximum(box_min - point, point - box_max))
@@ -68,7 +67,7 @@ def point_to_box_distance(point, box_center, box_size):
 
 
 def check_box_box_overlap(box1, box2):
-    """ Check overlap between two boxes. """
+    """Check overlap between two boxes."""
     pos1, size1, radi1, height1, shape1 = box1
     pos2, size2, radi2, height2, shape2 = box2
     half_size1 = size1 / 2
@@ -80,7 +79,7 @@ def check_box_box_overlap(box1, box2):
 
 
 def check_box_sphere_overlap(box1, sphere2):
-    """ Check if a box and a sphere overlap. """
+    """Check if a box and a sphere overlap."""
     pos1, size1, radi1, height1, shape1 = box1
     pos2, size2, radi2, height2, shape2 = sphere2
     distance = point_to_box_distance(pos2, pos1, size1)
@@ -88,7 +87,7 @@ def check_box_sphere_overlap(box1, sphere2):
 
 
 def check_box_cylinder_overlap(box1, cylinder2):
-    """ Check if a box and a vertically aligned cylinder overlap. """
+    """Check if a box and a vertically aligned cylinder overlap."""
     pos1, size1, radi1, height1, shape1 = box1
     pos2, size2, radi2, height2, shape2 = cylinder2
     # Check xy-plane overlap first
@@ -112,7 +111,7 @@ def check_sphere_sphere_overlap(sphere1, sphere2):
 
 
 def check_sphere_cylinder_overlap(sphere1, cylinder2):
-    """ Check if a sphere and a vertically aligned cylinder overlap. """
+    """Check if a sphere and a vertically aligned cylinder overlap."""
     pos1, size1, radi1, height1, shape1 = sphere1
     pos2, size2, radi2, height2, shape2 = cylinder2
     # Check distance in the xy-plane
@@ -128,7 +127,7 @@ def check_sphere_cylinder_overlap(sphere1, cylinder2):
 
 
 def check_cylinder_cylinder_overlap(cylinder1, cylinder2):
-    """ Check if two cylinders overlap. """
+    """Check if two cylinders overlap."""
     pos1, size1, radi1, height1, shape1 = cylinder1
     pos2, size2, radi2, height2, shape2 = cylinder2
     distance_xy = np.linalg.norm(pos1[:2] - pos2[:2])
@@ -143,17 +142,17 @@ def check_cylinder_cylinder_overlap(cylinder1, cylinder2):
 
 
 def check_overlap(new_meta, list_existing):
-    """ Check if the new box overlaps with any existing box. """
+    """Check if the new box overlaps with any existing box."""
     overlap_functions = {
-        ('Box', 'Box'): lambda obj1, obj2: check_box_box_overlap(obj1, obj2),
-        ('Box', 'Sphere'): lambda obj1, obj2: check_box_sphere_overlap(obj1, obj2),
-        ('Sphere', 'Box'): lambda obj1, obj2: check_box_sphere_overlap(obj2, obj1),
-        ('Box', 'Cylinder'): lambda obj1, obj2: check_box_cylinder_overlap(obj1, obj2),
-        ('Cylinder', 'Box'): lambda obj1, obj2: check_box_cylinder_overlap(obj2, obj1),
-        ('Sphere', 'Sphere'): lambda obj1, obj2: check_sphere_sphere_overlap(obj1, obj2),
-        ('Sphere', 'Cylinder'): lambda obj1, obj2: check_sphere_cylinder_overlap(obj1, obj2),
-        ('Cylinder', 'Sphere'): lambda obj1, obj2: check_sphere_cylinder_overlap(obj2, obj1),
-        ('Cylinder', 'Cylinder'): lambda obj1, obj2: check_cylinder_cylinder_overlap(obj1, obj2)
+        ("Box", "Box"): lambda obj1, obj2: check_box_box_overlap(obj1, obj2),
+        ("Box", "Sphere"): lambda obj1, obj2: check_box_sphere_overlap(obj1, obj2),
+        ("Sphere", "Box"): lambda obj1, obj2: check_box_sphere_overlap(obj2, obj1),
+        ("Box", "Cylinder"): lambda obj1, obj2: check_box_cylinder_overlap(obj1, obj2),
+        ("Cylinder", "Box"): lambda obj1, obj2: check_box_cylinder_overlap(obj2, obj1),
+        ("Sphere", "Sphere"): lambda obj1, obj2: check_sphere_sphere_overlap(obj1, obj2),
+        ("Sphere", "Cylinder"): lambda obj1, obj2: check_sphere_cylinder_overlap(obj1, obj2),
+        ("Cylinder", "Sphere"): lambda obj1, obj2: check_sphere_cylinder_overlap(obj2, obj1),
+        ("Cylinder", "Cylinder"): lambda obj1, obj2: check_cylinder_cylinder_overlap(obj1, obj2),
     }
     overlap_all = False
     for exist_meta in list_existing:
@@ -168,24 +167,30 @@ def check_overlap(new_meta, list_existing):
 
 def add_entity(scene, material, obj_shape: str, pos: np.ndarray, size: np.ndarray, radius: float, height: float):
 
-    if obj_shape == 'Box':
-        obj = gs.morphs.Box(pos=pos, size=size,)
-    elif obj_shape == 'Sphere':
-        obj = gs.morphs.Sphere(pos=pos, radius=radius,)
-    elif obj_shape == 'Cylinder':
+    if obj_shape == "Box":
+        obj = gs.morphs.Box(
+            pos=pos,
+            size=size,
+        )
+    elif obj_shape == "Sphere":
+        obj = gs.morphs.Sphere(
+            pos=pos,
+            radius=radius,
+        )
+    elif obj_shape == "Cylinder":
         obj = gs.morphs.Cylinder(pos=pos, radius=radius, height=height)
     else:
         raise ValueError(f"Invalid shape: {obj_shape}")
 
-    added_obj = scene.add_entity(
-        material=material,
-        morph=obj
-    )
+    added_obj = scene.add_entity(material=material, morph=obj)
     return added_obj
 
 
-def create_parameter(list_occupied: List, obj_shape: str, ):
-    
+def create_parameter(
+    list_occupied: List,
+    obj_shape: str,
+):
+
     max_attempts = 100
     success = False
     new_size = None
@@ -193,11 +198,11 @@ def create_parameter(list_occupied: List, obj_shape: str, ):
     new_height = None
     for _ in range(max_attempts):
         new_pos = np.random.rand(3) * 10 + 2
-        if obj_shape == 'Box':
+        if obj_shape == "Box":
             new_size = np.random.rand(3) * 4
         else:
             new_radius = np.random.rand() * 2
-            if obj_shape == 'Cylinder':
+            if obj_shape == "Cylinder":
                 new_height = np.random.rand() * 3
         cur_meta = [new_pos, new_size, new_radius, new_height, obj_shape]
         if not check_overlap(cur_meta, list_occupied):
@@ -207,7 +212,7 @@ def create_parameter(list_occupied: List, obj_shape: str, ):
     return success, list_occupied, cur_meta
 
 
-def add_force(rigid_solver, cur_idx, f_scale: int=100, dim: int=2):
+def add_force(rigid_solver, cur_idx, f_scale: int = 100, dim: int = 2):
     cur_pos = rigid_solver.get_links_pos(cur_idx)
     cur_pos[:, :, dim] -= 1
     force = f_scale * cur_pos
@@ -215,10 +220,10 @@ def add_force(rigid_solver, cur_idx, f_scale: int=100, dim: int=2):
         force=force,
         links_idx=cur_idx,
     )
-    return 
+    return
 
 
-def add_torque(rigid_solver, cur_idx, rot_direction, rot_scale: int=5, dim: int=2):
+def add_torque(rigid_solver, cur_idx, rot_direction, rot_scale: int = 5, dim: int = 2):
     torque = [0, 0, 0]
     torque[dim] = rot_direction * rot_scale
     torque = torch.tensor(torque).unsqueeze(0).unsqueeze(0)
@@ -226,25 +231,28 @@ def add_torque(rigid_solver, cur_idx, rot_direction, rot_scale: int=5, dim: int=
         torque=torque,
         links_idx=cur_idx,
     )
-    return 
+    return
 
 
 def set_velocity(obj, v_array):
-    v_init = gs.tensor(v_array,)
+    v_init = gs.tensor(
+        v_array,
+    )
     obj.set_dofs_velocity(v_init)
-    return 
+    return
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--vis", action="store_true", default=False)
     parser.add_argument("--num_obj", type=int, default=5)
     parser.add_argument("--seed", type=int, default=2)
-    parser.add_argument("--output_folder", type=str, default='output_folder')
+    parser.add_argument("--output_folder", type=str, default="output_folder")
     args = parser.parse_args()
 
     num_obj = args.num_obj
     seed = args.seed
-    root_folder = '.'
+    root_folder = "."
     os.makedirs(root_folder, exist_ok=True)
     output_folder = args.output_folder
     output_folder = os.path.join(root_folder, output_folder)
@@ -261,17 +269,17 @@ def main():
             gravity=(0, 0, -10.0),
         ),
         vis_options=gs.options.VisOptions(
-            visualize_mpm_boundary = False,
-            show_world_frame = False,
-            show_link_frame = False,
-            segmentation_level = 'entity'  # geom not supported yet
+            visualize_mpm_boundary=False,
+            show_world_frame=False,
+            show_link_frame=False,
+            segmentation_level="entity",  # geom not supported yet
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_fov= 40,
-            max_FPS   = 60,
+            camera_fov=40,
+            max_FPS=60,
         ),
-        show_viewer = False,
-        renderer = gs.renderers.Rasterizer(), # using rasterizer for camera rendering
+        show_viewer=False,
+        renderer=gs.renderers.Rasterizer(),  # using rasterizer for camera rendering
     )
 
     plane = scene.add_entity(
@@ -280,47 +288,58 @@ def main():
 
     B = 1
 
-    list_shape = ['Box', 'Sphere', 'Cylinder']
+    list_shape = ["Box", "Sphere", "Cylinder"]
     dict_obj_idx = dict()
     list_occupied = []
     for obj_idx in range(num_obj):
         friction_ratio = np.random.rand()
         rigid_material = gs.materials.Rigid(needs_coup=True, coup_friction=friction_ratio)
         obj_shape = np.random.choice(list_shape)
-        success, list_occupied, new_para = create_parameter(list_occupied=list_occupied, obj_shape=obj_shape, )
+        success, list_occupied, new_para = create_parameter(
+            list_occupied=list_occupied,
+            obj_shape=obj_shape,
+        )
         if success:
             new_pos, new_size, new_radius, new_height, _ = new_para
-            added_obj = add_entity(scene, material=rigid_material, obj_shape=obj_shape, pos=new_pos, size=new_size, radius=new_radius, height=new_height)
+            added_obj = add_entity(
+                scene,
+                material=rigid_material,
+                obj_shape=obj_shape,
+                pos=new_pos,
+                size=new_size,
+                radius=new_radius,
+                height=new_height,
+            )
             dict_obj_idx[obj_idx] = [added_obj, obj_shape]
-    
+
     # set camera pos to the highest place
     max_z = 0
     max_x = 0
     max_y = 0
     for meta in list_occupied:
         new_pos, new_size, new_radius, new_height, new_shape = meta
-        if new_shape == 'Box':
-            max_x = max(max_x, new_pos[0] + new_size[0]/2)
-            max_y = max(max_y, new_pos[1] + new_size[1]/2)
-            max_z = max(max_z, new_pos[2] + new_size[2]/2)
-        elif new_shape == 'Sphere':
+        if new_shape == "Box":
+            max_x = max(max_x, new_pos[0] + new_size[0] / 2)
+            max_y = max(max_y, new_pos[1] + new_size[1] / 2)
+            max_z = max(max_z, new_pos[2] + new_size[2] / 2)
+        elif new_shape == "Sphere":
             max_x = max(max_x, new_pos[0] + new_radius)
             max_y = max(max_y, new_pos[1] + new_radius)
             max_z = max(max_z, new_pos[2] + new_radius)
-        elif new_shape == 'Cylinder':
+        elif new_shape == "Cylinder":
             max_x = max(max_x, new_pos[0] + new_radius)
             max_y = max(max_y, new_pos[1] + new_radius)
-            max_z = max(max_z, new_pos[2] + new_height/2)
+            max_z = max(max_z, new_pos[2] + new_height / 2)
 
     max_x = np.ceil(max_x + 20)
     max_y = np.ceil(max_y + 20)
     max_z = np.ceil(max_z + 3)
     cam = scene.add_camera(
-        res    = (640, 480),
-        pos    = (max_x, max_y, max_z),
-        lookat = (0.0, 0.0, 0.0),
-        fov    = 35,
-        GUI    = False,
+        res=(640, 480),
+        pos=(max_x, max_y, max_z),
+        lookat=(0.0, 0.0, 0.0),
+        fov=35,
+        GUI=False,
     )
 
     scene.build(n_envs=B, env_spacing=(1.0, 1.0))
@@ -348,24 +367,24 @@ def main():
     # create segments colors
     seg_idxc_to_color = np.random.randint(0, 255, (num_entities, 3), dtype=np.uint8)
     # set background colors
-    seg_idxc_to_color[0, :] = 0 
+    seg_idxc_to_color[0, :] = 0
     link_idx = list(range(1, num_entities))
     list_changes = []
     for i in link_idx:
-        obj_shape = dict_obj_idx[i-1][1]
-        if obj_shape not in ('Sphere', 'Cylinder'):
-            action = np.random.choice(['force', 'torque'])
+        obj_shape = dict_obj_idx[i - 1][1]
+        if obj_shape not in ("Sphere", "Cylinder"):
+            action = np.random.choice(["force", "torque"])
         else:
-            action = 'force'
+            action = "force"
 
-        if action == 'force':
+        if action == "force":
             # f_scale = np.random.rand() * 50 - 25
-            f_scale = np.random.rand() * 50+20
-            list_changes.append(['force', i, f_scale])
+            f_scale = np.random.rand() * 50 + 20
+            list_changes.append(["force", i, f_scale])
         else:
             # rot_scale = np.random.rand() * 20 - 10
-            rot_scale = np.random.rand() * 20+20
-            list_changes.append(['torque', i, rot_scale])
+            rot_scale = np.random.rand() * 20 + 20
+            list_changes.append(["torque", i, rot_scale])
 
     os.makedirs(output_folder, exist_ok=True)
     rotation_direction = 1
@@ -379,7 +398,7 @@ def main():
             #         set_velocity(dict_obj_idx[obj_id][0], new_v)
             for init_changes in list_changes:
                 action, idx, a_scale = init_changes
-                if action == 'force':
+                if action == "force":
                     cur_idx = [idx]
                     dim = np.random.randint(3)
                     add_force(rigid_solver, cur_idx, f_scale=a_scale, dim=dim)
@@ -406,9 +425,10 @@ def main():
 
     # output depth & segmentation video
     # save_2D_to_video(recorded_depth, f'{output_folder}/depth.mp4', fps=60)
-    save_3D_to_video(recorded_seg, f'{output_folder}/segments.mp4', fps=60)
+    save_3D_to_video(recorded_seg, f"{output_folder}/segments.mp4", fps=60)
     # with open(f'{output_folder}/segments_id.pkl', 'wb') as f:
     #     pickle.dump(recorded_seg_id, f)
+
 
 if __name__ == "__main__":
     main()

@@ -1183,15 +1183,7 @@ class SpatialHasher:
             self.slot_start[i, b] -= self.slot_size[i, b]
 
     @ti.func
-    def for_all_neighbors(
-        self,
-        i,
-        pos,
-        task_range,
-        ret: ti.template(),
-        task: ti.template(),
-        b
-    ):
+    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), b):
         """
         Iterates over all neighbors of a given position and performs a task on each neighbor.
         Elements are considered neighbors if they are within task_range.

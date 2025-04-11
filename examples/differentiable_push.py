@@ -108,7 +108,7 @@ def main():
         pos_obj1_init = gs.tensor([0.3, 0.3, 0.1], requires_grad=True)
         obj1.set_position(pos_obj1_init)
         loss = 0
-        
+
         for i in range(horizon):
             v_i = v_list[i]
             # w_i = gs.tensor([2.0, 0.0, 0.0], requires_grad=True)

@@ -27,9 +27,7 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx = [1]
-        ),
+        vis_options=gs.options.VisOptions(rendered_envs_idx=[1]),
         show_viewer=args.vis,
     )
 
