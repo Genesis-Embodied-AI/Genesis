@@ -89,7 +89,7 @@ def main():
             color=(0.0, 0.4, 0.9, 1.0),
         ),
     )
-    scene.build()
+    scene.build(n_envs=5)
 
     horizon = 1000
     for i in range(horizon):

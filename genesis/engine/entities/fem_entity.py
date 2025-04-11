@@ -53,8 +53,13 @@ class FEMEntity(Entity):
             self._tgt["pos"] = torch.tile(self._tgt["pos"][None], [self._sim._B, 1, 1])
 
         elif len(pos.shape) == 2:
-            assert pos.shape == (self.n_vertices, 3)
-            self._tgt["pos"] = torch.tile(pos[None], [self._sim._B, 1, 1])
+            if pos.shape == (self.n_vertices, 3):
+                self._tgt["pos"] = torch.tile(pos[None], [self._sim._B, 1, 1])
+            elif pos.shape == (self._sim._B, 3):
+                # Tile COM position for each vertex
+                self._tgt["pos"] = torch.tile(pos[:, None, :], [1, self.n_vertices, 1])
+            else:
+                gs.raise_exception("Tensor shape not supported.")
 
         elif len(pos.shape) == 3:
             assert pos.shape == (self._sim._B, self.n_vertices, 3)
@@ -74,8 +79,12 @@ class FEMEntity(Entity):
             self._tgt["vel"] = torch.tile(vel, [self._sim._B, self.n_vertices, 1])
 
         elif len(vel.shape) == 2:
-            assert vel.shape == (self.n_vertices, 3)
-            self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+            if vel.shape == (self.n_vertices, 3):
+                self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+            elif vel.shape == (self._sim._B, 3):
+                self._tgt["vel"] = torch.tile(vel[:, None, :], [1, self.n_vertices, 1])
+            else:
+                gs.raise_exception("Tensor shape not supported.")
 
         elif len(vel.shape) == 3:
             assert vel.shape == (self._sim._B, self.n_vertices, 3)
@@ -101,7 +110,7 @@ class FEMEntity(Entity):
             else:
                 assert actu.shape == (self.n_elements,)
                 gs.raise_exception("Cannot set per-element actuation")
-            self._tgt["actu"] = actu.tile([self._sim._B, 1])
+            self._tgt["actu"] = torch.tile(actu[None], [self._sim._B, 1])
 
         elif len(actu.shape) == 2:
             assert actu.shape == (self._sim._B, n_groups)

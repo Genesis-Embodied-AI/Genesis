@@ -308,8 +308,12 @@ class ParticleEntity(Entity):
             self._tgt["vel"] = torch.tile(vel, [self._sim._B, self._n_particles, 1])
 
         elif len(vel.shape) == 2:
-            assert vel.shape == (self._n_particles, 3)
-            self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+            if vel.shape == (self._n_particles, 3):
+                self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+            elif vel.shape == (self._sim._B, 3):
+                self._tgt["vel"] = torch.tile(vel[:, None, :], [1, self._n_particles, 1])
+            else:
+                gs.raise_exception("Tensor shape not supported.")
 
         elif len(vel.shape) == 3:
             assert vel.shape == (self._sim._B, self._n_particles, 3)
@@ -337,8 +341,12 @@ class ParticleEntity(Entity):
             self._tgt["pos"] = torch.tile(self._tgt["pos"][None], [self._sim._B, 1, 1])
 
         elif len(pos.shape) == 2:
-            assert pos.shape == (self._n_particles, 3)
-            self._tgt["pos"] = torch.tile(pos[None], [self._sim._B, 1, 1])
+            if pos.shape == (self._n_particles, 3):
+                self._tgt["pos"] = torch.tile(pos[None], [self._sim._B, 1, 1])
+            elif pos.shape == (self._sim._B, 3):
+                self._tgt["pos"] = torch.tile(pos[:, None, :], [1, self._n_particles, 1])
+            else:
+                gs.raise_exception("Tensor shape not supported.")
 
         elif len(pos.shape) == 3:
             assert pos.shape == (self._sim._B, self._n_particles, 3)

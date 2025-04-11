@@ -58,11 +58,11 @@ class Coupler(RBC):
             )
 
         if self._rigid_pbd:
-            self.pbd_rigid_normal = ti.Vector.field(
-                3, dtype=gs.ti_float, shape=(self.pbd_solver.n_particles, self.rigid_solver.n_geoms, self.pbd_solver._B)
-            )
+            # self.pbd_rigid_normal = ti.Vector.field(
+            #     3, dtype=gs.ti_float, shape=(self.pbd_solver.n_particles, self.rigid_solver.n_geoms, self.pbd_solver._B)
+            # )
             self.pbd_rigid_normal_reordered = ti.Vector.field(
-                3, dtype=gs.ti_float, shape=(self.pbd_solver.n_particles, self.rigid_solver.n_geoms, self.pbd_solver._B)
+                3, dtype=gs.ti_float, shape=(self.pbd_solver.n_particles, self.pbd_solver._B, self.rigid_solver.n_geoms)
             )
 
         if self._mpm_sph:
@@ -258,7 +258,7 @@ class Coupler(RBC):
                                 ):
                                     self.sph_solver.particles_reordered[i, b].vel = (
                                         self.sph_solver.particles_reordered[i, b].vel
-                                        - delta_mv / self.sph_solver.particles_info[i, b].mass
+                                        - delta_mv / self.sph_solver.particles_info_reordered[i, b].mass
                                     )
 
                 #################### MPM <-> PBD ####################
@@ -491,13 +491,13 @@ class Coupler(RBC):
                         (
                             self.pbd_solver.particles_reordered[i, b].pos,
                             self.pbd_solver.particles_reordered[i, b].vel,
-                            self.pbd_rigid_normal_reordered[i, i_g, b],
+                            self.pbd_rigid_normal_reordered[i, b, i_g],
                         ) = self._func_pbd_collide_with_rigid_geom(
                             i,
                             self.pbd_solver.particles_reordered[i, b].pos,
                             self.pbd_solver.particles_reordered[i, b].vel,
                             self.pbd_solver.particles_info_reordered[i, b].mass,
-                            self.pbd_rigid_normal_reordered[i, i_g, b],
+                            self.pbd_rigid_normal_reordered[i, b, i_g],
                             i_g,
                             b,
                         )

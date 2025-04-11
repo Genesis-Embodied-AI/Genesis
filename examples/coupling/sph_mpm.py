@@ -21,7 +21,7 @@ def main():
         vis_options=gs.options.VisOptions(
             visualize_sph_boundary=True,
             visualize_mpm_boundary=True,
-            rendered_envs_idx = [2]
+            rendered_envs_idx = [0]
         ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(0.0, 0.0, -0.1),

@@ -29,8 +29,8 @@ class ToolEntity(Entity):
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
 
-        self._init_pos = np.tile(np.array(morph.pos, dtype=gs.np_float), (2, 1))
-        self._init_quat = np.tile(np.array(morph.quat, dtype=gs.np_float), (2, 1))
+        self._init_pos = np.array(morph.pos, dtype=gs.np_float)
+        self._init_quat = np.array(morph.quat, dtype=gs.np_float)
 
 
         self.mesh = Mesh(
@@ -48,8 +48,8 @@ class ToolEntity(Entity):
     def init_tgt_vars(self):
         # temp variable to store targets for next step
         self._tgt = {
-            "pos": gs.tensor(self._init_pos, requires_grad=True),
-            "quat": gs.tensor(self._init_quat, requires_grad=True),
+            "pos": None,
+            "quat": None,
             "vel": None,
             "ang": None,
         }
@@ -312,9 +312,9 @@ class ToolEntity(Entity):
     def set_init_state(self, pos: ti.types.ndarray(), quat: ti.types.ndarray()):
         for b in range(self._sim._B):
             for i in ti.static(range(3)):
-                self.pos[0, b][i] = pos[b, i]
+                self.pos[0, b][i] = pos[i]
             for i in ti.static(range(4)):
-                self.quat[0, b][i] = quat[b, i]
+                self.quat[0, b][i] = quat[i]
 
     @ti.kernel
     def set_vel(self, s: ti.i32, vel: ti.types.ndarray()):

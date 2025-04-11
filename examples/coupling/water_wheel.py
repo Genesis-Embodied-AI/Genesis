@@ -56,7 +56,7 @@ def main():
             color=(0.7, 0.85, 1.0, 0.7),
         ),
     )
-    scene.build()
+    scene.build(n_envs=5)
 
     horizon = 500
     for i in range(horizon):

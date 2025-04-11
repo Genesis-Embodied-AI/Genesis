@@ -236,7 +236,7 @@ class RasterizerContext:
                     )
                     mesh.visual = mu.surface_uvs_to_trimesh_visual(tool_entity.surface, n_verts=len(mesh.vertices))
 
-                    pose = gu.trans_quat_to_T(tool_entity.init_pos[0], tool_entity.init_quat[0])
+                    pose = gu.trans_quat_to_T(tool_entity.init_pos, tool_entity.init_quat)
                     double_sided = tool_entity.surface.double_sided
                     self.add_static_node(
                         tool_entity.uid, pyrender.Mesh.from_trimesh(mesh, double_sided=double_sided), pose=pose

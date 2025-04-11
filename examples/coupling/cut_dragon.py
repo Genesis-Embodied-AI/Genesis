@@ -35,7 +35,7 @@ def main():
         show_viewer=args.vis,
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
-            rendered_envs_idx = [2]
+            # rendered_envs_idx = [2]
         ),
     )
 
@@ -67,7 +67,7 @@ def main():
             vis_mode="particle",
         ),
     )
-    scene.build(n_envs=5)
+    scene.build(n_envs=10)
 
     horizon = 400
     for i in range(horizon):
