@@ -89,12 +89,9 @@ def main():
     scene.build(n_envs=2)
 
     ########################## forward + backward twice ##########################
-    v_list = []
     w_list = []
     horizon = 150
-    for i in range(horizon):
-        v_i = gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True)
-        v_list.append(v_i)
+    v_list  = [gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True) for _ in range(horizon)]
     for _ in range(2):
         scene.reset()
         init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)
@@ -139,7 +136,7 @@ def main():
         # backward pass
         print("backward")
         loss.backward()  # this lets gradient flow all the way back to tensor input
-        # timer.stamp("backward took: ")
+        timer.stamp("backward took: ")
         for v_i in v_list:
             print(v_i.grad)
             v_i.zero_grad()

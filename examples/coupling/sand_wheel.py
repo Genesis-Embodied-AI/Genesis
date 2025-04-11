@@ -31,7 +31,10 @@ def main():
             camera_fov=30,
             max_FPS=120,
         ),
-        vis_options=gs.options.VisOptions(visualize_mpm_boundary=True, rendered_envs_idx=[0]),
+        vis_options=gs.options.VisOptions(
+            visualize_mpm_boundary=True,
+            rendered_envs_idx=[0]
+        ),
     )
 
     plane = scene.add_entity(

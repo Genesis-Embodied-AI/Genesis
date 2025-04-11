@@ -30,7 +30,7 @@ def main():
             max_FPS=120,
         ),
         # vis_options=gs.options.VisOptions(
-        #     rendered_envs_idx = [2]
+        #     rendered_envs_idx=[2]
         # ),
         show_viewer=args.vis,
         sph_options=gs.options.SPHOptions(
