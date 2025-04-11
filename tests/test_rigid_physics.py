@@ -351,7 +351,7 @@ def test_robot_kinematics(gs_sim, mj_sim, atol):
         check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
 
 
-def test_mjcf_world_offset(show_viewer, atol):
+def test_set_root_pose(show_viewer, atol):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -363,12 +363,22 @@ def test_mjcf_world_offset(show_viewer, atol):
             euler=(0, 0, 90),
         ),
     )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
+    )
     scene.build()
 
     np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
     np.testing.assert_allclose(
         gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
     )
+    np.testing.assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), atol=atol)
+
+    cube.set_pos(torch.tensor((0.0, 0.5, 0.2)))
+    np.testing.assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), atol=atol)
 
 
 @pytest.mark.dof_damping(True)

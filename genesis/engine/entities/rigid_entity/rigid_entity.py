@@ -544,6 +544,7 @@ class RigidEntity(Entity):
                 entity=self,
                 name=j_info["name"],
                 idx=self.n_joints + self._joint_start,
+                link_idx=link.idx,
                 q_start=self.n_qs + self._q_start,
                 dof_start=self.n_dofs + self._dof_start,
                 n_qs=j_info["n_qs"],
