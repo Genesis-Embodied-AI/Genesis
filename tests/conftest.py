@@ -25,23 +25,26 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-def pytest_xdist_auto_num_workers(config):
-    # Determine whether 'benchmarks' marker is selected
+@pytest.hookimpl(tryfirst=True)
+def pytest_cmdline_main(config: pytest.Config) -> None:
+    # Force disabling distributed framework if benchmarks are selected
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+    if is_benchmarks:
+        config.option.numprocesses = 0
+
+    # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
+    if show_viewer:
+        config.option.numprocesses = 0
 
-    # Disable multi-processing for benchmarks
-    if is_benchmarks or show_viewer:
-        return 0
 
+def pytest_xdist_auto_num_workers(config):
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores
     physical_core_count = psutil.cpu_count(logical=False)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
     _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
     return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
-
-    return config.option.numprocesses
 
 
 def pytest_addoption(parser):
