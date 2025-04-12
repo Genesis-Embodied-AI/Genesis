@@ -29,12 +29,12 @@ def get_input_attribute_value(shader, input_name, input_type=None):
         # gs.raise_exception(f"Input type mismatch. Expecting {input_type}, but got attribute.")
 
     if input_type != "attribute":
-        return shader_input_attr.Get(), None
+        return shader_input.Get(), None
         # if shader_input.Get() is not None:
         # gs.raise_exception(f"Input type mismatch. Expecting {input_type}, but got value.")
     return None, None
 
-def parse_preview_surface(stage, shader, output_name):
+def parse_preview_surface(shader, output_name):
     shader_id = shader.GetShaderId()
     if shader.GetShaderId() == "UsdPreviewSurface":
         uvname = None
@@ -46,7 +46,7 @@ def parse_preview_surface(stage, shader, output_name):
                 component_image = None
             else:                               # texture shader
                 component_image, component_overencode, component_uvname = \
-                    parse_preview_surface(stage, component, component_output)
+                    parse_preview_surface(component, component_output)
                 if component_overencode is not None:
                     component_encode = component_overencode
                 component_factor = None
@@ -93,7 +93,7 @@ def parse_preview_surface(stage, shader, output_name):
         # parse io
         ior = get_input_attribute_value(shader, "ior", "value")[0]
 
-        return uvname, {
+        return {
             "color_texture": color_texture,
             "opacity_texture": opacity_texture,
             "roughness_texture": roughness_texture,
@@ -101,7 +101,7 @@ def parse_preview_surface(stage, shader, output_name):
             "emissive_texture": emissive_texture,
             "normal_texture": normal_texture,
             "ior": ior,
-        }
+        }, uvname
     
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
@@ -113,7 +113,7 @@ def parse_preview_surface(stage, shader, output_name):
 
         texture_uvs_shader, texture_uvs_output = \
             get_input_attribute_value(shader, "st", "attribute")
-        texture_uvs_name = parse_preview_surface(stage, texture_uvs_shader, texture_uvs_output)
+        texture_uvs_name = parse_preview_surface(texture_uvs_shader, texture_uvs_output)
 
         if output_name == "r":
             texture_image = texture_image[:, :, 0]
@@ -134,7 +134,7 @@ def parse_preview_surface(stage, shader, output_name):
         primvar_name = get_input_attribute_value(shader, "varname", "value")[0]
         return primvar_name
 
-def parse_gltf_surface(stage, shader, source_type, output_name):
+def parse_gltf_surface(shader, source_type, output_name):
     shader_subid = shader.GetSourceAssetSubIdentifier(source_type)
     if shader_subid == "gltf_material":
         # Parse color
@@ -142,8 +142,7 @@ def parse_gltf_surface(stage, shader, source_type, output_name):
         color_texture_shader, color_texture_output = \
             get_input_attribute_value(shader, "base_color_texture", "attribute")
         if color_texture_shader is not None:
-            color_image = parse_gltf_surface(
-                stage, color_texture_shader, source_type, color_texture_output)
+            color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output)
         else:
             color_image = None
         color_texture = mu.create_texture(color_image, color_factor, "srgb")
@@ -162,8 +161,7 @@ def parse_gltf_surface(stage, shader, source_type, output_name):
         combined_texture_shader, combined_texture_output = \
             get_input_attribute_value(shader, "metallic_roughness_texture", "attribute")
         if combined_texture_shader is not None:
-            combined_image = parse_gltf_surface(
-                stage, combined_texture_shader, source_type, combined_texture_output)
+            combined_image = parse_gltf_surface(combined_texture_shader, source_type, combined_texture_output)
             roughness_image = combined_image[:, :, 1]
             metallic_image = combined_image[:, :, 2]
         else:
@@ -178,16 +176,15 @@ def parse_gltf_surface(stage, shader, source_type, output_name):
         occlusion_texture_shader, occlusion_texture_output = \
             get_input_attribute_value(shader, "occlusion_texture", "attribute")
         if occlusion_texture_shader is not None:
-            occlusion_image = parse_gltf_surface(
-                stage, occlusion_texture_shader, source_type, occlusion_texture_output)
+            occlusion_image = parse_gltf_surface(occlusion_texture_shader, source_type, occlusion_texture_output)
 
-        return "st", {
+        return {
             "color_texture": color_texture,
             "opacity_texture": opacity_texture,
             "roughness_texture": roughness_texture,
             "metallic_texture": metallic_texture,
             "emissive_texture": emissive_texture,
-        }
+        }, "st"
 
     elif shader_subid == "gltf_texture_lookup":
         # offset = shader.GetInput("offset").Get()
@@ -204,7 +201,7 @@ def parse_gltf_surface(stage, shader, source_type, output_name):
     else:
         raise Exception(f"Fail to parse gltf Shader {shader_subid}.")
 
-def parse_omni_surface(stage, shader, source_type, output_name):
+def parse_omni_surface(shader, source_type, output_name):
 
     def parse_component(component_name, component_encode, adjust=None):
         component_usetex = get_input_attribute_value(shader, f"Is{component_name}Tex", "value")[0] == 1
@@ -232,7 +229,10 @@ def parse_omni_surface(stage, shader, source_type, output_name):
         return component_texture
 
     color_texture = parse_component("BaseColor", "srgb")
-    opacity_texture = color_texture.check_dim(3)
+    if color_texture is None:
+        opacity_texture = None
+    else:
+        opacity_texture = color_texture.check_dim(3)
     emissive_intensity = get_input_attribute_value(shader, "EmissiveIntensity", "value")[0]
     if emissive_intensity is None or emissive_intensity == 0.0:
         emissive_texture = None
@@ -242,45 +242,41 @@ def parse_omni_surface(stage, shader, source_type, output_name):
     normal_texture = parse_component("Normal", "linear")
     roughness_texture = parse_component("Gloss", "linear", lambda x: (2 / (x + 2))**(1.0 / 4.0))
     
-    return "st", {
+    return {
         "color_texture": color_texture,
         "opacity_texture": opacity_texture,
         "roughness_texture": roughness_texture,
         "metallic_texture": metallic_texture,
         "emissive_texture": emissive_texture,
         "normal_texture": normal_texture,
-    }
+    }, "st"
 
-def parse_usd_material(stage, material):
+def parse_usd_material(material):
     surface_outputs = material.GetSurfaceOutputs()
     for surface_output in surface_outputs:
-        surface_output_connections = surface_output.GetConnections()
-        if not surface_output_connections:
+        if not surface_output.HasConnectedSource():
             continue
-        surface_attr = stage.GetAttributeAtPath(surface_output_connections[0])
-        surface_shader = UsdShade.Shader(surface_attr.GetPrim())
+        surface_output_connectable, surface_output_name, _ = surface_output.GetConnectedSource()
+        surface_shader = UsdShade.Shader(surface_output_connectable.GetPrim())
         surface_shader_implement = surface_shader.GetImplementationSource()
-        surface_attr_name = surface_attr.GetBaseName()
 
         if surface_shader_implement == "id":
             if surface_shader.GetShaderId() == "UsdPreviewSurface":
-                return parse_preview_surface(stage, surface_shader, surface_attr_name)
-            else:
-                gs.logger.warning(f"Fail to parse Shader type {surface_shader.GetShaderId()}.")
-                continue
+                return parse_preview_surface(surface_shader, surface_output_name)
+            gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} with ID {surface_shader.GetShaderId()}.")
+            continue
 
         elif surface_shader_implement == "sourceAsset":
             source_types = surface_shader.GetSourceTypes()
             for source_type in source_types:
-                source_asset = surface_shader.GetSourceAsset(source_type).authoredPath
+                source_asset = surface_shader.GetSourceAsset(source_type).resolvedPath
                 if "gltf/pbr" in source_asset:
-                    return parse_gltf_surface(stage, surface_shader, source_type, surface_attr_name)
-                else:
-                    try:
-                        return parse_omni_surface(stage, surface_shader, source_type, surface_attr_name)
-                    except Exception as e:
-                        gs.logger.warning(f"Fail to parse Shader type {surface_shader.GetShaderId()} with message {e}.")
-                        continue
+                    return parse_gltf_surface(surface_shader, source_type, surface_output_name)
+                try:
+                    return parse_omni_surface(surface_shader, source_type, surface_output_name)
+                except Exception as e:
+                    gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}.")
+                    continue
     
     return None, None
 
@@ -297,7 +293,10 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
         if prim.IsA(UsdGeom.Mesh):
             matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
             usd_mesh = UsdGeom.Mesh(prim)
+            mesh_path = prim.GetPath().pathString
 
+            if not usd_mesh.GetPointsAttr().HasValue():
+                continue
             points = np.array(usd_mesh.GetPointsAttr().Get(), dtype=np.float32)
             faces = np.array(usd_mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
             faces_vertex_counts = np.array(usd_mesh.GetFaceVertexCountsAttr().Get())
@@ -312,16 +311,18 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                     if normals.shape[0] == faces.shape[0]:        # face varying
                         points_faces_varying = True
                     else:
-                        raise Exception("Size of normals mismatch.")
+                        gs.raise_exception(f"Size of normals mismatch for mesh {mesh_path} in usd file {path}.")
             
             # parse materials
             prim_bindings = UsdShade.MaterialBindingAPI(prim)
             material = prim_bindings.ComputeBoundMaterial()[0]
             group_idx = ""
             if material.GetPrim().IsValid():
-                material_path = material.GetPath().pathString
-                if material_path not in materials:
-                    material_dict, uv_names[material_path] = parse_usd_material(stage, material, surface)
+                material_spec = material.GetPrim().GetPrimStack()[-1]
+                material_id = material_spec.layer.identifier + material_spec.path.pathString
+
+                if material_id not in materials:
+                    material_dict, uv_names[material_id] = parse_usd_material(material)
                     material_surface = surface.copy()
                     
                     if material_dict is not None:
@@ -334,19 +335,22 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                             emissive_texture=material_dict.get("emissive_texture"),
                             ior=material_dict.get("ior"),
                         )
-                    materials[material_path] = material_surface
-                group_idx = material_path if group_by_material else i
-                uv_name = uv_names[material_path]
+                    materials[material_id] = material_surface
+                group_idx = material_id if group_by_material else i
+                uv_name = uv_names[material_id]
 
             # parse uvs
+            # print(uv_name, material_id, len(uv_names))
+            
             uv_attr = prim.GetAttribute(f"primvars:{uv_name}")
+            uvs = None
             if uv_attr.HasValue():
                 uvs = np.array(uv_attr.Get(), dtype=np.float32)
                 if uvs.shape[0] != points.shape[0]:
                     if uvs.shape[0] == faces.shape[0]:
                         points_faces_varying = True
                     else:
-                        raise Exception("Size of uvs mismatch.")
+                        gs.raise_exception(f"Size of uvs mismatch for mesh {mesh_path} in usd file {path}.")
 
             # rearrange points and faces
             if points_faces_varying:
@@ -372,12 +376,12 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
             points, normals = mu.apply_transform(matrix, points, normals)
 
-            mesh_infos.append(group_idx, points, triangles, normals, uvs, materials[material_path])
+            mesh_infos.append(group_idx, points, triangles, normals, uvs, materials[material_id])
 
-    return mesh_infos.export_meshes(scale=scale)
+    return mesh_infos.export_meshes(scale=scale, path=path)
 
 if __name__ == "__main__":
     file_path = 'table_scene.usd'
-    grouped_meshes = parse_meshes_usd(file_path)
+    grouped_meshes = parse_mesh_usd(file_path)
     for mesh in grouped_meshes:
         print(mesh)

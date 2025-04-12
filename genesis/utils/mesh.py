@@ -49,12 +49,12 @@ class MeshInfo:
         self.n_members += 1
         if uvs is not None:
             self.uvs_exist = True
-    
+
     def export_mesh(self, scale, path):
         if self.uvs_exist:
             for i in range(self.n_members):
                 if self.uvs[i] is None:
-                    self.uvs[i] = np.zeros((self.verts[i].shape[0], 2), dtype=float)
+                    self.uvs[i] = np.zeros((self.verts[i].shape[0], 2), dtype=np.float32)
             uvs = np.concatenate(self.uvs, axis=0)
         else:
             uvs = None
@@ -62,7 +62,7 @@ class MeshInfo:
         verts = np.concatenate(self.verts, axis=0)
         faces = np.concatenate(self.faces, axis=0)
         normals = np.concatenate(self.normals, axis=0)
-        
+
         mesh = gs.Mesh.from_attrs(
             verts=verts,
             faces=faces,

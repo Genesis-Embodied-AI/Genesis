@@ -333,7 +333,7 @@ class Mesh(RBC):
                 else:
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
-            elif morph.file.endswith("usd", "usda", "usdc", "usdz"):
+            elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif isinstance(morph, gs.options.morphs.MeshSet):

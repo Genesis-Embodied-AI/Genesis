@@ -14,6 +14,7 @@ class Rasterizer(RBC):
         self._camera_nodes = dict()
         self._camera_targets = dict()
         self._offscreen = self._viewer is None
+        self._renderer = None
 
     def build(self):
         if self._context is None:

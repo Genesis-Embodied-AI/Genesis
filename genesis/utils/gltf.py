@@ -304,7 +304,7 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
         for primitive in mesh.primitives:
             group_idx = primitive.material if group_by_material else i
             
-            if primitive.metarial is not None:
+            if primitive.material is not None:
                 if primitive.material not in materials:
                     materials[primitive.material], uv_names[primitive.material] = \
                         parse_glb_material(glb, primitive.material, surface)
@@ -381,4 +381,4 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
 
             mesh_infos.append(group_idx, points, triangles, normals, uvs, materials[primitive.material])
 
-    return mesh_infos.export_meshes(scale=scale)
+    return mesh_infos.export_meshes(scale=scale, path=path)
