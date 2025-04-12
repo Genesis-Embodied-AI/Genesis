@@ -8,6 +8,8 @@ import tetgen
 
 import genesis as gs
 import genesis.utils.mesh as mu
+import genesis.utils.gltf as gltf_utils
+import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
 from genesis.ext import trimesh
 from genesis.repr_base import RBC
@@ -295,9 +297,7 @@ class Mesh(RBC):
         """
         if surface is None:
             surface = gs.surfaces.Default()
-        else:
-            surface = surface.copy()
-
+            
         return cls(
             mesh=trimesh.Trimesh(
                 vertices=verts * scale if scale is not None else verts,
@@ -324,7 +324,10 @@ class Mesh(RBC):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
-                    meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+
+            elif morph.file.endswith("usd", "usda", "usdc", "usdz"):
+                meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif hasattr(morph, "files") and len(morph.files) > 0:  # for meshset
                 meshes = morph.files
