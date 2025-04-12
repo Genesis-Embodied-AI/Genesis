@@ -4,16 +4,18 @@ import pickle as pkl
 from io import BytesIO
 from urllib import request
 
+import numpy as np
+import trimesh
+from PIL import Image
+
 import coacd
 import igl
-import numpy as np
 import pygltflib
 import pyvista as pv
 import tetgen
-from PIL import Image
 
 import genesis as gs
-from genesis.ext import trimesh
+from genesis.ext import fast_simplification
 
 from . import geom as gu
 from .misc import (
@@ -48,7 +50,7 @@ class MeshInfo:
         if uvs is not None:
             self.uvs_exist = True
     
-    def export_mesh(self, scale):
+    def export_mesh(self, scale, path):
         if self.uvs_exist:
             for i in range(self.n_members):
                 if self.uvs[i] is None:
@@ -61,7 +63,7 @@ class MeshInfo:
         faces = np.concatenate(self.faces, axis=0)
         normals = np.concatenate(self.normals, axis=0)
         
-        return gs.Mesh.from_attrs(
+        mesh = gs.Mesh.from_attrs(
             verts=verts,
             faces=faces,
             normals=normals,
@@ -69,6 +71,8 @@ class MeshInfo:
             uvs=uvs,
             scale=scale,
         )
+        mesh.metadata["mesh_path"] = path
+        return mesh
     
 class MeshInfoGroup:
     def __init__(self):
@@ -79,8 +83,8 @@ class MeshInfoGroup:
             self.infos[name] = MeshInfo(surface)
         self.infos[name].append(verts, faces, normals, uvs)
     
-    def export_meshes(self, scale):
-        return [self.infos[name].export_mesh(scale) for name in self.infos]
+    def export_meshes(self, scale, path):
+        return [self.infos[name].export_mesh(scale, path) for name in self.infos]
     
 
 def get_asset_path(file):
@@ -225,13 +229,9 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     return visual
 
 
-def convex_decompose(mesh, morph):
-    if morph.decimate:
-        if mesh.vertices.shape[0] > 3:
-            mesh = mesh.simplify_quadric_decimation(morph.decimate_face_num)
-
+def convex_decompose(mesh, coacd_options):
     # compute file name via hashing for caching
-    cvx_path = get_cvx_path(mesh.vertices, mesh.faces, morph.coacd_options)
+    cvx_path = get_cvx_path(mesh.vertices, mesh.faces, coacd_options)
 
     # loading pre-computed cache if available
     is_cached_loaded = False
@@ -241,13 +241,13 @@ def convex_decompose(mesh, morph):
             with open(cvx_path, "rb") as file:
                 mesh_parts = pkl.load(file)
             is_cached_loaded = True
-        except (EOFError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:
         with gs.logger.timer("Running convex decomposition."):
             mesh = coacd.Mesh(mesh.vertices, mesh.faces)
-            args = morph.coacd_options
+            args = coacd_options
             result = coacd.run_coacd(
                 mesh,
                 threshold=args.threshold,
@@ -278,92 +278,123 @@ def convex_decompose(mesh, morph):
     return mesh_parts
 
 
-def parse_visual_and_col_mesh(morph, surface):
-    """
-    Returns a list of meshes, each will be stored in as a `RigidGeom`.
-    We parse all the submeshes in the obj file.
-    If group_by_material=True, we group them based on their associated materials. This will dramatically speed up parsing, since we only need to load texture images on a group basis.
-    """
-    vms = gs.Mesh.from_morph_surface(morph, surface)
+def postprocess_collision_geoms(
+    g_infos, decimate, decimate_face_num, convexify, decompose_error_threshold, coacd_options
+):
+    # Early return if there is no geometry to process
+    if not g_infos:
+        return []
 
-    # compute collision mesh
-    ms = list()
+    # Check if all the geometries can be convexify without decomposition
+    must_decompose = False
+    if convexify:
+        for g_info in g_infos:
+            mesh = g_info["mesh"]
+            tmesh = mesh.trimesh
+            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.volume < gs.EPS:
+                continue
+            cmesh = trimesh.convex.convex_hull(tmesh)
+            volume_err = cmesh.volume / tmesh.volume - 1.0
+            if volume_err > decompose_error_threshold:
+                must_decompose = True
 
-    if not morph.collision:
-        return vms, ms
+    # Check whether merging the geometries is possible, i.e.
+    # * They are all meshes
+    # * They belong to the same collision group (same contype and conaffinity)
+    # * Their physical properties are the same (friction coef and contact solver parameters)
+    is_merged = False
+    if must_decompose and len(g_infos) > 1:
+        is_merged = all(g_info["type"] == gs.GEOM_TYPE.MESH for g_info in g_infos)
+        for name in ("contype", "conaffinity", "friction", "sol_params"):
+            if not is_merged:
+                break
+            values = np.stack([g_info.get(name, float("nan")) for g_info in g_infos], axis=0)
+            diffs = np.diff(values, axis=0)
+            if not (np.isnan(diffs).all(axis=0) | (np.abs(diffs) < gs.EPS).all(axis=0)).all():
+                is_merged = False
 
-    if morph.merge_submeshes_for_collision:
-        tmeshes = []
-        for vm in vms:
-            tmeshes.append(vm.trimesh)
-        tmesh = trimesh.util.concatenate(tmeshes)
+        # Must apply geometry transform before merge concatenation
+        if is_merged:
+            tmeshes = []
+            for g_info in g_infos:
+                mesh = g_info["mesh"]
+                tmesh = mesh.trimesh.copy()
+                pos = g_info.get("pos", gu.zero_pos())
+                quat = g_info.get("quat", gu.identity_quat())
+                tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
+                tmeshes.append(tmesh)
+            tmesh = trimesh.util.concatenate(tmeshes)
+            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata={"merged": True})
+            g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
 
-        num_vertices = len(tmesh.vertices)
-        if num_vertices > 5000:
-            gs.logger.warning(
-                f"Mesh '{morph.file}' contains many vertices ({num_vertices}). Consider setting "
-                "'morph.decimate=True' to speed up collision detection."
-            )
-        if not tmesh.is_convex and not (morph.convexify or morph.decompose_nonconvex):
-            gs.logger.warning(
-                f"Mesh '{morph.file}' is non-convex. Consider setting 'morph.decompose_nonconvex=True' "
-                "or 'morph.convexify=True' to speed up collision detection."
-            )
+    # Try again to convexify then apply convex decomposition if not possible
+    if is_merged:
+        (g_info,) = g_infos
+        mesh = g_info["mesh"]
+        tmesh = mesh.trimesh
+        cmesh = trimesh.convex.convex_hull(tmesh)
+        volume_err = cmesh.volume / tmesh.volume - 1.0
+        must_decompose = volume_err > decompose_error_threshold
 
-        if morph.convexify or tmesh.is_convex or not morph.decompose_nonconvex:
-            ms.append(
-                gs.Mesh.from_trimesh(
-                    mesh=tmesh,
-                    convexify=morph.convexify,
-                    decimate=morph.decimate,
-                    decimate_face_num=morph.decimate_face_num,
-                    surface=gs.surfaces.Collision(),
-                )
-            )
-        else:
-            tmeshes = convex_decompose(tmesh, morph)
-            for tmesh in tmeshes:
-                ms.append(
-                    gs.Mesh.from_trimesh(
-                        mesh=tmesh,
-                        convexify=True,  # just to make sure
-                        decimate=morph.decimate,
-                        surface=gs.surfaces.Collision(),
-                    )
-                )
-
-    else:
-        for vm in vms:
-            if morph.convexify or vm.trimesh.is_convex or not morph.decompose_nonconvex:
-                ms.append(
-                    gs.Mesh.from_trimesh(
-                        mesh=vm.trimesh,
-                        convexify=morph.convexify,
-                        decimate=morph.decimate,
-                        decimate_face_num=morph.decimate_face_num,
-                        surface=gs.surfaces.Collision(),
-                    )
-                )
+    if must_decompose:
+        gs.logger.info(
+            f"Convex hull is not accurate enough for collision detection ({volume_err:.3f}). "
+            "Falling back to more expensive convex decomposition (see FileMorph options)."
+        )
+        _g_infos = []
+        for g_info in g_infos:
+            mesh = g_info["mesh"]
+            tmesh = mesh.trimesh
+            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.volume < gs.EPS:
+                volume_err = 0.0
             else:
-                tmeshes = convex_decompose(vm.trimesh, morph)
-                for tmesh in tmeshes:
-                    ms.append(
-                        gs.Mesh.from_trimesh(
-                            mesh=tmesh,
-                            convexify=True,  # just to make sure
-                            decimate=morph.decimate,
-                            decimate_face_num=morph.decimate_face_num,
-                            surface=gs.surfaces.Collision(),
-                        )
+                cmesh = trimesh.convex.convex_hull(tmesh)
+                volume_err = cmesh.volume / tmesh.volume - 1.0
+            if volume_err > decompose_error_threshold:
+                tmeshes = convex_decompose(tmesh, coacd_options)
+                meshes = [
+                    gs.Mesh.from_trimesh(
+                        tmesh, surface=gs.surfaces.Collision(), metadata={**mesh.metadata, "decomposed": True}
                     )
+                    for tmesh in tmeshes
+                ]
+                _g_infos += [{**g_info, **dict(mesh=mesh)} for mesh in meshes]
+            else:
+                _g_infos.append(g_info)
+        g_infos = _g_infos
 
-    return vms, ms
+    # Process of meshes sequentially
+    _g_infos = []
+    for g_info in g_infos:
+        mesh = g_info["mesh"]
+        tmesh = mesh.trimesh
+        num_vertices = len(tmesh.vertices)
+        if not decimate and num_vertices > 5000:
+            gs.logger.warning(
+                f"At least one of the meshes contain many vertices ({num_vertices}). Consider setting "
+                "'morph.decimate=True' to speed up collision detection and improve numerical stability."
+            )
+        if decimate and decimate_face_num < 100:
+            gs.logger.warning(
+                "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
+            )
+        mesh = gs.Mesh.from_trimesh(
+            mesh=tmesh,
+            convexify=convexify,
+            decimate=decimate,
+            decimate_face_num=decimate_face_num,
+            surface=gs.surfaces.Collision(),
+            metadata=mesh.metadata.copy(),
+        )
+        _g_infos.append({**g_info, **dict(mesh=mesh)})
+
+    return _g_infos
 
 
 def parse_mesh_trimesh(path, group_by_material, scale, surface):
     meshes = []
     for _, mesh in trimesh.load(path, force="scene", group_material=group_by_material, process=False).geometry.items():
-        meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface))
+        meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface, metadata={"mesh_path": path}))
     return meshes
 
 def trimesh_to_mesh(mesh, scale, surface):

@@ -2,9 +2,11 @@ import os
 from itertools import chain
 from enum import Enum
 
-import pytest
+import psutil
 import pyglet
 import numpy as np
+import pytest
+from _pytest.mark import Expression, MarkMatcher
 
 import mujoco
 import genesis as gs
@@ -13,10 +15,33 @@ from genesis.utils.mesh import get_assets_dir
 from .utils import MjSim
 
 
+TOL_SINGLE = 5e-5
+TOL_DOUBLE = 1e-9
+
+
 def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
     return f"{val}"
+
+
+def pytest_xdist_auto_num_workers(config):
+    # Determine whether 'benchmarks' marker is selected
+    expr = Expression.compile(config.option.markexpr)
+    is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+    show_viewer = config.getoption("--vis")
+
+    # Disable multi-processing for benchmarks
+    if is_benchmarks or show_viewer:
+        return 0
+
+    # Compute the default number of workers based on available RAM, VRAM, and number of physical cores
+    physical_core_count = psutil.cpu_count(logical=False)
+    _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
+    _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
+    return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
+
+    return config.option.numprocesses
 
 
 def pytest_addoption(parser):
@@ -29,19 +54,19 @@ def show_viewer(pytestconfig):
     return pytestconfig.getoption("--vis")
 
 
-@pytest.fixture
-def backend(pytestconfig, request):
-    if hasattr(request, "param"):
-        backend = request.param
-        if isinstance(backend, str):
-            return getattr(gs.constants.backend, backend)
-        return backend
+@pytest.fixture(scope="session")
+def backend(pytestconfig):
     return pytestconfig.getoption("--backend")
 
 
 @pytest.fixture(scope="session")
 def asset_tmp_path(tmp_path_factory):
     return tmp_path_factory.mktemp("assets")
+
+
+@pytest.fixture
+def atol():
+    return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -54,13 +79,55 @@ def initialize_genesis(request, backend):
         precision = "32"
         debug = False
     gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+    if backend != gs.cpu and gs.backend == gs.cpu:
+        gs.destroy()
+        pytest.skip("No GPU available on this machine")
     yield
     pyglet.app.exit()
     gs.destroy()
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator):
+def adjacent_collision(request):
+    adjacent_collision = None
+    for mark in request.node.iter_markers("adjacent_collision"):
+        if mark.args:
+            if adjacent_collision is not None:
+                pytest.fail("'adjacent_collision' can only be specified once.")
+            (adjacent_collision,) = mark.args
+    if adjacent_collision is None:
+        adjacent_collision = False
+    return adjacent_collision
+
+
+@pytest.fixture
+def multi_contact(request):
+    multi_contact = None
+    for mark in request.node.iter_markers("multi_contact"):
+        if mark.args:
+            if multi_contact is not None:
+                pytest.fail("'multi_contact' can only be specified once.")
+            (multi_contact,) = mark.args
+    if multi_contact is None:
+        multi_contact = True
+    return multi_contact
+
+
+@pytest.fixture
+def dof_damping(request):
+    dof_damping = None
+    for mark in request.node.iter_markers("dof_damping"):
+        if mark.args:
+            if dof_damping is not None:
+                pytest.fail("'dof_damping' can only be specified once.")
+            (dof_damping,) = mark.args
+    if dof_damping is None:
+        dof_damping = False
+    return dof_damping
+
+
+@pytest.fixture
+def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
     elif gs_solver == gs.constraint_solver.Newton:
@@ -85,17 +152,25 @@ def mj_sim(xml_path, gs_solver, gs_integrator):
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
     model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
-    model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    if multi_contact:
+        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    else:
+        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+    if adjacent_collision:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    else:
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
     data = mujoco.MjData(model)
 
     # Joint damping is not properly supported in Genesis for now
-    model.dof_damping[:] = 0.0
+    if not dof_damping:
+        model.dof_damping[:] = 0.0
 
     return MjSim(model, data)
 
 
 @pytest.fixture
-def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
+def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping, show_viewer, mj_sim):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -112,10 +187,11 @@ def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,
             constraint_solver=gs_solver,
+            enable_mpr_vanilla=True,
             box_box_detection=True,
             enable_self_collision=True,
-            enable_adjacent_collision=True,
-            contact_resolve_time=0.02,
+            enable_adjacent_collision=adjacent_collision,
+            enable_multi_contact=multi_contact,
             iterations=mj_sim.model.opt.iterations,
             tolerance=mj_sim.model.opt.tolerance,
             ls_iterations=mj_sim.model.opt.ls_iterations,
@@ -128,14 +204,17 @@ def gs_sim(xml_path, gs_solver, gs_integrator, show_viewer, mj_sim):
         gs.morphs.MJCF(file=xml_path),
         visualize_contact=True,
     )
+    gs_sim = scene.sim
+
+    # Force matching Mujoco safety factor for constraint time constant.
+    # Note that this time constant affects the penetration depth at rest.
+    gs_sim.rigid_solver._sol_constraint_min_resolve_time = 2.0 * gs_sim._substep_dt
 
     # Joint damping is not properly supported in Genesis for now
-    for joint in chain.from_iterable(gs_robot.joints):
-        joint.dofs_damping[:] = 0.0
+    if not dof_damping:
+        for joint in chain.from_iterable(gs_robot.joints):
+            joint.dofs_damping[:] = 0.0
 
     scene.build()
 
-    yield scene.sim
-
-    if show_viewer:
-        scene.viewer.stop()
+    return gs_sim

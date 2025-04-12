@@ -149,7 +149,7 @@ class Camera(RBC):
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
         """
         Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
-        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `n_rendered_envs`.
+        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `len(rendered_envs_idx)`.
 
         Parameters
         ----------
@@ -260,6 +260,100 @@ class Camera(RBC):
             self._recorded_imgs.append(rgb_arr)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
+
+    @gs.assert_built
+    def render_pointcloud(self, world_frame=True):
+        """
+        Render a partial point cloud from the camera view. Returns a (res[0], res[1], 3) numpy array representing the point cloud in each pixel.
+        Parameters
+        ----------
+        world_frame : bool, optional
+            Whether the point cloud is on camera frame or world frame.
+        Returns
+        -------
+        pc : np.ndarray
+            the point cloud
+        mask_arr : np.ndarray
+            The valid depth mask.
+        """
+        if self._rasterizer is not None:
+            self._rasterizer.update_scene()
+            rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
+                self, False, True, False, normal=False
+            )
+
+            def opengl_projection_matrix_to_intrinsics(P: np.ndarray, width: int, height: int):
+                """Convert OpenGL projection matrix to camera intrinsics.
+                Args:
+                    P (np.ndarray): OpenGL projection matrix.
+                    width (int): Image width.
+                    height (int): Image height
+                Returns:
+                    np.ndarray: Camera intrinsics. [3, 3]
+                """
+
+                fx = P[0, 0] * width / 2
+                fy = P[1, 1] * height / 2
+                cx = (1.0 - P[0, 2]) * width / 2
+                cy = (1.0 + P[1, 2]) * height / 2
+
+                K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+                return K
+
+            def backproject_depth_to_pointcloud(K: np.ndarray, depth: np.ndarray, pose, world):
+                """Convert depth image to pointcloud given camera intrinsics.
+                Args:
+                    depth (np.ndarray): Depth image.
+                Returns:
+                    np.ndarray: (x, y, z) Point cloud. [n, m, 3]
+                """
+                _fx = K[0, 0]
+                _fy = K[1, 1]
+                _cx = K[0, 2]
+                _cy = K[1, 2]
+
+                # Mask out invalid depth
+                mask = np.where(depth > -1.0)
+                depth = np.maximum(depth, -0.99)
+                mask1 = np.where(depth > -1.0)
+                x, y = mask1[1], mask1[0]
+
+                # Normalize pixel coordinates
+                normalized_x = x.astype(np.float32) - _cx
+                normalized_y = y.astype(np.float32) - _cy
+
+                # Convert to world coordinates
+                world_x = normalized_x * depth[y, x] / _fx
+                world_y = normalized_y * depth[y, x] / _fy
+                world_z = depth[y, x]
+
+                pc = np.vstack((world_x, world_y, world_z)).T
+
+                point_cloud_h = np.hstack((pc, np.ones((pc.shape[0], 1))))
+                if world:
+                    point_cloud_world = (pose @ point_cloud_h.T).T
+                    point_cloud_world = point_cloud_world[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
+
+                    return point_cloud_world, mask
+                else:
+                    point_cloud = point_cloud_h[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
+                    return point_cloud, mask
+
+            intrinsic_K = opengl_projection_matrix_to_intrinsics(
+                self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(),
+                width=self.res[0],
+                height=self.res[1],
+            )
+
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+            cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
+
+            pc, mask = backproject_depth_to_pointcloud(intrinsic_K, depth_arr, cam_pose, world_frame)
+
+            return pc, mask
+
+        else:
+            gs.raise_exception("We need a rasterizer to render depth and then convert it to pount cloud.")
 
     @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None):
@@ -442,7 +536,7 @@ class Camera(RBC):
             )
 
         if self._rgb_stacked:
-            for env_idx in range(self._visualizer._context.n_rendered_envs):
+            for env_idx in self._visualizer._context.rendered_envs_idx:
                 env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
                 env_name, env_ext = os.path.splitext(save_to_filename)
                 gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)

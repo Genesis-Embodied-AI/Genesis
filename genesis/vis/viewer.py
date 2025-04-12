@@ -1,4 +1,5 @@
 import os
+import threading
 import importlib
 
 import numpy as np
@@ -35,6 +36,7 @@ class Viewer(RBC):
         self._camera_up = options.camera_up
         self._camera_fov = options.camera_fov
 
+        self._pyrender_viewer = None
         self.context = context
 
         self._followed_entity = None
@@ -90,21 +92,35 @@ class Viewer(RBC):
             except OpenGL.error.Error:
                 # Invalid OpenGL context. Trying another platform if any...
                 gs.logger.debug(f"Invalid OpenGL context.")
+
+                # Clear broken OpenGL context if it went this far
+                if self._pyrender_viewer is not None:
+                    self._pyrender_viewer.close()
+                    self._pyrender_viewer = None
+
                 if i == len(all_opengl_platforms) - 1:
                     raise
+            finally:
+                if opengl_platform_orig is None:
+                    del os.environ["PYOPENGL_PLATFORM"]
+                else:
+                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
     def run(self):
+        if self._pyrender_viewer is None:
+            gs.raise_exception("Viewer must be built successfully before calling this method.")
         self._pyrender_viewer.run()
 
     def stop(self):
-        self._pyrender_viewer.close()
+        if self.is_alive():
+            self._pyrender_viewer.close()
 
     def is_alive(self):
-        return self._pyrender_viewer.is_active
+        return self._pyrender_viewer is not None and self._pyrender_viewer.is_active
 
     def setup_camera(self):
         pos = np.array(self._camera_init_pos)
@@ -117,7 +133,7 @@ class Viewer(RBC):
         pose = gu.trans_R_to_T(pos, R)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self, auto_refresh=True):
+    def update(self, auto_refresh=None):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -125,6 +141,11 @@ class Viewer(RBC):
             buffer_updates = self.context.update()
             for buffer_id, buffer_data in buffer_updates.items():
                 self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
+
+            # Refresh viewer by default if and if this is possible
+            if auto_refresh is None:
+                viewer_thread = self._pyrender_viewer._thread or threading.main_thread()
+                auto_refresh = viewer_thread == threading.current_thread()
 
             if auto_refresh and not self._pyrender_viewer.run_in_thread:
                 self._pyrender_viewer.refresh()

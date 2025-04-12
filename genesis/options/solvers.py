@@ -141,9 +141,11 @@ class RigidOptions(Options):
     enable_joint_limit : bool, optional
         Whether to enable joint limit. Defaults to True.
     enable_self_collision : bool, optional
-        Whether to enable self collision within each entity. Defaults to False.
+        Whether to enable self collision within each entity. Defaults to True.
     enable_adjacent_collision : bool, optional
         Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
+    disable_constraint: bool, optional
+        Whether to disable all constraints. Defaults to False.
     max_collision_pairs : int, optional
         Maximum number of collision pairs. Defaults to 100.
     integrator : gs.integrator, optional
@@ -163,7 +165,9 @@ class RigidOptions(Options):
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
     contact_resolve_time : float, optional
-        Time to resolve a contact. The smaller the value, the more stiff the constraint. Defaults to 0.02. (called timeconst in https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
+        Please note that this argument will be deprecated in a future version. Use constraint_resolve_time instead.
+    constraint_resolve_time : float, optional
+        Time to resolve a constraint. The smaller the value, the more stiff the constraint. Defaults to 0.02. (called timeconst in https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
     use_contact_island : bool, optional
         Whether to use contact island to speed up contact resolving. Defaults to False.
     use_hibernation : bool, optional
@@ -172,6 +176,8 @@ class RigidOptions(Options):
         Velocity threshold for hibernation. Defaults to 1e-3.
     hibernation_thresh_acc : float, optional
         Acceleration threshold for hibernation. Defaults to 1e-2.
+    max_dynamic_constraints : int, optional
+        Maximum number of dynamic constraints (like suction cup). Defaults to 8.
 
     Warning
     -------
@@ -182,9 +188,10 @@ class RigidOptions(Options):
     gravity: Optional[tuple] = None
     enable_collision: bool = True
     enable_joint_limit: bool = True
-    enable_self_collision: bool = False
+    enable_self_collision: bool = True
     enable_adjacent_collision: bool = False
-    max_collision_pairs: int = 100
+    disable_constraint: bool = False
+    max_collision_pairs: int = 300
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
 
@@ -201,6 +208,7 @@ class RigidOptions(Options):
     ls_tolerance: float = 1e-2
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
+    constraint_resolve_time: Optional[float] = None
     use_contact_island: bool = False
     box_box_detection: bool = (
         False  # collision detection branch for box-box pair, slower but more stable. (Follows mujoco's implementation: https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c)
@@ -210,6 +218,13 @@ class RigidOptions(Options):
     use_hibernation: bool = False
     hibernation_thresh_vel: float = 1e-3
     hibernation_thresh_acc: float = 1e-2
+
+    # for dynamic properties
+    max_dynamic_constraints: int = 8
+
+    # Experimental options mainly intended for debug purpose and unit tests
+    enable_multi_contact: bool = True
+    enable_mpr_vanilla: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -233,14 +248,19 @@ class AvatarOptions(Options):
         Maximum number of collision pairs. Defaults to 100.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage. Defaults to 6.
+    max_dynamic_constraints : int, optional
+        Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     """
 
     dt: Optional[float] = None
     enable_collision: bool = False
     enable_self_collision: bool = False
     enable_adjacent_collision: bool = False
-    max_collision_pairs: int = 100
+    max_collision_pairs: int = 300
     IK_max_targets: int = 6  # Increasing this doesn't affect IK solving speed, but will increase memory usage
+
+    # for dynamic properties
+    max_dynamic_constraints: int = 8
 
 
 class MPMOptions(Options):

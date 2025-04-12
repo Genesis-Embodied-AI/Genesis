@@ -69,7 +69,7 @@ Genesis의 목표:
 Genesis는 PyPI를 통해 설치할 수 있습니다:
 
 ```bash
-pip install genesis-world  # Python >=3.9 필요
+pip install genesis-world  # Python>=3.10,<3.13 필요
 ```
 
 또한, [공식 설명서](https://pytorch.org/get-started/locally/)에 따라 **PyTorch**를 설치해야 합니다.
@@ -79,7 +79,7 @@ pip install genesis-world  # Python >=3.9 필요
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Docker

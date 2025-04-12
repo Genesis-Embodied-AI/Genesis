@@ -10,15 +10,21 @@ import genesis as gs
 
 
 @ti.func
-def ti_transform_quat_by_quat(v, u):
-    # This method transforms quat_v by quat_u
-    # This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
+def ti_quat_mul(u, v):
     terms = v.outer_product(u)
     w = terms[0, 0] - terms[1, 1] - terms[2, 2] - terms[3, 3]
     x = terms[0, 1] + terms[1, 0] - terms[2, 3] + terms[3, 2]
     y = terms[0, 2] + terms[1, 3] + terms[2, 0] - terms[3, 1]
     z = terms[0, 3] - terms[1, 2] + terms[2, 1] + terms[3, 0]
-    return ti.Vector([w, x, y, z]).normalized()
+    return ti.Vector([w, x, y, z])
+
+
+@ti.func
+def ti_transform_quat_by_quat(v, u):
+    # This method transforms quat_v by quat_u
+    # This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
+    vec = ti_quat_mul(u, v)
+    return vec.normalized()
 
 
 @ti.func
@@ -279,30 +285,8 @@ def orthogonals(a):
     if -0.5 < a[1] and a[1] < 0.5:
         b = y
     b = b - a * a.dot(b)
-    # make b a normal vector. however if a is a zero vector, zero b as well.
     b = b.normalized()
-    if a.norm() < gs.EPS:
-        b = b * 0.0
     return b, a.cross(b)
-
-
-@ti.func
-def orthogonals2(a):
-    """Returns orthogonal vectors `b` and `c`, given a normal vector `a`."""
-    y, z = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float), ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
-    b = z
-    if -0.5 < a[1] and a[1] < 0.5:
-        b = y
-    b = b - a * a.dot(b)
-    # make b a normal vector. however if a is a zero vector, zero b as well.
-    b = b.normalized()
-    if a.norm() < gs.EPS:
-        b = b * 0.0
-
-    # perturb with some noise so that they do not align with world axes
-    c = (a.cross(b) + 0.1 * b).normalized()
-    b = c.cross(a).normalized()
-    return b, c
 
 
 @ti.func
@@ -341,6 +325,18 @@ def get_face_norm(v0, v1, v2):
     face_norm = edge0.cross(edge1)
     face_norm = face_norm.normalized()
     return face_norm
+
+
+@ti.func
+def ti_quat_mul_axis(q, axis):
+    return ti.Vector(
+        [
+            -q[1] * axis[0] - q[2] * axis[1] - q[3] * axis[2],
+            q[0] * axis[0] + q[2] * axis[2] - q[3] * axis[1],
+            q[0] * axis[1] + q[3] * axis[0] - q[1] * axis[2],
+            q[0] * axis[2] + q[1] * axis[1] - q[2] * axis[0],
+        ]
+    )
 
 
 # ------------------------------------------------------------------------------------
@@ -659,7 +655,7 @@ def quat_to_T(quat):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
-def quat_to_xyz(quat, rpy=True, degrees=True):
+def quat_to_xyz(quat, rpy=False, degrees=False):
     if isinstance(quat, torch.Tensor):
         # Extract quaternion components
         qw, qx, qy, qz = quat.unbind(-1)
@@ -704,7 +700,7 @@ def quat_to_xyz(quat, rpy=True, degrees=True):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
 
-def xyz_to_quat(euler_xyz, rpy=True, degrees=True):
+def xyz_to_quat(euler_xyz, rpy=False, degrees=False):
     if isinstance(euler_xyz, torch.Tensor):
         if degrees:
             euler_xyz *= torch.pi / 180.0

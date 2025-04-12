@@ -40,15 +40,11 @@ reinforcement learning (Nature 2023)](https://www.nature.com/articles/s41586-023
 
 #### 3.0 Installation
 
-At this stage, we have defined the environments. Now, we use the PPO implementation from `rsl-rl` to train the policy. Follow these installation steps:
+At this stage, we have defined the environments. Now, we use the PPO implementation from `rsl-rl` to train the policy. First, install all Python dependencies via `pip`:
 
 ```bash
-# Install rsl_rl.
-git clone https://github.com/leggedrobotics/rsl_rl
-cd rsl_rl && git checkout v1.0.2 && pip install -e .
-
-# Install tensorboard.
-pip install tensorboard
+pip install --upgrade pip
+pip install "tensorboard" "git+https://github.com/leggedrobotics/rsl_rl.git@v1.0.2"
 ```
 
 #### 3.1 Training
@@ -77,7 +73,7 @@ Run with:
 python hover_eval.py -e drone-hovering --ckpt 300 --record
 ```
 
-**Note**: If you experience slow performance or encounter other issues 
+**Note**: If you experience slow performance or encounter other issues
 during evaluation, try removing the `--record` option.
 
 For the latest updates, detailed documentation, and additional resources, visit this repository: [GenesisDroneEnv](https://github.com/KafuuChikai/GenesisDroneEnv).

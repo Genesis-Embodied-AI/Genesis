@@ -5,15 +5,15 @@ Author: Matthew Matl
 """
 
 import abc
-import numpy as np
-import six
 import sys
+from abc import ABCMeta
+
+import numpy as np
 
 from .constants import DEFAULT_Z_NEAR, DEFAULT_Z_FAR
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Camera(object):
+class Camera(metaclass=ABCMeta):
     """Abstract base class for all cameras.
 
     Note

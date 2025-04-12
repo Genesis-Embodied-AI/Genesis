@@ -5,8 +5,9 @@ Author: Matthew Matl
 """
 
 import abc
+from abc import ABCMeta
+
 import numpy as np
-import six
 
 from OpenGL.GL import *
 
@@ -16,8 +17,7 @@ from .constants import SHADOW_TEX_SZ
 from .camera import OrthographicCamera, PerspectiveCamera
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Light(object):
+class Light(metaclass=ABCMeta):
     """Base class for all light objects.
 
     Parameters

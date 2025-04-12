@@ -76,15 +76,20 @@ Install **PyTorch** first following the [official instructions](https://pytorch.
 
 Then, install Genesis via PyPI:
 ```bash
-pip install genesis-world  # Requires Python >=3.9;
+pip install genesis-world  # Requires Python>=3.10,<3.13;
 ```
 
-For the latest version, clone the repository and install locally:
+For the latest version to date, make sure that `pip` is up-to-date via `pip install --upgrade pip`, then run command:
+```bash
+pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
+```
+Note that the package must still be updated manually to sync with main branch.
 
+Users seeking to edit the source code of Genesis are encourage to install Genesis in developper mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Docker

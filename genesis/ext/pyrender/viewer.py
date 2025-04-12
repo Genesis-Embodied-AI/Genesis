@@ -535,14 +535,15 @@ class Viewer(pyglet.window.Window):
         This function will wait for the actual close, so you immediately
         manipulate the scene afterwards.
         """
-        viewer_thread = self._thread if self._run_in_thread else threading.main_thread()
-        if viewer_thread != threading.current_thread():
-            gs.raise_exception("This method can only be called from the thread that started the viewer.")
-
-        self.on_close()
         if self._run_in_thread:
-            while self._is_active:
+            while self._thread.is_alive():
                 time.sleep(1.0 / self.viewer_flags["refresh_rate"])
+        else:
+            viewer_thread = self._thread or threading.main_thread()
+            if viewer_thread != threading.current_thread():
+                raise RuntimeError("'Viewer.close' can only be called from the thread that started the viewer.")
+
+            self.on_close()
 
     def save_video(self, filename=None):
         """Save the stored frames to a video file.
@@ -559,11 +560,13 @@ class Viewer(pyglet.window.Window):
             a file dialog will be opened to ask the user where
             to save the video file.
         """
+        self.video_recorder.close()
         if filename is None:
             filename = self._get_save_filename(["mp4"])
-
-        self.video_recorder.close()
-        shutil.move(self.video_recorder.filename, filename)
+        if filename is None:
+            os.remove(self.video_recorder.filename)
+        else:
+            shutil.move(self.video_recorder.filename, filename)
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
@@ -571,21 +574,19 @@ class Viewer(pyglet.window.Window):
         if not self._initialized_event.is_set():
             self._initialized_event.set()
 
-        # Early return if already closed
-        if not self._is_active:
-            return
-
-        # Do not consider the viewer as active right away
+        # Do not consider the viewer as active anymore
         self._is_active = False
 
         # Remove our camera and restore the prior one
         try:
             if self._camera_node is not None:
                 self.scene.remove_node(self._camera_node)
+            self._camera_node = None
         except Exception:
             pass
         if self._prior_main_camera_node is not None:
             self.scene.main_camera_node = self._prior_main_camera_node
+        self._prior_main_camera_node = None
 
         # Delete any lighting nodes that we've attached
         if self.viewer_flags["use_raymond_lighting"]:
@@ -1021,7 +1022,7 @@ class Viewer(pyglet.window.Window):
         except Exception:
             return None
 
-        if filename == ():
+        if not filename:
             return None
         return filename
 
@@ -1187,7 +1188,7 @@ class Viewer(pyglet.window.Window):
                 pass
 
         if not self.context:
-            gs.raise_exception("Unable to initialize an OpenGL 3+ context")
+            raise RuntimeError("Unable to initialize an OpenGL 3+ context")
         clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
@@ -1205,15 +1206,20 @@ class Viewer(pyglet.window.Window):
         self.activate()
 
         if auto_refresh:
-            self.run()
+            while self._is_active:
+                try:
+                    self.refresh()
+                except AttributeError:
+                    # The graphical window has been closed
+                    self.on_close()
         else:
             self.refresh()
 
     def run(self):
         if self._run_in_thread:
-            gs.raise_exception("This method can only be called manually if the viewer is already running in thread.")
+            raise RuntimeError("'Viewer.run' cannot be called manually if the viewer is already running in thread.")
         elif threading.main_thread() != threading.current_thread():
-            gs.raise_exception("This method can only be called manually from main thread on MacOS.")
+            raise RuntimeError("'Viewer.run' can only be called manually from main thread on MacOS.")
 
         while self._is_active:
             try:
@@ -1223,9 +1229,9 @@ class Viewer(pyglet.window.Window):
                 self.on_close()
 
     def refresh(self):
-        viewer_thread = self._thread if self._run_in_thread else threading.main_thread()
+        viewer_thread = self._thread or threading.main_thread()
         if viewer_thread != threading.current_thread():
-            gs.raise_exception("This method can only be called from the thread that started the viewer.")
+            raise RuntimeError("'Viewer.refresh' can only be called from the thread that started the viewer.")
 
         time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
         while self._offscreen_event.wait(time_next_frame - time.time()):

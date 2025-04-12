@@ -1,12 +1,24 @@
 import argparse
 import os
 import pickle
+from importlib import metadata
 
 import torch
-from hover_env import HoverEnv
+
+try:
+    try:
+        if metadata.version("rsl-rl-lib"):
+            raise ImportError
+    except metadata.PackageNotFoundError:
+        if metadata.version("rsl-rl") != "1.0.2":
+            raise ImportError
+except (metadata.PackageNotFoundError, ImportError) as e:
+    raise ImportError("Please uninstall 'rsl-rl-lib' and install 'rsl_rl==1.0.2'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
+
+from hover_env import HoverEnv
 
 
 def main():
@@ -38,10 +50,10 @@ def main():
         show_viewer=True,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
     resume_path = os.path.join(log_dir, f"model_{args.ckpt}.pt")
     runner.load(resume_path)
-    policy = runner.get_inference_policy(device="cuda:0")
+    policy = runner.get_inference_policy(device=gs.device)
 
     obs, _ = env.reset()
 
@@ -68,6 +80,6 @@ if __name__ == "__main__":
 python examples/drone/hover_eval.py
 
 # Note
-If you experience slow performance or encounter other issues 
+If you experience slow performance or encounter other issues
 during evaluation, try removing the --record option.
 """

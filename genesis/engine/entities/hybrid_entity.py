@@ -1,9 +1,9 @@
 import numpy as np
 import taichi as ti
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.ext import trimesh
 from genesis.ext.urdfpy.urdf import URDF
 from genesis.utils.hybrid import (
     check_graph,
@@ -394,7 +394,7 @@ def default_func_instantiate_soft_from_rigid(
         trans, quat = gu.transform_pos_quat_by_trans_quat(
             geom.init_pos, geom.init_quat, link.init_x_pos, link.init_x_quat
         )
-        euler = gu.quat_to_xyz(quat)
+        euler = gu.quat_to_xyz(quat, rpy=True, degrees=True)
 
         # can also do link.init_verts here and it seems to have more indices than geom.init_verts (but there is no idx_offset_vert)
         lower = geom.init_verts.min(axis=0)

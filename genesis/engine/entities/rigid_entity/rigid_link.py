@@ -3,7 +3,7 @@ import taichi as ti
 import torch
 
 import genesis as gs
-from genesis.ext import trimesh
+import trimesh
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 
@@ -93,7 +93,7 @@ class RigidLink(RBC):
         is_fixed = all(joint.type is gs.JOINT_TYPE.FIXED for joint in self.joints)
         while link.parent_idx > -1:
             link = solver_links[link.parent_idx]
-            if all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
+            if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
                 is_fixed = False
         self.root_idx = gs.np_int(link.idx)
         self.is_fixed = gs.np_int(is_fixed)
@@ -467,11 +467,15 @@ class RigidLink(RBC):
     @property
     def dof_start(self):
         """The index of the link's first degree of freedom (DOF) in the scene."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[0].dof_start
 
     @property
     def dof_end(self):
         """The index of the link's last degree of freedom (DOF) in the scene *plus one*."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[-1].dof_end
 
     @property
@@ -482,11 +486,15 @@ class RigidLink(RBC):
     @property
     def q_start(self):
         """Returns the starting index of the `q` variables of the link in the rigid solver."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[0].q_start
 
     @property
     def q_end(self):
         """Returns the last index of the `q` variables of the link in the rigid solver *plus one*."""
+        if len(self.joints) == 0:
+            return -1
         return self.joints[-1].q_end
 
     @property

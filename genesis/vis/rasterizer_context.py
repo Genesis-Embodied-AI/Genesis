@@ -1,11 +1,12 @@
 import numpy as np
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 
-from genesis.ext import pyrender, trimesh
+from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
 from genesis.utils.misc import tensor_to_array
 
@@ -29,7 +30,7 @@ class RasterizerContext:
         self.particle_size_scale = options.particle_size_scale
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
-        self.n_rendered_envs = options.n_rendered_envs
+        self.rendered_envs_idx = options.rendered_envs_idx
         self.env_separate_rigid = options.env_separate_rigid
 
         self.init_meshes()
@@ -59,14 +60,14 @@ class RasterizerContext:
         self.visualizer = scene.visualizer
         self.visualizer.update_visual_states()
 
-        if self.n_rendered_envs is None:
-            self.n_rendered_envs = self.sim._B
+        if self.rendered_envs_idx is None:
+            self.rendered_envs_idx = list(range(self.sim._B))
 
         # pyrender scene
         self._scene = pyrender.Scene(
             ambient_light=self.ambient_light,
             bg_color=self.background_color,
-            n_envs=self.n_rendered_envs,
+            n_envs=len(self.rendered_envs_idx),
         )
 
         self.jit = JITRenderer(self._scene, [], [])
@@ -277,7 +278,7 @@ class RasterizerContext:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
-                    geom_T = geoms_T[geom.idx][: self.n_rendered_envs]
+                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     self.rigid_nodes[geom.uid] = self.add_node(
                         pyrender.Mesh.from_trimesh(
                             mesh=mesh,
@@ -304,7 +305,7 @@ class RasterizerContext:
                     geoms_T = self.sim.rigid_solver._geoms_render_T
 
                 for geom in geoms:
-                    geom_T = geoms_T[geom.idx][: self.n_rendered_envs]
+                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
                         [0, 2, 1]
                     )
@@ -318,10 +319,19 @@ class RasterizerContext:
                 contact_data = self.sim.rigid_solver.collider.contact_data[i_con, batch_idx]
                 contact_pos = np.array(contact_data.pos) + self.scene.envs_offset[batch_idx]
 
+                ga_state = self.sim.rigid_solver.geoms_state[contact_data.geom_a, batch_idx]
+                gb_state = self.sim.rigid_solver.geoms_state[contact_data.geom_b, batch_idx]
+                aabb_size = min(
+                    (ga_state.aabb_max - ga_state.aabb_min).norm(), (gb_state.aabb_max - gb_state.aabb_min).norm()
+                )
+                normal_scaled = aabb_size * contact_data.normal
+                normal_color = (0.9, 0.0, 0.8, 1.0)
                 if self.sim.rigid_solver.links[contact_data.link_a].visualize_contact:
                     self.draw_contact_arrow(pos=contact_pos, force=-contact_data.force)
+                    self.draw_debug_arrow(pos=contact_pos, vec=normal_scaled, color=normal_color, persistent=False)
                 if self.sim.rigid_solver.links[contact_data.link_b].visualize_contact:
                     self.draw_contact_arrow(pos=contact_pos, force=contact_data.force)
+                    self.draw_debug_arrow(pos=contact_pos, vec=-normal_scaled, color=normal_color, persistent=False)
 
     def on_avatar(self):
         if self.sim.avatar_solver.is_active():
@@ -659,15 +669,18 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_debug_arrow(self, pos, vec=(0, 0, 1), radius=0.006, color=(1.0, 0.0, 0.0, 0.5)):
+    def draw_debug_arrow(self, pos, vec=(0, 0, 1), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         length = np.linalg.norm(vec)
         if length > 0:
             mesh = mu.create_arrow(length=length, radius=radius, body_color=color, head_color=color)
             pose = np.eye(4)
             pose[:3, 3] = tensor_to_array(pos)
             pose[:3, :3] = gu.z_to_R(tensor_to_array(vec))
-            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}")
-            self.add_external_node(node, pose=pose)
+            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose[None])
+            if persistent:
+                self.add_external_node(node)
+            else:
+                self.add_dynamic_node(node)
             return node
 
     def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
@@ -702,28 +715,27 @@ class RasterizerContext:
         self.add_external_node(node, pose=T)
         return node
 
-    def draw_contact_arrow(self, pos, radius=0.006, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0)):
-        force_vec = tensor_to_array(force) * self.contact_force_scale
-        length = np.linalg.norm(force_vec)
-        if length > 0:
-            mesh = mu.create_arrow(length=length, radius=radius, body_color=color, head_color=color)
-            pose = np.eye(4)
-            pose[:3, 3] = tensor_to_array(pos)
-            pose[:3, :3] = gu.z_to_R(force_vec)
-            self.add_dynamic_node(pyrender.Mesh.from_trimesh(mesh), pose=pose)
+    def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0)):
+        self.draw_debug_arrow(pos, tensor_to_array(force) * self.contact_force_scale, radius, persistent=False)
 
-    def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
+    def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
         pose = gu.trans_to_T(tensor_to_array(pos))
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_sphere_{gs.UID()}", smooth=True)
-        self.add_external_node(node, pose=pose)
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_sphere_{gs.UID()}", smooth=True, poses=pose[None])
+        if persistent:
+            self.add_external_node(node)
+        else:
+            self.add_dynamic_node(node)
         return node
 
-    def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5)):
+    def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
         poses = gu.trans_to_T(tensor_to_array(poss))
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_spheres_{gs.UID()}", smooth=True, poses=poses)
-        self.add_external_node(node)
+        if persistent:
+            self.add_external_node(node)
+        else:
+            self.add_dynamic_node(node)
         return node
 
     def draw_debug_box(self, bounds, color=(1.0, 0.0, 0.0, 1.0), wireframe=True, wireframe_radius=0.002):

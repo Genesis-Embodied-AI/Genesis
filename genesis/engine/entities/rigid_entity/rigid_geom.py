@@ -6,11 +6,11 @@ import numpy as np
 import skimage
 import taichi as ti
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.ext import trimesh
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
 
@@ -120,7 +120,7 @@ class RigidGeom(RBC):
                 with open(self._gsd_path, "rb") as file:
                     gsd_dict = pkl.load(file)
                 is_cached_loaded = True
-            except (EOFError, pkl.UnpicklingError):
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:

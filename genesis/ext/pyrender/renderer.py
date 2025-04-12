@@ -398,18 +398,27 @@ class Renderer(object):
         # Free meshes
         for mesh in self._meshes:
             for p in mesh.primitives:
-                p.delete()
+                try:
+                    p.delete()
+                except OpenGL.error.GLError:
+                    pass
+        self._meshes.clear()
 
         # Free textures
         for mesh_texture in self._mesh_textures:
-            mesh_texture.delete()
+            try:
+                mesh_texture.delete()
+            except OpenGL.error.GLError:
+                pass
+        self._mesh_textures.clear()
 
         for shadow_texture in self._shadow_textures:
-            shadow_texture.delete()
+            try:
+                shadow_texture.delete()
+            except OpenGL.error.GLError:
+                pass
+        self._shadow_textures.clear()
 
-        self._meshes = set()
-        self._mesh_textures = set()
-        self._shadow_textures = set()
         self._texture_alloc_idx = 0
 
         self._delete_main_framebuffer()

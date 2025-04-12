@@ -44,8 +44,9 @@ class Options(BaseModel, RBC):
         return f"<{cls.__module__}.{cls.__qualname__}>".replace("genesis", "gs")
 
     def __repr__(self):
-        if not __debug__:
-            self.__colorized__repr__()
+        if __debug__:
+            return super().__repr__()
+        self.__colorized__repr__()
 
     def __colorized__repr__(self) -> str:
         property_attrs = self.__dict__.keys()
