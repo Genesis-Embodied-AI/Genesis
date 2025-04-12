@@ -1,7 +1,8 @@
-from pxr import Usd, UsdGeom, UsdShade
 import genesis as gs
-from genesis.ext import trimesh
 from . import mesh as mu
+
+from pxr import Usd, UsdGeom, UsdShade
+import trimesh
 import numpy as np
 from PIL import Image
 

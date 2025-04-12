@@ -2,10 +2,10 @@ from io import BytesIO
 from urllib import request
 import numpy as np
 import pygltflib
+import trimesh
 from PIL import Image
 
 import genesis as gs
-from genesis.ext import trimesh
 from . import mesh as mu
 
 ctype_to_numpy = {
@@ -158,8 +158,13 @@ def parse_glb_material(glb, material_index, surface):
             texture = glb.textures[pbr_texture.baseColorTexture.index]
             if pbr_texture.baseColorTexture.texCoord is not None:
                 uvs_used = pbr_texture.baseColorTexture.texCoord
+            if "KHR_texture_basisu" in texture.extensions:
+                gs.logger.warning(
+                    f"Mesh file `{glb.path}` uses 'KHR_texture_basisu' extension for supercompression of texture "
+                    "images, which is unsupported. Ignoring texture."
+                )
             color_image = get_glb_image(glb, texture.source, "RGBA")
-
+            
         # parse color
         color_factor = None
         if pbr_texture.baseColorFactor is not None:
@@ -172,9 +177,9 @@ def parse_glb_material(glb, material_index, surface):
         color_image = None
         if "diffuseTexture" in extension_material:
             texture = extension_material["diffuseTexture"]
-            if texture.get("texCoord", None) is not None:
+            if texture.get("texCoord") is not None:
                 uvs_used = texture["texCoord"]
-            color_image = get_glb_image(glb, texture.get("index", None), "RGBA")
+            color_image = get_glb_image(glb, texture.get("index"), "RGBA")
 
         color_factor = None
         if "diffuseFactor" in extension_material:
@@ -280,6 +285,7 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
     glb = pygltflib.GLTF2().load(path)
     assert glb is not None
     glb.convert_images(pygltflib.ImageFormat.DATAURI)
+    glb.path = path
 
     glb_scene = 0 if glb.scene is None else glb.scene
     scene = glb.scenes[glb_scene]
