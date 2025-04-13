@@ -90,6 +90,8 @@ def batched_franka(solver, n_envs, show_viewer):
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             constraint_solver=solver,
+            # FIXME: Must disable self collision to avoid CUDA OOM error
+            enable_self_collision=False,
         ),
         show_viewer=show_viewer,
     )

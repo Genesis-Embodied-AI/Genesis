@@ -371,14 +371,19 @@ def test_set_root_pose(show_viewer, atol):
     )
     scene.build()
 
-    np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
-    np.testing.assert_allclose(
-        gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
-    )
-    np.testing.assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), atol=atol)
+    for _ in range(2):
+        scene.reset()
 
-    cube.set_pos(torch.tensor((0.0, 0.5, 0.2)))
-    np.testing.assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), atol=atol)
+        np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
+        np.testing.assert_allclose(
+            gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
+        )
+        robot.set_pos(torch.tensor((-0.1, -0.2, 0.2)))
+        np.testing.assert_allclose(robot.get_pos(), (-0.1, -0.2, 0.2), atol=atol)
+
+        np.testing.assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), atol=atol)
+        cube.set_pos(torch.tensor((0.0, 0.5, 0.2)))
+        np.testing.assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), atol=atol)
 
 
 @pytest.mark.dof_damping(True)
