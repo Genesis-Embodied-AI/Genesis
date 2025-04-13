@@ -357,7 +357,8 @@ class Mesh(RBC):
             else:
                 gs.raise_exception()
 
-            return cls.from_trimesh(tmesh, surface=surface, metadata={"mesh_path": morph.file})
+            metadata = {"mesh_path": morph.file} if isinstance(morph, gs.options.morphs.FileMorph) else {}
+            return cls.from_trimesh(tmesh, surface=surface, metadata=metadata)
 
     def set_color(self, color):
         """
