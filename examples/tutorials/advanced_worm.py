@@ -57,16 +57,16 @@ worm = scene.add_entity(
 )
 
 ########################## build ##########################
-scene.build()
+scene.build(n_envs=3)
 
 
 ########################## set muscle ##########################
 def set_muscle_by_pos(robot):
     if isinstance(robot.material, gs.materials.MPM.Muscle):
-        pos = robot.get_state().pos
+        pos = robot.get_state().pos[0]
         n_units = robot.n_particles
     elif isinstance(robot.material, gs.materials.FEM.Muscle):
-        pos = robot.get_state().pos[robot.get_el2v()].mean(1)
+        pos = robot.get_state().pos[0, robot.get_el2v()].mean(1)
         n_units = robot.n_elements
     else:
         raise NotImplementedError
