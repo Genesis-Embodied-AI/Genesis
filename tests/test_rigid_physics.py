@@ -1,6 +1,7 @@
-import pytest
+import sys
 import xml.etree.ElementTree as ET
 
+import pytest
 import trimesh
 import torch
 import numpy as np
@@ -551,12 +552,14 @@ def move_cube(use_suction, show_viewer):
     np.testing.assert_allclose(qpos[2], 0.06, atol=2e-3)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics(show_viewer):
     use_suction = False
     move_cube(use_suction, show_viewer)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_suction_cup(show_viewer):
     use_suction = True
