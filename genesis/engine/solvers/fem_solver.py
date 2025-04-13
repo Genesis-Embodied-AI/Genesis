@@ -399,13 +399,15 @@ class FEMSolver(Solver):
         tri2v: ti.types.ndarray(),
         tri2el: ti.types.ndarray(),
     ):
-        for i in range(self.n_vertices):
+        n_verts_local = verts.shape[0]
+        for i in range(n_verts_local):
             i_global = i + v_start
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global].pos[j] = verts[i, j]
             self.elements_v[f, i_global].vel = ti.Vector.zero(gs.ti_float, 3)
 
-        for i in range(self.n_elements):
+        n_elems_local = elems.shape[0]
+        for i in range(n_elems_local):
             i_global = i + el_start
 
             a = self.elements_v[f, elems[i, 0] + v_start].pos
