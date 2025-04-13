@@ -18,6 +18,7 @@ class RigidJoint(RBC):
         entity,
         name,
         idx,
+        link_idx,
         q_start,
         dof_start,
         n_qs,
@@ -45,6 +46,7 @@ class RigidJoint(RBC):
 
         self._uid = gs.UID()
         self._idx = idx
+        self._link_idx = link_idx
         self._q_start = q_start
         self._dof_start = dof_start
         self._n_qs = n_qs
@@ -176,7 +178,7 @@ class RigidJoint(RBC):
         """
         Returns the child link that of the joint.
         """
-        return self._solver.links[self._idx]
+        return self._solver.links[self._link_idx]
 
     @property
     def idx(self):

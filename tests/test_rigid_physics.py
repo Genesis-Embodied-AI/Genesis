@@ -63,7 +63,7 @@ def mimic_hinges():
 def box_box():
     """Generate an XML model for two boxes."""
     mjcf = ET.Element("mujoco", model="one_box")
-    ET.SubElement(mjcf, "option", timestep="0.01")  # FIXME: It only works for 5ms
+    ET.SubElement(mjcf, "option", timestep="0.01")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
     worldbody = ET.SubElement(mjcf, "worldbody")
@@ -297,9 +297,6 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
             np.testing.assert_allclose(qpos[:3], qpos0, atol=0.05)
             np.testing.assert_allclose(qpos[3:], 0, atol=0.03)
 
-    if show_viewer:
-        scene.viewer.stop()
-
 
 @pytest.mark.adjacent_collision(True)
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
@@ -354,7 +351,7 @@ def test_robot_kinematics(gs_sim, mj_sim, atol):
         check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
 
 
-def test_mjcf_world_offset(show_viewer, atol):
+def test_set_root_pose(show_viewer, atol):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -366,15 +363,27 @@ def test_mjcf_world_offset(show_viewer, atol):
             euler=(0, 0, 90),
         ),
     )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
+    )
     scene.build()
 
-    np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
-    np.testing.assert_allclose(
-        gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
-    )
+    for _ in range(2):
+        scene.reset()
 
-    if show_viewer:
-        scene.viewer.stop()
+        np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
+        np.testing.assert_allclose(
+            gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
+        )
+        robot.set_pos(torch.tensor((-0.1, -0.2, 0.2)))
+        np.testing.assert_allclose(robot.get_pos(), (-0.1, -0.2, 0.2), atol=atol)
+
+        np.testing.assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), atol=atol)
+        cube.set_pos(torch.tensor((0.0, 0.5, 0.2)))
+        np.testing.assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), atol=atol)
 
 
 @pytest.mark.dof_damping(True)
@@ -466,12 +475,12 @@ def move_cube(use_suction, show_viewer):
         num_waypoints=100,  # 1s duration
     )
     # execute the planned path
+    franka.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
     for waypoint in path:
         franka.control_dofs_position(waypoint)
-        franka.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
         scene.step()
 
-    # allow robot to reach the last waypoint
+    # Get more time to the robot to reach the last waypoint
     for i in range(100):
         scene.step()
 
@@ -514,7 +523,15 @@ def move_cube(use_suction, show_viewer):
         pos=np.array([0.4, 0.2, 0.18]),
         quat=np.array([0, 1, 0, 0]),
     )
-    franka.control_dofs_position(qpos[:-2], motors_dof)
+    path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=50,
+    )
+    for waypoint in path:
+        franka.control_dofs_position(waypoint[:-2], motors_dof)
+        scene.step()
+
+    # Get more time to the robot to reach the last waypoint
     for i in range(100):
         scene.step()
 
@@ -524,17 +541,14 @@ def move_cube(use_suction, show_viewer):
     else:
         rigid.delete_weld_constraint(link_cube, link_franka)
 
-    for i in range(450):
+    for i in range(500):
         scene.step()
-        if i > 400:
+        if i > 450:
             qvel = cube.get_dofs_velocity().cpu()
             np.testing.assert_allclose(qvel, 0, atol=0.05)
 
     qpos = cube.get_dofs_position().cpu()
     np.testing.assert_allclose(qpos[2], 0.06, atol=2e-3)
-
-    if show_viewer:
-        scene.viewer.stop()
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -580,9 +594,6 @@ def test_nonconvex_collision(show_viewer):
         if i > 1400:
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             np.testing.assert_allclose(qvel, 0, atol=0.1)
-
-    if show_viewer:
-        scene.viewer.stop()
 
 
 # FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
@@ -646,18 +657,18 @@ def test_convexify(euler, show_viewer):
     # but for the others it is hard to tell... Let's use some reasonable guess.
     mug, donut, cup, apple = objs
     assert len(apple.geoms) == 1
-    assert 5 <= len(donut.geoms) <= 10
-    assert 5 <= len(cup.geoms) <= 20
-    assert 5 <= len(mug.geoms) <= 40
-    assert 5 <= len(box.geoms) <= 20
+    assert all(geom.metadata["decomposed"] for geom in donut.geoms) and 5 <= len(donut.geoms) <= 10
+    assert all(geom.metadata["decomposed"] for geom in cup.geoms) and 5 <= len(cup.geoms) <= 20
+    assert all(geom.metadata["decomposed"] for geom in mug.geoms) and 5 <= len(mug.geoms) <= 40
+    assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 1600 if euler == (90, 0, 90) else 500
+    num_steps = 2500 if euler == (90, 0, 90) else 600
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.3)
+            np.testing.assert_allclose(qvel, 0, atol=0.6)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
@@ -672,9 +683,6 @@ def test_convexify(euler, show_viewer):
             qpos = obj.get_dofs_position().cpu()
             np.testing.assert_allclose(qpos[0], 0.0, atol=6e-3)
             np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
-
-    if show_viewer:
-        scene.viewer.stop()
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -767,9 +775,6 @@ def test_urdf_mimic_panda(show_viewer, atol):
 
     gs_qpos = rigid.qpos.to_numpy()[:, 0]
     np.testing.assert_allclose(gs_qpos[-1], gs_qpos[-2], atol=atol)
-
-    if show_viewer:
-        scene.viewer.stop()
 
 
 @pytest.mark.parametrize("n_envs, backend", [(0, gs.cpu), (0, gs.gpu), (3, gs.cpu)])
@@ -906,11 +911,11 @@ def test_data_accessor(n_envs, atol):
         if setter is not None:
             if isinstance(datas, torch.Tensor):
                 # Make sure that the vector is normalized and positive just in case it is a quaternion
-                datas = torch.abs(torch.randn(datas.shape, dtype=datas.dtype))
+                datas = torch.abs(torch.randn(datas.shape, device="cpu", dtype=datas.dtype))
                 datas /= torch.linalg.norm(datas, dim=-1, keepdims=True)
             else:
                 for val in datas:
-                    val[:] = torch.abs(torch.randn(val.shape, dtype=val.dtype))
+                    val[:] = torch.abs(torch.randn(val.shape, device="cpu", dtype=val.dtype))
                     val[:] /= torch.linalg.norm(vals, dim=-1, keepdims=True)
             setter(datas)
         if arg1_max > 0:

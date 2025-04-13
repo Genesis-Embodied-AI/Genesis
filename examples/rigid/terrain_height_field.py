@@ -54,13 +54,13 @@ def main():
     scene.build(n_envs=1)
 
     height_field = terrain.geoms[0].metadata["height_field"]
-    rows = horizontal_scale * torch.arange(0, height_field.shape[0], 1, device="cuda").unsqueeze(1).repeat(
+    rows = horizontal_scale * torch.arange(0, height_field.shape[0], 1, device=gs.device).unsqueeze(1).repeat(
         1, height_field.shape[1]
     ).unsqueeze(-1)
-    cols = horizontal_scale * torch.arange(0, height_field.shape[1], 1, device="cuda").unsqueeze(0).repeat(
+    cols = horizontal_scale * torch.arange(0, height_field.shape[1], 1, device=gs.device).unsqueeze(0).repeat(
         height_field.shape[0], 1
     ).unsqueeze(-1)
-    heights = vertical_scale * torch.tensor(height_field, device="cuda").unsqueeze(-1)
+    heights = vertical_scale * torch.tensor(height_field, device=gs.device).unsqueeze(-1)
 
     poss = torch.cat([rows, cols, heights], dim=-1).reshape(-1, 3)
     scene.draw_debug_spheres(poss=poss, radius=0.05, color=(0, 0, 1, 0.7))

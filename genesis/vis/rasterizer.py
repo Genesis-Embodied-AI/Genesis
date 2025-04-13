@@ -14,6 +14,7 @@ class Rasterizer(RBC):
         self._camera_nodes = dict()
         self._camera_targets = dict()
         self._offscreen = self._viewer is None
+        self._renderer = None
 
     def build(self):
         if self._context is None:
@@ -123,13 +124,14 @@ class Rasterizer(RBC):
         self._context.jit.update_buffer(buffer_updates)
 
     def destroy(self):
-        if self._offscreen:
+        if self._offscreen and self._renderer is not None:
             self._renderer._platform.make_current()
             for target in self._camera_targets:
                 self._camera_targets[target].delete()
             self._renderer.delete()
             del self._renderer
             gc.collect()
+            self._renderer = None
 
     @property
     def viewer(self):

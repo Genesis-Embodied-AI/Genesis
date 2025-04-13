@@ -163,6 +163,9 @@ class RigidSolver(Solver):
         self._equalities = self.equalities
 
         base_links_idx = []
+        for link in self.links:
+            if link.parent_idx == -1 and link.is_fixed:
+                base_links_idx.append(link.idx)
         for joint in chain.from_iterable(self.joints):
             if joint.type == gs.JOINT_TYPE.FREE:
                 base_links_idx.append(joint.link.idx)
@@ -236,7 +239,7 @@ class RigidSolver(Solver):
                 offset = offsets[i_link]
 
                 this_link = i_link
-                while this_link >= 0:
+                while this_link != -1:
                     for i_d_ in range(dof_end[this_link] - dof_start[this_link]):
                         i_d = dof_end[this_link] - i_d_ - 1
                         jacr[i_d] = cdof_ang[i_d]
@@ -306,7 +309,7 @@ class RigidSolver(Solver):
 
         for i in range(self.n_links):
             j = i
-            while j >= 0:
+            while j != -1:
                 for i_d in range(self.links[i].dof_start, self.links[i].dof_end):
                     for j_d in range(self.links[j].dof_start, self.links[j].dof_end):
                         mass_parent_mask[i_d, j_d] = 1.0
@@ -586,12 +589,27 @@ class RigidSolver(Solver):
             joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
         )
 
-        self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
-            self.qpos.from_numpy(init_qpos)
             self.qpos0.from_numpy(init_qpos)
+
+        # Check if the initial configuration is out-of-bounds
+        self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
+        is_init_qpos_out_of_bounds = False
+        if self.n_qs > 0:
+            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            for joint in chain.from_iterable(self._joints):
+                if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_idx]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_idx] > joint.dofs_limit[0, 1]).any()
+                    # init_qpos[joint.q_idx] = np.clip(init_qpos[joint.q_idx], *joint.dofs_limit[0])
+            self.qpos.from_numpy(init_qpos)
+        if is_init_qpos_out_of_bounds:
+            gs.logger.warning(
+                "Reference robot position exceeds joint limits."
+                # "Clipping initial position too make sure it is valid."
+            )
 
         # This is for IK use only
         # TODO: support IK with parallel envs
@@ -866,6 +884,7 @@ class RigidSolver(Solver):
             coup_softness=gs.ti_float,
             coup_restitution=gs.ti_float,
             is_free=gs.ti_int,
+            is_decomposed=gs.ti_int,
         )
         struct_geom_state = ti.types.struct(
             pos=gs.ti_vec3,
@@ -933,6 +952,7 @@ class RigidSolver(Solver):
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
                 geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
+                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_int),
             )
 
     @ti.kernel
@@ -962,6 +982,7 @@ class RigidSolver(Solver):
         geoms_coup_friction: ti.types.ndarray(),
         geoms_coup_restitution: ti.types.ndarray(),
         geoms_is_free: ti.types.ndarray(),
+        geoms_is_decomp: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_geoms):
@@ -1006,6 +1027,7 @@ class RigidSolver(Solver):
             self.geoms_info[i].coup_restitution = geoms_coup_restitution[i]
 
             self.geoms_info[i].is_free = geoms_is_free[i]
+            self.geoms_info[i].is_decomposed = geoms_is_decomp[i]
 
             # compute init AABB.
             # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
@@ -2290,7 +2312,7 @@ class RigidSolver(Solver):
 
             pos = l_info.pos
             quat = l_info.quat
-            if l_info.parent_idx >= 0:
+            if l_info.parent_idx != -1:
                 parent_pos = self.links_state[l_info.parent_idx, i_b].pos
                 parent_quat = self.links_state[l_info.parent_idx, i_b].quat
                 pos = parent_pos + gu.ti_transform_by_quat(pos, parent_quat)
@@ -2369,8 +2391,10 @@ class RigidSolver(Solver):
                 else:
                     print("unrecognized joint type", joint_type)
 
-            self.links_state[i_l, i_b].pos = pos
-            self.links_state[i_l, i_b].quat = quat
+            # Skip link pose update for fixed root links to allow the user for manually overwriting them
+            if not (l_info.is_fixed and l_info.parent_idx == -1):
+                self.links_state[i_l, i_b].pos = pos
+                self.links_state[i_l, i_b].quat = quat
 
     @ti.func
     def _func_forward_velocity_entity(self, i_e, i_b):
@@ -2380,7 +2404,7 @@ class RigidSolver(Solver):
 
             cvel_vel = ti.Vector.zero(gs.ti_float, 3)
             cvel_ang = ti.Vector.zero(gs.ti_float, 3)
-            if l_info.parent_idx >= 0:
+            if l_info.parent_idx != -1:
                 cvel_vel = self.links_state[l_info.parent_idx, i_b].cd_vel
                 cvel_ang = self.links_state[l_info.parent_idx, i_b].cd_ang
 
@@ -3664,9 +3688,10 @@ class RigidSolver(Solver):
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
-        if inputs_start < 0 or input_max <= inputs_end:
-            gs.raise_exception("`{idx_name}` is out-of-range.")
+        if len(inputs_idx):
+            inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
+            if inputs_start < 0 or input_max <= inputs_end:
+                gs.raise_exception("`{idx_name}` is out-of-range.")
 
         if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
@@ -3798,7 +3823,7 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             pos = pos.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
-            gs.raise_exception("`links_idx` contains at least one link that is not a free-floating base link.")
+            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_pos(pos, links_idx, envs_idx)
         if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3816,12 +3841,13 @@ class RigidSolver(Solver):
             I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
             for i in ti.static(range(3)):
                 self.links_state[i_l, envs_idx[i_b_]].pos[i] = pos[i_b_, i_l_, i]
-            q_start = self.links_info[I_l].q_start
-            for i in ti.static(range(3)):
-                self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
+            if not (self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed):
+                q_start = self.links_info[I_l].q_start
+                for i in ti.static(range(3)):
+                    self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
-        raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
+        raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         if links_idx is None:
@@ -3832,7 +3858,7 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             quat = quat.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
-            gs.raise_exception("`links_idx` contains at least one link that is not a free-floating base link.")
+            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_quat(quat, links_idx, envs_idx)
         if skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3850,9 +3876,10 @@ class RigidSolver(Solver):
             I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
             for i in ti.static(range(4)):
                 self.links_state[i_l, envs_idx[i_b_]].quat[i] = quat[i_b_, i_l_, i]
-            q_start = self.links_info[I_l].q_start
-            for i in ti.static(range(4)):
-                self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
+            if not (self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed):
+                q_start = self.links_info[I_l].q_start
+                for i in ti.static(range(4)):
+                    self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -4379,15 +4406,22 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "entity_com"] = "link_origin",
         unsafe: bool = False,
     ):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        assert ref in ("link_origin", "link_com")
-        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref=int(ref == "link_origin"))
+        if ref == "entity_com":
+            ref = 0
+        elif ref == "link_com":
+            ref = 1
+        elif ref == "link_origin":
+            ref = 2
+        else:
+            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'entity_com'.")
+        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref)
         return _tensor
 
     @ti.kernel
@@ -4404,11 +4438,11 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             l_state = self.links_state[links_idx[i_l_], envs_idx[i_b_]]
-            xvel = l_state.vel
-            if ti.static(ref == 1):  # link's origin
-                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
-            else:  # link's CoM
+            xvel = l_state.vel  # entity's CoM
+            if ti.static(ref == 1):  # link's CoM
                 xvel = xvel + l_state.ang.cross(l_state.i_pos)
+            if ti.static(ref == 2):  # link's origin
+                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = xvel[i]
 

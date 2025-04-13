@@ -40,52 +40,6 @@ exit_callbacks = []
 global_scene_list = set()
 
 
-############ fix python DLL search dir for OMPL ############
-try:
-    import ompl
-
-    _is_ompl_available = True
-except ImportError:
-    _is_ompl_available = False
-
-
-def dll_loader(lib, path):
-    # First, try the user-specified path
-    sys = system()
-    if sys == "Windows":
-        ext = ".dll"
-    elif sys == "Darwin":
-        ext = ".dylib"
-    else:  # Linux, other UNIX systems
-        ext = ".so"
-    fname = f"lib{lib}{ext}"
-    fpath = os.path.join(path, fname)
-
-    # Fallback to site-packages
-    if not os.path.isfile(fpath):
-        for sitepackagedir in site.getsitepackages():
-            if not os.path.exists(sitepackagedir):
-                continue
-            for _fname in os.listdir(sitepackagedir):
-                _fpath = os.path.join(sitepackagedir, _fname)
-                if os.path.isfile(_fpath):
-                    if _fname.startswith(fname):
-                        fpath = _fpath
-                        break
-
-    # Fallback to system loading and pray
-    if not os.path.isfile(fpath):
-        fpath = find_library(lib)
-
-    cdll = ctypes.CDLL(fpath, ctypes.RTLD_GLOBAL)
-    if cdll is None:
-        gs.raise_exception(f"Failed to load dynamic library '{lib}' (search path '{path}').")
-
-
-if _is_ompl_available:
-    ompl.dll_loader = dll_loader
-
-
 ########################## init ##########################
 def init(
     seed=None,
@@ -252,6 +206,9 @@ def init(
 
     _globalize_backend(backend)
 
+    # Update torch default device
+    torch.set_default_device(device)
+
     logger.info(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
     )
@@ -304,10 +261,8 @@ def destroy():
     global global_scene_list
     for scene in global_scene_list:
         if scene._visualizer is not None:
-            if scene._visualizer._rasterizer is not None:
-                scene._visualizer._rasterizer.destroy()
-                scene._visualizer._rasterizer = None
-            scene._visualizer = None
+            scene._visualizer.destroy()
+        del scene
     global_scene_list.clear()
 
     # Reset taichi

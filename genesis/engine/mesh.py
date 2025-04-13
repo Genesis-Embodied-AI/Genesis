@@ -333,9 +333,8 @@ class Mesh(RBC):
                 else:
                     meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
-            elif hasattr(morph, "files") and len(morph.files) > 0:  # for meshset
-                meshes = morph.files
-                assert all([isinstance(v, trimesh.Trimesh) for v in meshes])
+            elif isinstance(morph, gs.options.morphs.MeshSet):
+                assert all(isinstance(v, trimesh.Trimesh) for v in morph.files)
                 meshes = [mu.trimesh_to_mesh(v, morph.scale, surface) for v in meshes]
 
             else:
@@ -358,7 +357,8 @@ class Mesh(RBC):
             else:
                 gs.raise_exception()
 
-            return cls.from_trimesh(tmesh, surface=surface)
+            metadata = {"mesh_path": morph.file} if isinstance(morph, gs.options.morphs.FileMorph) else {}
+            return cls.from_trimesh(tmesh, surface=surface, metadata=metadata)
 
     def set_color(self, color):
         """

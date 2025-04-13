@@ -267,7 +267,7 @@ def postprocess_collision_geoms(
                 tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
                 tmeshes.append(tmesh)
             tmesh = trimesh.util.concatenate(tmeshes)
-            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
+            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata={"merged": True})
             g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
 
     # Try again to convexify then apply convex decomposition if not possible
@@ -295,7 +295,12 @@ def postprocess_collision_geoms(
                 volume_err = cmesh.volume / tmesh.volume - 1.0
             if volume_err > decompose_error_threshold:
                 tmeshes = convex_decompose(tmesh, coacd_options)
-                meshes = [gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()) for tmesh in tmeshes]
+                meshes = [
+                    gs.Mesh.from_trimesh(
+                        tmesh, surface=gs.surfaces.Collision(), metadata={**mesh.metadata, "decomposed": True}
+                    )
+                    for tmesh in tmeshes
+                ]
                 _g_infos += [{**g_info, **dict(mesh=mesh)} for mesh in meshes]
             else:
                 _g_infos.append(g_info)
@@ -322,6 +327,7 @@ def postprocess_collision_geoms(
             decimate=decimate,
             decimate_face_num=decimate_face_num,
             surface=gs.surfaces.Collision(),
+            metadata=mesh.metadata.copy(),
         )
         _g_infos.append({**g_info, **dict(mesh=mesh)})
 
@@ -331,7 +337,7 @@ def postprocess_collision_geoms(
 def parse_mesh_trimesh(path, group_by_material, scale, surface):
     meshes = []
     for _, mesh in trimesh.load(path, force="scene", group_material=group_by_material, process=False).geometry.items():
-        meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface))
+        meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface, metadata={"mesh_path": path}))
     return meshes
 
 
@@ -741,16 +747,16 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
             double_sided=double_sided,
         )
 
-        meshes.append(
-            gs.Mesh.from_attrs(
-                verts=verts,
-                faces=faces,
-                normals=normals,
-                surface=group_surface,
-                uvs=uvs,
-                scale=scale,
-            )
+        mesh = gs.Mesh.from_attrs(
+            verts=verts,
+            faces=faces,
+            normals=normals,
+            surface=group_surface,
+            uvs=uvs,
+            scale=scale,
         )
+        mesh.metadata["mesh_path"] = path
+        meshes.append(mesh)
 
     return meshes
 

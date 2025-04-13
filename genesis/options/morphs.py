@@ -343,7 +343,7 @@ class FileMorph(Morph):
             else:
                 self.convexify = False
                 self.decompose_error_threshold = float("inf")
-            gs.warning(
+            gs.logger.warning(
                 "`decompose_nonconvex` is deprecated. Please use 'convexify' and 'decompose_error_threshold' instead."
             )
 

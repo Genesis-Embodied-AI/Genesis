@@ -2,11 +2,22 @@ import argparse
 import os
 import pickle
 import shutil
+from importlib import metadata
 
-from hover_env import HoverEnv
+try:
+    try:
+        if metadata.version("rsl-rl-lib"):
+            raise ImportError
+    except metadata.PackageNotFoundError:
+        if metadata.version("rsl-rl") != "1.0.2":
+            raise ImportError
+except (metadata.PackageNotFoundError, ImportError) as e:
+    raise ImportError("Please uninstall 'rsl-rl-lib' and install 'rsl_rl==1.0.2'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
+
+from hover_env import HoverEnv
 
 
 def get_train_cfg(exp_name, max_iterations):
@@ -136,7 +147,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     pickle.dump(
         [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],

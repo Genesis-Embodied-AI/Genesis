@@ -100,6 +100,11 @@ class Viewer(RBC):
 
                 if i == len(all_opengl_platforms) - 1:
                     raise
+            finally:
+                if opengl_platform_orig is None:
+                    del os.environ["PYOPENGL_PLATFORM"]
+                else:
+                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
