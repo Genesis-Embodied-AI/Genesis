@@ -1,36 +1,9 @@
 import pytest
+
 import genesis as gs
 
 
-@pytest.fixture
-def fem_scene():
-    """Fixture for basic FEM scene setup"""
-    try:
-        gs.init(seed=0, precision="32", logging_level="debug")
-    except Exception as err:
-        # Ignore exception when genesis has been already initialized
-        if "Genesis already initialized." not in str(err):
-            raise err
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            substeps=10,
-            gravity=(0, 0, 0),
-        ),
-        fem_options=gs.options.FEMOptions(
-            dt=5e-4,
-            damping=45.0,
-        ),
-        show_viewer=False,
-    )
-
-    yield scene
-
-    # Cleanup
-    scene = None
-
-
-@pytest.fixture
+@pytest.fixture(scope="session")
 def fem_material():
     """Fixture for common FEM material properties"""
     return gs.materials.FEM.Muscle(
@@ -41,10 +14,23 @@ def fem_material():
     )
 
 
-def test_multiple_fem_entities(fem_scene, fem_material):
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_multiple_fem_entities(fem_material, show_viewer):
     """Test adding multiple FEM entities to the scene"""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=5e-4,
+            substeps=10,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        fem_options=gs.options.FEMOptions(
+            damping=45.0,
+        ),
+        show_viewer=show_viewer,
+    )
+
     # Add first FEM entity
-    fem_scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.5, -0.2, 0.3),
             radius=0.1,
@@ -53,15 +39,17 @@ def test_multiple_fem_entities(fem_scene, fem_material):
     )
 
     # Add second FEM entity
-    fem_scene.add_entity(
-        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)),
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+        ),
         material=fem_material,
     )
 
-    # Build and run the scene
-    fem_scene.build()
-    fem_scene.reset()
+    # Build the scene
+    scene.build()
 
-    # Run simulation steps
+    # Run simulation
     for _ in range(100):
-        fem_scene.step()
+        scene.step()
