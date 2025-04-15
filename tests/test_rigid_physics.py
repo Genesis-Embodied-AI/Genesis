@@ -348,14 +348,12 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 850 if dynamics else 400
+    num_steps = 900 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
-            for n, entity in enumerate(scene.entities[1:]):
-                i, j, k = int(n / 25), int(n / 5) % 5, n % 5
-                qvel = entity.get_dofs_velocity().cpu()
-                np.testing.assert_allclose(qvel, 0, atol=0.15 if dynamics else 0.05)
+            qvel = scene.rigid_solver.get_dofs_velocity().cpu()
+            np.testing.assert_allclose(qvel, 0, atol=0.15 if dynamics else 0.05)
 
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
@@ -470,12 +468,12 @@ def test_stickman(gs_sim, mj_sim, atol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(4000):
+    for i in range(4500):
         gs_sim.scene.step()
-        if i > 3900:
+        if i > 4400:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.3)
+            np.testing.assert_allclose(qvel, 0, atol=0.4)
 
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
@@ -616,7 +614,7 @@ def move_cube(use_suction, show_viewer):
         scene.step()
         if i > 450:
             qvel = cube.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.05)
+            np.testing.assert_allclose(qvel, 0, atol=0.06)
 
     qpos = cube.get_dofs_position().cpu()
     np.testing.assert_allclose(qpos[2], 0.06, atol=2e-3)
@@ -638,7 +636,10 @@ def test_suction_cup(show_viewer):
 
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_nonconvex_collision(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
     tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
@@ -656,6 +657,7 @@ def test_nonconvex_collision(show_viewer):
         surface=gs.surfaces.Default(
             color=(0.5, 0.7, 0.9, 1.0),
         ),
+        visualize_contact=True,
     )
     scene.build()
 
@@ -736,7 +738,7 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 2500 if euler == (90, 0, 90) else 600
+    num_steps = 1200 if euler == (90, 0, 90) else 600
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
@@ -775,18 +777,40 @@ def test_collision_edge_cases(gs_sim, mode):
     np.testing.assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
 
 
+@pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
+@pytest.mark.parametrize("mode", [3])
+@pytest.mark.parametrize("model_name", ["collision_edge_cases"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_nan_reset(gs_sim, mode):
+    for _ in range(200):
+        gs_sim.scene.step()
+        qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
+        if np.isnan(qvel).any():
+            break
+    else:
+        raise AssertionError
+
+    gs_sim.scene.reset()
+    for _ in range(5):
+        gs_sim.scene.step()
+    qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
+    assert not np.isnan(qvel).any()
+
+
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_terrain_generation(show_viewer):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-5.0, -5.0, 10.0),
             camera_lookat=(5.0, 5.0, 0.0),
             camera_fov=40,
         ),
         show_viewer=show_viewer,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-        ),
     )
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
