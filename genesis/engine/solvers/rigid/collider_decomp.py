@@ -1000,9 +1000,6 @@ class Collider:
                 else:  # non-convex non-terrain object
                     if ti.static(self._has_nonconvex_nonterrain):
                         is_col = False
-                        penetration = gs.ti_float(0.0)
-                        normal = ti.Vector.zero(gs.ti_float, 3)
-                        contact_pos = ti.Vector.zero(gs.ti_float, 3)
                         tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
                         for i in range(2):
                             if i == 1:
@@ -1023,7 +1020,7 @@ class Collider:
 
                             if is_col_0 and ti.static(self._solver._enable_multi_contact):
                                 # perturb geom_a around two orthogonal axes to find multiple contacts
-                                axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, i_b, normal)
+                                axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal_0, i_b)
 
                                 ga_state = self._solver.geoms_state[i_ga, i_b]
                                 gb_state = self._solver.geoms_state[i_gb, i_b]
@@ -1031,17 +1028,11 @@ class Collider:
                                 ga_pos, ga_quat = ga_state.pos, ga_state.quat
                                 gb_pos, gb_quat = gb_state.pos, gb_state.quat
 
-                                n_valid = 1
-                                for i_rot in range(4):
-                                    axis = axis_0
-                                    if i_rot == 1:
-                                        axis = -axis_0
-                                    elif i_rot == 2:
-                                        axis = axis_1
-                                    elif i_rot == 3:
-                                        axis = -axis_1
+                                n_con = 1
+                                for i_rot in range(1, 5):
+                                    axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
-                                    qrot = gu.ti_rotvec_to_quat(axis * self._mc_perturbation)
+                                    qrot = gu.ti_rotvec_to_quat(self._mc_perturbation * axis)
                                     self._func_rotate_frame(i_ga, contact_pos_0, qrot, i_b)
                                     self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
@@ -1056,18 +1047,16 @@ class Collider:
                                         penetration = penetration_0
 
                                     if is_col:
-                                        i_col = self.n_contacts[i_b]
-                                        valid = True
-                                        for j in range(n_valid):
-                                            if (
-                                                contact_pos - self.contact_data[i_col - j - 1, i_b].pos
-                                            ).norm() < tolerance:
-                                                valid = False
-                                                break
+                                        repeated = False
+                                        for i_con in range(n_con):
+                                            if not repeated:
+                                                idx_prev = self.n_contacts[i_b] - 1 - i_con
+                                                prev_contact = self.contact_data[idx_prev, i_b].pos
+                                                if (contact_pos - prev_contact).norm() < tolerance:
+                                                    repeated = True
 
-                                        if valid:
-                                            # Apply first-order penetration depth correction
-                                            normal -= self._mc_perturbation * axis.cross(normal)
+                                        if not repeated:
+                                            # Apply first-order penetration depth correction.
                                             contact_shift = contact_pos - contact_pos_0
                                             depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
                                             penetration = ti.min(
@@ -1078,7 +1067,7 @@ class Collider:
                                                 self._func_add_contact(
                                                     i_ga, i_gb, normal, contact_pos, penetration, i_b
                                                 )
-                                                n_valid += 1
+                                                n_con += 1
 
                                     self._solver.geoms_state[i_ga, i_b].pos = ga_pos
                                     self._solver.geoms_state[i_ga, i_b].quat = ga_quat
@@ -1198,7 +1187,7 @@ class Collider:
         return tolerance_abs
 
     @ti.func
-    def _func_contact_orthogonals(self, i_ga, i_gb, i_b, normal):
+    def _func_contact_orthogonals(self, i_ga, i_gb, normal, i_b):
         # The reference geometry is the one that will have the largest impact on the position of
         # the contact point. Basically, the smallest one between the two, which can be approximated
         # by the volume of their respective bounding box.
@@ -1334,7 +1323,7 @@ class Collider:
                         self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
                         if multi_contact:
                             # perturb geom_a around two orthogonal axes to find multiple contacts
-                            axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, i_b, normal)
+                            axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal, i_b)
                             n_con = 1
 
                         if ti.static(not self._solver._enable_mpr_vanilla):
@@ -1344,15 +1333,15 @@ class Collider:
                         self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    repeat = False
+                    repeated = False
                     for i_con in range(n_con):
-                        if not repeat:
+                        if not repeated:
                             idx_prev = self.n_contacts[i_b] - 1 - i_con
                             prev_contact = self.contact_data[idx_prev, i_b].pos
                             if (contact_pos - prev_contact).norm() < tolerance:
-                                repeat = True
+                                repeated = True
 
-                    if not repeat:
+                    if not repeated:
                         # Apply first-order penetration depth correction: compensate effect of small rotation:
                         # First, unrotate the normal direction, then cancel virtual penetation over-estimation.
                         normal -= self._mc_perturbation * axis.cross(normal)  # Rodrigues' rotation formula
