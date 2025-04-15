@@ -2870,6 +2870,14 @@ class RigidSolver(Solver):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self._B):
+                for i_d_ in range(self.n_awake_dofs[i_b]):
+                    i_d = self.awake_dofs[i_d_, i_b]
+                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+
+                    self.dofs_state[i_d, i_b].qf_passive = -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
+
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(self._B):
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
                     I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
@@ -2890,18 +2898,15 @@ class RigidSolver(Solver):
                             I_d = (
                                 [dof_start + j_d, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + j_d
                             )
-                            self.dofs_state[dof_start + j_d, i_b].qf_passive = (
+                            self.dofs_state[dof_start + j_d, i_b].qf_passive += (
                                 -self.qpos[q_start + j_d, i_b] * self.dofs_info[I_d].stiffness
                             )
-
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_d_ in range(self.n_awake_dofs[i_b]):
-                    i_d = self.awake_dofs[i_d_, i_b]
-                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-
-                    self.dofs_state[i_d, i_b].qf_passive += -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
         else:
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
+                I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+                self.dofs_state[i_d, i_b].qf_passive = -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
+
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
@@ -2920,14 +2925,9 @@ class RigidSolver(Solver):
 
                     for j_d in range(q_end - q_start):
                         I_d = [dof_start + j_d, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + j_d
-                        self.dofs_state[dof_start + j_d, i_b].qf_passive = (
+                        self.dofs_state[dof_start + j_d, i_b].qf_passive += (
                             -self.qpos[q_start + j_d, i_b] * self.dofs_info[I_d].stiffness
                         )
-
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                self.dofs_state[i_d, i_b].qf_passive += -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
 
     @ti.func
     def _func_system_update_acc(self, for_sensor):

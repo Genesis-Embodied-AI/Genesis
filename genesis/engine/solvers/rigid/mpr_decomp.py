@@ -338,38 +338,31 @@ class MPR:
     def mpr_find_pos(self, i_ga, i_gb, i_b):
         b = ti.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.ti_float)
 
-        direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
-
-        for i in range(4):
-            i1, i2, i3 = (i + 1) % 4, (i + 2) % 4, (i + 3) % 4
-            vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
-            b[i] = vec.dot(self.simplex_support[i_ga, i_gb, i3, i_b].v) * (1 - i % 2 * 2)
+        # Only look into the direction of the portal for consistency with penetration depth computation
+        if ti.static(self._solver._enable_mpr_vanilla):
+            for i in range(4):
+                i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
+                vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
+                b[i] = vec.dot(self.simplex_support[i_ga, i_gb, i3, i_b].v) * (1 - 2 * (((i + 1) // 2) % 2))
 
         sum_ = b.sum()
 
-        if sum_ <= 0:
+        if sum_ < self.CCD_EPS:
+            direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
             b[0] = 0.0
             for i in range(1, 4):
                 i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
                 vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
                 b[i] = vec.dot(direction)
-
-        sum_ = b.sum()
+            sum_ = b.sum()
 
         p1 = gs.ti_vec3([0.0, 0.0, 0.0])
         p2 = gs.ti_vec3([0.0, 0.0, 0.0])
         for i in range(4):
-            vec = self.simplex_support[i_ga, i_gb, i, i_b].v1 * b[i]
-            p1 += vec
-            vec = self.simplex_support[i_ga, i_gb, i, i_b].v2 * b[i]
-            p2 += vec
+            p1 += b[i] * self.simplex_support[i_ga, i_gb, i, i_b].v1
+            p2 += b[i] * self.simplex_support[i_ga, i_gb, i, i_b].v2
 
-        inv_ = 1 / sum_
-        p1 = p1 * inv_
-        p2 = p2 * inv_
-        pos = (p1 + p2) * 0.5
-
-        return pos
+        return (0.5 / sum_) * (p1 + p2)
 
     @ti.func
     def mpr_find_penetr_touch(self, i_ga, i_gb, i_b):
