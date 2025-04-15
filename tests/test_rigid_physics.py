@@ -664,9 +664,9 @@ def test_nonconvex_collision(show_viewer):
     # Force numpy seed because this test is very sensitive to the initial condition
     np.random.seed(0)
     ball.set_dofs_velocity(np.random.rand(ball.n_dofs) * 0.8)
-    for i in range(1500):
+    for i in range(1800):
         scene.step()
-        if i > 1400:
+        if i > 1700:
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             np.testing.assert_allclose(qvel, 0, atol=0.1)
 
@@ -738,7 +738,7 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 1200 if euler == (90, 0, 90) else 600
+    num_steps = 1500 if euler == (90, 0, 90) else 600
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:

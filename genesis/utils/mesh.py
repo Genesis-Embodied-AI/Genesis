@@ -1,4 +1,5 @@
 import hashlib
+import math
 import os
 import pickle as pkl
 from io import BytesIO
@@ -234,12 +235,18 @@ def postprocess_collision_geoms(
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.volume < gs.EPS:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
             cmesh = trimesh.convex.convex_hull(tmesh)
-            volume_err = cmesh.volume / tmesh.volume - 1.0
-            if volume_err > decompose_error_threshold:
+            if cmesh.volume < gs.EPS:
+                continue
+            if not tmesh.is_winding_consistent:
+                volume_err = float("inf")
                 must_decompose = True
+            elif tmesh.volume > gs.EPS:
+                volume_err = cmesh.volume / tmesh.volume - 1.0
+                if volume_err > decompose_error_threshold:
+                    must_decompose = True
 
     # Check whether merging the geometries is possible, i.e.
     # * They are all meshes
@@ -276,24 +283,35 @@ def postprocess_collision_geoms(
         mesh = g_info["mesh"]
         tmesh = mesh.trimesh
         cmesh = trimesh.convex.convex_hull(tmesh)
-        volume_err = cmesh.volume / tmesh.volume - 1.0
-        must_decompose = volume_err > decompose_error_threshold
+        if tmesh.is_winding_consistent:
+            volume_err = cmesh.volume / tmesh.volume - 1.0
+            must_decompose = volume_err > decompose_error_threshold
 
     if must_decompose:
-        gs.logger.info(
-            f"Convex hull is not accurate enough for collision detection ({volume_err:.3f}). "
-            "Falling back to more expensive convex decomposition (see FileMorph options)."
-        )
+        if math.isinf(volume_err):
+            gs.logger.info(
+                f"Collision mesh has inconsistent winding and 'decompose_error_threshold' != float('inf'). "
+                "Falling back to more expensive convex decomposition (see FileMorph options)."
+            )
+        else:
+            gs.logger.info(
+                f"Convex hull is not accurate enough for collision detection ({volume_err:.3f}). Falling back to more "
+                "expensive convex decomposition (see FileMorph options)."
+            )
         _g_infos = []
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.volume < gs.EPS:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
+                volume_err = 0.0
+            if not tmesh.is_winding_consistent:
+                volume_err = float("inf")
+            elif tmesh.volume < gs.EPS:
                 volume_err = 0.0
             else:
                 cmesh = trimesh.convex.convex_hull(tmesh)
                 volume_err = cmesh.volume / tmesh.volume - 1.0
-            if volume_err > decompose_error_threshold:
+            if volume_err > decompose_error_threshold:  # Note that 'inf' is not larger than 'inf'
                 tmeshes = convex_decompose(tmesh, coacd_options)
                 meshes = [
                     gs.Mesh.from_trimesh(
