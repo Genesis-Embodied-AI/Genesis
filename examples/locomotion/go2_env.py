@@ -15,6 +15,7 @@ class Go2Env:
         self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
+        self.device = gs.device
 
         self.simulate_action_latency = True  # there is a 1 step latency on real robot
         self.dt = 0.02  # control frequency on real robot is 50hz
