@@ -78,6 +78,76 @@ def box_box():
     return mjcf
 
 
+@pytest.fixture
+def collision_edge_cases(asset_tmp_path, mode):
+    assets = {}
+    for i, box_size in enumerate(((0.8, 0.8, 0.04), (0.04, 0.04, 0.005))):
+        tmesh = trimesh.creation.box(extents=np.array(box_size) * 2)
+        mesh_path = str(asset_tmp_path / f"box{i}.obj")
+        tmesh.export(mesh_path, file_type="obj")
+        assets[f"box{i}"] = mesh_path
+
+    mjcf = ET.Element("mujoco", model="one_box")
+    ET.SubElement(mjcf, "option", timestep="0.005")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
+
+    asset = ET.SubElement(mjcf, "asset")
+    for name, mesh_path in assets.items():
+        ET.SubElement(asset, "mesh", name=name, refpos="0 0 0", refquat="1 0 0 0", file=mesh_path)
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+
+    if mode == 0:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0.0 0.0 0.7")
+        ET.SubElement(box1_body, "geom", type="box", size="0.04 0.04 0.005", pos="-0.758 -0.758 0.", rgba="0 0 1 0.4")
+    elif mode == 1:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 0.7")
+        ET.SubElement(box1_body, "geom", type="box", size="0.04 0.04 0.005", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 2:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 1.1")
+        ET.SubElement(box1_body, "geom", type="box", size="0.04 0.04 0.005", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 3:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0.0 0.0 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="-0.758 -0.758 0.", rgba="0 0 1 0.4")
+    elif mode == 4:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0.0 0.0 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="-0.758 -0.758 0.", rgba="0 0 1 0.4")
+    elif mode == 5:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 6:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 1.1")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 7:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.758  0.758 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.758 -0.758 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.758 -0.758 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.758  0.758 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 8:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.762  0.762 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.762 -0.762 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.762 -0.762 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.762  0.762 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    else:
+        raise ValueError("Invalid mode")
+
+    ET.SubElement(box1_body, "joint", name="root", type="free")
+
+    return mjcf
+
+
 def _build_chain_capsule_hinge(asset_tmp_path, enable_mesh):
     if enable_mesh:
         mesh_path = str(asset_tmp_path / "capsule.obj")
@@ -686,6 +756,23 @@ def test_convexify(euler, show_viewer):
             qpos = obj.get_dofs_position().cpu()
             np.testing.assert_allclose(qpos[0], 0.0, atol=6e-3)
             np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
+
+
+@pytest.mark.mpr_vanilla(False)
+@pytest.mark.parametrize("mode", range(9))
+@pytest.mark.parametrize("model_name", ["collision_edge_cases"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_collision_edge_cases(gs_sim, mode):
+    qpos_0 = gs_sim.rigid_solver.get_dofs_position().cpu()
+    for _ in range(200):
+        gs_sim.scene.step()
+
+    qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
+    np.testing.assert_allclose(qvel, 0, atol=1e-2)
+    qpos = gs_sim.rigid_solver.get_dofs_position().cpu()
+    np.testing.assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
