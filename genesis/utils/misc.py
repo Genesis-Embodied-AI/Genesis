@@ -141,7 +141,7 @@ def get_device(backend: gs_backend):
         device = torch.device("mps:0")
 
     elif backend == gs_backend.vulkan:
-        if torch.xpu.is_available():  # pytorch 2.5+ Intel XPU device
+        if torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
             device_idx = torch.xpu.current_device()
             device = torch.device(f"xpu:{device_idx}")
             device_property = torch.xpu.get_device_properties(device_idx)
@@ -149,8 +149,8 @@ def get_device(backend: gs_backend):
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
-            (gs.logger or LOGGER).warning("Vulkan support only available on Intel XPU device. Falling back to CPU.")
-            return get_device(gs_backend.cpu)
+            (gs.logger or LOGGER).warning("No Intel XPU device available. Falling back to CPU for torch device.")
+            device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
         if torch.cuda.is_available():
