@@ -1056,7 +1056,15 @@ class Collider:
                                                     repeated = True
 
                                         if not repeated:
-                                            # Apply first-order penetration depth correction.
+                                            # Apply first-order correction of small rotation perturbation.
+                                            # See MPR comment for details about this procedure.
+                                            normal_proj = (normal - axis.dot(normal) * axis).normalized()
+                                            twist_angle = ti.math.clamp(
+                                                normal_proj.cross(normal_0).dot(axis) / normal_proj.dot(normal_0),
+                                                -self._mc_perturbation,
+                                                self._mc_perturbation,
+                                            )
+                                            normal += twist_angle * axis.cross(normal)
                                             contact_shift = contact_pos - contact_pos_0
                                             depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
                                             penetration = ti.min(
@@ -1297,8 +1305,8 @@ class Collider:
                         # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
                         # initial penetration is already quite large, because the contact information provided by MPR
                         # may be unreliable in such a case.
-                        # Here it is assulmed that generic SDF is much slower than MPR, so it is faster in average to
-                        # first make sure that the geometries are truly colliding and only after to run SDF if
+                        # Here it is assumed that generic SDF is much slower than MPR, so it is faster in average
+                        # to first make sure that the geometries are truly colliding and only after to run SDF if
                         # necessary. This would probably not be the case anymore if it was possible to rely on
                         # specialized SDF implementation for convex-convex collision detection in the first place.
                         if ti.static(not self._solver._enable_mpr_vanilla):
@@ -1306,16 +1314,19 @@ class Collider:
                                 ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
                             ).any()
                             if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
-                                is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
+                                # Note that SDF may detect different collision points depending on geometry ordering.
+                                # Because of this, it is necessary to run it twice and take the contact information
+                                # associated with the point of deepest penetration.
+                                is_col_a, normal_a, penetration_a, contact_pos_a = self._func_contact_vertex_sdf(
                                     i_ga, i_gb, i_b
                                 )
-                                if not is_col_:
-                                    is_col_, normal_, penetration_, contact_pos_ = self._func_contact_vertex_sdf(
-                                        i_gb, i_ga, i_b
-                                    )
-                                    normal_ = -normal_
-                                if is_col_:
-                                    normal, penetration, contact_pos = normal_, penetration_, contact_pos_
+                                is_col_b, normal_b, penetration_b, contact_pos_b = self._func_contact_vertex_sdf(
+                                    i_gb, i_ga, i_b
+                                )
+                                if is_col_a and (not is_col_b or penetration_a >= penetration_b):
+                                    normal, penetration, contact_pos = normal_a, penetration_a, contact_pos_a
+                                elif is_col_b and (not is_col_a or penetration_b > penetration_a):
+                                    normal, penetration, contact_pos = -normal_b, penetration_b, contact_pos_b
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
@@ -1342,9 +1353,17 @@ class Collider:
                                 repeated = True
 
                     if not repeated:
-                        # Apply first-order penetration depth correction: compensate effect of small rotation:
+                        # Apply first-order correction of small rotation perturbation.
                         # First, unrotate the normal direction, then cancel virtual penetation over-estimation.
-                        normal -= self._mc_perturbation * axis.cross(normal)  # Rodrigues' rotation formula
+                        # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                        # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let
+                        # compute the mininal rotation that makes the corrected twisted normal as closed as
+                        # possible to the original one, up to the scale of the perturbation, then apply
+                        # first-order Taylor expension of Rodrigues' rotation formula.
+                        twist_rotvec = ti.math.clamp(
+                            normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
+                        )
+                        normal += twist_rotvec.cross(normal)
                         contact_shift = contact_pos - contact_pos_0
                         depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
                         penetration = ti.min(penetration - 2 * self._mc_perturbation * depth_lever, penetration_0)
