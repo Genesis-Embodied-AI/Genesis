@@ -24,7 +24,7 @@ def main():
 
     horizontal_scale = 2.0
     path_terrain = "./genesis/assets/meshes/terrain_45.obj"
-    hf_terrain, xs, ys = mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=3)
+    hf_terrain, xs, ys = mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
     print("hf_terrain", hf_terrain.shape, np.max(hf_terrain))
 
     # default heightfield starts at 0, 0, 0

@@ -357,7 +357,7 @@ def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale
 def mesh_to_heightfield(
     path: str,
     spacing: float | tuple[float, float],
-    oversample: int = 3,
+    oversample: int = 1,
     *,
     up_axis: str = "z",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
