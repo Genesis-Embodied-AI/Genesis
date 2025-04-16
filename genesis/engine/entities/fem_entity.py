@@ -182,8 +182,8 @@ class FEMEntity(Entity):
         if not init_positions.shape[0] > 0:
             gs.raise_exception(f"Entity has zero vertices.")
 
-        self.init_positions = gs.tensor(init_positions).contiguous()
-        self.init_positions_COM_offset = (self.init_positions - gs.tensor(verts_COM)).contiguous()
+        self.init_positions = gs.tensor(init_positions)
+        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM)
 
         self.elems = elems
 

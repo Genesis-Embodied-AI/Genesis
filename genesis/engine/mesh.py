@@ -160,12 +160,12 @@ class Mesh(RBC):
         Sample particles using the mesh volume.
         """
         if "pbs" in sampler:
-            positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
-            if positions is None:
-                gs.logger.warning("`pbs` sampler failed. Falling back to `random` sampler.")
+            try:
+                positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
+            except gs.GenesisException:
                 sampler = "random"
 
-        if sampler in ["random", "regular"]:
+        if sampler in ("random", "regular"):
             positions = pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
 
         return positions

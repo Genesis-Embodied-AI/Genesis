@@ -1760,7 +1760,7 @@ class RigidSolver(Solver):
     def _process_dim(self, tensor, envs_idx=None):
         if self.n_envs == 0:
             if tensor.ndim == 1:
-                tensor = tensor[None, :]
+                tensor = tensor.unsqueeze(0)
             else:
                 gs.raise_exception(
                     f"Invalid input shape: {tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
@@ -1768,12 +1768,12 @@ class RigidSolver(Solver):
         else:
             if tensor.ndim == 2:
                 if envs_idx is not None:
-                    if tensor.shape[0] != len(envs_idx):
+                    if len(tensor) != len(envs_idx):
                         gs.raise_exception(
                             f"Invalid input shape: {tensor.shape}. 1st dimension of input does not match `envs_idx`."
                         )
                 else:
-                    if tensor.shape[0] != self.n_envs:
+                    if len(tensor) != self.n_envs:
                         gs.raise_exception(
                             f"Invalid input shape: {tensor.shape}. 1st dimension of input does not match `scene.n_envs`."
                         )

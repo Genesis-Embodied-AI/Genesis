@@ -255,8 +255,8 @@ class ParticleEntity(Entity):
                 self._vverts = np.array([])
                 self._vfaces = np.array([])
 
-        self._particles = particles.astype(gs.np_float)
-        self._init_particles_offset = (gs.tensor(particles).contiguous() - gs.tensor(origin)).contiguous()
+        self._particles = particles.astype(gs.np_float, order="C", copy=False)
+        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(origin)
         self._n_particles = len(self._particles)
 
         gs.logger.info(f"Sampled ~~<{self._n_particles:,}>~~ particles.")
