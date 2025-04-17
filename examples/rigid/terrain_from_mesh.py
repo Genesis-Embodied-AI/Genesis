@@ -1,6 +1,7 @@
 import genesis as gs
 import numpy as np
 import argparse
+import os
 from genesis.utils.terrain import mesh_to_heightfield
 
 
@@ -16,6 +17,9 @@ def main():
     ########################## create a scene ##########################
     scene = gs.Scene(
         show_viewer=True,
+        sim_options=gs.options.SimOptions(
+            gravity=(2, 0, -2),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -50, 0),
             camera_lookat=(0, 0, 0),
@@ -23,7 +27,9 @@ def main():
     )
 
     horizontal_scale = 2.0
-    path_terrain = "./genesis/assets/meshes/terrain_45.obj"
+    gs_root = os.path.dirname(os.path.abspath(gs.__file__))
+    path_terrain = os.path.join(gs_root, "assets", "meshes", "terrain_45.obj")
+    print("path_terrain", path_terrain)
     hf_terrain, xs, ys = mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
     print("hf_terrain", hf_terrain.shape, np.max(hf_terrain))
 
@@ -51,16 +57,23 @@ def main():
 
     ball = scene.add_entity(
         gs.morphs.Sphere(
-            pos=(10, 15, 18),
-            radius=2,
+            pos=(10, 15, 10),
+            radius=1,
         ),
         vis_mode="collision",
     )
 
     scene.build()
 
+    from IPython import embed
+
+    embed()
     for i in range(2000):
         scene.step()
+
+        qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        qvel_norm = np.linalg.norm(qvel, axis=-1)
+        print("qvel_norm", i, qvel_norm)
 
 
 if __name__ == "__main__":
