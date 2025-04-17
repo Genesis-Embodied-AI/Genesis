@@ -44,7 +44,7 @@ At this stage, we have defined the environments. Now, we use the PPO implementat
 
 ```bash
 pip install --upgrade pip
-pip install "tensorboard" "git+https://github.com/leggedrobotics/rsl_rl.git@v2.2.4"
+pip install tensorboard rsl-rl-lib==2.2.4
 ```
 
 #### 3.1 Training
