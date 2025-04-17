@@ -44,7 +44,7 @@ At this stage, we have defined the environments. Now, we use the PPO implementat
 
 ```bash
 pip install --upgrade pip
-pip install "tensorboard" "git+https://github.com/leggedrobotics/rsl_rl.git@v1.0.2"
+pip install tensorboard rsl-rl-lib==2.2.4
 ```
 
 #### 3.1 Training
@@ -54,13 +54,13 @@ Train the drone hovering policy using the `HoverEnv` environment.
 Run with:
 
 ```bash
-python hover_train.py -e drone-hovering -B 8192 --max_iterations 300
+python hover_train.py -e drone-hovering -B 8192 --max_iterations 301
 ```
 
 Train with visualization:
 
 ```bash
-python hover_train.py -e drone-hovering -B 8192 --max_iterations 300 -v
+python hover_train.py -e drone-hovering -B 8192 --max_iterations 301 -v
 ```
 
 #### 3.2 Evaluation

@@ -7,13 +7,13 @@ import torch
 
 try:
     try:
-        if metadata.version("rsl-rl-lib"):
+        if metadata.version("rsl-rl"):
             raise ImportError
     except metadata.PackageNotFoundError:
-        if metadata.version("rsl-rl") != "1.0.2":
+        if metadata.version("rsl-rl-lib") != "2.2.4":
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError("Please uninstall 'rsl-rl-lib' and install 'rsl_rl==1.0.2'.") from e
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -63,13 +63,13 @@ def main():
             env.cam.start_recording()
             for _ in range(max_sim_step):
                 actions = policy(obs)
-                obs, _, rews, dones, infos = env.step(actions)
+                obs, rews, dones, infos = env.step(actions)
                 env.cam.render()
             env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
         else:
             for _ in range(max_sim_step):
                 actions = policy(obs)
-                obs, _, rews, dones, infos = env.step(actions)
+                obs, rews, dones, infos = env.step(actions)
 
 
 if __name__ == "__main__":

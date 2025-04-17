@@ -6,13 +6,13 @@ from importlib import metadata
 
 try:
     try:
-        if metadata.version("rsl-rl-lib"):
+        if metadata.version("rsl-rl"):
             raise ImportError
     except metadata.PackageNotFoundError:
-        if metadata.version("rsl-rl") != "1.0.2":
+        if metadata.version("rsl-rl-lib") != "2.2.4":
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError("Please uninstall 'rsl-rl-lib' and install 'rsl_rl==1.0.2'.") from e
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -23,6 +23,7 @@ from hover_env import HoverEnv
 def get_train_cfg(exp_name, max_iterations):
     train_cfg_dict = {
         "algorithm": {
+            "class_name": "PPO",
             "clip_param": 0.2,
             "desired_kl": 0.01,
             "entropy_coef": 0.004,
@@ -42,24 +43,23 @@ def get_train_cfg(exp_name, max_iterations):
             "actor_hidden_dims": [128, 128],
             "critic_hidden_dims": [128, 128],
             "init_noise_std": 1.0,
+            "class_name": "ActorCritic",
         },
         "runner": {
-            "algorithm_class_name": "PPO",
             "checkpoint": -1,
             "experiment_name": exp_name,
             "load_run": -1,
             "log_interval": 1,
             "max_iterations": max_iterations,
-            "num_steps_per_env": 100,
-            "policy_class_name": "ActorCritic",
             "record_interval": -1,
             "resume": False,
             "resume_path": None,
             "run_name": "",
-            "runner_class_name": "runner_class_name",
-            "save_interval": 100,
         },
         "runner_class_name": "OnPolicyRunner",
+        "num_steps_per_env": 100,
+        "save_interval": 100,
+        "empirical_normalization": None,
         "seed": 1,
     }
 
@@ -122,7 +122,7 @@ def main():
     parser.add_argument("-e", "--exp_name", type=str, default="drone-hovering")
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-B", "--num_envs", type=int, default=8192)
-    parser.add_argument("--max_iterations", type=int, default=300)
+    parser.add_argument("--max_iterations", type=int, default=301)
     args = parser.parse_args()
 
     gs.init(logging_level="warning")
@@ -138,6 +138,11 @@ def main():
     if args.vis:
         env_cfg["visualize_target"] = True
 
+    pickle.dump(
+        [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
+        open(f"{log_dir}/cfgs.pkl", "wb"),
+    )
+
     env = HoverEnv(
         num_envs=args.num_envs,
         env_cfg=env_cfg,
@@ -148,11 +153,6 @@ def main():
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
-
-    pickle.dump(
-        [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
-        open(f"{log_dir}/cfgs.pkl", "wb"),
-    )
 
     runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
 
