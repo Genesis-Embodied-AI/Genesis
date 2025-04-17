@@ -685,9 +685,9 @@ class RigidEntity(Entity):
 
         self._kernel_get_jacobian(link.idx)
 
-        jacobian = self._jacobian.to_torch(gs.device).transpose(1, 0)
+        jacobian = self._jacobian.to_torch(gs.device)
         if self._solver.n_envs == 0:
-            jacobian = jacobian.squeeze(0)
+            jacobian = jacobian.squeeze(2)
 
         return jacobian
 
