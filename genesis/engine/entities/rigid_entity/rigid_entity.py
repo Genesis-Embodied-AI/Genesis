@@ -591,6 +591,7 @@ class RigidEntity(Entity):
                 cg_infos,
                 morph.decimate,
                 morph.decimate_face_num,
+                morph.decimate_aggressiveness,
                 morph.convexify,
                 morph.decompose_error_threshold,
                 morph.coacd_options,

@@ -223,7 +223,7 @@ def convex_decompose(mesh, coacd_options):
 
 
 def postprocess_collision_geoms(
-    g_infos, decimate, decimate_face_num, convexify, decompose_error_threshold, coacd_options
+    g_infos, decimate, decimate_face_num, decimate_aggressiveness, convexify, decompose_error_threshold, coacd_options
 ):
     # Early return if there is no geometry to process
     if not g_infos:
@@ -344,6 +344,7 @@ def postprocess_collision_geoms(
             convexify=convexify,
             decimate=decimate,
             decimate_face_num=decimate_face_num,
+            decimate_aggressiveness=decimate_aggressiveness,
             surface=gs.surfaces.Collision(),
             metadata=mesh.metadata.copy(),
         )
