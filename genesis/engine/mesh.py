@@ -33,6 +33,10 @@ class Mesh(RBC):
         Whether to decimate the mesh.
     decimate_face_num : int
         The target number of faces after decimation.
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters
+        the original geometry if necessary. does what needs to be done at all costs.
     metadata : dict
         The metadata of the mesh.
     """
@@ -45,6 +49,7 @@ class Mesh(RBC):
         convexify=False,
         decimate=False,
         decimate_face_num=500,
+        decimate_aggressiveness=0,
         metadata=dict(),
     ):
         self._uid = gs.UID()
@@ -68,7 +73,7 @@ class Mesh(RBC):
             self.convexify()
 
         if decimate:
-            self.decimate(decimate_face_num, convexify)
+            self.decimate(decimate_face_num, decimate_aggressiveness, convexify)
 
     def convexify(self):
         """
@@ -78,7 +83,7 @@ class Mesh(RBC):
             self._mesh = trimesh.convex.convex_hull(self._mesh)
         self.clear_visuals()
 
-    def decimate(self, decimate_face_num, convexify):
+    def decimate(self, decimate_face_num, decimate_aggressiveness, convexify):
         """
         Decimate the mesh.
         """
@@ -88,7 +93,8 @@ class Mesh(RBC):
                     self._mesh.vertices,
                     self._mesh.faces,
                     target_count=decimate_face_num,
-                    agg=2,
+                    agg=decimate_aggressiveness,
+                    lossless=(decimate_aggressiveness == 0),
                 )
             )
 
@@ -204,7 +210,15 @@ class Mesh(RBC):
 
     @classmethod
     def from_trimesh(
-        cls, mesh, scale=None, convexify=False, decimate=False, decimate_face_num=500, metadata=dict(), surface=None
+        cls,
+        mesh,
+        scale=None,
+        convexify=False,
+        decimate=False,
+        decimate_face_num=500,
+        decimate_aggressiveness=2,
+        metadata=dict(),
+        surface=None,
     ):
         """
         Create a genesis.Mesh from a trimesh.Trimesh object.
@@ -292,6 +306,7 @@ class Mesh(RBC):
             convexify=convexify,
             decimate=decimate,
             decimate_face_num=decimate_face_num,
+            decimate_aggressiveness=decimate_aggressiveness,
             metadata=metadata,
         )
 
