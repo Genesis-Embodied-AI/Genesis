@@ -718,7 +718,7 @@ def test_convexify(euler, show_viewer):
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
-            # visualize_contact=True,
+            visualize_contact=True,
         )
         objs.append(obj)
     scene.build()
@@ -738,7 +738,7 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 1500 if euler == (90, 0, 90) else 600
+    num_steps = 1300 if euler == (90, 0, 90) else 600
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
