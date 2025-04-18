@@ -1079,17 +1079,10 @@ class RigidEntity(Entity):
         if n_dofs == 0:
             gs.raise_exception("Target dofs not provided.")
         links_idx_by_dofs = []
-        for v in self.links:
-            for joint in v.joints:
-                links_idx_by_dof_at_v = joint.dof_idx_local
-                if links_idx_by_dof_at_v is None:
-                    link_relevant = False
-                elif isinstance(links_idx_by_dof_at_v, list):
-                    link_relevant = any(vv in dofs_idx for vv in links_idx_by_dof_at_v)
-                else:
-                    link_relevant = links_idx_by_dof_at_v in dofs_idx
-                if link_relevant:
-                    links_idx_by_dofs.append(v.idx_local)  # converted to global later
+        for link in self.links:
+            for joint in link.joints:
+                if any(i in dofs_idx for i in joint.dofs_idx_local):
+                    links_idx_by_dofs.append(link.idx_local)  # converted to global later
                     break
 
         links_idx_by_dofs = self._get_idx(links_idx_by_dofs, self.n_links, self._link_start)
@@ -1366,7 +1359,7 @@ class RigidEntity(Entity):
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
 
     @gs.assert_built
-    def forward_kinematics(self, qpos, qs_idx_local=None, ls_idx_local=None, envs_idx=None):
+    def forward_kinematics(self, qpos, qs_idx_local=None, links_idx_local=None, envs_idx=None):
         """
         Compute forward kinematics for a single target link.
 
@@ -1376,7 +1369,7 @@ class RigidEntity(Entity):
             The joint positions.
         qs_idx_local : None | array_like, optional
             The indices of the qpos to set. If None, all qpos will be set. Defaults to None.
-        ls_idx_local : None | array_like, optional
+        links_idx_local : None | array_like, optional
             The indices of the links to get. If None, all links will be returned. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments to set. If None, all environments will be set. Defaults to None.
@@ -1395,7 +1388,7 @@ class RigidEntity(Entity):
         else:
             envs_idx = self._solver._sanitize_envs_idx(envs_idx)
 
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start)
         links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
         links_quat = torch.empty((len(envs_idx), len(links_idx), 4), dtype=gs.tc_float, device=gs.device)
 
@@ -1550,9 +1543,9 @@ class RigidEntity(Entity):
         space.setBounds(bounds)
         ss = og.SimpleSetup(space)
 
-        geom_indices = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
+        geoms_idx = list(range(self._geom_start, self._geom_start + len(self._geoms)))
         mask_collision_pairs = set(
-            (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geom_indices or i_gb in geom_indices
+            (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geoms_idx or i_gb in geoms_idx
         )
         if not ignore_collision and mask_collision_pairs:
             gs.logger.info("Ingoring collision pairs already active for starting pos.")
@@ -1749,13 +1742,13 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang(self._base_links_idx, envs_idx, unsafe=unsafe).squeeze(-2)
 
     @gs.assert_built
-    def get_links_pos(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_pos(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns position of all the entity's links.
 
         Parameters
         ----------
-        ls_idx_local : None | array_like
+        links_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1765,17 +1758,17 @@ class RigidEntity(Entity):
         pos : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The position of all the entity's links.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_pos(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_quat(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_quat(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns quaternion of all the entity's links.
 
         Parameters
         ----------
-        ls_idx_local : None | array_like
+        links_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1785,19 +1778,24 @@ class RigidEntity(Entity):
         quat : torch.Tensor, shape (n_links, 4) or (n_envs, n_links, 4)
             The quaternion of all the entity's links.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_quat(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def get_links_vel(
-        self, ls_idx_local=None, envs_idx=None, *, ref: Literal["link_origin", "link_com"] = "link_origin", unsafe=False
+        self,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com"] = "link_origin",
+        unsafe=False,
     ):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
         Parameters
         ----------
-        ls_idx_local : None | array_like
+        links_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1809,17 +1807,17 @@ class RigidEntity(Entity):
         vel : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The linear velocity of all the entity's links.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_vel(links_idx, envs_idx, ref=ref, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_ang(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_ang(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns angular velocity of all the entity's links in world coordinates.
 
         Parameters
         ----------
-        ls_idx_local : None | array_like
+        links_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1829,17 +1827,17 @@ class RigidEntity(Entity):
         ang : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The angular velocity of all the entity's links.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_ang(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_acc(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Returns linear acceleration of the specified entity's links. (Mimicking accelerometer)
 
         Parameters
         ----------
-        ls_idx_local : None | array_like
+        links_idx_local : None | array_like
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
@@ -1849,17 +1847,17 @@ class RigidEntity(Entity):
         acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The linear acceleration of the specified entity's links.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_acc(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_inertial_mass(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+    def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_inertial_mass(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_invweight(self, ls_idx_local=None, envs_idx=None, *, unsafe=False):
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+    def get_links_invweight(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
@@ -2536,31 +2534,31 @@ class RigidEntity(Entity):
         )
         return tensor.squeeze(0) if self._solver.n_envs == 0 else tensor
 
-    def set_friction_ratio(self, friction_ratio, ls_idx_local, envs_idx=None):
+    def set_friction_ratio(self, friction_ratio, links_idx_local, envs_idx=None):
         """
         Set the friction ratio of the geoms of the specified links.
         Parameters
         ----------
         friction_ratio : torch.Tensor, shape (n_envs, n_links)
             The friction ratio
-        ls_idx_local : array_like
+        links_idx_local : array_like
             The indices of the links to set friction ratio.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        geom_indices = [
-            self._links[il]._geom_start + g_idx for il in ls_idx_local for g_idx in range(self._links[il].n_geoms)
+        geoms_idx = [
+            self._links[i_l]._geom_start + i_g_ for i_l in links_idx_local for i_g_ in range(self._links[i_l].n_geoms)
         ]
 
         self._solver.set_geoms_friction_ratio(
             torch.cat(
                 [
-                    ratio.unsqueeze(-1).repeat(1, self._links[j].n_geoms)
-                    for j, ratio in zip(ls_idx_local, friction_ratio.unbind(-1))
+                    ratio.unsqueeze(-1).repeat(1, self._links[i_l].n_geoms)
+                    for i_l, ratio in zip(links_idx_local, friction_ratio.unbind(-1))
                 ],
                 dim=-1,
             ),
-            geom_indices,
+            geoms_idx,
             envs_idx,
         )
 
@@ -2585,44 +2583,44 @@ class RigidEntity(Entity):
         for link in self._links:
             link.set_friction(friction)
 
-    def set_mass_shift(self, mass_shift, ls_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_mass_shift(self, mass_shift, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the mass shift of specified links.
         Parameters
         ----------
         mass : torch.Tensor, shape (n_envs, n_links)
             The mass shift
-        ls_idx_local : array_like
+        links_idx_local : array_like
             The indices of the links to set mass shift.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_mass_shift(mass_shift, links_idx, envs_idx, unsafe=unsafe)
 
-    def set_COM_shift(self, com_shift, ls_idx_local, envs_idx=None, *, unsafe=False):
+    def set_COM_shift(self, com_shift, links_idx_local, envs_idx=None, *, unsafe=False):
         """
         Set the center of mass (COM) shift of specified links.
         Parameters
         ----------
         com : torch.Tensor, shape (n_envs, n_links, 3)
             The COM shift
-        ls_idx_local : array_like
+        links_idx_local : array_like
             The indices of the links to set COM shift.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_COM_shift(com_shift, links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_links_inertial_mass(self, inertial_mass, ls_idx_local=None, envs_idx=None, *, unsafe=False):
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+    def set_links_inertial_mass(self, inertial_mass, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_inertial_mass(inertial_mass, links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_links_invweight(self, invweight, ls_idx_local=None, envs_idx=None, *, unsafe=False):
-        links_idx = self._get_idx(ls_idx_local, self.n_links, self._link_start, unsafe=True)
+    def set_links_invweight(self, invweight, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_invweight(invweight, links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built

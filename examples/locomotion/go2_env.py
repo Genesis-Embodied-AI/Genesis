@@ -67,11 +67,11 @@ class Go2Env:
         self.scene.build(n_envs=num_envs)
 
         # names to indices
-        self.motor_dofs = [self.robot.get_joint(name).dof_idx_local for name in self.env_cfg["dof_names"]]
+        self.motors_dof_idx = [self.robot.get_joint(name).dof_start for name in self.env_cfg["joint_names"]]
 
         # PD control parameters
-        self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motor_dofs)
-        self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motor_dofs)
+        self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
+        self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motors_dof_idx)
 
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
@@ -105,7 +105,7 @@ class Go2Env:
         self.base_pos = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
         self.base_quat = torch.zeros((self.num_envs, 4), device=gs.device, dtype=gs.tc_float)
         self.default_dof_pos = torch.tensor(
-            [self.env_cfg["default_joint_angles"][name] for name in self.env_cfg["dof_names"]],
+            [self.env_cfg["default_joint_angles"][name] for name in self.env_cfg["joint_names"]],
             device=gs.device,
             dtype=gs.tc_float,
         )
@@ -121,7 +121,7 @@ class Go2Env:
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
         target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
-        self.robot.control_dofs_position(target_dof_pos, self.motor_dofs)
+        self.robot.control_dofs_position(target_dof_pos, self.motors_dof_idx)
         self.scene.step()
 
         # update buffers
@@ -137,8 +137,8 @@ class Go2Env:
         self.base_lin_vel[:] = transform_by_quat(self.robot.get_vel(), inv_base_quat)
         self.base_ang_vel[:] = transform_by_quat(self.robot.get_ang(), inv_base_quat)
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
-        self.dof_pos[:] = self.robot.get_dofs_position(self.motor_dofs)
-        self.dof_vel[:] = self.robot.get_dofs_velocity(self.motor_dofs)
+        self.dof_pos[:] = self.robot.get_dofs_position(self.motors_dof_idx)
+        self.dof_vel[:] = self.robot.get_dofs_velocity(self.motors_dof_idx)
 
         # resample commands
         envs_idx = (
@@ -202,7 +202,7 @@ class Go2Env:
         self.dof_vel[envs_idx] = 0.0
         self.robot.set_dofs_position(
             position=self.dof_pos[envs_idx],
-            dofs_idx_local=self.motor_dofs,
+            dofs_idx_local=self.motors_dof_idx,
             zero_velocity=True,
             envs_idx=envs_idx,
         )
