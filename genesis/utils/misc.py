@@ -12,6 +12,7 @@ from collections import OrderedDict
 from typing import Any
 
 import numpy as np
+import cpuinfo
 import psutil
 import torch
 
@@ -34,12 +35,10 @@ class DeprecationError(Exception):
 
 
 def raise_exception(msg="Something went wrong."):
-    gs.logger._error_msg = msg
     raise gs.GenesisException(msg)
 
 
 def raise_exception_from(msg="Something went wrong.", cause=None):
-    gs.logger._error_msg = msg
     raise gs.GenesisException(msg) from cause
 
 
@@ -102,25 +101,6 @@ def get_platform():
     assert False, f"Unknown platform name {name}"
 
 
-def get_cpu_name():
-    if get_platform() == "macOS":
-        os.environ["PATH"] = os.environ["PATH"] + os.pathsep + "/usr/sbin"
-        command = "sysctl -n machdep.cpu.brand_string"
-        process = subprocess.run(command, shell=True, capture_output=True, text=True)
-        return process.stdout.strip()
-
-    elif get_platform() == "Linux":
-        command = "cat /proc/cpuinfo"
-        process = subprocess.run(command, shell=True, capture_output=True, text=True)
-        all_info = process.stdout.strip()
-        for line in all_info.split("\n"):
-            if "model name" in line:
-                return line.replace("\t", "").replace("model name: ", "")
-
-    else:
-        return platform.processor()
-
-
 def get_device(backend: gs_backend):
     if backend == gs_backend.cuda:
         if not torch.cuda.is_available():
@@ -161,7 +141,7 @@ def get_device(backend: gs_backend):
             return get_device(gs_backend.vulkan)
 
     else:
-        device_name = get_cpu_name()
+        device_name = cpuinfo.get_cpu_info()["brand_raw"]
         total_mem = psutil.virtual_memory().total / 1024**3
         device = torch.device("cpu")
 

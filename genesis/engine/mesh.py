@@ -160,12 +160,12 @@ class Mesh(RBC):
         Sample particles using the mesh volume.
         """
         if "pbs" in sampler:
-            positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
-            if positions is None:
-                gs.logger.warning("`pbs` sampler failed. Falling back to `random` sampler.")
+            try:
+                positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
+            except gs.GenesisException:
                 sampler = "random"
 
-        if sampler in ["random", "regular"]:
+        if sampler in ("random", "regular"):
             positions = pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
 
         return positions
@@ -334,8 +334,8 @@ class Mesh(RBC):
                     meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif isinstance(morph, gs.options.morphs.MeshSet):
-                assert all(isinstance(v, trimesh.Trimesh) for v in morph.files)
-                meshes = [mu.trimesh_to_mesh(v, morph.scale, surface) for v in meshes]
+                assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
+                meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
 
             else:
                 gs.raise_exception(

@@ -246,10 +246,6 @@ def destroy():
     # Display any buffered error message if logger is configured
     global logger
     if logger:
-        if logger._error_msg is not None:
-            logger.error(logger._error_msg)
-            logger._error_msg = None
-
         logger.info("💤 Exiting Genesis and caching compiled kernels...")
 
     # Call all exit callbacks
@@ -309,13 +305,12 @@ class GenesisException(Exception):
 
 
 def _custom_excepthook(exctype, value, tb):
-    if issubclass(exctype, GenesisException):
-        # We don't want the traceback info to trace till this __init__.py file.
-        stack_trace = "".join(traceback.format_exception(exctype, value, tb)[:-2])
-        print(stack_trace)
-    else:
-        # Use the system's default excepthook for other exception types
-        sys.__excepthook__(exctype, value, tb)
+    # We don't want the traceback info to trace till this __init__.py file.
+    print("".join(traceback.format_exception(exctype, value, tb)[:-2]))
+
+    # Logger the exception right before exit if possible
+    if gs.logger is not None:
+        gs.logger.error(f"{exctype.__name__}: {value}")
 
 
 # Set the custom excepthook to handle GenesisException
