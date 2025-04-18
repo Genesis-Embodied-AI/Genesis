@@ -146,7 +146,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
                 reader.SetFileName(vtk_path)
                 reader.Update()
                 positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
-            except OSError:
+            except OSError as e:
                 gs.raise_exception_from("`pbs` sampler failed.", e)
             finally:
                 os.remove(mesh_path)
@@ -357,7 +357,6 @@ def particles_to_mesh(positions, radius, backend):
         r = radius * radius_scale
 
         try:
-            gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
             command = ["splashsurf", "reconstruct", xyz_path, f"-r={r}", "-c=0.8", "-l=2.0", "-t=0.6", "-o", obj_path]
             if smooth_iter is not None:
                 command += [
@@ -378,10 +377,11 @@ def particles_to_mesh(positions, radius, backend):
 
             # Read the generated OBJ file
             mesh = trimesh.load_mesh(obj_path)
-        except OSError:
+            gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
+        except OSError as e:
             gs.raise_exception_from("Surface reconstruction failed.", e)
         finally:
-            os.remove(mesh_path)
+            os.remove(xyz_path)
             os.remove(obj_path)
 
         return mesh
