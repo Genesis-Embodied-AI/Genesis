@@ -334,8 +334,8 @@ class Mesh(RBC):
                     meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif isinstance(morph, gs.options.morphs.MeshSet):
-                assert all(isinstance(v, trimesh.Trimesh) for v in morph.files)
-                meshes = [mu.trimesh_to_mesh(v, morph.scale, surface) for v in meshes]
+                assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
+                meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
 
             else:
                 gs.raise_exception(

@@ -346,17 +346,19 @@ def augment_link_world_coords(part_rigid):
             parent_pos = link_p.init_x_pos
             parent_quat = link_p.init_x_quat
 
-        link_is_fixed = link.joint.type == gs.JOINT_TYPE.FIXED
-        if link.joint.type == gs.JOINT_TYPE.FREE or (link_is_fixed and i_p == -1):
+        if (link.joints and link.joints[0].type == gs.JOINT_TYPE.FREE) or (
+            i_p == -1 and (not link.joints or link.joints[0].type == gs.JOINT_TYPE.FIXED)
+        ):
             link.init_x_pos = link.pos
             link.init_x_quat = link.quat
         else:
             link.init_x_pos, link.init_x_quat = gu.transform_pos_quat_by_trans_quat(
                 link.pos, link.quat, parent_pos, parent_quat
             )
-            link.init_x_pos, link.init_x_quat = gu.transform_pos_quat_by_trans_quat(
-                link.joint.pos, link.joint.quat, link.init_x_pos, link.init_x_quat
-            )
+            for joint in link.joints:
+                link.init_x_pos, link.init_x_quat = gu.transform_pos_quat_by_trans_quat(
+                    joint.pos, joint.quat, link.init_x_pos, link.init_x_quat
+                )
 
 
 def _visualize_muscle_group(positions, muscle_group):
