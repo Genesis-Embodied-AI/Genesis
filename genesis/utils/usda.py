@@ -19,6 +19,9 @@ def make_tuple(value):
     else:
         return (value,)
 
+def flip(image):
+    return None if image is None else np.flipud(image)
+
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
     
@@ -26,17 +29,15 @@ def get_input_attribute_value(shader, input_name, input_type=None):
         shader_input_attr = shader_input.GetValueProducingAttribute()[0]
         if shader_input_attr.IsValid():
             return UsdShade.Shader(shader_input_attr.GetPrim()), shader_input_attr.GetBaseName()
-        # gs.raise_exception(f"Input type mismatch. Expecting {input_type}, but got attribute.")
 
     if input_type != "attribute":
         return shader_input.Get(), None
-        # if shader_input.Get() is not None:
-        # gs.raise_exception(f"Input type mismatch. Expecting {input_type}, but got value.")
     return None, None
+
 
 def parse_preview_surface(shader, output_name):
     shader_id = shader.GetShaderId()
-    if shader.GetShaderId() == "UsdPreviewSurface":
+    if shader_id == "UsdPreviewSurface":
         uvname = None
 
         def parse_component(component_name, component_encode):
@@ -51,7 +52,7 @@ def parse_preview_surface(shader, output_name):
                     component_encode = component_overencode
                 component_factor = None
 
-            component_texture = mu.create_texture(component_image, component_factor, component_encode)
+            component_texture = mu.create_texture(flip(component_image), component_factor, component_encode)
             return component_texture, component_uvname
 
         # parse color
@@ -145,7 +146,7 @@ def parse_gltf_surface(shader, source_type, output_name):
             color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output)
         else:
             color_image = None
-        color_texture = mu.create_texture(color_image, color_factor, "srgb")
+        color_texture = mu.create_texture(flip(color_image), color_factor, "srgb")
         
         # parse opacity
         opacity_factor = make_tuple(get_input_attribute_value(shader, "base_alpha", "value")[0])
@@ -166,8 +167,8 @@ def parse_gltf_surface(shader, source_type, output_name):
             metallic_image = combined_image[:, :, 2]
         else:
             roughness_image, metallic_image = None, None
-        metallic_texture = mu.create_texture(metallic_image, metallic_factor, "linear")
-        roughness_texture = mu.create_texture(roughness_image, roughness_factor, "linear")
+        metallic_texture = mu.create_texture(flip(metallic_image), metallic_factor, "linear")
+        roughness_texture = mu.create_texture(flip(roughness_image), roughness_factor, "linear")
 
         # parse emissive
         emissive_factor = make_tuple(get_input_attribute_value(shader, "emissive_strength", "value")[0])
@@ -207,16 +208,15 @@ def parse_omni_surface(shader, source_type, output_name):
         component_usetex = get_input_attribute_value(shader, f"Is{component_name}Tex", "value")[0] == 1
         if component_usetex:
             component_tex_name = f"{component_name}_Tex"
-            component_image = get_input_attribute_value(shader, component_tex_name, "value")[0]
-            if component_image is not None:
-                component_image = np.array(Image.open(component_image.resolvedPath))
-            component_image = np.array(Image.open(component_image.resolvedPath))
+            component_texture = get_input_attribute_value(shader, component_tex_name, "value")[0]
+            if component_texture is not None:
+                component_image = np.array(Image.open(component_texture.resolvedPath))
             component_cs = shader.GetInput(component_tex_name).GetAttr().GetColorSpace()
             component_overencode = cs_encode[component_cs]
             if component_overencode is not None:
                 component_encode = component_overencode
             if adjust is not None:
-                component_image = adjust(component_image)
+                component_image = (adjust(component_image / 255.0) * 255.0).astype(np.uint8)
             component_factor = None
         else:
             component_color_name = f"{component_name}_Color"
@@ -225,19 +225,15 @@ def parse_omni_surface(shader, source_type, output_name):
                 component_factor = tuple([adjust(c) for c in component_factor])
             component_image = None
 
-        component_texture = mu.create_texture(component_image, component_factor, component_encode)
+        component_texture = mu.create_texture(flip(component_image), component_factor, component_encode)
         return component_texture
 
     color_texture = parse_component("BaseColor", "srgb")
-    if color_texture is None:
-        opacity_texture = None
-    else:
-        opacity_texture = color_texture.check_dim(3)
+    opacity_texture = color_texture.check_dim(3) if color_texture else None
     emissive_intensity = get_input_attribute_value(shader, "EmissiveIntensity", "value")[0]
-    if emissive_intensity is None or emissive_intensity == 0.0:
-        emissive_texture = None
-    else:
-        emissive_texture = parse_component("Emissive", "srgb", lambda x: x * emissive_intensity)
+    emissive_texture = parse_component("Emissive", "srgb", lambda x: x * emissive_intensity) 
+    if emissive_texture is not None:
+        emissive_texture.check_dim(3)
     metallic_texture = parse_component("Metallic", "linear")
     normal_texture = parse_component("Normal", "linear")
     roughness_texture = parse_component("Gloss", "linear", lambda x: (2 / (x + 2))**(1.0 / 4.0))
@@ -250,6 +246,7 @@ def parse_omni_surface(shader, source_type, output_name):
         "emissive_texture": emissive_texture,
         "normal_texture": normal_texture,
     }, "st"
+
 
 def parse_usd_material(material):
     surface_outputs = material.GetSurfaceOutputs()
@@ -272,24 +269,28 @@ def parse_usd_material(material):
                 source_asset = surface_shader.GetSourceAsset(source_type).resolvedPath
                 if "gltf/pbr" in source_asset:
                     return parse_gltf_surface(surface_shader, source_type, surface_output_name)
-                try:
-                    return parse_omni_surface(surface_shader, source_type, surface_output_name)
-                except Exception as e:
-                    gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}.")
-                    continue
+                return parse_omni_surface(surface_shader, source_type, surface_output_name)
+                # try:
+                #     return parse_omni_surface(surface_shader, source_type, surface_output_name)
+                # except Exception as e:
+                #     gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}.")
+                #     continue
     
     return None, None
 
 def parse_mesh_usd(path, group_by_material, scale, surface):
     stage = Usd.Stage.Open(path)
     xform_cache = UsdGeom.XformCache()
-    usd_traverse = stage.Traverse()
 
     mesh_infos = mu.MeshInfoGroup()
     materials = dict()
     uv_names = dict()
 
-    for i, prim in enumerate(usd_traverse):
+    for prim in stage.Traverse():
+        if prim.HasRelationship("material:binding"):
+            if not prim.HasAPI(UsdShade.MaterialBindingAPI):
+                UsdShade.MaterialBindingAPI.Apply(prim)
+    for i, prim in enumerate(stage.Traverse()):
         if prim.IsA(UsdGeom.Mesh):
             matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
             usd_mesh = UsdGeom.Mesh(prim)
@@ -379,6 +380,21 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             mesh_infos.append(group_idx, points, triangles, normals, uvs, materials[material_id])
 
     return mesh_infos.export_meshes(scale=scale, path=path)
+
+def parse_instance_usd(path):
+    stage = Usd.Stage.Open(path)
+    xform_cache = UsdGeom.XformCache()
+
+    instance_list = list()
+    for i, prim in enumerate(stage.Traverse()):
+        if prim.IsA(UsdGeom.Xformable):
+            if len(prim.GetPrimStack()) > 1:
+                matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
+                instance_spec = prim.GetPrimStack()[-1]
+                instance_list.append((matrix.T, instance_spec.layer.identifier))
+
+    return instance_list
+
 
 if __name__ == "__main__":
     file_path = 'table_scene.usd'
