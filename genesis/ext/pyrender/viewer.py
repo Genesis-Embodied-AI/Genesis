@@ -536,6 +536,7 @@ class Viewer(pyglet.window.Window):
         manipulate the scene afterwards.
         """
         if self._run_in_thread:
+            self._is_active = False
             while self._thread.is_alive():
                 time.sleep(1.0 / self.viewer_flags["refresh_rate"])
         else:

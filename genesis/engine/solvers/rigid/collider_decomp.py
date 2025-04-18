@@ -37,7 +37,7 @@ class Collider:
 
         # multi contact perturbation and tolerance
         self._mc_perturbation = 1e-3
-        self._mc_tolerance = 5e-2
+        self._mc_tolerance = 1e-2
         self._mpr_to_sdf_overlap_ratio = 0.5
 
     def _init_verts_connectivity(self):
