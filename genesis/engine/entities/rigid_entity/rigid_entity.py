@@ -685,9 +685,9 @@ class RigidEntity(Entity):
 
         self._kernel_get_jacobian(link.idx)
 
-        jacobian = self._jacobian.to_torch(gs.device)
+        jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
         if self._solver.n_envs == 0:
-            jacobian = jacobian.squeeze(2)
+            jacobian = jacobian.squeeze(0)
 
         return jacobian
 
@@ -1095,14 +1095,12 @@ class RigidEntity(Entity):
 
         if return_error:
             error_pose = (
-                self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].transpose(1, 0)
+                self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].permute(2, 0, 1)
             )
             if self._solver.n_envs == 0:
                 error_pose = error_pose.squeeze(0)
             return qpos, error_pose
-
-        else:
-            return qpos
+        return qpos
 
     @ti.kernel
     def _kernel_inverse_kinematics(
