@@ -545,6 +545,9 @@ class MJCF(FileMorph):
         if not self.file.endswith(".xml"):
             gs.raise_exception(f"Expected `.xml` extension for MJCF file: {self.file}")
 
+        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+
 
 class URDF(FileMorph):
     """
@@ -616,6 +619,9 @@ class URDF(FileMorph):
         super().__init__(**data)
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Expected `.urdf` extension for URDF file: {self.file}")
+
+        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
 
 
 class Drone(FileMorph):

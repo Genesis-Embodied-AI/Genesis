@@ -97,6 +97,7 @@ class Visualizer(RBC):
 
     def destroy(self):
         if self._context is not None:
+            self._context.destroy()
             del self._context
             self._context = None
         if self._viewer is not None:

@@ -101,6 +101,20 @@ class RasterizerContext:
         # segmentation mapping
         self.generate_seg_vars()
 
+    def destroy(self):
+        self.clear_dynamic_nodes()
+
+        for node_registry in (
+            self.link_frame_nodes,
+            self.frustum_nodes,
+            self.rigid_nodes,
+            self.static_nodes,
+            self.external_nodes,
+        ):
+            for external_node in node_registry.values():
+                self.remove_node(external_node)
+            node_registry.clear()
+
     def reset(self):
         self._t = -1
 
