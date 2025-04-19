@@ -417,9 +417,9 @@ class PBDOptions(Options):
     gravity: Optional[tuple] = None
 
     # constraints solving iterations
-    max_stretch_solver_iterations: int = 4
-    max_bending_solver_iterations: int = 1
-    max_volume_solver_iterations: int = 1
+    max_stretch_solver_iterations: int = 4 # 4
+    max_bending_solver_iterations: int = 1 # 1
+    max_volume_solver_iterations: int = 1 # 1
     max_density_solver_iterations: int = 1
     max_viscosity_solver_iterations: int = 1
 

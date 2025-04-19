@@ -267,10 +267,21 @@ class Simulator(RBC):
             solver.process_input_grad()
 
     def substep(self, f):
-        self._coupler.preprocess(f)
-        self.substep_pre_coupling(f)
-        self._coupler.couple(f)
-        self.substep_post_coupling(f)
+        # import time
+        # start_time = time.perf_counter_ns()
+        self._coupler.preprocess(f) # 35181 ns
+        # preprocess_time = time.perf_counter_ns() - start_time
+        # start_time = time.perf_counter_ns()
+        self.substep_pre_coupling(f) # 1780143322 ns
+        # pre_coupling_time = time.perf_counter_ns() - start_time
+        # start_time = time.perf_counter_ns()
+        self._coupler.couple(f) # 57061 ns
+        # couple_time = time.perf_counter_ns() - start_time
+        # start_time = time.perf_counter_ns()
+        self.substep_post_coupling(f) # 171568728 ns
+        # post_coupling_time = time.perf_counter_ns() - start_time
+        # print(f"Time taken for substep {f}: {preprocess_time} ns, {pre_coupling_time} ns, {couple_time} ns, {post_coupling_time} ns")
+        # import ipdb; ipdb.set_trace()
 
     def sub_step_grad(self, f):
         self.substep_post_coupling_grad(f)

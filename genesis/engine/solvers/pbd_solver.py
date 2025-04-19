@@ -894,6 +894,11 @@ class PBDSolver(Solver):
             self.particles[particle_idx].pos[i] = pos[i]
         self.particles[particle_idx].free = 0
 
+
+    @gs.assert_built
+    def set_particles_positions(self, particle_start, n_particles, positions):
+       self._kernel_set_particles_pos(0, particle_start, n_particles, positions)
+
     @gs.assert_built
     def set_particle_velocity(self, particle_idx, vel):
         self._kernel_set_particle_velocity(particle_idx, vel)

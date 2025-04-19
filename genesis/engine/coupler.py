@@ -199,7 +199,7 @@ class Coupler(RBC):
 
                 # external force fields
                 for i_ff in ti.static(range(len(self.mpm_solver._ffs))):
-                    vel_mpm += self.mpm_solver._ffs[i_ff].get_acc(pos, vel_mpm, t) * self.mpm_solver.substep_dt
+                    vel_mpm += self.mpm_solver._ffs[i_ff].get_acc(pos, vel_mpm, t, 0) * self.mpm_solver.substep_dt
 
                 #################### MPM <-> Tool ####################
                 if ti.static(self.tool_solver.is_active()):

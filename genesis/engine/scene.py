@@ -718,8 +718,11 @@ class Scene(RBC):
         """
         if not self._forward_ready:
             gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
-
-        self._sim.step()
+        # import time
+        # start_time = time.perf_counter_ns()
+        self._sim.step() # 1026285 ns
+        # end_time = time.perf_counter_ns()
+        # print(f"Time taken for step: {end_time - start_time} ns")
 
         self._t += 1
 
