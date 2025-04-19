@@ -79,6 +79,7 @@ class backend(IntEnum):
     vulkan = 3
     metal = 4
     opengl = 5
+    amdgpu = 6
 
     def __format__(self, format_spec):
         return f"gs.{self.name}"
@@ -95,12 +96,14 @@ GS_ARCH = {
         backend.cpu: backend.cpu,
         backend.gpu: backend.cuda,
         backend.cuda: backend.cuda,
+        backend.amdgpu: backend.amdgpu,
         backend.vulkan: backend.vulkan,
     },
     "Windows": {
         backend.cpu: backend.cpu,
         backend.gpu: backend.cuda,
         backend.cuda: backend.cuda,
+        backend.amdgpu: backend.amdgpu,
         backend.vulkan: backend.vulkan,
     },
 }
@@ -114,11 +117,13 @@ TI_ARCH = {
     "Linux": {
         backend.cpu: ti.cpu,
         backend.cuda: ti.cuda,
+        backend.amdgpu: ti.amdgpu,
         backend.vulkan: ti.vulkan,
     },
     "Windows": {
         backend.cpu: ti.cpu,
         backend.cuda: ti.cuda,
+        backend.amdgpu: ti.amdgpu,
         backend.vulkan: ti.vulkan,
     },
 }

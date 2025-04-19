@@ -102,9 +102,9 @@ def get_platform():
 
 
 def get_device(backend: gs_backend):
-    if backend == gs_backend.cuda:
+    if backend in (gs_backend.cuda, gs_backend.amdgpu):
         if not torch.cuda.is_available():
-            gs.raise_exception("cuda device not available")
+            gs.raise_exception("torch cuda backend not available")
 
         device_idx = torch.cuda.current_device()
         device = torch.device(f"cuda:{device_idx}")
