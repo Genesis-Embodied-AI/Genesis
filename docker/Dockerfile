@@ -94,12 +94,12 @@ RUN git clone https://github.com/Genesis-Embodied-AI/Genesis.git && \
 
 # -------------------- Surface Reconstruction --------------------
 # Set the LD_LIBRARY_PATH directly in the environment
-COPY --from=builder /workspace/Genesis/genesis/ext/ParticleMesher/ParticleMesherPy /opt/conda/lib/python3.1/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy
-ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.1/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy:$LD_LIBRARY_PATH
+COPY --from=builder /workspace/Genesis/genesis/ext/ParticleMesher/ParticleMesherPy /opt/conda/lib/python3.11/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy:$LD_LIBRARY_PATH
 
 # --------------------- Ray Tracing Renderer ---------------------
 # Copy LuisaRender build artifacts from the builder stage
-COPY --from=builder /workspace/Genesis/genesis/ext/LuisaRender/build/bin /opt/conda/lib/python3.1/site-packages/genesis/ext/LuisaRender/build/bin
+COPY --from=builder /workspace/Genesis/genesis/ext/LuisaRender/build/bin /opt/conda/lib/python3.11/site-packages/genesis/ext/LuisaRender/build/bin
 # fix GLIBCXX_3.4.30 not found
 RUN cd /opt/conda/lib && \
     mv libstdc++.so.6 libstdc++.so.6.old && \

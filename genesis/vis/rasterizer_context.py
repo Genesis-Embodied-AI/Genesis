@@ -33,6 +33,15 @@ class RasterizerContext:
         self.rendered_envs_idx = options.rendered_envs_idx
         self.env_separate_rigid = options.env_separate_rigid
 
+        # nodes
+        self.world_frame_node = None
+        self.link_frame_nodes = dict()
+        self.frustum_nodes = dict()  # nodes camera frustums
+        self.rigid_nodes = dict()
+        self.static_nodes = dict()  # used across all frames
+        self.dynamic_nodes = list()  # nodes that live within single frame
+        self.external_nodes = dict()  # nodes added by external user
+
         self.init_meshes()
 
     def init_meshes(self):
@@ -71,15 +80,6 @@ class RasterizerContext:
         )
 
         self.jit = JITRenderer(self._scene, [], [])
-
-        # nodes
-        self.world_frame_node = None
-        self.link_frame_nodes = dict()
-        self.frustum_nodes = dict()  # nodes camera frustums
-        self.rigid_nodes = dict()
-        self.static_nodes = dict()  # used across all frames
-        self.dynamic_nodes = list()  # nodes that live within single frame
-        self.external_nodes = dict()  # nodes added by external user
 
         self.on_lights()
 

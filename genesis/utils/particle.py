@@ -20,7 +20,7 @@ from . import misc as miu
 # Make sure ParticleMesherPy shared libary can be found in search path
 LD_LIBRARY_PATH = os.path.join(miu.get_src_dir(), "ext/ParticleMesher/ParticleMesherPy")
 sys.path.append(LD_LIBRARY_PATH)
-os.environ["LD_LIBRARY_PATH"] = f"{os.environ.get("LD_LIBRARY_PATH", "")}:{LD_LIBRARY_PATH}"
+os.environ["LD_LIBRARY_PATH"] = ":".join(filter(None, (os.environ.get("LD_LIBRARY_PATH"), LD_LIBRARY_PATH)))
 
 
 def n_particles_vol(p_size=0.01, volume=1.0):
@@ -312,7 +312,10 @@ def particles_to_mesh(positions, radius, backend):
         radii = radius
         radius = np.min(radius)
         if "splashsurf" in backend:
-            gs.logger.warning("Cannot use variable radius for splashsurf. Fall back to openvdb.")
+            gs.logger.warning(
+                "Backend 'splashsurf' does not support specifying individual radius for each particle. Switching to "
+                "backend 'openvdb' as a fallback."
+            )
             backend = "openvdb"
     else:
         radii = np.array([])
@@ -320,10 +323,10 @@ def particles_to_mesh(positions, radius, backend):
     args_dict = parse_args(backend)
 
     if "openvdb" in backend:
-        try:
-            import ParticleMesherPy
-        except ImportError as e:
-            gs.raise_exception_from("Failed to import ParticleMesher", e)
+        if gs.platform != "Linux" or sys.version_info[:2] == (3, 9):
+            gs.raise_exception("Backend 'openvdb' is only supported on Linux and Python 3.9 specfically.")
+
+        import ParticleMesherPy
 
         radius_scale = args_dict.get("rscale", 2.0)
         reconstructor = ParticleMesherPy.MeshConstructor(
@@ -343,7 +346,7 @@ def particles_to_mesh(positions, radius, backend):
 
     elif "splashsurf" in backend:
         if gs.platform != "Linux":
-            gs.raise_exception("Backend splashsurf is only supported on Linux.")
+            gs.raise_exception("Backend 'splashsurf' is only supported on Linux.")
 
         fd, xyz_path = tempfile.mkstemp(suffix=".xyz")
         os.close(fd)
@@ -403,8 +406,10 @@ def init_foam_generator(
     k_foam,
     foam_density,
 ):
-    if not is_ParticleMesherPy_available:
-        gs.raise_exception(f"Failed to import ParticleMesher. {ParticleMesherPy_error_msg}")
+    if gs.platform != "Linux" or sys.version_info[:2] == (3, 9):
+        gs.raise_exception("This method is only supported on Linux and Python 3.9 specfically.")
+
+    import ParticleMesherPy
 
     min_ke = 0.1 * (particle_radius**3 * 6400) * (2.5**2)
     return ParticleMesherPy.FoamGenerator(
@@ -440,8 +445,10 @@ def generate_foam_particles(generator, positions, velocities):
 
 
 def filter_surface(positions, radii, particle_radius, half_width=8.0, radius_scale=1.0):
-    if not is_ParticleMesherPy_available:
-        gs.raise_exception(f"Failed to import ParticleMesher. {ParticleMesherPy_error_msg}")
+    if gs.platform != "Linux" or sys.version_info[:2] == (3, 9):
+        gs.raise_exception("This method is only supported on Linux and Python 3.9 specfically.")
+
+    import ParticleMesherPy
 
     splitter = ParticleMesherPy.SurfaceSplitter(
         ParticleMesherPy.SurfaceSplitterConfig(
