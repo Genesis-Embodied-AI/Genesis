@@ -76,7 +76,6 @@ class Logger:
         self._logger.addHandler(self._handler)
 
         self._stream = self._handler.stream
-        self._error_msg = None
         self._is_new_line = True
 
         self.timer_lock = threading.Lock()

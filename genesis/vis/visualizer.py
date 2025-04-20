@@ -96,18 +96,20 @@ class Visualizer(RBC):
         self.destroy()
 
     def destroy(self):
-        if self._context is not None:
-            del self._context
-            self._context = None
         if self._viewer is not None:
             self._viewer.stop()
             self._viewer = None
-        if self._rasterizer is not None:
+        if self._rasterizer is not None and self._rasterizer is not self._raytracer:
+            # FIXME: Deleting raytracer twice would cause segfault because of a bug
             self._rasterizer.destroy()
             self._rasterizer = None
         if self._raytracer is not None:
             self._raytracer.destroy()
             self._raytracer = None
+        if self._context is not None:
+            self._context.destroy()
+            del self._context
+            self._context = None
         self._renderer = None
 
     def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise):

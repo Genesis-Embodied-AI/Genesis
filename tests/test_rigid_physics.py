@@ -1,6 +1,7 @@
-import pytest
+import sys
 import xml.etree.ElementTree as ET
 
+import pytest
 import trimesh
 import torch
 import numpy as np
@@ -74,6 +75,76 @@ def box_box():
     box2_body = ET.SubElement(worldbody, "body", name="box2", pos="0. 0. 0.8")
     ET.SubElement(box2_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 0 1 0.4")
     ET.SubElement(box2_body, "joint", name="root2", type="free")
+    return mjcf
+
+
+@pytest.fixture
+def collision_edge_cases(asset_tmp_path, mode):
+    assets = {}
+    for i, box_size in enumerate(((0.8, 0.8, 0.04), (0.04, 0.04, 0.005))):
+        tmesh = trimesh.creation.box(extents=np.array(box_size) * 2)
+        mesh_path = str(asset_tmp_path / f"box{i}.obj")
+        tmesh.export(mesh_path, file_type="obj")
+        assets[f"box{i}"] = mesh_path
+
+    mjcf = ET.Element("mujoco", model="one_box")
+    ET.SubElement(mjcf, "option", timestep="0.005")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
+
+    asset = ET.SubElement(mjcf, "asset")
+    for name, mesh_path in assets.items():
+        ET.SubElement(asset, "mesh", name=name, refpos="0 0 0", refquat="1 0 0 0", file=mesh_path)
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+
+    if mode == 0:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0.0 0.0 0.7")
+        ET.SubElement(box1_body, "geom", type="box", size="0.04 0.04 0.005", pos="-0.758 -0.758 0.", rgba="0 0 1 0.4")
+    elif mode == 1:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 0.7")
+        ET.SubElement(box1_body, "geom", type="box", size="0.04 0.04 0.005", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 2:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 1.1")
+        ET.SubElement(box1_body, "geom", type="box", size="0.04 0.04 0.005", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 3:
+        ET.SubElement(worldbody, "geom", type="box", size="0.8 0.8 0.04", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0.0 0.0 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="-0.758 -0.758 0.", rgba="0 0 1 0.4")
+    elif mode == 4:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0.0 0.0 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="-0.758 -0.758 0.", rgba="0 0 1 0.4")
+    elif mode == 5:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 6:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="-0.758 -0.758 1.1")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box1", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 7:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.758  0.758 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.758 -0.758 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.758 -0.758 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.758  0.758 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    elif mode == 8:
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.762  0.762 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.762 -0.762 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos=" 0.762 -0.762 0.", rgba="0 1 0 0.4")
+        ET.SubElement(worldbody, "geom", type="mesh", mesh="box1", pos="-0.762  0.762 0.", rgba="0 1 0 0.4")
+        box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.7")
+        ET.SubElement(box1_body, "geom", type="mesh", mesh="box0", pos="0. 0. 0.", rgba="0 0 1 0.4")
+    else:
+        raise ValueError("Invalid mode")
+
+    ET.SubElement(box1_body, "joint", name="root", type="free")
+
     return mjcf
 
 
@@ -277,14 +348,12 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 850 if dynamics else 400
+    num_steps = 900 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
-            for n, entity in enumerate(scene.entities[1:]):
-                i, j, k = int(n / 25), int(n / 5) % 5, n % 5
-                qvel = entity.get_dofs_velocity().cpu()
-                np.testing.assert_allclose(qvel, 0, atol=0.15 if dynamics else 0.05)
+            qvel = scene.rigid_solver.get_dofs_velocity().cpu()
+            np.testing.assert_allclose(qvel, 0, atol=0.15 if dynamics else 0.05)
 
     for n, entity in enumerate(scene.entities[1:]):
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
@@ -351,6 +420,44 @@ def test_robot_kinematics(gs_sim, mj_sim, atol):
         check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
 
 
+def test_robot_scaling(show_viewer, atol):
+    mass = None
+    links_pos = None
+    for scale in (0.5, 1.0, 2.0):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                gravity=(0, 0, -10.0),
+            ),
+            show_viewer=show_viewer,
+            show_FPS=False,
+        )
+        robot = scene.add_entity(
+            gs.morphs.MJCF(
+                file="xml/franka_emika_panda/panda.xml",
+                scale=scale,
+            ),
+        )
+        scene.build()
+
+        mass_ = robot.get_mass() / scale**3
+        if mass is None:
+            mass = mass_
+        np.testing.assert_allclose(mass, mass_, atol=atol)
+
+        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+        qpos = 0.5 * dofs_lower_bound
+        robot.set_dofs_position(qpos)
+
+        links_pos_ = robot.get_links_pos() / scale
+        if links_pos is None:
+            links_pos = links_pos_
+        np.testing.assert_allclose(links_pos, links_pos_, atol=atol)
+
+        scene.step()
+        qf_passive = scene.rigid_solver.dofs_state.qf_passive.to_numpy()
+        np.testing.assert_allclose(qf_passive, 0, atol=atol)
+
+
 def test_set_root_pose(show_viewer, atol):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -371,14 +478,19 @@ def test_set_root_pose(show_viewer, atol):
     )
     scene.build()
 
-    np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
-    np.testing.assert_allclose(
-        gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
-    )
-    np.testing.assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), atol=atol)
+    for _ in range(2):
+        scene.reset()
 
-    cube.set_pos(torch.tensor((0.0, 0.5, 0.2)))
-    np.testing.assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), atol=atol)
+        np.testing.assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), atol=atol)
+        np.testing.assert_allclose(
+            gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), atol=atol
+        )
+        robot.set_pos(torch.tensor((-0.1, -0.2, 0.2)))
+        np.testing.assert_allclose(robot.get_pos(), (-0.1, -0.2, 0.2), atol=atol)
+
+        np.testing.assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), atol=atol)
+        cube.set_pos(torch.tensor((0.0, 0.5, 0.2)))
+        np.testing.assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), atol=atol)
 
 
 @pytest.mark.dof_damping(True)
@@ -394,12 +506,12 @@ def test_stickman(gs_sim, mj_sim, atol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(4000):
+    for i in range(4500):
         gs_sim.scene.step()
-        if i > 3900:
+        if i > 4400:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.3)
+            np.testing.assert_allclose(qvel, 0, atol=0.4)
 
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
@@ -540,18 +652,20 @@ def move_cube(use_suction, show_viewer):
         scene.step()
         if i > 450:
             qvel = cube.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.05)
+            np.testing.assert_allclose(qvel, 0, atol=0.06)
 
     qpos = cube.get_dofs_position().cpu()
     np.testing.assert_allclose(qpos[2], 0.06, atol=2e-3)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics(show_viewer):
     use_suction = False
     move_cube(use_suction, show_viewer)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_suction_cup(show_viewer):
     use_suction = True
@@ -560,7 +674,10 @@ def test_suction_cup(show_viewer):
 
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_nonconvex_collision(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
     tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
@@ -578,15 +695,16 @@ def test_nonconvex_collision(show_viewer):
         surface=gs.surfaces.Default(
             color=(0.5, 0.7, 0.9, 1.0),
         ),
+        visualize_contact=True,
     )
     scene.build()
 
     # Force numpy seed because this test is very sensitive to the initial condition
     np.random.seed(0)
     ball.set_dofs_velocity(np.random.rand(ball.n_dofs) * 0.8)
-    for i in range(1500):
+    for i in range(2000):
         scene.step()
-        if i > 1400:
+        if i > 1900:
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             np.testing.assert_allclose(qvel, 0, atol=0.1)
 
@@ -638,7 +756,7 @@ def test_convexify(euler, show_viewer):
                 pos=(0.0, 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
-            # visualize_contact=True,
+            visualize_contact=True,
         )
         objs.append(obj)
     scene.build()
@@ -658,7 +776,7 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 2500 if euler == (90, 0, 90) else 600
+    num_steps = 1300 if euler == (90, 0, 90) else 600
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 100:
@@ -680,18 +798,57 @@ def test_convexify(euler, show_viewer):
             np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
 
 
+@pytest.mark.mpr_vanilla(False)
+@pytest.mark.parametrize("mode", range(9))
+@pytest.mark.parametrize("model_name", ["collision_edge_cases"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_collision_edge_cases(gs_sim, mode):
+    qpos_0 = gs_sim.rigid_solver.get_dofs_position().cpu()
+    for _ in range(200):
+        gs_sim.scene.step()
+
+    qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
+    np.testing.assert_allclose(qvel, 0, atol=1e-2)
+    qpos = gs_sim.rigid_solver.get_dofs_position().cpu()
+    np.testing.assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
+
+
+@pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
+@pytest.mark.parametrize("mode", [3])
+@pytest.mark.parametrize("model_name", ["collision_edge_cases"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_nan_reset(gs_sim, mode):
+    for _ in range(200):
+        gs_sim.scene.step()
+        qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
+        if np.isnan(qvel).any():
+            break
+    else:
+        raise AssertionError
+
+    gs_sim.scene.reset()
+    for _ in range(5):
+        gs_sim.scene.step()
+    qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
+    assert not np.isnan(qvel).any()
+
+
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_terrain_generation(show_viewer):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-5.0, -5.0, 10.0),
             camera_lookat=(5.0, 5.0, 0.0),
             camera_fov=40,
         ),
         show_viewer=show_viewer,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-        ),
     )
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(

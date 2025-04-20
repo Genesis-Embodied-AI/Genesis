@@ -40,52 +40,6 @@ exit_callbacks = []
 global_scene_list = set()
 
 
-############ fix python DLL search dir for OMPL ############
-try:
-    import ompl
-
-    _is_ompl_available = True
-except ImportError:
-    _is_ompl_available = False
-
-
-def dll_loader(lib, path):
-    # First, try the user-specified path
-    sys = system()
-    if sys == "Windows":
-        ext = ".dll"
-    elif sys == "Darwin":
-        ext = ".dylib"
-    else:  # Linux, other UNIX systems
-        ext = ".so"
-    fname = f"lib{lib}{ext}"
-    fpath = os.path.join(path, fname)
-
-    # Fallback to site-packages
-    if not os.path.isfile(fpath):
-        for sitepackagedir in site.getsitepackages():
-            if not os.path.exists(sitepackagedir):
-                continue
-            for _fname in os.listdir(sitepackagedir):
-                _fpath = os.path.join(sitepackagedir, _fname)
-                if os.path.isfile(_fpath):
-                    if _fname.startswith(fname):
-                        fpath = _fpath
-                        break
-
-    # Fallback to system loading and pray
-    if not os.path.isfile(fpath):
-        fpath = find_library(lib)
-
-    cdll = ctypes.CDLL(fpath, ctypes.RTLD_GLOBAL)
-    if cdll is None:
-        gs.raise_exception(f"Failed to load dynamic library '{lib}' (search path '{path}').")
-
-
-if _is_ompl_available:
-    ompl.dll_loader = dll_loader
-
-
 ########################## init ##########################
 def init(
     seed=None,
@@ -292,10 +246,6 @@ def destroy():
     # Display any buffered error message if logger is configured
     global logger
     if logger:
-        if logger._error_msg is not None:
-            logger.error(logger._error_msg)
-            logger._error_msg = None
-
         logger.info("💤 Exiting Genesis and caching compiled kernels...")
 
     # Call all exit callbacks
@@ -355,13 +305,12 @@ class GenesisException(Exception):
 
 
 def _custom_excepthook(exctype, value, tb):
-    if issubclass(exctype, GenesisException):
-        # We don't want the traceback info to trace till this __init__.py file.
-        stack_trace = "".join(traceback.format_exception(exctype, value, tb)[:-2])
-        print(stack_trace)
-    else:
-        # Use the system's default excepthook for other exception types
-        sys.__excepthook__(exctype, value, tb)
+    # We don't want the traceback info to trace till this __init__.py file.
+    print("".join(traceback.format_exception(exctype, value, tb)[:-2]))
+
+    # Logger the exception right before exit if possible
+    if gs.logger is not None:
+        gs.logger.error(f"{exctype.__name__}: {value}")
 
 
 # Set the custom excepthook to handle GenesisException

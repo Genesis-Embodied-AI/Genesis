@@ -591,6 +591,7 @@ class RigidEntity(Entity):
                 cg_infos,
                 morph.decimate,
                 morph.decimate_face_num,
+                morph.decimate_aggressiveness,
                 morph.convexify,
                 morph.decompose_error_threshold,
                 morph.coacd_options,
@@ -685,7 +686,7 @@ class RigidEntity(Entity):
 
         self._kernel_get_jacobian(link.idx)
 
-        jacobian = self._jacobian.to_torch(gs.device).transpose(1, 0)
+        jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
         if self._solver.n_envs == 0:
             jacobian = jacobian.squeeze(0)
 
@@ -1095,14 +1096,12 @@ class RigidEntity(Entity):
 
         if return_error:
             error_pose = (
-                self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].transpose(1, 0)
+                self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].permute(2, 0, 1)
             )
             if self._solver.n_envs == 0:
                 error_pose = error_pose.squeeze(0)
             return qpos, error_pose
-
-        else:
-            return qpos
+        return qpos
 
     @ti.kernel
     def _kernel_inverse_kinematics(
@@ -1464,14 +1463,11 @@ class RigidEntity(Entity):
             from ompl import base as ob
             from ompl import geometric as og
             from ompl import util as ou
-
-            ou.setLogLevel(ou.LOG_ERROR)
         except ImportError as e:
-            gs.raise_exception_from(
-                "Failed to import OMPL. Did you install? (For installation instructions, see "
-                "https://genesis-world.readthedocs.io/en/latest/user_guide/overview/installation.html#optional-motion-planning)",
-                e,
-            )
+            if gs.platform == "Windows":
+                gs.raise_exception_from("No pre-compiled binaries of OMPL are not distributed on Windows OS.", e)
+            else:
+                raise
 
         if self._solver.n_envs > 0:
             gs.raise_exception("Motion planning is not supported for batched envs (yet).")
@@ -1510,6 +1506,7 @@ class RigidEntity(Entity):
             q_limit_upper = np.maximum(q_limit_upper, qpos_goal)
 
         ######### setup OMPL ##########
+        ou.setLogLevel(ou.LOG_ERROR)
         space = ob.RealVectorStateSpace(self.n_qs)
         bounds = ob.RealVectorBounds(self.n_qs)
 
@@ -1834,7 +1831,7 @@ class RigidEntity(Entity):
     @gs.assert_built
     def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, unsafe=False):
         """
-        Set position of the entity's base free-floating link.
+        Set position of the entity's base link.
 
         Parameters
         ----------
@@ -1855,7 +1852,7 @@ class RigidEntity(Entity):
     @gs.assert_built
     def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, unsafe=False):
         """
-        Set quaternion of the entity's base free-floating link.
+        Set quaternion of the entity's base link.
 
         Parameters
         ----------

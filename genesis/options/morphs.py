@@ -302,6 +302,11 @@ class FileMorph(Morph):
         Whether to decimate (simplify) the mesh. If not given, it defaults to `convexify`. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
@@ -327,6 +332,7 @@ class FileMorph(Morph):
     scale: Union[float, tuple] = 1.0
     decimate: Optional[bool] = None
     decimate_face_num: int = 500
+    decimate_aggressiveness: int = 2
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
     decompose_error_threshold: float = 0.15
@@ -399,6 +405,11 @@ class Mesh(FileMorph):
         Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
@@ -498,6 +509,11 @@ class MJCF(FileMorph):
         Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
@@ -529,6 +545,9 @@ class MJCF(FileMorph):
         if not self.file.endswith(".xml"):
             gs.raise_exception(f"Expected `.xml` extension for MJCF file: {self.file}")
 
+        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+
 
 class URDF(FileMorph):
     """
@@ -556,6 +575,11 @@ class URDF(FileMorph):
         Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
@@ -596,6 +620,9 @@ class URDF(FileMorph):
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Expected `.urdf` extension for URDF file: {self.file}")
 
+        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
+
 
 class Drone(FileMorph):
     """
@@ -621,6 +648,11 @@ class Drone(FileMorph):
         Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not

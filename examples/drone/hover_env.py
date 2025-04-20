@@ -16,6 +16,7 @@ class HoverEnv:
         self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
         self.num_commands = command_cfg["num_commands"]
+        self.device = gs.device
 
         self.simulate_action_latency = env_cfg["simulate_action_latency"]
         self.dt = 0.01  # run in 100hz
@@ -112,6 +113,7 @@ class HoverEnv:
         self.last_base_pos = torch.zeros_like(self.base_pos)
 
         self.extras = dict()  # extra information for logging
+        self.extras["observations"] = dict()
 
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["pos_x_range"], (len(envs_idx),), gs.device)
@@ -192,11 +194,13 @@ class HoverEnv:
         )
 
         self.last_actions[:] = self.actions[:]
+        self.extras["observations"]["critic"] = self.obs_buf
 
-        return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
+        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def get_observations(self):
-        return self.obs_buf
+        self.extras["observations"]["critic"] = self.obs_buf
+        return self.obs_buf, self.extras
 
     def get_privileged_observations(self):
         return None
