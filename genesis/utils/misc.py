@@ -104,7 +104,7 @@ def get_platform():
 def get_device(backend: gs_backend):
     if backend == gs_backend.cuda:
         if not torch.cuda.is_available():
-            gs.raise_exception("cuda device not available")
+            gs.raise_exception("torch cuda not available")
 
         device_idx = torch.cuda.current_device()
         device = torch.device(f"cuda:{device_idx}")
@@ -121,7 +121,9 @@ def get_device(backend: gs_backend):
         device = torch.device("mps:0")
 
     elif backend == gs_backend.vulkan:
-        if torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
+        if torch.cuda.is_available():
+            device, device_name, total_mem, _ = get_device(gs_backend.cuda)
+        elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
             device_idx = torch.xpu.current_device()
             device = torch.device(f"xpu:{device_idx}")
             device_property = torch.xpu.get_device_properties(device_idx)
