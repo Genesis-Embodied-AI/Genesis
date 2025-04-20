@@ -29,6 +29,7 @@ class Texture(Options):
     def apply_cutoff(self, cutoff):
         pass
 
+
 class ColorTexture(Texture):
     """
     A texture with a single color.

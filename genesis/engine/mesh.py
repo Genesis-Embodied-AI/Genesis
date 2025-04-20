@@ -319,7 +319,7 @@ class Mesh(RBC):
         """
         if surface is None:
             surface = gs.surfaces.Default()
-            
+
         return cls(
             mesh=trimesh.Trimesh(
                 vertices=verts * scale if scale is not None else verts,

@@ -34,14 +34,17 @@ alpha_modes = {
     "BLEND": 2,
 }
 
+
 def uri_to_PIL(data_uri):
     with request.urlopen(data_uri) as response:
         data = response.read()
     return BytesIO(data)
 
+
 def get_glb_bufferview_data(glb, buffer_view):
     buffer = glb.buffers[buffer_view.buffer]
     return glb.get_data_from_buffer_uri(buffer.uri)
+
 
 def get_glb_data_from_accessor(glb, accessor_index):
     accessor = glb.accessors[accessor_index]
@@ -74,6 +77,7 @@ def get_glb_data_from_accessor(glb, accessor_index):
 
     return array.reshape([count] + type_to_count[data_type][1])
 
+
 def get_glb_image(glb, image_index, image_type=None):
     if image_index is not None:
         image = Image.open(uri_to_PIL(glb.images[image_index].uri))
@@ -81,6 +85,7 @@ def get_glb_image(glb, image_index, image_type=None):
             image = image.convert(image_type)
         return np.array(image)
     return None
+
 
 def parse_glb_material(glb, material_index, surface):
     # parse images
@@ -164,7 +169,7 @@ def parse_glb_material(glb, material_index, surface):
                     "images, which is unsupported. Ignoring texture."
                 )
             color_image = get_glb_image(glb, texture.source, "RGBA")
-            
+
         # parse color
         color_factor = None
         if pbr_texture.baseColorFactor is not None:
@@ -219,9 +224,7 @@ def parse_glb_material(glb, material_index, surface):
     for extension_name, extension_material in material.extensions.items():
         if extension_name == "KHR_materials_specular":
             specular_weight = extension_material.get("specularFactor", 1.0)
-            specular_color = np.array(
-                extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=float
-            )
+            specular_color = np.array(extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=float)
 
         elif extension_name == "KHR_materials_clearcoat":
             clearcoat_weight = extension_material.get("clearcoatFactor", 0.0)
@@ -249,6 +252,7 @@ def parse_glb_material(glb, material_index, surface):
     )
 
     return material_surface, uvs_used
+
 
 def parse_glb_tree(glb, node_index):
     node = glb.nodes[node_index]
@@ -281,6 +285,7 @@ def parse_glb_tree(glb, node_index):
         mesh_list[i][1] = mesh_list[i][1] @ matrix
     return mesh_list
 
+
 def parse_mesh_glb(path, group_by_material, scale, surface):
     glb = pygltflib.GLTF2().load(path)
     assert glb is not None
@@ -303,11 +308,12 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
         matrix = mesh_list[i][1]
         for primitive in mesh.primitives:
             group_idx = primitive.material if group_by_material else i
-            
+
             if primitive.material is not None:
                 if primitive.material not in materials:
-                    materials[primitive.material], uv_names[primitive.material] = \
-                        parse_glb_material(glb, primitive.material, surface)
+                    materials[primitive.material], uv_names[primitive.material] = parse_glb_material(
+                        glb, primitive.material, surface
+                    )
                 uv_used = uv_names[primitive.material]
             else:
                 uv_used = 0

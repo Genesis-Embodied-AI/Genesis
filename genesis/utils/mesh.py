@@ -29,6 +29,7 @@ from .misc import (
     get_tet_cache_dir,
 )
 
+
 class MeshInfo:
     def __init__(self, surface):
         self.surface = surface
@@ -39,7 +40,7 @@ class MeshInfo:
         self.n_points = 0
         self.n_members = 0
         self.uvs_exist = False
-    
+
     def append(self, verts, faces, normals, uvs):
         faces += self.n_points
         self.verts.append(verts)
@@ -74,7 +75,8 @@ class MeshInfo:
         )
         mesh.metadata["mesh_path"] = path
         return mesh
-    
+
+
 class MeshInfoGroup:
     def __init__(self):
         self.infos = dict()
@@ -83,13 +85,14 @@ class MeshInfoGroup:
         if name not in self.infos:
             self.infos[name] = MeshInfo(surface)
         self.infos[name].append(verts, faces, normals, uvs)
-    
+
     def export_meshes(self, scale, path):
         return [self.infos[name].export_mesh(scale, path) for name in self.infos]
-    
+
 
 def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
+
 
 def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
     hashkey = get_hashkey(
@@ -416,24 +419,28 @@ def parse_mesh_trimesh(path, group_by_material, scale, surface):
         meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface, metadata={"mesh_path": path}))
     return meshes
 
+
 def trimesh_to_mesh(mesh, scale, surface):
     return gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface)
 
 
 def adjust_alpha_cutoff(alpha_cutoff, alpha_mode):
-    if alpha_mode == 0:     # OPAQUE
+    if alpha_mode == 0:  # OPAQUE
         return 0.0
-    elif alpha_mode == 1:   # MASK
+    elif alpha_mode == 1:  # MASK
         return alpha_cutoff
-    else:                   # BLEND
+    else:  # BLEND
         return None
+
 
 def PIL_to_array(image):
     return np.array(image)
 
+
 def tonemapped(image):
     exposure = 0.5
     return (np.clip(np.power(image / 255 * np.power(2, exposure), 1 / 2.2), 0, 1) * 255).astype(np.uint8)
+
 
 def create_texture(image, factor, encoding):
     if image is not None:

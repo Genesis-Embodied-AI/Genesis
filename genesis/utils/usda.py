@@ -13,18 +13,21 @@ cs_encode = {
     "": None,
 }
 
+
 def make_tuple(value):
     if value is None:
         return None
     else:
         return (value,)
 
+
 def flip(image):
     return None if image is None else np.flipud(image)
 
+
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
-    
+
     if input_type != "value":
         shader_input_attr = shader_input.GetValueProducingAttribute()[0]
         if shader_input_attr.IsValid():
@@ -42,12 +45,13 @@ def parse_preview_surface(shader, output_name):
 
         def parse_component(component_name, component_encode):
             component, component_output = get_input_attribute_value(shader, component_name)
-            if component_output is None:        # constant value
+            if component_output is None:  # constant value
                 component_factor = component
                 component_image = None
-            else:                               # texture shader
-                component_image, component_overencode, component_uvname = \
-                    parse_preview_surface(component, component_output)
+            else:  # texture shader
+                component_image, component_overencode, component_uvname = parse_preview_surface(
+                    component, component_output
+                )
                 if component_overencode is not None:
                     component_encode = component_overencode
                 component_factor = None
@@ -103,7 +107,7 @@ def parse_preview_surface(shader, output_name):
             "normal_texture": normal_texture,
             "ior": ior,
         }, uvname
-    
+
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
         if texture is not None:
@@ -112,8 +116,7 @@ def parse_preview_surface(shader, output_name):
         texture_encode = get_input_attribute_value(shader, "sourceColorSpace", "value")[0]
         texture_encode = cs_encode[texture_encode]
 
-        texture_uvs_shader, texture_uvs_output = \
-            get_input_attribute_value(shader, "st", "attribute")
+        texture_uvs_shader, texture_uvs_output = get_input_attribute_value(shader, "st", "attribute")
         texture_uvs_name = parse_preview_surface(texture_uvs_shader, texture_uvs_output)
 
         if output_name == "r":
@@ -135,19 +138,21 @@ def parse_preview_surface(shader, output_name):
         primvar_name = get_input_attribute_value(shader, "varname", "value")[0]
         return primvar_name
 
+
 def parse_gltf_surface(shader, source_type, output_name):
     shader_subid = shader.GetSourceAssetSubIdentifier(source_type)
     if shader_subid == "gltf_material":
         # Parse color
         color_factor = get_input_attribute_value(shader, "base_color_factor", "value")[0]  # Gf.Vec3f(1.0, 1.0, 1.0)
-        color_texture_shader, color_texture_output = \
-            get_input_attribute_value(shader, "base_color_texture", "attribute")
+        color_texture_shader, color_texture_output = get_input_attribute_value(
+            shader, "base_color_texture", "attribute"
+        )
         if color_texture_shader is not None:
             color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output)
         else:
             color_image = None
         color_texture = mu.create_texture(flip(color_image), color_factor, "srgb")
-        
+
         # parse opacity
         opacity_factor = make_tuple(get_input_attribute_value(shader, "base_alpha", "value")[0])
         opacity_texture = mu.create_texture(None, opacity_factor, "linear")
@@ -156,11 +161,12 @@ def parse_gltf_surface(shader, source_type, output_name):
         alpha_cutoff = mu.adjust_alpha_cutoff(alpha_cutoff, alpha_mode)
         opacity_texture.apply_cutoff(alpha_cutoff)
 
-        # parse roughness and metaillic 
+        # parse roughness and metaillic
         metallic_factor = make_tuple(get_input_attribute_value(shader, "metallic_factor", "value")[0])
         roughness_factor = make_tuple(get_input_attribute_value(shader, "roughness_factor", "value")[0])
-        combined_texture_shader, combined_texture_output = \
-            get_input_attribute_value(shader, "metallic_roughness_texture", "attribute")
+        combined_texture_shader, combined_texture_output = get_input_attribute_value(
+            shader, "metallic_roughness_texture", "attribute"
+        )
         if combined_texture_shader is not None:
             combined_image = parse_gltf_surface(combined_texture_shader, source_type, combined_texture_output)
             roughness_image = combined_image[:, :, 1]
@@ -174,8 +180,9 @@ def parse_gltf_surface(shader, source_type, output_name):
         emissive_factor = make_tuple(get_input_attribute_value(shader, "emissive_strength", "value")[0])
         emissive_texture = mu.create_texture(None, emissive_factor, "srgb")
 
-        occlusion_texture_shader, occlusion_texture_output = \
-            get_input_attribute_value(shader, "occlusion_texture", "attribute")
+        occlusion_texture_shader, occlusion_texture_output = get_input_attribute_value(
+            shader, "occlusion_texture", "attribute"
+        )
         if occlusion_texture_shader is not None:
             occlusion_image = parse_gltf_surface(occlusion_texture_shader, source_type, occlusion_texture_output)
 
@@ -201,6 +208,7 @@ def parse_gltf_surface(shader, source_type, output_name):
 
     else:
         raise Exception(f"Fail to parse gltf Shader {shader_subid}.")
+
 
 def parse_omni_surface(shader, source_type, output_name):
 
@@ -231,13 +239,13 @@ def parse_omni_surface(shader, source_type, output_name):
     color_texture = parse_component("BaseColor", "srgb")
     opacity_texture = color_texture.check_dim(3) if color_texture else None
     emissive_intensity = get_input_attribute_value(shader, "EmissiveIntensity", "value")[0]
-    emissive_texture = parse_component("Emissive", "srgb", lambda x: x * emissive_intensity) 
+    emissive_texture = parse_component("Emissive", "srgb", lambda x: x * emissive_intensity)
     if emissive_texture is not None:
         emissive_texture.check_dim(3)
     metallic_texture = parse_component("Metallic", "linear")
     normal_texture = parse_component("Normal", "linear")
-    roughness_texture = parse_component("Gloss", "linear", lambda x: (2 / (x + 2))**(1.0 / 4.0))
-    
+    roughness_texture = parse_component("Gloss", "linear", lambda x: (2 / (x + 2)) ** (1.0 / 4.0))
+
     return {
         "color_texture": color_texture,
         "opacity_texture": opacity_texture,
@@ -260,7 +268,9 @@ def parse_usd_material(material):
         if surface_shader_implement == "id":
             if surface_shader.GetShaderId() == "UsdPreviewSurface":
                 return parse_preview_surface(surface_shader, surface_output_name)
-            gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} with ID {surface_shader.GetShaderId()}.")
+            gs.logger.warning(
+                f"Fail to parse Shader {surface_shader.GetPath()} with ID {surface_shader.GetShaderId()}."
+            )
             continue
 
         elif surface_shader_implement == "sourceAsset":
@@ -275,8 +285,9 @@ def parse_usd_material(material):
                 # except Exception as e:
                 #     gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}.")
                 #     continue
-    
+
     return None, None
+
 
 def parse_mesh_usd(path, group_by_material, scale, surface):
     stage = Usd.Stage.Open(path)
@@ -309,11 +320,11 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             if normal_attr.HasValue():
                 normals = np.array(normal_attr.Get(), dtype=np.float32)
                 if normals.shape[0] != points.shape[0]:
-                    if normals.shape[0] == faces.shape[0]:        # face varying
+                    if normals.shape[0] == faces.shape[0]:  # face varying
                         points_faces_varying = True
                     else:
                         gs.raise_exception(f"Size of normals mismatch for mesh {mesh_path} in usd file {path}.")
-            
+
             # parse materials
             prim_bindings = UsdShade.MaterialBindingAPI(prim)
             material = prim_bindings.ComputeBoundMaterial()[0]
@@ -325,7 +336,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 if material_id not in materials:
                     material_dict, uv_names[material_id] = parse_usd_material(material)
                     material_surface = surface.copy()
-                    
+
                     if material_dict is not None:
                         material_surface.update_texture(
                             color_texture=material_dict.get("color_texture"),
@@ -342,7 +353,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
 
             # parse uvs
             # print(uv_name, material_id, len(uv_names))
-            
+
             uv_attr = prim.GetAttribute(f"primvars:{uv_name}")
             uvs = None
             if uv_attr.HasValue():
@@ -357,7 +368,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             if points_faces_varying:
                 points = points[faces]
                 faces = np.arange(faces.shape[0])
-            
+
             if np.max(faces_vertex_counts) > 3:
                 triangles = list()
                 bi = 0
@@ -381,6 +392,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
 
     return mesh_infos.export_meshes(scale=scale, path=path)
 
+
 def parse_instance_usd(path):
     stage = Usd.Stage.Open(path)
     xform_cache = UsdGeom.XformCache()
@@ -399,7 +411,7 @@ def parse_instance_usd(path):
 
 
 if __name__ == "__main__":
-    file_path = 'table_scene.usd'
+    file_path = "table_scene.usd"
     grouped_meshes = parse_mesh_usd(file_path)
     for mesh in grouped_meshes:
         print(mesh)
