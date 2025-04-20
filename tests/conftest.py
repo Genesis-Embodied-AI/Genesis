@@ -59,7 +59,10 @@ def show_viewer(pytestconfig):
 
 @pytest.fixture(scope="session")
 def backend(pytestconfig):
-    return pytestconfig.getoption("--backend")
+    backend = pytestconfig.getoption("--backend", "cpu")
+    if isinstance(backend, str):
+        return getattr(gs.constants.backend, backend)
+    return backend
 
 
 @pytest.fixture(scope="session")
@@ -81,13 +84,15 @@ def initialize_genesis(request, backend):
     else:
         precision = "32"
         debug = False
-    gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
-    if backend != gs.cpu and gs.backend == gs.cpu:
+    try:
+        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        if backend != gs.cpu and gs.backend == gs.cpu:
+            gs.destroy()
+            pytest.skip("No GPU available on this machine")
+        yield
+    finally:
+        pyglet.app.exit()
         gs.destroy()
-        pytest.skip("No GPU available on this machine")
-    yield
-    pyglet.app.exit()
-    gs.destroy()
 
 
 @pytest.fixture
