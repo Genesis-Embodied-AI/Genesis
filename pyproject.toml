@@ -48,6 +48,8 @@ dependencies = [
     "scikit-image",
     # Convex decomposition library
     "coacd",
+    # Ray casting used in mesh to height field conversion
+    "rtree",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Motion Planning library
