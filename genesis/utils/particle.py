@@ -20,7 +20,7 @@ from . import misc as miu
 # Make sure ParticleMesherPy shared libary can be found in search path
 LD_LIBRARY_PATH = os.path.join(miu.get_src_dir(), "ext/ParticleMesher/ParticleMesherPy")
 sys.path.append(LD_LIBRARY_PATH)
-os.environ["LD_LIBRARY_PATH"] = f"{os.environ.get("LD_LIBRARY_PATH", "")}:{LD_LIBRARY_PATH}"
+os.environ["LD_LIBRARY_PATH"] = f"{os.environ.get('LD_LIBRARY_PATH', '')}:{LD_LIBRARY_PATH}"
 
 
 def n_particles_vol(p_size=0.01, volume=1.0):
