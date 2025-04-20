@@ -389,9 +389,11 @@ def parse_instance_usd(path):
     for i, prim in enumerate(stage.Traverse()):
         if prim.IsA(UsdGeom.Xformable):
             if len(prim.GetPrimStack()) > 1:
-                matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
-                instance_spec = prim.GetPrimStack()[-1]
-                instance_list.append((matrix.T, instance_spec.layer.identifier))
+                assert len(prim.GetPrimStack()) == 2, f"Invalid instance {prim.GetPath()} in usd file {path}."
+                if prim.GetPrimStack()[0].hasReferences:
+                    matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
+                    instance_spec = prim.GetPrimStack()[-1]
+                    instance_list.append((matrix.T, instance_spec.layer.identifier))
 
     return instance_list
 
