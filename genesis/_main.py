@@ -96,13 +96,26 @@ def clean():
 
 def _start_gui_mac(motor_names, dof_pos_limits, gui_joint_positions, stop_event):
     def on_close():
+        nonlocal after_id
+        if after_id is not None:
+            root.after_cancel(after_id)
+            after_id = None
         stop_event.set()
         root.destroy()
+        root.quit()
 
     root = tk.Tk()
     app = JointControlGUI(root, motor_names, dof_pos_limits, gui_joint_positions)
     root.protocol("WM_DELETE_WINDOW", on_close)
 
+    def check_event():
+        nonlocal after_id
+        if stop_event.is_set():
+            on_close()
+        elif root.winfo_exists():
+            after_id = root.after(100, check_event)
+
+    after_id = root.after(100, check_event)
     root.mainloop()
 
 
@@ -165,6 +178,8 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
             zero_velocity=True,
         )
         scene.visualizer.update(force=True)
+    stop_event.set()
+    gui_process.join()
 
 
 def animate(filename_pattern, fps):
