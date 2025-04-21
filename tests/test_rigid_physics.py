@@ -817,7 +817,7 @@ def test_collision_edge_cases(gs_sim, mode):
     np.testing.assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
 
 
-@pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
+# @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
 @pytest.mark.parametrize("mode", [3])
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
