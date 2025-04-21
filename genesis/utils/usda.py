@@ -238,7 +238,9 @@ def parse_omni_surface(shader, source_type, output_name):
     color_texture = parse_component("BaseColor", "srgb")
     opacity_texture = color_texture.check_dim(3) if color_texture else None
     emissive_intensity = get_input_attribute_value(shader, "EmissiveIntensity", "value")[0]
-    emissive_texture = parse_component("Emissive", "srgb", lambda x: x * emissive_intensity) if emissive_intensity else None
+    emissive_texture = (
+        parse_component("Emissive", "srgb", lambda x: x * emissive_intensity) if emissive_intensity else None
+    )
     if emissive_texture is not None:
         emissive_texture.check_dim(3)
     metallic_texture = parse_component("Metallic", "linear")
