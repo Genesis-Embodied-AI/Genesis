@@ -1,7 +1,8 @@
 import os
 import math
-import numpy as np
 import pickle
+
+import numpy as np
 import trimesh
 
 import genesis as gs
@@ -386,8 +387,7 @@ def mesh_to_heightfield(
     Notes
     -----
     • Requires `pyembree` or `rtree` for fast ray‑tracing.
-    • Memory cost grows as  oversample².  For very large terrains keep
-      `oversample` ≤ 4 unless you have ample RAM.
+    • Memory cost grows as  oversample².
     """
     mesh = trimesh.load(path, force="mesh")
 
