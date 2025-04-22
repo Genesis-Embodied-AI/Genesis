@@ -1,5 +1,5 @@
 import os
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Sequence, Union
 
 import numpy as np
 
@@ -358,8 +358,8 @@ class FileMorph(Morph):
                 self.decompose_object_error_threshold = float("inf")
                 self.decompose_robot_error_threshold = float("inf")
             gs.logger.warning(
-                "`decompose_nonconvex` is deprecated. Please use 'convexify' and "
-                "'decompose_(robot|object)_error_threshold' instead."
+                "FileMorph option 'decompose_nonconvex' is deprecated and will be removed in future release. Please use "
+                "'convexify' and 'decompose_(robot|object)_error_threshold' instead."
             )
 
         # Make sure that this threshold is positive to avoid decomposition of convex and primitive shapes
@@ -708,9 +708,11 @@ class Drone(FileMorph):
         The model of the drone. Defaults to 'CF2X'. Supported models are 'CF2X', 'CF2P', and 'RACE'.
     COM_link_name : str, optional
         The name of the link that represents the center of mass. Defaults to 'center_of_mass_link'.
-    propellers_link_names : list of str, optional
+    propellers_link_names : sequence of str, optional
+        This option is deprecated and will be removed in the future. Please use 'propellers_link_name' instead.
+    propellers_link_name : sequence of str, optional
         The names of the links that represent the propellers. Defaults to ['prop0_link', 'prop1_link', 'prop2_link', 'prop3_link'].
-    propellers_spin : list of int, optional
+    propellers_spin : sequence of int, optional
         The spin direction of the propellers. 1: CCW, -1: CW. Defaults to [-1, 1, -1, 1].
     """
 
@@ -718,11 +720,20 @@ class Drone(FileMorph):
     fixed: bool = False
     prioritize_urdf_material: bool = False
     COM_link_name: str = "center_of_mass_link"
-    propellers_link_names: List[str] = ["prop0_link", "prop1_link", "prop2_link", "prop3_link"]
-    propellers_spin: List[int] = [-1, 1, -1, 1]  # 1: CCW, -1: CW
+    propellers_link_names: Optional[Sequence[str]] = None
+    propellers_link_name: Sequence[str] = ("prop0_link", "prop1_link", "prop2_link", "prop3_link")
+    propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
 
     def __init__(self, **data):
         super().__init__(**data)
+
+        if self.propellers_link_names is not None:
+            gs.logger.warning(
+                "Drone option 'propellers_link_names' is deprecated and will be remove in future release. Please use "
+                "'propellers_link_name' instead."
+            )
+            self.propellers_link_name = self.propellers_link_names
+
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
 

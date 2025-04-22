@@ -49,7 +49,7 @@ def anymal_c(solver, n_envs, show_viewer):
     scene.build(n_envs=n_envs)
 
     ######################## simulate #########################
-    joint_names = [
+    joints_name = (
         "RH_HAA",
         "LH_HAA",
         "RF_HAA",
@@ -62,14 +62,14 @@ def anymal_c(solver, n_envs, show_viewer):
         "LH_KFE",
         "RF_KFE",
         "LF_KFE",
-    ]
-    motor_dofs = [robot.get_joint(name).dof_idx_local for name in joint_names]
+    )
+    motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
 
-    robot.set_dofs_kp(np.full(12, 1000), motor_dofs)
+    robot.set_dofs_kp(np.full(12, 1000), motors_dof_idx)
     if n_envs > 0:
-        robot.control_dofs_position(np.zeros((n_envs, 12)), motor_dofs)
+        robot.control_dofs_position(np.zeros((n_envs, 12)), motors_dof_idx)
     else:
-        robot.control_dofs_position(np.zeros(12), motor_dofs)
+        robot.control_dofs_position(np.zeros(12), motors_dof_idx)
 
     vec_fps = []
     for i in range(1000):

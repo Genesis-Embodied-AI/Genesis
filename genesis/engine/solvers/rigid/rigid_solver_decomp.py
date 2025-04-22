@@ -81,7 +81,10 @@ class RigidSolver(Solver):
 
         if options.contact_resolve_time is not None:
             self._sol_contact_resolve_time = options.contact_resolve_time
-            gs.logger.warning("contact_resolve_time is deprecated. Please use constraint_resolve_time instead.")
+            gs.logger.warning(
+                "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please use "
+                "'constraint_resolve_time' instead."
+            )
 
         self._options = options
 
@@ -601,9 +604,9 @@ class RigidSolver(Solver):
             init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
             for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
-                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_idx]).any()
-                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_idx] > joint.dofs_limit[0, 1]).any()
-                    # init_qpos[joint.q_idx] = np.clip(init_qpos[joint.q_idx], *joint.dofs_limit[0])
+                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.dofs_limit[0, 1]).any()
+                    # init_qpos[joint.q_start] = np.clip(init_qpos[joint.q_start], *joint.dofs_limit[0])
             self.qpos.from_numpy(init_qpos)
         if is_init_qpos_out_of_bounds:
             gs.logger.warning(

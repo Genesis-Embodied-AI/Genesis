@@ -70,7 +70,7 @@ def main():
         ls_idx_local=np.arange(0, robot.n_links),
     )
 
-    joint_names = [
+    joints_name = (
         "FR_hip_joint",
         "FR_thigh_joint",
         "FR_calf_joint",
@@ -83,11 +83,11 @@ def main():
         "RL_hip_joint",
         "RL_thigh_joint",
         "RL_calf_joint",
-    ]
-    motor_dofs = [robot.get_joint(name).dof_idx_local for name in joint_names]
+    )
+    motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
 
-    robot.set_dofs_kp(np.full(12, 20), motor_dofs)
-    robot.set_dofs_kv(np.full(12, 1), motor_dofs)
+    robot.set_dofs_kp(np.full(12, 20), motors_dof_idx)
+    robot.set_dofs_kv(np.full(12, 1), motors_dof_idx)
     default_dof_pos = np.array(
         [
             0.0,
@@ -104,7 +104,7 @@ def main():
             -1.5,
         ]
     )
-    robot.control_dofs_position(default_dof_pos, motor_dofs)
+    robot.control_dofs_position(default_dof_pos, motors_dof_idx)
 
     for i in range(1000):
         scene.step()
