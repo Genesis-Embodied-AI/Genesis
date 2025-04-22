@@ -287,6 +287,9 @@ def postprocess_collision_geoms(
             volume_err = cmesh.volume / tmesh.volume - 1.0
             must_decompose = volume_err > decompose_error_threshold
 
+    # temporarily disable convex decomposition until we have a better logic for articulated robots
+    must_decompose = False
+
     if must_decompose:
         if math.isinf(volume_err):
             gs.logger.info(
