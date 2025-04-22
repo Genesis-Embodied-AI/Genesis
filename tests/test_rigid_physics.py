@@ -415,7 +415,7 @@ def test_robot_kinematics(gs_sim, mj_sim, atol):
     (gs_robot,) = gs_sim.entities
     dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
     for _ in range(100):
-        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_qs)
+        qpos = dof_bounds[:, 0] + (dof_bounds[:, 1] - dof_bounds[:, 0]) * np.random.rand(gs_robot.n_qs)
         init_simulators(gs_sim, mj_sim, qpos)
         check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
 
@@ -445,7 +445,7 @@ def test_robot_scaling(show_viewer, atol):
         np.testing.assert_allclose(mass, mass_, atol=atol)
 
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-        qpos = 0.5 * dofs_lower_bound
+        qpos = dofs_lower_bound
         robot.set_dofs_position(qpos)
 
         links_pos_ = robot.get_links_pos() / scale
@@ -479,6 +479,53 @@ def test_info_batching():
     scene.step()
     qposs = robot.get_qpos()
     np.testing.assert_allclose(qposs[0], qposs[1])
+
+
+def test_batched_offscreen_rendering(show_viewer):
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            plane_reflection=False,
+            # rendered_envs_idx=(0, 1, 2),
+            env_separate_rigid=False,
+            show_world_frame=False,
+            show_link_frame=False,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    cam = scene.add_camera(
+        pos=(0.9, 0.0, 0.4),
+        lookat=(0.0, 0.0, 0.4),
+        res=(500, 500),
+        fov=60,
+        spp=512,
+        GUI=False,
+    )
+    scene.build(n_envs=3, env_spacing=(2.0, 2.0))
+
+    dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+    qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
+
+    steps_rgb_arrays = []
+    for _ in range(2):
+        scene.step()
+
+        robots_rgb_arrays = []
+        robot.set_qpos(torch.tile(qpos, (3, 1)))
+        for i in range(3):
+            pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
+            lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
+            cam.set_pose(pos=pos_i, lookat=lookat_i)
+            rgb_array, *_ = cam.render()
+            assert np.std(rgb_array) > 10.0
+            robots_rgb_arrays.append(rgb_array)
+        steps_rgb_arrays.append(robots_rgb_arrays)
+
+    for i in range(3):
+        np.testing.assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i])
 
 
 def test_set_root_pose(show_viewer, atol):
@@ -978,7 +1025,7 @@ def test_data_accessor(n_envs, atol):
     dof_bounds[..., 2, :] = torch.tensor((0.7, 1.0))
     dof_bounds[..., 3:6, :] = torch.tensor((-np.pi / 2, np.pi / 2))
     for i in range(max(n_envs, 1)):
-        qpos = dof_bounds[:, 0] + dof_bounds[:, 1] * np.random.rand(gs_robot.n_dofs)
+        qpos = dof_bounds[:, 0] + (dof_bounds[:, 1] - dof_bounds[:, 0]) * np.random.rand(gs_robot.n_dofs)
         if n_envs:
             gs_robot.set_dofs_position(qpos[None], envs_idx=[i])
         else:

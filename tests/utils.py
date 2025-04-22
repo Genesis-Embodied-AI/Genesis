@@ -5,6 +5,7 @@ from typing import Literal, Sequence
 import numpy as np
 
 import mujoco
+
 import genesis as gs
 import genesis.utils.geom as gu
 
