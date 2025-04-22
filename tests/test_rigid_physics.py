@@ -1,10 +1,10 @@
 import sys
 import xml.etree.ElementTree as ET
-
+import os
 import pytest
+
 import trimesh
 import torch
-import os
 import numpy as np
 from huggingface_hub import snapshot_download
 
@@ -1105,7 +1105,6 @@ def test_equality_weld(gs_sim, mj_sim):
 
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mesh_to_heightfield(show_viewer):
-    from genesis.utils.terrain import mesh_to_heightfield
 
     ########################## create a scene ##########################
     scene = gs.Scene(
@@ -1122,7 +1121,7 @@ def test_mesh_to_heightfield(show_viewer):
     horizontal_scale = 2.0
     gs_root = os.path.dirname(os.path.abspath(gs.__file__))
     path_terrain = os.path.join(gs_root, "assets", "meshes", "terrain_45.obj")
-    hf_terrain, xs, ys = mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
+    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
 
     # default heightfield starts at 0, 0, 0
     # translate to the center of the mesh
@@ -1152,6 +1151,6 @@ def test_mesh_to_heightfield(show_viewer):
         scene.step()
 
     # speed is around 0
-    qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    qvel = ball.get_dofs_velocity().cpu()
     qvel_norm = np.linalg.norm(qvel, axis=-1)
     np.testing.assert_allclose(qvel_norm, 0, atol=1e-2)

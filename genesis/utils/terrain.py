@@ -386,9 +386,11 @@ def mesh_to_heightfield(
 
     Notes
     -----
-    • Requires `pyembree` or `rtree` for fast ray‑tracing.
     • Memory cost grows as  oversample².
     """
+    if np.isscalar(spacing):
+        spacing = (spacing, spacing)
+
     mesh = trimesh.load(path, force="mesh")
 
     # -------------------------------- axis handling ---------------------------
@@ -400,7 +402,7 @@ def mesh_to_heightfield(
     (minx, miny, _), (maxx, maxy, maxz) = mesh.bounds
 
     # -------------------------------- coarse grid ----------------------------
-    dx, dy = (spacing, spacing) if isinstance(spacing, (int, float)) else spacing
+    dx, dy = spacing
     nx = math.ceil((maxx - minx) / dx) + 1
     ny = math.ceil((maxy - miny) / dy) + 1
 
@@ -414,7 +416,7 @@ def mesh_to_heightfield(
     fy_lin = np.linspace(miny, maxy, fy, dtype=np.float32)
     fxx, fyy = np.meshgrid(fx_lin, fy_lin, indexing="ij")
 
-    origins = np.c_[fxx.ravel(), fyy.ravel(), np.full(fxx.size, maxz + 1.0)]
+    origins = np.stack((fxx.ravel(), fyy.ravel(), np.full(fxx.size, maxz + 1.0)), axis=-1)
     directions = np.tile([0.0, 0.0, -1.0], (origins.shape[0], 1))
 
     # -------------------------------- ray cast -------------------------------
