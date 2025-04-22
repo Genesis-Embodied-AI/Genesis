@@ -148,7 +148,7 @@ def init(
     ti_ivec4 = ti.types.vector(4, ti_int)
 
     global EPS
-    EPS = eps
+    EPS = max(eps, np.finfo(np_float).eps)
 
     taichi_kwargs = {}
     if gs.logger.level == _logging.CRITICAL:
