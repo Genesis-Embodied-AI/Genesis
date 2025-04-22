@@ -436,14 +436,14 @@ class RigidLink(RBC):
         """
         The sequence of joints that connects the link to its parent link.
         """
-        return self._solver.joints[self._idx]
+        return self._solver.joints[self.joint_start : self.joint_end]
 
     @property
     def n_joints(self):
         """
         Number of the joints that connects the link to its parent link.
         """
-        return len(self.joints)
+        return self._n_joints
 
     @property
     def joint_start(self):

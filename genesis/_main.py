@@ -2,7 +2,6 @@ import argparse
 import multiprocessing
 import os
 import threading
-from itertools import chain
 import tkinter as tk
 from tkinter import ttk
 
@@ -79,7 +78,7 @@ class JointControlGUI:
 def get_movable_dofs(robot):
     motor_dofs = []
     motor_dof_names = []
-    for joint in chain.from_iterable(robot.joints):
+    for joint in robot.joints:
         if joint.type == gs.JOINT_TYPE.FREE:
             continue
         elif joint.type == gs.JOINT_TYPE.FIXED:

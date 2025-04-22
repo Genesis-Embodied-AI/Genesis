@@ -1,4 +1,3 @@
-from itertools import chain
 from typing import Literal
 
 import numpy as np
@@ -166,7 +165,7 @@ class RigidSolver(Solver):
         for link in self.links:
             if link.parent_idx == -1 and link.is_fixed:
                 base_links_idx.append(link.idx)
-        for joint in chain.from_iterable(self.joints):
+        for joint in self.joints:
             if joint.type == gs.JOINT_TYPE.FREE:
                 base_links_idx.append(joint.link.idx)
         self._base_links_idx = torch.tensor(base_links_idx, dtype=gs.tc_int, device=gs.device)
@@ -378,7 +377,7 @@ class RigidSolver(Solver):
             shape=self._batch_shape(self.n_dofs_), needs_grad=False, layout=ti.Layout.SOA
         )
 
-        joints = tuple(chain.from_iterable(self.joints))
+        joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             # Make sure that the constraints parameters are valid
@@ -573,7 +572,7 @@ class RigidSolver(Solver):
         )
 
         # Make sure that the constraints parameters are valid
-        joints = tuple(chain.from_iterable(self.joints))
+        joints = self.joints
         joints_sol_params = np.concatenate([joint.sol_params for joint in joints], dtype=gs.np_float)
         joints_sol_params = _sanitize_sol_params(
             joints_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
@@ -599,7 +598,7 @@ class RigidSolver(Solver):
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
-            for joint in chain.from_iterable(self._joints):
+            for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
                     is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_idx]).any()
                     is_init_qpos_out_of_bounds |= (init_qpos[joint.q_idx] > joint.dofs_limit[0, 1]).any()
@@ -4839,7 +4838,7 @@ class RigidSolver(Solver):
     def n_joints(self):
         if self.is_built:
             return self._n_joints
-        return sum(map(len, self.joints))
+        return len(self.joints)
 
     @property
     def n_geoms(self):

@@ -432,7 +432,6 @@ class RigidEntity(Entity):
                 )
 
     def _build(self):
-        assert self.n_links == len(self.joints)
         for link in self._links:
             link._build()
 
@@ -457,7 +456,7 @@ class RigidEntity(Entity):
         # compute joint limit in q space
         q_limit_lower = []
         q_limit_upper = []
-        for joint in chain.from_iterable(self._joints):
+        for joint in self.joints:
             if joint.type == gs.JOINT_TYPE.FREE:
                 q_limit_lower.append(joint.dofs_limit[:3, 0])
                 q_limit_lower.append(-np.ones(4))  # quaternion lower bound
@@ -1635,13 +1634,13 @@ class RigidEntity(Entity):
         """
 
         if name is not None:
-            for joint in chain.from_iterable(self._joints):
+            for joint in self.joints:
                 if joint.name == name:
                     return joint
             gs.raise_exception(f"Joint not found for name: {name}.")
 
         elif uid is not None:
-            for joint in chain.from_iterable(self._joints):
+            for joint in self.joints:
                 if uid in str(joint.uid):
                     return joint
             gs.raise_exception(f"Joint not found for uid: {uid}.")
@@ -2671,14 +2670,14 @@ class RigidEntity(Entity):
     @property
     def init_qpos(self):
         """The initial qpos of the entity."""
-        return np.concatenate([joint.init_qpos for joint in chain.from_iterable(self._joints)])
+        return np.concatenate([joint.init_qpos for joint in self.joints])
 
     @property
     def n_qs(self):
         """The number of `q` (generalized coordinates) of the entity."""
         if self._is_built:
             return self._n_qs
-        return sum(joint.n_qs for joint in chain.from_iterable(self._joints))
+        return sum(joint.n_qs for joint in self.joints)
 
     @property
     def n_links(self):
@@ -2695,7 +2694,7 @@ class RigidEntity(Entity):
         """The number of degrees of freedom (DOFs) of the entity."""
         if self._is_built:
             return self._n_dofs
-        return sum(joint.n_dofs for joint in chain.from_iterable(self._joints))
+        return sum(joint.n_dofs for joint in self.joints)
 
     @property
     def n_geoms(self):
@@ -2862,6 +2861,11 @@ class RigidEntity(Entity):
     @property
     def joints(self):
         """The list of joints (`RigidJoint`) in the entity."""
+        return tuple(chain.from_iterable(self._joints))
+
+    @property
+    def joints_by_links(self):
+        """The list of joints (`RigidJoint`) in the entity grouped by parent links."""
         return self._joints
 
     @property

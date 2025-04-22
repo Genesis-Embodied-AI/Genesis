@@ -1,5 +1,4 @@
 import os
-from itertools import chain
 from enum import Enum
 
 import psutil
@@ -235,7 +234,7 @@ def gs_sim(
 
     # Joint damping is not properly supported in Genesis for now
     if not dof_damping:
-        for joint in chain.from_iterable(gs_robot.joints):
+        for joint in gs_robot.joints:
             joint.dofs_damping[:] = 0.0
 
     scene.build()
