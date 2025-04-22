@@ -1,5 +1,4 @@
 from typing import Literal
-from itertools import chain
 from dataclasses import dataclass
 
 import numpy as np
@@ -55,7 +54,7 @@ def _gs_search_by_joint_names(
             gs_q_idcs = dict()
             gs_dof_idcs = dict()
             valid_joint_names = []
-            for joint in chain.from_iterable(entity.joints):
+            for joint in entity.joints:
                 valid_joint_names.append(joint.name)
                 if joint.name in joint_names:
                     if to == "entity":
@@ -140,10 +139,7 @@ def _get_model_mappings(
 ):
     if joint_names is None:
         joint_names = [
-            joint.name
-            for entity in gs_sim.entities
-            for joint in chain.from_iterable(entity.joints)
-            if joint.type != gs.JOINT_TYPE.FIXED
+            joint.name for entity in gs_sim.entities for joint in entity.joints if joint.type != gs.JOINT_TYPE.FIXED
         ]
     body_names = [
         body.name for entity in gs_sim.entities for body in entity.links if not (body.is_fixed and body.parent_idx < 0)
@@ -304,18 +300,14 @@ def check_mujoco_model_consistency(
     mj_dof_invweight0 = mj_sim.model.dof_invweight0
     np.testing.assert_allclose(gs_dof_invweight0[gs_dof_idcs], mj_dof_invweight0[mj_dof_idcs], atol=atol)
 
-    gs_jnt_solparams = np.concatenate(
-        [joint.sol_params for entity in gs_sim.entities for joints in entity.joints for joint in joints]
-    )
+    gs_jnt_solparams = np.concatenate([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
     gs_jnt_solref = gs_jnt_solparams[:, :2]
     mj_jnt_solref = mj_sim.model.jnt_solref
     np.testing.assert_allclose(gs_jnt_solref[gs_jnt_idcs], mj_jnt_solref[mj_jnt_idcs], atol=atol)
     gs_jnt_solimp = gs_jnt_solparams[:, 2:]
     mj_jnt_solimp = mj_sim.model.jnt_solimp
     np.testing.assert_allclose(gs_jnt_solimp[gs_jnt_idcs], mj_jnt_solimp[mj_jnt_idcs], atol=atol)
-    gs_dof_solparams = np.concatenate(
-        [joint.dofs_sol_params for entity in gs_sim.entities for joints in entity.joints for joint in joints]
-    )
+    gs_dof_solparams = np.concatenate([joint.dofs_sol_params for entity in gs_sim.entities for joint in entity.joints])
     gs_dof_solref = gs_dof_solparams[:, :2]
     mj_dof_solref = mj_sim.model.dof_solref
     np.testing.assert_allclose(gs_dof_solref[gs_dof_idcs], mj_dof_solref[mj_dof_idcs], atol=atol)
