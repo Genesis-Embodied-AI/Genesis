@@ -458,6 +458,29 @@ def test_robot_scaling(show_viewer, atol):
         np.testing.assert_allclose(qf_passive, 0, atol=atol)
 
 
+def test_info_batching():
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            batch_dofs_info=True,
+            batch_joints_info=True,
+            batch_links_info=True,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=2)
+
+    scene.step()
+    qposs = robot.get_qpos()
+    np.testing.assert_allclose(qposs[0], qposs[1])
+
+
 def test_set_root_pose(show_viewer, atol):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -529,6 +552,7 @@ def move_cube(use_suction, show_viewer):
             box_box_detection=True,
         ),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
     plane = scene.add_entity(
         gs.morphs.Plane(),
@@ -648,9 +672,9 @@ def move_cube(use_suction, show_viewer):
     else:
         rigid.delete_weld_constraint(link_cube, link_franka)
 
-    for i in range(500):
+    for i in range(550):
         scene.step()
-        if i > 450:
+        if i > 550:
             qvel = cube.get_dofs_velocity().cpu()
             np.testing.assert_allclose(qvel, 0, atol=0.06)
 
