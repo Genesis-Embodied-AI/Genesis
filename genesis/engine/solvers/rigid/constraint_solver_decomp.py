@@ -287,18 +287,16 @@ class ConstraintSolver:
 
         sol_params = eq_info.sol_params
 
-        joint_1_maybe_batch = (
-            [eq_info.eq_obj1id, i_b] if ti.static(self._solver._options.batch_joints_info) else eq_info.eq_obj1id
-        )
-        joint_2_maybe_batch = (
-            [eq_info.eq_obj2id, i_b] if ti.static(self._solver._options.batch_joints_info) else eq_info.eq_obj2id
-        )
-        joint_info1 = self._solver.joints_info[joint_1_maybe_batch]
-        joint_info2 = self._solver.joints_info[joint_2_maybe_batch]
+        I_joint1 = [eq_info.eq_obj1id, i_b] if ti.static(self._solver._options.batch_joints_info) else eq_info.eq_obj1id
+        I_joint2 = [eq_info.eq_obj2id, i_b] if ti.static(self._solver._options.batch_joints_info) else eq_info.eq_obj2id
+        joint_info1 = self._solver.joints_info[I_joint1]
+        joint_info2 = self._solver.joints_info[I_joint2]
         i_qpos1 = joint_info1.q_start
         i_qpos2 = joint_info2.q_start
         i_dof1 = joint_info1.dof_start
         i_dof2 = joint_info2.dof_start
+        I_dof1 = [i_dof1, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_dof1
+        I_dof2 = [i_dof2, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_dof2
 
         n_con = ti.atomic_add(self.n_constraints[i_b], 1)
         ti.atomic_add(self.n_constraints_equality[i_b], 1)
@@ -334,7 +332,7 @@ class ConstraintSolver:
             self.jac[n_con, i_dof1, i_b] * self._solver.dofs_state[i_dof1, i_b].vel
             + self.jac[n_con, i_dof2, i_b] * self._solver.dofs_state[i_dof2, i_b].vel
         )
-        invweight = self._solver.dofs_info[i_dof1].invweight + self._solver.dofs_info[i_dof2].invweight
+        invweight = self._solver.dofs_info[I_dof1].invweight + self._solver.dofs_info[I_dof2].invweight
 
         imp, aref = gu.imp_aref(sol_params, -ti.abs(pos), jac_qvel, pos)
 

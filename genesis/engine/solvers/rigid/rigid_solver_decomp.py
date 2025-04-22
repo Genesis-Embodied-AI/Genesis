@@ -275,8 +275,9 @@ class RigidSolver(Solver):
                 for i_e in range(self.n_entities):
                     e_info = self.entities_info[i_e]
                     for i_d in range(e_info.dof_start, e_info.dof_end):
+                        I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
                         self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
-                        self.meaninertia[i_b] -= self.dofs_info[i_d].damping * self._substep_dt
+                        self.meaninertia[i_b] -= self.dofs_info[I_d].damping * self._substep_dt
                     self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
             else:
                 self.meaninertia[i_b] = 1.0
@@ -2323,6 +2324,7 @@ class RigidSolver(Solver):
                 joint_type = j_info.type
                 q_start = j_info.q_start
                 dof_start = j_info.dof_start
+                I_d = [dof_start, i_b] if ti.static(self._options.batch_dofs_info) else dof_start
 
                 # compute axis and anchor
                 if joint_type == gs.JOINT_TYPE.FREE:
@@ -2335,9 +2337,9 @@ class RigidSolver(Solver):
                 else:
                     axis = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
                     if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                        axis = self.dofs_info[dof_start].motion_ang
+                        axis = self.dofs_info[I_d].motion_ang
                     elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-                        axis = self.dofs_info[dof_start].motion_vel
+                        axis = self.dofs_info[I_d].motion_vel
 
                     self.joints_state[i_j, i_b].xanchor = gu.ti_transform_by_quat(j_info.pos, quat) + pos
                     self.joints_state[i_j, i_b].xaxis = gu.ti_transform_by_quat(axis, quat)
@@ -2379,7 +2381,7 @@ class RigidSolver(Solver):
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
                     pos = self.joints_state[i_j, i_b].xanchor - gu.ti_transform_by_quat(j_info.pos, quat)
                 elif joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    axis = self.dofs_info[dof_start].motion_ang
+                    axis = self.dofs_info[I_d].motion_ang
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
                     qloc = gu.ti_rotvec_to_quat(axis * self.dofs_state[dof_start, i_b].pos)
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
