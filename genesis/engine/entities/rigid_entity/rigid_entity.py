@@ -174,6 +174,7 @@ class RigidEntity(Entity):
 
         link, (joint,) = self._add_by_info(
             l_info=dict(
+                is_robot=False,
                 name=f"{link_name_prefix}_baselink",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
@@ -246,6 +247,7 @@ class RigidEntity(Entity):
 
         link, (joint,) = self._add_by_info(
             l_info=dict(
+                is_robot=False,
                 name=f"{link_name}_baselink",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
@@ -293,6 +295,7 @@ class RigidEntity(Entity):
 
         link, (joint,) = self._add_by_info(
             l_info=dict(
+                is_robot=False,
                 name="baselink",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
@@ -333,6 +336,21 @@ class RigidEntity(Entity):
         l_infos, links_j_infos, links_g_infos, ordered_links_idx = uu._order_links(
             l_infos, links_j_infos, links_g_infos
         )
+
+        # Define flag to determine whether the link at hand is associated with a robot
+        world_l_info["is_robot"] = False
+        for i, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+            if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
+                if l_info["parent_idx"] > 0:
+                    l_info["is_robot"] = l_infos[l_info["parent_idx"]]["is_robot"]
+                else:
+                    l_info["is_robot"] = False
+            elif all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
+                l_info["is_robot"] = False
+            else:
+                l_info["is_robot"] = True
+                if l_info["parent_idx"] > 0:
+                    l_infos[l_info["parent_idx"]]["is_robot"] = True
 
         # Add all bodies to this entity
         all_infos = list(zip(l_infos, links_j_infos, links_g_infos))
@@ -382,6 +400,9 @@ class RigidEntity(Entity):
     def _load_URDF(self, morph, surface):
         l_infos, j_infos, equalities = uu.parse_urdf(morph, surface)
 
+        # Define flag to determine whether the link at hand is associated with a robot
+        is_robot = any(j_info["type"] not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos)
+
         for i_l in range(len(l_infos)):
             l_info = l_infos[i_l]
             j_info = j_infos[i_l]
@@ -391,8 +412,11 @@ class RigidEntity(Entity):
                 l_info["quat"] = np.array(morph.quat)
 
                 if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver, but this initial value will be reflected in init_qpos
+                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver,
+                    # but this initial value will be reflected in init_qpos
                     j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+
+            l_info["is_robot"] = is_robot
 
             self._add_by_info(l_info, (j_info,), l_info["g_infos"], morph, surface)
 
@@ -587,13 +611,24 @@ class RigidEntity(Entity):
         # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
         # both cases, this improves runtime performance, numerical stability and compilation time.
         if isinstance(morph, gs.options.morphs.FileMorph):
+            # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
+            # is associated with a robot.
+            # The rational behind it is that performing convex decomposition for robots is mostly useless because
+            # the non-physical part that is added to the original geometries to convexify them are generally inside
+            # the mechanical structure and not interacting directly with the outer world. On top of that, not only
+            # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
+            if l_info["is_robot"]:
+                decompose_error_threshold = morph.decompose_robot_error_threshold
+            else:
+                decompose_error_threshold = morph.decompose_object_error_threshold
+
             cg_infos = mu.postprocess_collision_geoms(
                 cg_infos,
                 morph.decimate,
                 morph.decimate_face_num,
                 morph.decimate_aggressiveness,
                 morph.convexify,
-                morph.decompose_error_threshold,
+                decompose_error_threshold,
                 morph.coacd_options,
             )
 

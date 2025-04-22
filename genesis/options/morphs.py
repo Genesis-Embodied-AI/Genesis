@@ -310,14 +310,19 @@ class FileMorph(Morph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -335,7 +340,8 @@ class FileMorph(Morph):
     decimate_aggressiveness: int = 2
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
-    decompose_error_threshold: float = 0.15
+    decompose_object_error_threshold: float = 0.15
+    decompose_robot_error_threshold: float = float("inf")
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
 
@@ -345,16 +351,20 @@ class FileMorph(Morph):
         if self.decompose_nonconvex is not None:
             if self.decompose_nonconvex:
                 self.convexify = True
-                self.decompose_error_threshold = 0.0
+                self.decompose_object_error_threshold = 0.0
+                self.decompose_robot_error_threshold = 0.0
             else:
                 self.convexify = False
-                self.decompose_error_threshold = float("inf")
+                self.decompose_object_error_threshold = float("inf")
+                self.decompose_robot_error_threshold = float("inf")
             gs.logger.warning(
-                "`decompose_nonconvex` is deprecated. Please use 'convexify' and 'decompose_error_threshold' instead."
+                "`decompose_nonconvex` is deprecated. Please use 'convexify' and "
+                "'decompose_(robot|object)_error_threshold' instead."
             )
 
-        # Make sure that this threshold is positive to avoid decomposition of convex and primivie shapes
-        self.decompose_error_threshold = max(self.decompose_error_threshold, gs.EPS)
+        # Make sure that this threshold is positive to avoid decomposition of convex and primitive shapes
+        self.decompose_object_error_threshold = max(self.decompose_object_error_threshold, gs.EPS)
+        self.decompose_robot_error_threshold = max(self.decompose_robot_error_threshold, gs.EPS)
 
         if self.coacd_options is None:
             self.coacd_options = CoacdOptions()
@@ -413,14 +423,19 @@ class Mesh(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     merge_submeshes_for_collision : bool, optional
@@ -517,14 +532,19 @@ class MJCF(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -583,14 +603,19 @@ class URDF(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -656,14 +681,19 @@ class Drone(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
