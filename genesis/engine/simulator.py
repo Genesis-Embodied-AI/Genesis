@@ -176,8 +176,8 @@ class Simulator(RBC):
                     self._rigid_only = False
         self._coupler.build()
 
-        # if self.n_envs > 0 and not self._rigid_only:
-        #     gs.raise_exception("Batching is only supported for rigid-only scenes as of now.")
+        if self.n_envs > 0 and self.sf_solver.is_active():
+            gs.raise_exception("Batching is not supported for SF solver as of now.")
 
         # hybrid
         for entity in self._entities:

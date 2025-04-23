@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="error")
+    gs.init(seed=0, precision="32", logging_level="warning")
 
     ########################## create a scene ##########################
 

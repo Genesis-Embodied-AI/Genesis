@@ -34,7 +34,7 @@ def main():
         show_viewer=args.vis,
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
-            rendered_envs_idx=[0]
+            rendered_envs_idx=[0],
         ),
     )
 

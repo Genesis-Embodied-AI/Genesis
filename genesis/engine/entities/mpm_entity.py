@@ -210,18 +210,18 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def clear_grad(self, f: ti.i32):
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
-            self._solver.particles.grad[f, i_global, b].pos = 0
-            self._solver.particles.grad[f, i_global, b].vel = 0
-            self._solver.particles.grad[f, i_global, b].C = 0
-            self._solver.particles.grad[f, i_global, b].F = 0
-            self._solver.particles.grad[f, i_global, b].F_tmp = 0
-            self._solver.particles.grad[f, i_global, b].Jp = 0
-            self._solver.particles.grad[f, i_global, b].U = 0
-            self._solver.particles.grad[f, i_global, b].V = 0
-            self._solver.particles.grad[f, i_global, b].S = 0
-            self._solver.particles.grad[f, i_global, b].actu = 0
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
+            self._solver.particles.grad[f, i_global, i_b].pos = 0
+            self._solver.particles.grad[f, i_global, i_b].vel = 0
+            self._solver.particles.grad[f, i_global, i_b].C = 0
+            self._solver.particles.grad[f, i_global, i_b].F = 0
+            self._solver.particles.grad[f, i_global, i_b].F_tmp = 0
+            self._solver.particles.grad[f, i_global, i_b].Jp = 0
+            self._solver.particles.grad[f, i_global, i_b].U = 0
+            self._solver.particles.grad[f, i_global, i_b].V = 0
+            self._solver.particles.grad[f, i_global, i_b].S = 0
+            self._solver.particles.grad[f, i_global, i_b].actu = 0
 
     def process_input(self, in_backward=False):
         if in_backward:
@@ -286,60 +286,55 @@ class MPMEntity(ParticleEntity):
         Jp: ti.types.ndarray(),  # shape [B, n_particles]
         active: ti.types.ndarray(),  # shape [B, n_particles]
     ):
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
             # Copy pos, vel
             for j in ti.static(range(3)):
-                pos[b, i, j] = self._solver.particles[f, i_global, b].pos[j]
-                vel[b, i, j] = self._solver.particles[f, i_global, b].vel[j]
+                pos[i_b, i_p, j] = self._solver.particles[f, i_global, i_b].pos[j]
+                vel[i_b, i_p, j] = self._solver.particles[f, i_global, i_b].vel[j]
                 # Copy C, F
                 for k in ti.static(range(3)):
-                    C[b, i, j, k] = self._solver.particles[f, i_global, b].C[j, k]
-                    F[b, i, j, k] = self._solver.particles[f, i_global, b].F[j, k]
+                    C[i_b, i_p, j, k] = self._solver.particles[f, i_global, i_b].C[j, k]
+                    F[i_b, i_p, j, k] = self._solver.particles[f, i_global, i_b].F[j, k]
             # Copy Jp, active
-            Jp[b, i] = self._solver.particles[f, i_global, b].Jp
-            active[b, i] = self._solver.particles_ng[f, i_global, b].active
+            Jp[i_b, i_p] = self._solver.particles[f, i_global, i_b].Jp
+            active[i_b, i_p] = self._solver.particles_ng[f, i_global, i_b].active
 
     @ti.kernel
     def set_frame_add_grad_pos(self, f: ti.i32, pos_grad: ti.types.ndarray()):
-        # pos_grad shape: [B, n_particles, 3]
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
-                self._solver.particles.grad[f, i_global, b].pos[j] += pos_grad[b, i, j]
+                self._solver.particles.grad[f, i_global, i_b].pos[j] += pos_grad[i_b, i_p, j]
 
     @ti.kernel
     def set_frame_add_grad_vel(self, f: ti.i32, vel_grad: ti.types.ndarray()):
-        # vel_grad shape: [B, n_particles, 3]
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
-                self._solver.particles.grad[f, i_global, b].vel[j] += vel_grad[b, i, j]
+                self._solver.particles.grad[f, i_global, i_b].vel[j] += vel_grad[i_b, i_p, j]
 
     @ti.kernel
     def set_frame_add_grad_C(self, f: ti.i32, C_grad: ti.types.ndarray()):
-        # C_grad shape: [B, n_particles, 3, 3]
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
-                    self._solver.particles.grad[f, i_global, b].C[j, k] += C_grad[b, i, j, k]
+                    self._solver.particles.grad[f, i_global, i_b].C[j, k] += C_grad[i_b, i_p, j, k]
 
     @ti.kernel
     def set_frame_add_grad_F(self, f: ti.i32, F_grad: ti.types.ndarray()):
-        # F_grad shape: [B, n_particles, 3, 3]
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
-                    self._solver.particles.grad[f, i_global, b].F[j, k] += F_grad[b, i, j, k]
+                    self._solver.particles.grad[f, i_global, i_b].F[j, k] += F_grad[i_b, i_p, j, k]
 
     @ti.kernel
     def set_frame_add_grad_Jp(self, f: ti.i32, Jp_grad: ti.types.ndarray()):
-        # Jp_grad shape: [B, n_particles]
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
-            i_global = i + self._particle_start
-            self._solver.particles.grad[f, i_global, b].Jp += Jp_grad[b, i]
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
+            self._solver.particles.grad[f, i_global, i_b].Jp += Jp_grad[i_b, i_p]
 
     def add_grad_from_state(self, state):
         if state.pos.grad is not None:
@@ -364,16 +359,16 @@ class MPMEntity(ParticleEntity):
 
     @gs.assert_built
     def get_particles(self):
-        pos = np.empty((self.n_particles, 3), dtype=gs.np_float)
+        pos = np.empty((self._sim._B, self.n_particles, 3), dtype=gs.np_float)
         self._kernel_get_particles(self._sim.cur_substep_local, pos)
         return pos
 
     @ti.kernel
     def _kernel_get_particles(self, f: ti.i32, pos: ti.types.ndarray()):
-        for i in range(self.n_particles):
-            i_global = i + self._particle_start
+        for i_p, i_b in range(self.n_particles, self._sim._B):
+            i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
-                pos[i, j] = self._solver.particles[f, i_global].pos[j]
+                pos[i_b, i, j] = self._solver.particles[f, i_global, i_b].pos[j]
 
     @gs.assert_built
     def get_state(self):

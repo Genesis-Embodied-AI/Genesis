@@ -80,9 +80,9 @@ class FEMEntity(Entity):
 
         elif len(vel.shape) == 2:
             if vel.shape == (self.n_vertices, 3):
-                self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+                self._tgt["vel"] = torch.tile(vel.unsqueeze(0), [self._sim._B, 1, 1])
             elif vel.shape == (self._sim._B, 3):
-                self._tgt["vel"] = torch.tile(vel[:, None, :], [1, self.n_vertices, 1])
+                self._tgt["vel"] = torch.tile(vel.unsqueeze(1), [1, self.n_vertices, 1])
             else:
                 gs.raise_exception("Tensor shape not supported.")
 
@@ -110,7 +110,7 @@ class FEMEntity(Entity):
             else:
                 assert actu.shape == (self.n_elements,)
                 gs.raise_exception("Cannot set per-element actuation")
-            self._tgt["actu"] = torch.tile(actu[None], [self._sim._B, 1])
+            self._tgt["actu"] = torch.tile(actu.unsqueeze(0), [self._sim._B, 1])
 
         elif len(actu.shape) == 2:
             assert actu.shape == (self._sim._B, n_groups)
@@ -435,27 +435,28 @@ class FEMEntity(Entity):
 
     @ti.kernel
     def get_frame(self, f: ti.i32, pos: ti.types.ndarray(), vel: ti.types.ndarray(), active: ti.types.ndarray()):
-        for i, b in ti.ndrange(self.n_vertices, self._sim._B):
-            i_global = i + self.v_start
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
+            i_global = i_v + self.v_start
             for j in ti.static(range(3)):
-                pos[b, i, j] = self._solver.elements_v[f, i_global, b].pos[j]
-                vel[b, i, j] = self._solver.elements_v[f, i_global, b].vel[j]
+                pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
+                vel[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].vel[j]
 
-        for i, b in ti.ndrange(self.n_elements, self._sim._B):
-            i_global = i + self.el_start
-            active[b, i] = self._solver.elements_el_ng[f, i_global, b].active
+        for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
+            i_global = i_v + self.el_start
+            active[i_b, i_v] = self._solver.elements_el_ng[f, i_global, i_b].active
 
     @ti.kernel
     def clear_grad(self, f: ti.i32):
         # TODO: not well-tested
-        for i, b in ti.ndrange(self.n_vertices, self._sim._B):
-            i_global = i + self.v_start
-            self._solver.elements_v.grad[f, i_global, b].pos = 0
-            self._solver.elements_v.grad[f, i_global, b].vel = 0
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
+            i_global = i_v + self.v_start
+            self._solver.elements_v.grad[f, i_global, i_b].pos = 0
+            self._solver.elements_v.grad[f, i_global, i_b].vel = 0
 
-        for i, b in ti.ndrange(self.n_elements, self._sim._B):
-            i_global = i + self.el_start
-            self._solver.elements_el.grad[f, i_global, b].actu = 0
+        for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
+            i_global = i_v + self.el_start
+            self._solver.elements_el.grad[f, i_global, i_b].actu = 0
+
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -24,7 +24,7 @@ def main():
         ),
         vis_options=gs.options.VisOptions(
             visualize_sph_boundary=True,
-            rendered_envs_idx=[0]
+            rendered_envs_idx=[0],
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, -3.15, 2.42),
