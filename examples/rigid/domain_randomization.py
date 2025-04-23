@@ -84,7 +84,7 @@ def main():
         "RL_thigh_joint",
         "RL_calf_joint",
     )
-    motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
+    motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
     robot.set_dofs_kp(np.full(12, 20), motors_dof_idx)
     robot.set_dofs_kv(np.full(12, 1), motors_dof_idx)
