@@ -529,6 +529,63 @@ def test_batched_offscreen_rendering(show_viewer):
         np.testing.assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i])
 
 
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_pd_control(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            substeps=1,  # This is essential to be able to emulate native PD control
+        ),
+        rigid_options=gs.options.RigidOptions(
+            batch_dofs_info=True,
+        ),
+        # vis_options=gs.options.VisOptions(
+        #     rendered_envs_idx=(1,),
+        # ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    scene.build(n_envs=2)
+
+    MOTORS_POS_TARGET = torch.tensor(
+        [0.6900, -0.1100, -0.7200, -2.7300, -0.1500, 2.6400, 0.8900, 0.0400, 0.0400],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+    MOTORS_KP = torch.tensor(
+        [4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+    MOTORS_KD = torch.tensor(
+        [450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+
+    robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
+    robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
+    robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+
+    # Must update DoF armature to emulate implicit damping for force control.
+    # This is equivalent to a first-order correction term, which greatly improves numerical stability.
+    robot.set_dofs_armature(robot.get_dofs_armature(envs_idx=1) + MOTORS_KD * scene.sim._substep_dt, envs_idx=1)
+
+    for i in range(1000):
+        dofs_pos = robot.get_dofs_position(envs_idx=1)
+        dofs_vel = robot.get_dofs_velocity(envs_idx=1)
+        dofs_torque = MOTORS_KP * (MOTORS_POS_TARGET - dofs_pos) - MOTORS_KD * dofs_vel
+        robot.control_dofs_force(dofs_torque, envs_idx=1)
+        scene.step()
+        qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_torch(device="cpu").T
+        # dofs_torque = robot.get_dofs_control_force().cpu()
+        np.testing.assert_allclose(qf_applied[0], qf_applied[1], atol=1e-7)
+
+
 def test_set_root_pose(show_viewer, atol):
     scene = gs.Scene(
         show_viewer=show_viewer,
