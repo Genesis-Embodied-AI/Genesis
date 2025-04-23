@@ -57,7 +57,7 @@ def main():
         "finger_joint1",
         "finger_joint2",
     )
-    motors_dof_idx = [franka.get_joint(name).dof_start for name in joints_name]
+    motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
     links_name = (
         "link0",
