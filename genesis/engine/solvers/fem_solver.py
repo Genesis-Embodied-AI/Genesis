@@ -199,7 +199,7 @@ class FEMSolver(Solver):
     # ----------------------------------- simulation -------------------------------------
     # ------------------------------------------------------------------------------------
 
-   @ti.kernel
+    @ti.kernel
     def init_pos_and_vel(self, f: ti.i32):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
