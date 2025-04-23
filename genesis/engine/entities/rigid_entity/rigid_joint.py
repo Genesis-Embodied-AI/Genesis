@@ -192,7 +192,7 @@ class RigidJoint(RBC):
         """
         Returns the local index of the joint in the entity.
         """
-        return self._idx - self._entity._joint_start
+        return self._idx - self._entity.joint_start
 
     @property
     def init_qpos(self):
@@ -307,7 +307,7 @@ class RigidJoint(RBC):
             "This property is deprecated and will be removed in future release. Please use 'dof_idx_local' instead."
         )
         if self.n_dofs == 1:
-            return self.dofs_idx[0] - self._entity._dof_start
+            return self.dof_start - self._entity.dof_start
         if self.n_dofs == 0:
             return None
         return self.dofs_idx_local
@@ -317,7 +317,7 @@ class RigidJoint(RBC):
         """
         Returns the local Degrees of Freedom indices of the joint in the entity.
         """
-        return [dof_idx - self._entity._dof_start for dof_idx in self.dofs_idx]
+        return list(range(self.dof_start - self._entity.dof_start, self.dof_end - self._entity.dof_start))
 
     @property
     def q_idx(self):
@@ -353,7 +353,7 @@ class RigidJoint(RBC):
             "This property is deprecated and will be removed in future release. Please use 'qs_idx_local' instead."
         )
         if self.n_qs == 1:
-            return self.q_start - self._entity._q_start
+            return self.q_start - self._entity.q_start
         elif self.n_qs == 0:
             return None
         else:
@@ -364,7 +364,7 @@ class RigidJoint(RBC):
         """
         Returns all the local `q` indices of the joint in the entity.
         """
-        return [q_idx - self._entity._q_start for q_idx in self.qs_idx]
+        return list(range(self.q_start - self._entity.q_start, self.q_end - self._entity.q_start))
 
     @property
     def dofs_motion_ang(self):
