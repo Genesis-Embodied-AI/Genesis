@@ -5,11 +5,14 @@ from contextlib import redirect_stdout
 import numpy as np
 import pyvista as pv
 import tetgen
+import trimesh
+import pymeshlab
 
 import genesis as gs
 import genesis.utils.mesh as mu
+import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
-from genesis.ext import trimesh
+from genesis.ext import fast_simplification
 from genesis.repr_base import RBC
 
 
@@ -31,6 +34,10 @@ class Mesh(RBC):
         Whether to decimate the mesh.
     decimate_face_num : int
         The target number of faces after decimation.
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters
+        the original geometry if necessary. does what needs to be done at all costs.
     metadata : dict
         The metadata of the mesh.
     """
@@ -43,6 +50,7 @@ class Mesh(RBC):
         convexify=False,
         decimate=False,
         decimate_face_num=500,
+        decimate_aggressiveness=0,
         metadata=dict(),
     ):
         self._uid = gs.UID()
@@ -66,7 +74,7 @@ class Mesh(RBC):
             self.convexify()
 
         if decimate:
-            self.decimate(decimate_face_num, convexify)
+            self.decimate(decimate_face_num, decimate_aggressiveness, convexify)
 
     def convexify(self):
         """
@@ -76,12 +84,20 @@ class Mesh(RBC):
             self._mesh = trimesh.convex.convex_hull(self._mesh)
         self.clear_visuals()
 
-    def decimate(self, target_face_num, convexify):
+    def decimate(self, decimate_face_num, decimate_aggressiveness, convexify):
         """
         Decimate the mesh.
         """
-        if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > target_face_num:
-            self._mesh = self._mesh.simplify_quadric_decimation(target_face_num)
+        if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > decimate_face_num:
+            self._mesh = trimesh.Trimesh(
+                *fast_simplification.simplify(
+                    self._mesh.vertices,
+                    self._mesh.faces,
+                    target_count=decimate_face_num,
+                    agg=decimate_aggressiveness,
+                    lossless=(decimate_aggressiveness == 0),
+                )
+            )
 
             # need to run convexify again after decimation, because sometimes decimating a convex-mesh can make it non-convex...
             if convexify:
@@ -102,13 +118,11 @@ class Mesh(RBC):
                 with open(rm_file_path, "rb") as file:
                     verts, faces = pkl.load(file)
                 is_cached_loaded = True
-            except (EOFError, pkl.UnpicklingError):
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
             gs.logger.info("Remeshing for tetrahedralization...")
-            with open(os.devnull, "w") as stdout, redirect_stdout(stdout):
-                import pymeshlab
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(vertex_matrix=self.verts, face_matrix=self.faces))
             if edge_len_abs is not None:
@@ -153,12 +167,12 @@ class Mesh(RBC):
         Sample particles using the mesh volume.
         """
         if "pbs" in sampler:
-            positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
-            if positions is None:
-                gs.logger.warning("`pbs` sampler failed. Falling back to `random` sampler.")
+            try:
+                positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
+            except gs.GenesisException:
                 sampler = "random"
 
-        if sampler in ["random", "regular"]:
+        if sampler in ("random", "regular"):
             positions = pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
 
         return positions
@@ -197,7 +211,15 @@ class Mesh(RBC):
 
     @classmethod
     def from_trimesh(
-        cls, mesh, scale=None, convexify=False, decimate=False, decimate_face_num=500, metadata=dict(), surface=None
+        cls,
+        mesh,
+        scale=None,
+        convexify=False,
+        decimate=False,
+        decimate_face_num=500,
+        decimate_aggressiveness=2,
+        metadata=dict(),
+        surface=None,
     ):
         """
         Create a genesis.Mesh from a trimesh.Trimesh object.
@@ -285,6 +307,7 @@ class Mesh(RBC):
             convexify=convexify,
             decimate=decimate,
             decimate_face_num=decimate_face_num,
+            decimate_aggressiveness=decimate_aggressiveness,
             metadata=metadata,
         )
 
@@ -295,8 +318,6 @@ class Mesh(RBC):
         """
         if surface is None:
             surface = gs.surfaces.Default()
-        else:
-            surface = surface.copy()
 
         return cls(
             mesh=trimesh.Trimesh(
@@ -324,12 +345,11 @@ class Mesh(RBC):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
-                    meshes = mu.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
-            elif hasattr(morph, "files") and len(morph.files) > 0:  # for meshset
-                meshes = morph.files
-                assert all([isinstance(v, trimesh.Trimesh) for v in meshes])
-                meshes = [mu.trimesh_to_mesh(v, morph.scale, surface) for v in meshes]
+            elif isinstance(morph, gs.options.morphs.MeshSet):
+                assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
+                meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
 
             else:
                 gs.raise_exception(
@@ -351,7 +371,8 @@ class Mesh(RBC):
             else:
                 gs.raise_exception()
 
-            return cls.from_trimesh(tmesh, surface=surface)
+            metadata = {"mesh_path": morph.file} if isinstance(morph, gs.options.morphs.FileMorph) else {}
+            return cls.from_trimesh(tmesh, surface=surface, metadata=metadata)
 
     def set_color(self, color):
         """

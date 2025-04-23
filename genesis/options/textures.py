@@ -26,6 +26,9 @@ class Texture(Options):
     def check_dim(self, dim):
         raise NotImplementedError
 
+    def apply_cutoff(self, cutoff):
+        pass
+
 
 class ColorTexture(Texture):
     """
