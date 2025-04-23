@@ -14,7 +14,6 @@
     </default>
 
     <worldbody>
-        <geom type="plane" size="10 10 0.1" pos="0 0 -2" rgba=".9 0 0 1" />
         <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1" />
         <body name="link_1" pos="0 0 0">
             <geom type="cylinder" size=".2    2" pos="0 0 2" euler="0 0 0" material="red__" class="visual"/>

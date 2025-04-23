@@ -6,11 +6,11 @@ import numpy as np
 import skimage
 import taichi as ti
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.ext import trimesh
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
 
@@ -96,6 +96,14 @@ class RigidGeom(RBC):
             self._sdf_verts = np.array(self._init_verts)
             self._sdf_faces = np.array(self._init_faces)
 
+        if len(self._sdf_faces) > 50000:
+            mesh_descr = f"({mesh.metadata['mesh_path']})" if "mesh_path" in mesh.metadata else ""
+            gs.logging.warning(
+                "Beware that SDF pre-processing of mesh {mesh_descr} having more than 50000 vertices may take a very "
+                "long time (>10min) and require large RAM allocation (>20Gb). Please either enable convexify or "
+                "decimation. (see FileMorph options)"
+            )
+
         # collision mesh uses default color
         self._preprocess()
 
@@ -120,7 +128,7 @@ class RigidGeom(RBC):
                 with open(self._gsd_path, "rb") as file:
                     gsd_dict = pkl.load(file)
                 is_cached_loaded = True
-            except (EOFError, pkl.UnpicklingError):
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
@@ -131,20 +139,15 @@ class RigidGeom(RBC):
                 center = (upper + lower) / 2.0
 
                 # NOTE: sdf size is from the center of the lower voxel cell to the center of the upper voxel cell
-                # add padding
+                # add padding. Adjust the cell size to keep resolution within bounds.
                 padding_ratio = 0.2
                 grid_size = (upper - lower).max() * padding_ratio + (upper - lower)
-                sdf_res = np.ceil(grid_size / self._material.sdf_cell_size).astype(int) + 1
-
-                if sdf_res.max() > self._material.sdf_max_res:
-                    sdf_res = np.ceil(sdf_res * self._material.sdf_max_res / sdf_res.max()).astype(int)
-                    sdf_cell_size = grid_size.max() / (sdf_res.max() - 1)
-                elif sdf_res.max() < self._material.sdf_min_res:
-                    sdf_res = np.ceil(sdf_res * self._material.sdf_min_res / sdf_res.max()).astype(int)
-                    sdf_cell_size = grid_size.max() / (sdf_res.max() - 1)
-                else:
-                    sdf_cell_size = self._material.sdf_cell_size
-                sdf_res = np.clip(sdf_res, 3, None)
+                sdf_cell_size = gs.EPS + np.clip(
+                    self._material.sdf_cell_size,
+                    grid_size.max() / (self._material.sdf_max_res - 1),
+                    grid_size.min() / max(self._material.sdf_min_res - 1, 2),
+                )
+                sdf_res = np.ceil(grid_size / sdf_cell_size).astype(int) + 1
 
                 # round up to multiple of sdf_cell_size
                 grid_size = (sdf_res - 1) * sdf_cell_size

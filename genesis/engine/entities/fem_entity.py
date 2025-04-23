@@ -30,6 +30,32 @@ class FEMEntity(Entity):
 
         self.sample()
 
+        el2tri = np.array(
+            [  # follow the order with correct normal
+                [[v[0], v[2], v[1]], [v[1], v[2], v[3]], [v[0], v[1], v[3]], [v[0], v[3], v[2]]] for v in self.elems
+            ]
+        )
+        all_tri = el2tri.reshape(-1, 3)
+        all_tri_sorted = np.sort(all_tri, axis=1)
+        _, unique_idcs, cnt = np.unique(all_tri_sorted, axis=0, return_counts=True, return_index=True)
+        unique_tri = all_tri[unique_idcs]
+        surface_tri = unique_tri[cnt == 1]
+
+        self._surface_tri_np = surface_tri.astype(gs.np_int)
+        self._n_surfaces = len(self._surface_tri_np)
+
+        if self._n_surfaces > 0:
+            self._n_surface_vertices = len(np.unique(self._surface_tri_np))
+        else:
+            self._n_surface_vertices = 0
+
+        tri2el = np.repeat(np.arange(self.elems.shape[0])[:, None], 4, axis=-1)
+        all_el = tri2el.reshape(
+            -1,
+        )
+        unique_el = all_el[unique_idcs]
+        self._surface_el_np = unique_el[cnt == 1].astype(gs.np_int)
+
         self.init_tgt_vars()
         self.init_ckpt()
 
@@ -156,8 +182,8 @@ class FEMEntity(Entity):
         if not init_positions.shape[0] > 0:
             gs.raise_exception(f"Entity has zero vertices.")
 
-        self.init_positions = gs.tensor(init_positions).contiguous()
-        self.init_positions_COM_offset = (self.init_positions - gs.tensor(verts_COM)).contiguous()
+        self.init_positions = gs.tensor(init_positions)
+        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM)
 
         self.elems = elems
 
@@ -195,26 +221,9 @@ class FEMEntity(Entity):
                 f"Entity {self.uid} added. class: {self.__class__.__name__}, morph: {self.morph.__class__.__name__}, size: ({self.n_elements}, {self.n_vertices}), material: {self.material}."
             )
 
-        el2tri = np.array(
-            [  # follow the order with correct normal
-                [[v[0], v[2], v[1]], [v[1], v[2], v[3]], [v[0], v[1], v[3]], [v[0], v[3], v[2]]] for v in self.elems
-            ]
-        )
-        all_tri = el2tri.reshape(-1, 3)
-        all_tri_sorted = np.sort(all_tri, axis=1)
-        _, unique_idcs, cnt = np.unique(all_tri_sorted, axis=0, return_counts=True, return_index=True)
-        unique_tri = all_tri[unique_idcs]
-        surface_tri = unique_tri[cnt == 1]
-        surface_tri = surface_tri.astype(gs.np_int)
-        self._n_surfaces = len(surface_tri)
-        self._n_surface_vertices = len(np.unique(surface_tri))
-
-        tri2el = np.repeat(np.arange(self.elems.shape[0])[:, None], 4, axis=-1)
-        all_el = tri2el.reshape(
-            -1,
-        )
-        unique_el = all_el[unique_idcs]
-        surface_el = unique_el[cnt == 1].astype(gs.np_int)
+        # Convert to appropriate numpy array types
+        elems_np = self.elems.astype(gs.np_int)
+        verts_numpy = self.init_positions.cpu().numpy().astype(gs.np_float)
 
         self._solver._kernel_add_elements(
             f=self._sim.cur_substep_local,
@@ -226,10 +235,10 @@ class FEMEntity(Entity):
             v_start=self._v_start,
             el_start=self._el_start,
             s_start=self._s_start,
-            verts=self.init_positions,
-            elems=self.elems,
-            tri2v=surface_tri,
-            tri2el=surface_el,
+            verts=verts_numpy,
+            elems=elems_np,
+            tri2v=self._surface_tri_np,
+            tri2el=self._surface_el_np,
         )
         self.active = True
 

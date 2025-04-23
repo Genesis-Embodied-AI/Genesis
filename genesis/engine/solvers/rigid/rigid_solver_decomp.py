@@ -1,4 +1,3 @@
-from itertools import chain
 from typing import Literal
 
 import numpy as np
@@ -82,7 +81,10 @@ class RigidSolver(Solver):
 
         if options.contact_resolve_time is not None:
             self._sol_contact_resolve_time = options.contact_resolve_time
-            gs.logger.warning("contact_resolve_time is deprecated. Please use constraint_resolve_time instead.")
+            gs.logger.warning(
+                "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please use "
+                "'constraint_resolve_time' instead."
+            )
 
         self._options = options
 
@@ -166,7 +168,7 @@ class RigidSolver(Solver):
         for link in self.links:
             if link.parent_idx == -1 and link.is_fixed:
                 base_links_idx.append(link.idx)
-        for joint in chain.from_iterable(self.joints):
+        for joint in self.joints:
             if joint.type == gs.JOINT_TYPE.FREE:
                 base_links_idx.append(joint.link.idx)
         self._base_links_idx = torch.tensor(base_links_idx, dtype=gs.tc_int, device=gs.device)
@@ -276,8 +278,9 @@ class RigidSolver(Solver):
                 for i_e in range(self.n_entities):
                     e_info = self.entities_info[i_e]
                     for i_d in range(e_info.dof_start, e_info.dof_end):
+                        I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
                         self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
-                        self.meaninertia[i_b] -= self.dofs_info[i_d].damping * self._substep_dt
+                        self.meaninertia[i_b] -= self.dofs_info[I_d].damping * self._substep_dt
                     self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
             else:
                 self.meaninertia[i_b] = 1.0
@@ -378,7 +381,7 @@ class RigidSolver(Solver):
             shape=self._batch_shape(self.n_dofs_), needs_grad=False, layout=ti.Layout.SOA
         )
 
-        joints = tuple(chain.from_iterable(self.joints))
+        joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             # Make sure that the constraints parameters are valid
@@ -573,7 +576,7 @@ class RigidSolver(Solver):
         )
 
         # Make sure that the constraints parameters are valid
-        joints = tuple(chain.from_iterable(self.joints))
+        joints = self.joints
         joints_sol_params = np.concatenate([joint.sol_params for joint in joints], dtype=gs.np_float)
         joints_sol_params = _sanitize_sol_params(
             joints_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
@@ -599,11 +602,11 @@ class RigidSolver(Solver):
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
-            for joint in chain.from_iterable(self._joints):
+            for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
-                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_idx]).any()
-                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_idx] > joint.dofs_limit[0, 1]).any()
-                    # init_qpos[joint.q_idx] = np.clip(init_qpos[joint.q_idx], *joint.dofs_limit[0])
+                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.dofs_limit[0, 1]).any()
+                    # init_qpos[joint.q_start] = np.clip(init_qpos[joint.q_start], *joint.dofs_limit[0])
             self.qpos.from_numpy(init_qpos)
         if is_init_qpos_out_of_bounds:
             gs.logger.warning(
@@ -2324,6 +2327,7 @@ class RigidSolver(Solver):
                 joint_type = j_info.type
                 q_start = j_info.q_start
                 dof_start = j_info.dof_start
+                I_d = [dof_start, i_b] if ti.static(self._options.batch_dofs_info) else dof_start
 
                 # compute axis and anchor
                 if joint_type == gs.JOINT_TYPE.FREE:
@@ -2336,9 +2340,9 @@ class RigidSolver(Solver):
                 else:
                     axis = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
                     if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                        axis = self.dofs_info[dof_start].motion_ang
+                        axis = self.dofs_info[I_d].motion_ang
                     elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-                        axis = self.dofs_info[dof_start].motion_vel
+                        axis = self.dofs_info[I_d].motion_vel
 
                     self.joints_state[i_j, i_b].xanchor = gu.ti_transform_by_quat(j_info.pos, quat) + pos
                     self.joints_state[i_j, i_b].xaxis = gu.ti_transform_by_quat(axis, quat)
@@ -2380,7 +2384,7 @@ class RigidSolver(Solver):
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
                     pos = self.joints_state[i_j, i_b].xanchor - gu.ti_transform_by_quat(j_info.pos, quat)
                 elif joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    axis = self.dofs_info[dof_start].motion_ang
+                    axis = self.dofs_info[I_d].motion_ang
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
                     qloc = gu.ti_rotvec_to_quat(axis * self.dofs_state[dof_start, i_b].pos)
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
@@ -4839,7 +4843,7 @@ class RigidSolver(Solver):
     def n_joints(self):
         if self.is_built:
             return self._n_joints
-        return sum(map(len, self.joints))
+        return len(self.joints)
 
     @property
     def n_geoms(self):

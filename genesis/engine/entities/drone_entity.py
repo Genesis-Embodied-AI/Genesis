@@ -1,5 +1,5 @@
 import os
-import xml.etree.ElementTree as etxml
+import xml.etree.ElementTree as ET
 
 import torch
 import taichi as ti
@@ -16,20 +16,20 @@ class DroneEntity(RigidEntity):
         super()._load_URDF(morph, surface)
 
         # additional drone specific attributes
-        properties = etxml.parse(os.path.join(mu.get_assets_dir(), morph.file)).getroot()[0].attrib
+        properties = ET.parse(os.path.join(mu.get_assets_dir(), morph.file)).getroot()[0].attrib
         self._KF = float(properties["kf"])
         self._KM = float(properties["km"])
 
-        self._n_propellers = len(morph.propellers_link_names)
+        self._n_propellers = len(morph.propellers_link_name)
         self._COM_link_idx = self.get_link(morph.COM_link_name).idx
 
-        propellers_links = gs.List([self.get_link(name) for name in morph.propellers_link_names])
+        propellers_link = gs.List([self.get_link(name) for name in morph.propellers_link_name])
         self._propellers_link_idxs = torch.tensor(
-            [link.idx for link in propellers_links], dtype=gs.tc_int, device=gs.device
+            [link.idx for link in propellers_link], dtype=gs.tc_int, device=gs.device
         )
         try:
             self._propellers_vgeom_idxs = torch.tensor(
-                [link.vgeoms[0].idx for link in propellers_links], dtype=gs.tc_int, device=gs.device
+                [link.vgeoms[0].idx for link in propellers_link], dtype=gs.tc_int, device=gs.device
             )
             self._animate_propellers = True
         except Exception:

@@ -45,8 +45,8 @@ jobs:
             cp -r /workspace /app && cd /app && \
             bash ./.github/workflows/setup_env.sh && \
             pip install -e ".[dev]" && \
-            pytest -v tests && \
-            pytest -v -m 'benchmarks' tests"
+            pytest -v ./tests && \
+            pytest -v -m 'benchmarks' --backend gpu ./tests"
 
           mkdir -p ./artifacts
           docker cp "$container_id:/app/speed_test.txt" "./artifacts/speed_test_${artifacts_id}.txt"

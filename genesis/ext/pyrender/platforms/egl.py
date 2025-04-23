@@ -227,6 +227,8 @@ class EGLPlatform(Platform):
                 # Ignore the error unless there is no device left to check
                 if i == len(devices) - 1:
                     raise
+        else:
+            raise EGLError("No EGL device detected.")
 
         # Backup the device and display that will be used
         self._egl_device = device

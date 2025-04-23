@@ -195,13 +195,3 @@ class FPSTracker:
             self.last_time = time.perf_counter()
         else:
             self.last_time = current_time
-
-
-def run_in_another_thread(fn, args):
-    """
-    Use this for running simulation loop in order to use viewer in non-linux system
-    """
-    if gs.platform == "Linux":
-        gs.raise_exception("Use this only for non-linux system")
-
-    threading.Thread(target=fn, args=args).start()

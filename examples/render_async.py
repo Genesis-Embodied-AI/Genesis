@@ -1,3 +1,5 @@
+import threading
+
 import genesis as gs
 
 
@@ -37,7 +39,7 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    gs.tools.run_in_another_thread(fn=run_sim, args=(scene,))
+    threading.Thread(target=run_sim, args=(scene,)).start()
     scene.viewer.run()
 
 

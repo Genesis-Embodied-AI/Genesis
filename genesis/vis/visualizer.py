@@ -28,6 +28,11 @@ class Visualizer(RBC):
         self._t = -1
         self._scene = scene
 
+        self._context = None
+        self._viewer = None
+        self._rasterizer = None
+        self._raytracer = None
+
         # Rasterizer context is shared by viewer and rasterizer
         try:
             from .viewer import Viewer
@@ -73,9 +78,6 @@ class Visualizer(RBC):
 
             self._viewer = Viewer(viewer_options, self._context)
 
-        else:
-            self._viewer = None
-
         # Rasterizer is always needed for depth and segmentation mask rendering.
         self._rasterizer = Rasterizer(self._viewer, self._context)
 
@@ -89,6 +91,26 @@ class Visualizer(RBC):
             self._raytracer = None
 
         self._cameras = gs.List()
+
+    def __del__(self):
+        self.destroy()
+
+    def destroy(self):
+        if self._viewer is not None:
+            self._viewer.stop()
+            self._viewer = None
+        if self._rasterizer is not None and self._rasterizer is not self._raytracer:
+            # FIXME: Deleting raytracer twice would cause segfault because of a bug
+            self._rasterizer.destroy()
+            self._rasterizer = None
+        if self._raytracer is not None:
+            self._raytracer.destroy()
+            self._raytracer = None
+        if self._context is not None:
+            self._context.destroy()
+            del self._context
+            self._context = None
+        self._renderer = None
 
     def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise):
         camera = Camera(
@@ -140,11 +162,10 @@ class Visualizer(RBC):
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
                 self._rasterizer.render_camera(self._cameras[0])
 
-    def update(self, force=True, auto=True):
+    def update(self, force=True, auto=None):
         if force:  # force update
             self.reset()
-
-        if self._viewer is not None:
+        elif self._viewer is not None:
             if self._viewer.is_alive():
                 self._viewer.update(auto_refresh=auto)
             else:

@@ -1,11 +1,12 @@
 """Utilities for URDF parsing."""
 
 import os
-import genesis as gs
+import xml.etree.ElementTree as ET
 
-from lxml import etree as ET
+import trimesh
 import numpy as np
-from genesis.ext import trimesh
+
+import genesis as gs
 
 
 def rpy_to_matrix(coords):
@@ -170,7 +171,7 @@ def unparse_origin(matrix):
 
     Returns
     -------
-    node : :class`lxml.etree.Element`
+    node : :class:`xml.etree.ElementTree.Element`
         An XML node whose tag is ``origin``. The node has two attributes:
 
         - ``xyz`` - A string with three space-delimited floats representing

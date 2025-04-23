@@ -1,12 +1,24 @@
 import argparse
 import os
 import pickle
+from importlib import metadata
 
 import torch
-from go2_env import Go2Env
+
+try:
+    try:
+        if metadata.version("rsl-rl"):
+            raise ImportError
+    except metadata.PackageNotFoundError:
+        if metadata.version("rsl-rl-lib") != "2.2.4":
+            raise ImportError
+except (metadata.PackageNotFoundError, ImportError) as e:
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
+
+from go2_env import Go2Env
 
 
 def main():
@@ -30,16 +42,16 @@ def main():
         show_viewer=True,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
     resume_path = os.path.join(log_dir, f"model_{args.ckpt}.pt")
     runner.load(resume_path)
-    policy = runner.get_inference_policy(device="cuda:0")
+    policy = runner.get_inference_policy(device=gs.device)
 
     obs, _ = env.reset()
     with torch.no_grad():
         while True:
             actions = policy(obs)
-            obs, _, rews, dones, infos = env.step(actions)
+            obs, rews, dones, infos = env.step(actions)
 
 
 if __name__ == "__main__":

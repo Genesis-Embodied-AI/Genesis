@@ -1,8 +1,8 @@
 import itertools
 import logging
 import numpy as np
-from scipy import spatial
 import trimesh
+from scipy import spatial
 
 
 _BOX_CORNERS = list(itertools.product((-1, 1), (-1, 1), (-1, 1)))

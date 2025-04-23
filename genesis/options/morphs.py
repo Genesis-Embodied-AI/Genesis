@@ -1,5 +1,5 @@
 import os
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Sequence, Union
 
 import numpy as np
 
@@ -68,7 +68,7 @@ class Morph(Options):
 
         if self.euler is not None:
             if self.quat is None:
-                self.quat = tuple(gs.utils.geom.xyz_to_quat(np.array(self.euler)))
+                self.quat = tuple(gs.utils.geom.xyz_to_quat(np.array(self.euler), rpy=True, degrees=True))
 
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")
@@ -298,8 +298,33 @@ class FileMorph(Morph):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. If not given, it defaults to `convexify`. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to a convex hull. False by default.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     collision : bool, optional
@@ -310,11 +335,39 @@ class FileMorph(Morph):
 
     file: Any = ""
     scale: Union[float, tuple] = 1.0
-    convexify: bool = False
+    decimate: Optional[bool] = None
+    decimate_face_num: int = 500
+    decimate_aggressiveness: int = 2
+    convexify: Optional[bool] = None
+    decompose_nonconvex: Optional[bool] = None
+    decompose_object_error_threshold: float = 0.15
+    decompose_robot_error_threshold: float = float("inf")
+    coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
+
+        if self.decompose_nonconvex is not None:
+            if self.decompose_nonconvex:
+                self.convexify = True
+                self.decompose_object_error_threshold = 0.0
+                self.decompose_robot_error_threshold = 0.0
+            else:
+                self.convexify = False
+                self.decompose_object_error_threshold = float("inf")
+                self.decompose_robot_error_threshold = float("inf")
+            gs.logger.warning(
+                "FileMorph option 'decompose_nonconvex' is deprecated and will be removed in future release. Please use "
+                "'convexify' and 'decompose_(robot|object)_error_threshold' instead."
+            )
+
+        # Make sure that this threshold is positive to avoid decomposition of convex and primitive shapes
+        self.decompose_object_error_threshold = max(self.decompose_object_error_threshold, gs.EPS)
+        self.decompose_robot_error_threshold = max(self.decompose_robot_error_threshold, gs.EPS)
+
+        if self.coacd_options is None:
+            self.coacd_options = CoacdOptions()
 
         if isinstance(self.file, str):
             file = os.path.abspath(self.file)
@@ -358,12 +411,35 @@ class Mesh(FileMorph):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will be converted to a convex hull. False by default.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
     decompose_nonconvex : bool, optional
-        Whether to decompose meshes into convex components, if input mesh is nonconvex and `convexify=False`. We use coacd for this decomposition process. False by default.
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    merge_submeshes_for_collision : bool, optional
+        Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     collision : bool, optional
@@ -376,12 +452,6 @@ class Mesh(FileMorph):
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
     group_by_material : bool, optional
         Whether to group submeshes by their visual material type defined in the asset file. Defaults to True. **This is only used for RigidEntity.**
-    merge_submeshes_for_collision : bool, optional
-        Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
-    decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
-    decimate_face_num : int, optional
-        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
     mindihedral : int, optional
@@ -405,10 +475,6 @@ class Mesh(FileMorph):
     fixed: bool = False
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
-    decimate: bool = False
-    decimate_face_num: int = 500
-    decompose_nonconvex: bool = False
-    coacd_options: Optional[CoacdOptions] = None
 
     # FEM specific
     order: int = 1
@@ -421,16 +487,6 @@ class Mesh(FileMorph):
     verbose: int = 0
 
     force_retet: bool = False
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.decimate and self.decimate_face_num < 100:
-            gs.raise_exception(
-                "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
-            )
-
-        if self.coacd_options is None:
-            self.coacd_options = CoacdOptions()
 
 
 class MeshSet(Mesh):
@@ -464,8 +520,33 @@ class MJCF(FileMorph):
         The euler angle of the entity's baselink in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will be converted to a convex hull. If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
@@ -483,6 +564,9 @@ class MJCF(FileMorph):
         super().__init__(**data)
         if not self.file.endswith(".xml"):
             gs.raise_exception(f"Expected `.xml` extension for MJCF file: {self.file}")
+
+        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
 
 
 class URDF(FileMorph):
@@ -507,8 +591,33 @@ class URDF(FileMorph):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will be converted to a convex hull. If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
@@ -536,6 +645,9 @@ class URDF(FileMorph):
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Expected `.urdf` extension for URDF file: {self.file}")
 
+        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
+
 
 class Drone(FileMorph):
     """
@@ -557,8 +669,33 @@ class Drone(FileMorph):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
     convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will be converted to a convex hull. If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
@@ -571,9 +708,11 @@ class Drone(FileMorph):
         The model of the drone. Defaults to 'CF2X'. Supported models are 'CF2X', 'CF2P', and 'RACE'.
     COM_link_name : str, optional
         The name of the link that represents the center of mass. Defaults to 'center_of_mass_link'.
-    propellers_link_names : list of str, optional
+    propellers_link_names : sequence of str, optional
+        This option is deprecated and will be removed in the future. Please use 'propellers_link_name' instead.
+    propellers_link_name : sequence of str, optional
         The names of the links that represent the propellers. Defaults to ['prop0_link', 'prop1_link', 'prop2_link', 'prop3_link'].
-    propellers_spin : list of int, optional
+    propellers_spin : sequence of int, optional
         The spin direction of the propellers. 1: CCW, -1: CW. Defaults to [-1, 1, -1, 1].
     """
 
@@ -581,11 +720,20 @@ class Drone(FileMorph):
     fixed: bool = False
     prioritize_urdf_material: bool = False
     COM_link_name: str = "center_of_mass_link"
-    propellers_link_names: List[str] = ["prop0_link", "prop1_link", "prop2_link", "prop3_link"]
-    propellers_spin: List[int] = [-1, 1, -1, 1]  # 1: CCW, -1: CW
+    propellers_link_names: Optional[Sequence[str]] = None
+    propellers_link_name: Sequence[str] = ("prop0_link", "prop1_link", "prop2_link", "prop3_link")
+    propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
 
     def __init__(self, **data):
         super().__init__(**data)
+
+        if self.propellers_link_names is not None:
+            gs.logger.warning(
+                "Drone option 'propellers_link_names' is deprecated and will be remove in future release. Please use "
+                "'propellers_link_name' instead."
+            )
+            self.propellers_link_name = self.propellers_link_names
+
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
 

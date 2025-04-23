@@ -69,17 +69,25 @@ Genesisの目指すところ：
 GenesisはPyPIで利用可能です：
 
 ```bash
-pip install genesis-world  # Python >=3.9 が必要です;
+pip install genesis-world  # Python>=3.10,<3.13 が必要です;
 ```
 
 また、**PyTorch**を[公式手順](https://pytorch.org/get-started/locally/)に従ってインストールする必要があります。
 
-最新バージョンを利用するには、リポジトリをクローンしてローカルにインストールしてください：
+最新版を利用する場合はこのレポジトリから直接インストールしてください:
+
+```bash
+pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
+```
+
+このパッケージは定期的に手動で最新版と同期する必要があることに注意してください。
+
+ソースコードを変更したいユーザはGenesisを開発者モードでインストールすることを推奨します。まず、pip経由の `genesis-world` がアンインストールされていることを確認してください。そして、このレポジトリーを以下のようにクローンしてインストールしてください。
 
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Docker

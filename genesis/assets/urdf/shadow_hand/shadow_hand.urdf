@@ -210,7 +210,7 @@
         <limit effort="4.0" lower="-0.349065850399" upper="0.349065850399" velocity="2.0"/>
     </joint>
 
-    <joint name="index_finger_join2" type="revolute">
+    <joint name="index_finger_joint2" type="revolute">
         <parent link="index_finger_knuckle"/>
         <child link="index_finger_proximal"/>
         <axis xyz="1 0 0"/>

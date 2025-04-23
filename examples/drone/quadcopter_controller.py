@@ -46,17 +46,13 @@ class DronePIDController:
 
     def __get_drone_att(self) -> torch.Tensor:
         quat = self.drone.get_quat()
-        # print(quat_to_xyz(quat))
-        return quat_to_xyz(quat)
+        return quat_to_xyz(quat, rpy=True, degrees=True)
 
     def __mixer(self, thrust, roll, pitch, yaw, x_vel, y_vel) -> torch.Tensor:
         M1 = self.__base_rpm + (thrust - roll - pitch - yaw - x_vel + y_vel)
         M2 = self.__base_rpm + (thrust - roll + pitch + yaw + x_vel + y_vel)
         M3 = self.__base_rpm + (thrust + roll + pitch - yaw + x_vel - y_vel)
         M4 = self.__base_rpm + (thrust + roll - pitch + yaw - x_vel - y_vel)
-        # print("pitch =", pitch)
-        # print("roll =", roll)
-
         return torch.Tensor([M1, M2, M3, M4])
 
     def update(self, target) -> np.ndarray:

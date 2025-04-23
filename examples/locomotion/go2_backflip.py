@@ -26,7 +26,7 @@ def get_cfgs():
             "RL_calf_joint": -1.5,
             "RR_calf_joint": -1.5,
         },
-        "dof_names": [
+        "joint_names": [
             "FR_hip_joint",
             "FR_thigh_joint",
             "FR_calf_joint",
@@ -103,7 +103,7 @@ class BackflipEnv(Go2Env):
     def step(self, actions):
         super().step(actions)
         self.get_observations()
-        return self.obs_buf, None, self.rew_buf, self.reset_buf, self.extras
+        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
 
 
 def main():
@@ -132,13 +132,13 @@ def main():
     )
 
     policy = torch.jit.load(f"./backflip/{args.exp_name}.pt")
-    policy.to(device="cuda:0")
+    policy.to(device=gs.device)
 
     obs, _ = env.reset()
     with torch.no_grad():
         while True:
             actions = policy(obs)
-            obs, _, rews, dones, infos = env.step(actions)
+            obs, rews, dones, infos = env.step(actions)
 
 
 if __name__ == "__main__":
