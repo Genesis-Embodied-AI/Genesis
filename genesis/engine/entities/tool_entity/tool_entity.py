@@ -158,14 +158,9 @@ class ToolEntity(Entity):
 
     def substep_post_coupling(self, f):
         self.update_latest_pos(f)
-        # self.update_mesh_pose(f)
 
     def substep_post_coupling_grad(self, f):
         pass
-
-    # def update_mesh_pose(self, f):
-    #     # For visualization only. No need to compute grad.
-    #     self.mesh.update_vertices(f)
 
     @ti.func
     def collide(self, f, pos_world, vel_mat, b):

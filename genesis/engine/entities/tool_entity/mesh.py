@@ -78,14 +78,6 @@ class Mesh:
         self.vertices = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
         self.vertex_normals = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
 
-    # @ti.kernel
-    # def update_vertices(self, f: ti.i32):
-    #     for i in self.vertices:
-    #         self.vertices[i] = gu.ti_transform_by_trans_quat(
-    #             self.init_vertices[i], self.entity.pos[f], self.entity.quat[f]
-    #         )
-    #         self.vertex_normals[i] = gu.ti_transform_by_quat(self.init_vertex_normals[i], self.entity.quat[f])
-
     @ti.func
     def sdf(self, f, pos_world, b):
         # sdf value from world coordinate
