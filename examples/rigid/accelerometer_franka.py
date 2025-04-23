@@ -50,7 +50,7 @@ def main():
         "finger_joint1",
         "finger_joint2",
     )
-    motors_dof_idx = tuple(i for name in joints_name for i in franka.get_joint(name).motors_dof_idx_local)
+    motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
     # Optional: set control gains
     # franka.set_dofs_kp(

@@ -46,7 +46,7 @@ def main():
     ########################## domain randomization ##########################
     robot.set_friction_ratio(
         friction_ratio=0.5 + torch.rand(scene.n_envs, robot.n_links),
-        ls_idx_local=np.arange(0, robot.n_links),
+        links_idx_local=np.arange(0, robot.n_links),
     )
     from IPython import embed
 
@@ -63,11 +63,11 @@ def main():
 
     robot.set_mass_shift(
         mass_shift=-0.5 + torch.rand(scene.n_envs, robot.n_links),
-        ls_idx_local=np.arange(0, robot.n_links),
+        links_idx_local=np.arange(0, robot.n_links),
     )
     robot.set_COM_shift(
         com_shift=-0.05 + 0.1 * torch.rand(scene.n_envs, robot.n_links, 3),
-        ls_idx_local=np.arange(0, robot.n_links),
+        links_idx_local=np.arange(0, robot.n_links),
     )
 
     joints_name = (
@@ -84,7 +84,7 @@ def main():
         "RL_thigh_joint",
         "RL_calf_joint",
     )
-    motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
+    motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
     robot.set_dofs_kp(np.full(12, 20), motors_dof_idx)
     robot.set_dofs_kv(np.full(12, 1), motors_dof_idx)
