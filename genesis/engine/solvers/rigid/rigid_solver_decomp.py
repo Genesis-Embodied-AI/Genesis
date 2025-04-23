@@ -2788,7 +2788,6 @@ class RigidSolver(Solver):
         for i_e, i_b in ti.ndrange(self.n_entities, self._B):
             wakeup = False
             for i_l in range(self.entities_info[i_e].link_start, self.entities_info[i_e].link_end):
-                force = gs.ti_float(0.0)
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
                 if l_info.n_dofs == 0:
@@ -2800,6 +2799,7 @@ class RigidSolver(Solver):
 
                 for i_d in range(l_info.dof_start, l_info.dof_end):
                     I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+                    force = gs.ti_float(0.0)
                     if self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.FORCE:
                         force = self.dofs_state[i_d, i_b].ctrl_force
                     elif self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY:
@@ -2864,6 +2864,7 @@ class RigidSolver(Solver):
                         self.dofs_state[i_d, i_b].qf_applied = ti.math.clamp(
                             force, self.dofs_info[I_d].force_range[0], self.dofs_info[I_d].force_range[1]
                         )
+
                         if ti.abs(force) > gs.EPS:
                             wakeup = True
 
@@ -3198,6 +3199,7 @@ class RigidSolver(Solver):
                     if i_d1_ < e_info.n_dofs:
                         i_d1 = e_info.dof_start + i_d1_
                         acc = gs.ti_float(0.0)
+                        # FIXME: It should be the non-damped inverse mass matrix.
                         for i_d2 in range(e_info.dof_start, e_info.dof_end):
                             acc += self.mass_mat_inv[i_d1, i_d2, i_b] * self.dofs_state[i_d2, i_b].force
                         self.dofs_state[i_d1, i_b].acc = acc
@@ -3210,6 +3212,7 @@ class RigidSolver(Solver):
                 if i_d1_ < e_info.n_dofs:
                     i_d1 = e_info.dof_start + i_d1_
                     acc = gs.ti_float(0.0)
+                    # FIXME: It should be the non-damped inverse mass matrix.
                     for i_d2 in range(e_info.dof_start, e_info.dof_end):
                         acc += self.mass_mat_inv[i_d1, i_d2, i_b] * self.dofs_state[i_d2, i_b].force
                     self.dofs_state[i_d1, i_b].acc = acc
@@ -3649,7 +3652,7 @@ class RigidSolver(Solver):
         self,
         tensor,
         inputs_idx,
-        input_max,
+        input_size,
         envs_idx,
         batched=True,
         idx_name="dofs_idx",
@@ -3664,11 +3667,11 @@ class RigidSolver(Solver):
             envs_idx = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
 
         if inputs_idx is None:
-            inputs_idx = range(0, input_max)
+            inputs_idx = range(0, input_size)
         elif isinstance(inputs_idx, slice):
             inputs_idx = range(
                 inputs_idx.start or 0,
-                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
         elif isinstance(inputs_idx, int):
@@ -3687,22 +3690,24 @@ class RigidSolver(Solver):
             return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
-        _inputs_idx = torch.atleast_1d(torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
+        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
         if _inputs_idx is not inputs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        _inputs_idx = torch.atleast_1d(_inputs_idx)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
         if len(inputs_idx):
             inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
-            if inputs_start < 0 or input_max <= inputs_end:
-                gs.raise_exception("`{idx_name}` is out-of-range.")
+            if inputs_start < 0 or input_size <= inputs_end:
+                gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
             if _tensor is not tensor:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor
-            if tensor.shape[-1] != len(_inputs_idx):
+            tensor = _tensor.unsqueeze(0) if batched and self.n_envs and _tensor.ndim == 1 else _tensor
+
+            if tensor.shape[-1] != len(inputs_idx):
                 gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
 
             if batched:
@@ -3731,7 +3736,7 @@ class RigidSolver(Solver):
         self,
         tensor,
         inputs_idx,
-        input_max,
+        input_size,
         vec_size,
         envs_idx=None,
         batched=True,
@@ -3747,11 +3752,11 @@ class RigidSolver(Solver):
             envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
 
         if inputs_idx is None:
-            inputs_idx = range(0, input_max)
+            inputs_idx = range(0, input_size)
         elif isinstance(inputs_idx, slice):
             inputs_idx = range(
                 inputs_idx.start or 0,
-                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
         elif isinstance(inputs_idx, int):
@@ -3773,18 +3778,20 @@ class RigidSolver(Solver):
         _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
         if _inputs_idx is not inputs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        _inputs_idx = torch.atleast_1d(_inputs_idx)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
         inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
-        if inputs_start < 0 or input_max <= inputs_end:
-            gs.raise_exception("`{idx_name}` is out-of-range.")
+        if inputs_start < 0 or input_size <= inputs_end:
+            gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
             if _tensor is not tensor:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor
-            if tensor.shape[-2] != len(_inputs_idx):
+            tensor = _tensor.unsqueeze(0) if batched and self.n_envs and _tensor.ndim == 2 else _tensor
+
+            if tensor.shape[-2] != len(inputs_idx):
                 gs.raise_exception(f"Second last dimension of the input tensor does not match length of `{idx_name}`.")
             if tensor.shape[-1] != vec_size:
                 gs.raise_exception(f"Last dimension of the input tensor must be {vec_size}.")
@@ -4585,19 +4592,19 @@ class RigidSolver(Solver):
             )
 
     def get_dofs_kp(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.kp, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_kv(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.kv, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_force_range(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.force_range, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         if self.n_envs == 0 and self._options.batch_dofs_info:
@@ -4605,7 +4612,7 @@ class RigidSolver(Solver):
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_limit(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.limit, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         if self.n_envs == 0 and self._options.batch_dofs_info:
@@ -4613,25 +4620,25 @@ class RigidSolver(Solver):
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_stiffness(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.stiffness, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_invweight(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.invweight, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_armature(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.armature, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_damping(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.damping, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor

@@ -43,7 +43,7 @@ joints_name = (
     "RF_KFE",
     "LF_KFE",
 )
-motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
+motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
 robot.set_dofs_kp(np.full(12, 1000), motors_dof_idx)
 robot.control_dofs_position(np.zeros((n_envs, 12)), motors_dof_idx)
