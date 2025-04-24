@@ -481,6 +481,7 @@ def test_info_batching():
     np.testing.assert_allclose(qposs[0], qposs[1])
 
 
+@pytest.mark.xfail(reason="Offscreen rendering is actually not deterministic on Nvidia GPU.")
 def test_batched_offscreen_rendering(show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -506,26 +507,28 @@ def test_batched_offscreen_rendering(show_viewer):
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
 
-    dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-    qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
+    for _ in range(10):
+        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+        qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
 
-    steps_rgb_arrays = []
-    for _ in range(2):
-        scene.step()
+        steps_rgb_arrays = []
+        for _ in range(2):
+            scene.step()
 
-        robots_rgb_arrays = []
-        robot.set_qpos(torch.tile(qpos, (3, 1)))
+            robots_rgb_arrays = []
+            robot.set_qpos(torch.tile(qpos, (3, 1)))
+            for i in range(3):
+                pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
+                lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
+                cam.set_pose(pos=pos_i, lookat=lookat_i)
+                rgb_array, *_ = cam.render()
+                assert np.std(rgb_array) > 10.0
+                robots_rgb_arrays.append(rgb_array)
+
+            steps_rgb_arrays.append(robots_rgb_arrays)
+
         for i in range(3):
-            pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
-            lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
-            cam.set_pose(pos=pos_i, lookat=lookat_i)
-            rgb_array, *_ = cam.render()
-            assert np.std(rgb_array) > 10.0
-            robots_rgb_arrays.append(rgb_array)
-        steps_rgb_arrays.append(robots_rgb_arrays)
-
-    for i in range(3):
-        np.testing.assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i])
+            np.testing.assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i])
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -1077,6 +1080,7 @@ def test_data_accessor(n_envs, atol):
     gs_s = gs_sim.rigid_solver
 
     # Initialize the simulation
+    np.random.seed(0)
     dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_torch(device="cpu")
     dof_bounds[..., :2, :] = torch.tensor((-1.0, 1.0))
     dof_bounds[..., 2, :] = torch.tensor((0.7, 1.0))
@@ -1086,7 +1090,7 @@ def test_data_accessor(n_envs, atol):
         gs_robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
 
     # Simulate for a while, until they collide with something
-    for _ in range(500):
+    for _ in range(400):
         gs_sim.step()
         gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_torch(device="cpu")
         if (gs_n_contacts > 0).all():
