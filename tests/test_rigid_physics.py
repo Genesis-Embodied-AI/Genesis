@@ -1086,7 +1086,7 @@ def test_data_accessor(n_envs, atol):
         gs_robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
 
     # Simulate for a while, until they collide with something
-    for _ in range(400):
+    for _ in range(500):
         gs_sim.step()
         gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_torch(device="cpu")
         if (gs_n_contacts > 0).all():
