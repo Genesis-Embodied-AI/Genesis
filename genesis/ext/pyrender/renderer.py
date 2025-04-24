@@ -115,7 +115,7 @@ class Renderer(object):
     def point_size(self, value):
         self._point_size = float(value)
 
-    def render(self, scene, flags, seg_node_map=None):
+    def render(self, scene, flags, seg_node_map=None, is_first_pass=True):
         """Render a scene with the given set of flags.
 
         Parameters
@@ -140,9 +140,9 @@ class Renderer(object):
             in linear units.
         """
         # Update context with meshes and textures
-        self._update_context(scene, flags)
-
-        self.jit.update(scene)
+        if is_first_pass:
+            self._update_context(scene, flags)
+            self.jit.update(scene)
 
         if bool(flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.SEG or flags & RenderFlags.FLAT):
             flags &= ~RenderFlags.REFLECTIVE_FLOOR
@@ -176,7 +176,6 @@ class Renderer(object):
                         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
             # Make forward pass
-            # forward_pass_start = time()
             if flags & RenderFlags.REFLECTIVE_FLOOR:
                 self._floor_pass(scene, flags, env_idx=env_idx)
 
@@ -192,8 +191,6 @@ class Renderer(object):
                     retval_list = [retval]
                 else:
                     retval_list.append(retval)
-            # retval = self._forward_pass_legacy(scene, flags, seg_node_map=seg_node_map)
-            # print('render_forward', time()-forward_pass_start)
 
             # If necessary, make normals pass
             if flags & (RenderFlags.VERTEX_NORMALS | RenderFlags.FACE_NORMALS):
@@ -1225,7 +1222,6 @@ class Renderer(object):
     ###########################################################################
 
     def _configure_forward_pass_viewport(self, flags):
-
         # If using offscreen render, bind main framebuffer
         if flags & RenderFlags.OFFSCREEN:
             self._configure_main_framebuffer()
@@ -1393,29 +1389,12 @@ class Renderer(object):
             glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST)
         glBindFramebuffer(GL_READ_FRAMEBUFFER, self._main_fb)
 
-        # # Read depth
-        z_near = scene.main_camera_node.camera.znear
-        z_far = scene.main_camera_node.camera.zfar
-        if z_far is None:
-            z_far = -1.0
-        # depth_buf = glReadPixels(
-        #     0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT
-        # )
-        # depth_im = np.frombuffer(depth_buf, dtype=np.float32)
-        # depth_im = depth_im.reshape((height, width))
-        # depth_im = np.flip(depth_im, axis=0)
-        # inf_inds = (depth_im == 1.0)
-        # depth_im = 2.0 * depth_im - 1.0
-        # noninf = np.logical_not(inf_inds)
-        # if z_far is None:
-        #     depth_im[noninf] = 2 * z_near / (1.0 - depth_im[noninf])
-        # else:
-        #     depth_im[noninf] = ((2.0 * z_near * z_far) /
-        #                         (z_far + z_near - depth_im[noninf] *
-        #                         (z_far - z_near)))
-        # depth_im[inf_inds] = 0.0
-
+        # Read depth if requested
         if flags & RenderFlags.RET_DEPTH:
+            z_near = scene.main_camera_node.camera.znear
+            z_far = scene.main_camera_node.camera.zfar
+            if z_far is None:
+                z_far = -1.0
             depth_im = self.jit.read_depth_buf(width, height, z_near, z_far)
 
             # Resize for macos if needed
