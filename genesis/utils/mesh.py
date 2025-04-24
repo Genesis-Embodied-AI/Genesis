@@ -33,13 +33,11 @@ from .misc import (
 class MeshInfo:
     def __init__(self, surface):
         self.surface = surface
-        self.verts = list()
-        self.faces = list()
-        self.normals = list()
-        self.uvs = list()
+        self.verts = []
+        self.faces = []
+        self.normals = []
+        self.uvs = []
         self.n_points = 0
-        self.n_members = 0
-        self.uvs_exist = False
 
     def append(self, verts, faces, normals, uvs):
         faces += self.n_points
@@ -47,16 +45,13 @@ class MeshInfo:
         self.faces.append(faces)
         self.normals.append(normals)
         self.uvs.append(uvs)
-        self.n_points += verts.shape[0]
-        self.n_members += 1
-        if uvs is not None:
-            self.uvs_exist = True
+        self.n_points += len(verts)
 
     def export_mesh(self, scale, path):
-        if self.uvs_exist:
-            for i in range(self.n_members):
-                if self.uvs[i] is None:
-                    self.uvs[i] = np.zeros((self.verts[i].shape[0], 2), dtype=np.float32)
+        if self.uvs:
+            for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
+                if uvs is None:
+                    self.uvs[i] = np.zeros((len(verts), 2), dtype=np.float32)
             uvs = np.concatenate(self.uvs, axis=0)
         else:
             uvs = None
@@ -82,12 +77,13 @@ class MeshInfoGroup:
         self.infos = dict()
 
     def append(self, name, verts, faces, normals, uvs, surface):
-        if name not in self.infos:
-            self.infos[name] = MeshInfo(surface)
-        self.infos[name].append(verts, faces, normals, uvs)
+        mesh_info = self.infos.get(name)
+        if mesh_info is None:
+            mesh_info = self.infos.setdefault(name, MeshInfo(surface))
+        mesh_info.append(verts, faces, normals, uvs)
 
     def export_meshes(self, scale, path):
-        return [self.infos[name].export_mesh(scale, path) for name in self.infos]
+        return [mesh_info.export_mesh(scale, path) for mesh_info in self.infos.values()]
 
 
 def get_asset_path(file):
@@ -425,12 +421,11 @@ def trimesh_to_mesh(mesh, scale, surface):
 
 
 def adjust_alpha_cutoff(alpha_cutoff, alpha_mode):
-    if alpha_mode == 0:  # OPAQUE
+    if alpha_mode == 0:     # OPAQUE
         return 0.0
-    elif alpha_mode == 1:  # MASK
+    if alpha_mode == 1:     # MASK
         return alpha_cutoff
-    else:  # BLEND
-        return None
+    return None             # BLEND
 
 
 def PIL_to_array(image):
@@ -769,7 +764,7 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
                     [size, size],
                     [size, size],
                 ],
-                dtype=float,
+                dtype=np.float32,
             ),
             material=trimesh.visual.material.SimpleMaterial(
                 image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png")),

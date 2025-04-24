@@ -3,19 +3,20 @@ from urllib import request
 import numpy as np
 import pygltflib
 import trimesh
+from scipy.spatial.transform import Rotation as R
 from PIL import Image
 
 import genesis as gs
 from . import mesh as mu
 
 ctype_to_numpy = {
-    5120: (1, np.int8),  # BYTE
-    5121: (1, np.uint8),  # UNSIGNED_BYTE
-    5122: (2, np.int16),  # SHORT
-    5123: (2, np.uint16),  # UNSIGNED_SHORT
-    5124: (4, np.int32),  # INT
-    5125: (4, np.uint32),  # UNSIGNED_INT
-    5126: (4, np.float32),  # FLOAT
+    5120: np.int8,      # BYTE
+    5121: np.uint8,     # UNSIGNED_BYTE
+    5122: np.int16,     # SHORT
+    5123: np.uint16,    # UNSIGNED_SHORT
+    5124: np.int32,     # INT
+    5125: np.uint32,    # UNSIGNED_INT
+    5126: np.float32,   # FLOAT
 }
 
 type_to_count = {
@@ -52,30 +53,31 @@ def get_glb_data_from_accessor(glb, accessor_index):
     buffer_data = get_glb_bufferview_data(glb, buffer_view)
 
     data_type, data_ctype, count = accessor.type, accessor.componentType, accessor.count
-    dtype = ctype_to_numpy[data_ctype][1]
-    itemsize = np.dtype(dtype).itemsize
-    buffer_byte_offset = (buffer_view.byteOffset or 0) + (accessor.byteOffset or 0)
     num_components = type_to_count[data_type][0]
+    dtype = ctype_to_numpy[data_ctype]
+    itemsize = np.dtype(dtype).itemsize
 
-    byte_stride = buffer_view.byteStride if buffer_view.byteStride else num_components * itemsize
     # Extract data considering byteStride
-    if byte_stride == num_components * itemsize:
+    byte_offset = (buffer_view.byteOffset or 0) + (accessor.byteOffset or 0)
+    byte_stride = buffer_view.byteStride
+    
+    if not byte_stride or byte_stride == num_components * itemsize:
         # Data is tightly packed
         byte_length = count * num_components * itemsize
-        data = buffer_data[buffer_byte_offset : buffer_byte_offset + byte_length]
+        data = buffer_data[byte_offset : byte_offset + byte_length]
         array = np.frombuffer(data, dtype=dtype)
-        if num_components > 1:
-            array = array.reshape((count, num_components))
+        # if num_components > 1:
+        #     array = array.reshape((count, num_components))
     else:
         # Data is interleaved
         array = np.zeros((count, num_components), dtype=dtype)
         for i in range(count):
-            start = buffer_byte_offset + i * byte_stride
+            start = byte_offset + i * byte_stride
             end = start + num_components * itemsize
             data_slice = buffer_data[start:end]
             array[i] = np.frombuffer(data_slice, dtype=dtype, count=num_components)
 
-    return array.reshape([count] + type_to_count[data_type][1])
+    return array.reshape([count, *type_to_count[data_type][1]])
 
 
 def get_glb_image(glb, image_index, image_type=None):
@@ -173,7 +175,7 @@ def parse_glb_material(glb, material_index, surface):
         # parse color
         color_factor = None
         if pbr_texture.baseColorFactor is not None:
-            color_factor = np.array(pbr_texture.baseColorFactor, dtype=float)
+            color_factor = np.array(pbr_texture.baseColorFactor, dtype=np.float32)
 
         color_texture = mu.create_texture(color_image, color_factor, "srgb")
 
@@ -188,7 +190,7 @@ def parse_glb_material(glb, material_index, surface):
 
         color_factor = None
         if "diffuseFactor" in extension_material:
-            color_factor = np.array(extension_material["diffuseFactor"], dtype=float)
+            color_factor = np.array(extension_material["diffuseFactor"], dtype=np.float32)
 
         color_texture = mu.create_texture(color_image, color_factor, "srgb")
         material.extensions.pop("KHR_materials_pbrSpecularGlossiness")
@@ -215,7 +217,7 @@ def parse_glb_material(glb, material_index, surface):
 
         emissive_factor = None
         if material.emissiveFactor is not None:
-            emissive_factor = np.array(material.emissiveFactor, dtype=float)
+            emissive_factor = np.array(material.emissiveFactor, dtype=np.float32)
 
         if emissive_factor is not None and np.any(emissive_factor > 0.0):  # Make sure to check emissive
             emissive_texture = mu.create_texture(emissive_image, emissive_factor, "srgb")
@@ -224,7 +226,7 @@ def parse_glb_material(glb, material_index, surface):
     for extension_name, extension_material in material.extensions.items():
         if extension_name == "KHR_materials_specular":
             specular_weight = extension_material.get("specularFactor", 1.0)
-            specular_color = np.array(extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=float)
+            specular_color = np.array(extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=np.float32)
 
         elif extension_name == "KHR_materials_clearcoat":
             clearcoat_weight = extension_material.get("clearcoatFactor", 0.0)
@@ -257,32 +259,38 @@ def parse_glb_material(glb, material_index, surface):
 def parse_glb_tree(glb, node_index):
     node = glb.nodes[node_index]
     if node.matrix is not None:
-        matrix = np.array(node.matrix, dtype=float).reshape((4, 4))
+        transform = np.array(node.matrix, dtype=np.float32).reshape((4, 4))
     else:
-        matrix = np.identity(4, dtype=float)
+        transform = np.identity(4, dtype=np.float32)
         if node.translation is not None:
-            translation = np.array(node.translation, dtype=float)
-            translation_matrix = np.identity(4, dtype=float)
-            translation_matrix[3, :3] = translation
-            matrix = translation_matrix @ matrix
+            transform[:3, 3] = node.translation
+            # translation = np.array(node.translation, dtype=float)
+            # translation_matrix = np.identity(4, dtype=float)
+            # translation_matrix[3, :3] = translation
+            # matrix = translation_matrix @ matrix
         if node.rotation is not None:
-            rotation = np.array(node.rotation, dtype=float)  # xyzw
-            rotation_matrix = np.identity(4, dtype=float)
-            rotation = [rotation[3], rotation[0], rotation[1], rotation[2]]
-            rotation_matrix[:3, :3] = trimesh.transformations.quaternion_matrix(rotation)[:3, :3].T
-            matrix = rotation_matrix @ matrix
+            transform[:3, :3] = R.from_quat(node.rotation).as_matrix()     # xyzw
+            # rotation = np.array(node.rotation, dtype=float)  
+            # rotation_matrix = np.identity(4, dtype=float)
+            # rotation = [rotation[3], rotation[0], rotation[1], rotation[2]]
+            # rotation_matrix[:3, :3] = trimesh.transformations.quaternion_matrix(rotation)[:3, :3].T
+            # matrix = rotation_matrix @ matrix
         if node.scale is not None:
-            scale = np.array(node.scale, dtype=float)
-            scale_matrix = np.diag(np.append(scale, 1))
-            matrix = scale_matrix @ matrix
-    mesh_list = list()
-    if node.mesh is not None:
-        mesh_list.append([node.mesh, np.identity(4, dtype=float)])
+            transform[:3, :3] *= node.scale
+            # scale = np.array(node.scale, dtype=np.float32)
+            # matrix[:3, :3] *= scale[:, np.newaxis]
+            # scale_matrix = np.diag(np.append(scale, 1))
+            # matrix = scale_matrix @ matrix
+        transform = transform.T       # translation at bottom
+
+    mesh_list = []
     for sub_node_index in node.children:
         sub_mesh_list = parse_glb_tree(glb, sub_node_index)
-        mesh_list.extend(sub_mesh_list)
-    for i in range(len(mesh_list)):
-        mesh_list[i][1] = mesh_list[i][1] @ matrix
+        mesh_list += sub_mesh_list
+    for (_, mesh_transform) in mesh_list:
+        mesh_transform @= transform
+    if node.mesh is not None:
+        mesh_list.append([node.mesh, transform])
     return mesh_list
 
 
@@ -292,31 +300,27 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
     glb.convert_images(pygltflib.ImageFormat.DATAURI)
     glb.path = path
 
-    glb_scene = 0 if glb.scene is None else glb.scene
+    glb_scene = glb.scene or 0
     scene = glb.scenes[glb_scene]
-    mesh_list = list()
+    mesh_list = []
     for node_index in scene.nodes:
         root_mesh_list = parse_glb_tree(glb, node_index)
-        mesh_list.extend(root_mesh_list)
+        mesh_list += root_mesh_list
 
     mesh_infos = mu.MeshInfoGroup()
-    materials = dict()
-    uv_names = dict()
+    materials = {}
 
-    for i in range(len(mesh_list)):
-        mesh = glb.meshes[mesh_list[i][0]]
-        matrix = mesh_list[i][1]
+    for i, (mesh, mesh_transform) in enumerate(mesh_list):
         for primitive in mesh.primitives:
             group_idx = primitive.material if group_by_material else i
 
             if primitive.material is not None:
-                if primitive.material not in materials:
-                    materials[primitive.material], uv_names[primitive.material] = parse_glb_material(
-                        glb, primitive.material, surface
-                    )
-                uv_used = uv_names[primitive.material]
+                material, uv_used = materials.get(primitive.material, (None, 0))
+                if material is None:
+                    material, uv_used = materials.setdefault(
+                        primitive.material, parse_glb_material(glb, primitive.material, surface))
             else:
-                uv_used = 0
+                material, uv_used = None, 0
 
             uvs = None
             if "KHR_draco_mesh_compression" in primitive.extensions:
@@ -339,10 +343,10 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 #                 COLOR_0=None, JOINTS_0=None, WEIGHTS_0=None)
                 # parse vertices
 
-                points = get_glb_data_from_accessor(glb, primitive.attributes.POSITION).astype(float)
+                points = get_glb_data_from_accessor(glb, primitive.attributes.POSITION).astype(np.float32)
 
                 if primitive.indices is None:
-                    indices = np.arange(points.shape[0], dtype=np.uint32)
+                    indices = np.arange(len(points), dtype=np.uint32)
                 else:
                     indices = get_glb_data_from_accessor(glb, primitive.indices).astype(np.int32)
 
@@ -369,22 +373,22 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
 
                 # parse normals
                 if primitive.attributes.NORMAL:
-                    normals = get_glb_data_from_accessor(glb, primitive.attributes.NORMAL).astype(float)
+                    normals = get_glb_data_from_accessor(glb, primitive.attributes.NORMAL).astype(np.float32)
                 else:
                     normals = None
 
                 # parse uvs
                 if uv_used == 0:
                     if primitive.attributes.TEXCOORD_0:
-                        uvs = get_glb_data_from_accessor(glb, primitive.attributes.TEXCOORD_0).astype(float)
+                        uvs = get_glb_data_from_accessor(glb, primitive.attributes.TEXCOORD_0).astype(np.float32)
                 elif uv_used == 1:
                     if primitive.attributes.TEXCOORD_1:
-                        uvs = get_glb_data_from_accessor(glb, primitive.attributes.TEXCOORD_1).astype(float)
+                        uvs = get_glb_data_from_accessor(glb, primitive.attributes.TEXCOORD_1).astype(np.float32)
 
             if normals is None:
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
-            points, normals = mu.apply_transform(matrix, points, normals)
+            points, normals = mu.apply_transform(mesh_transform, points, normals)
 
-            mesh_infos.append(group_idx, points, triangles, normals, uvs, materials[primitive.material])
+            mesh_infos.append(group_idx, points, triangles, normals, uvs, material)
 
     return mesh_infos.export_meshes(scale=scale, path=path)
