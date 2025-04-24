@@ -5,9 +5,14 @@ Author: Matthew Matl
 
 import os
 
+from OpenGL.GL import *
+
 from .constants import RenderFlags
 from .renderer import Renderer
 from .shader_program import ShaderProgram, ShaderProgramCache
+
+
+MODULE_DIR = os.path.dirname(__file__)
 
 
 class OffscreenRenderer(object):
@@ -138,17 +143,15 @@ class OffscreenRenderer(object):
                 retval = color, depth
 
         if normal:
-
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None
 
                 def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
                     if self.program is None:
-                        absolute_path = os.path.abspath(__file__)
                         self.program = ShaderProgram(
-                            os.path.join(absolute_path.replace("offscreen.py", ""), "shaders/mesh_normal.vert"),
-                            os.path.join(absolute_path.replace("offscreen.py", ""), "shaders/mesh_normal.frag"),
+                            os.path.join(MODULE_DIR, "shaders/mesh_normal.vert"),
+                            os.path.join(MODULE_DIR, "shaders/mesh_normal.frag"),
                             defines=defines,
                         )
                     return self.program
@@ -159,8 +162,10 @@ class OffscreenRenderer(object):
             flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
             if env_separate_rigid:
                 flags |= RenderFlags.ENV_SEPARATE
-            normal_arr, _ = renderer.render(scene, flags)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
             retval = retval + (normal_arr,)
+
             renderer._program_cache = old_cache
 
         # Make the platform not current

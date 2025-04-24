@@ -481,7 +481,6 @@ def test_info_batching():
     np.testing.assert_allclose(qposs[0], qposs[1])
 
 
-@pytest.mark.xfail(reason="Offscreen rendering is actually not deterministic on Nvidia GPU.")
 def test_batched_offscreen_rendering(show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
