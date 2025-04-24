@@ -3,7 +3,10 @@ import os
 
 import OpenGL.platform
 
+import genesis as gs
+
 from .base import Platform
+
 
 EGL_PLATFORM_DEVICE_EXT = 0x313F
 EGL_DRM_DEVICE_FILE_EXT = 0x3233
@@ -86,7 +89,6 @@ def get_device_by_index(device_id):
 
 
 class EGLDevice:
-
     def __init__(self, display=None):
         self._display = display
 
@@ -116,13 +118,12 @@ class EGLPlatform(Platform):
 
     def __init__(self, viewport_width, viewport_height, device: EGLDevice = None):
         super(EGLPlatform, self).__init__(viewport_width, viewport_height)
-        self._egl_device = None
+        self._egl_device = device
         self._egl_display = None
         self._egl_context = None
 
     def init_context(self):
         _ensure_egl_loaded()
-
         from OpenGL.EGL import (
             EGL_SURFACE_TYPE,
             EGL_PBUFFER_BIT,
@@ -190,15 +191,23 @@ class EGLPlatform(Platform):
         configs = (EGLConfig * 1)()
 
         # Get the list of devices to try on
+        all_devices = query_devices()
         if self._egl_device is None:
             if _eglQueryDevicesEXT is None:
                 devices = (EGLDevice(None),)
-            devices = query_devices()
+            devices = all_devices
         else:
             devices = (self._egl_device,)
 
         # Get the first EGL device that is working
         for i, device in enumerate(devices):
+            for device_id, device_ in enumerate(all_devices):
+                if device == device_:
+                    break
+            else:
+                raise EGLError("Unknown EGL device.")
+            gs.logger.debug(f"Trying to create EGL Context for EGL_DEVICE_ID='{device_id}'...")
+
             # Cache DISPLAY if necessary and get an off-screen EGL display
             orig_dpy = None
             if "DISPLAY" in os.environ:
