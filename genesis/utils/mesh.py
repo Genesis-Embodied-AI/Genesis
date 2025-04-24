@@ -421,11 +421,11 @@ def trimesh_to_mesh(mesh, scale, surface):
 
 
 def adjust_alpha_cutoff(alpha_cutoff, alpha_mode):
-    if alpha_mode == 0:     # OPAQUE
+    if alpha_mode == 0:  # OPAQUE
         return 0.0
-    if alpha_mode == 1:     # MASK
+    if alpha_mode == 1:  # MASK
         return alpha_cutoff
-    return None             # BLEND
+    return None  # BLEND
 
 
 def PIL_to_array(image):

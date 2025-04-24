@@ -10,13 +10,13 @@ import genesis as gs
 from . import mesh as mu
 
 ctype_to_numpy = {
-    5120: np.int8,      # BYTE
-    5121: np.uint8,     # UNSIGNED_BYTE
-    5122: np.int16,     # SHORT
-    5123: np.uint16,    # UNSIGNED_SHORT
-    5124: np.int32,     # INT
-    5125: np.uint32,    # UNSIGNED_INT
-    5126: np.float32,   # FLOAT
+    5120: np.int8,  # BYTE
+    5121: np.uint8,  # UNSIGNED_BYTE
+    5122: np.int16,  # SHORT
+    5123: np.uint16,  # UNSIGNED_SHORT
+    5124: np.int32,  # INT
+    5125: np.uint32,  # UNSIGNED_INT
+    5126: np.float32,  # FLOAT
 }
 
 type_to_count = {
@@ -60,7 +60,7 @@ def get_glb_data_from_accessor(glb, accessor_index):
     # Extract data considering byteStride
     byte_offset = (buffer_view.byteOffset or 0) + (accessor.byteOffset or 0)
     byte_stride = buffer_view.byteStride
-    
+
     if not byte_stride or byte_stride == num_components * itemsize:
         # Data is tightly packed
         byte_length = count * num_components * itemsize
@@ -269,8 +269,8 @@ def parse_glb_tree(glb, node_index):
             # translation_matrix[3, :3] = translation
             # matrix = translation_matrix @ matrix
         if node.rotation is not None:
-            transform[:3, :3] = R.from_quat(node.rotation).as_matrix()     # xyzw
-            # rotation = np.array(node.rotation, dtype=float)  
+            transform[:3, :3] = R.from_quat(node.rotation).as_matrix()  # xyzw
+            # rotation = np.array(node.rotation, dtype=float)
             # rotation_matrix = np.identity(4, dtype=float)
             # rotation = [rotation[3], rotation[0], rotation[1], rotation[2]]
             # rotation_matrix[:3, :3] = trimesh.transformations.quaternion_matrix(rotation)[:3, :3].T
@@ -281,13 +281,13 @@ def parse_glb_tree(glb, node_index):
             # matrix[:3, :3] *= scale[:, np.newaxis]
             # scale_matrix = np.diag(np.append(scale, 1))
             # matrix = scale_matrix @ matrix
-        transform = transform.T       # translation at bottom
+        transform = transform.T  # translation at bottom
 
     mesh_list = []
     for sub_node_index in node.children:
         sub_mesh_list = parse_glb_tree(glb, sub_node_index)
         mesh_list += sub_mesh_list
-    for (_, mesh_transform) in mesh_list:
+    for _, mesh_transform in mesh_list:
         mesh_transform @= transform
     if node.mesh is not None:
         mesh_list.append([node.mesh, transform])
@@ -318,7 +318,8 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 material, uv_used = materials.get(primitive.material, (None, 0))
                 if material is None:
                     material, uv_used = materials.setdefault(
-                        primitive.material, parse_glb_material(glb, primitive.material, surface))
+                        primitive.material, parse_glb_material(glb, primitive.material, surface)
+                    )
             else:
                 material, uv_used = None, 0
 
