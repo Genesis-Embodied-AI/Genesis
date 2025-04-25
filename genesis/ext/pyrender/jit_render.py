@@ -756,62 +756,32 @@ class JITRenderer:
         self.load_programs(renderer, flags, program_flags)
         if self._forward_pass is None:
             self.gen_func_ptr()
-        # timer = time()
-        if flags & RenderFlags.SEG:
-            self._forward_pass(
-                self.vao_id,
-                self.program_id[(flags, program_flags)],
-                self.pose,
-                self.textures,
-                self.pbr_mat,
-                self.spec_mat,
-                self.render_flags,
-                self.mode,
-                self.n_instances,
-                self.n_indices,
-                self.light,
-                self.shadow_map,
-                self.light_matrix,
-                self.ambient_light,
-                V.astype(np.float32),
-                P.astype(np.float32),
-                cam_pos.astype(np.float32),
-                flags,
-                color_list,
-                reflection_mat,
-                floor_tex,
-                screen_size,
-                env_idx,
-                self.gl.wrapper_instance,
-            )
-        else:
-            self._forward_pass(
-                self.vao_id,
-                self.program_id[(flags, program_flags)],
-                self.pose,
-                self.textures,
-                self.pbr_mat,
-                self.spec_mat,
-                self.render_flags,
-                self.mode,
-                self.n_instances,
-                self.n_indices,
-                self.light,
-                self.shadow_map,
-                self.light_matrix,
-                self.ambient_light,
-                V.astype(np.float32),
-                P.astype(np.float32),
-                cam_pos.astype(np.float32),
-                flags,
-                self.pbr_mat,
-                reflection_mat,
-                floor_tex,
-                screen_size,
-                env_idx,
-                self.gl.wrapper_instance,
-            )
-        # print(100.0/(time()-timer))
+        self._forward_pass(
+            self.vao_id,
+            self.program_id[(flags, program_flags)],
+            self.pose,
+            self.textures,
+            self.pbr_mat,
+            self.spec_mat,
+            self.render_flags,
+            self.mode,
+            self.n_instances,
+            self.n_indices,
+            self.light,
+            self.shadow_map,
+            self.light_matrix,
+            self.ambient_light,
+            V.astype(np.float32),
+            P.astype(np.float32),
+            cam_pos.astype(np.float32),
+            flags,
+            color_list if flags & RenderFlags.SEG else self.pbr_mat,
+            reflection_mat,
+            floor_tex,
+            screen_size,
+            env_idx,
+            self.gl.wrapper_instance,
+        )
 
     def shadow_mapping_pass(self, renderer, V, P, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
