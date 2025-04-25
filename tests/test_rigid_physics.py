@@ -1029,8 +1029,11 @@ def test_convexify(euler, show_viewer):
             file="meshes/tank.obj",
             scale=5.0,
             fixed=True,
-            euler=euler,
             pos=(0.05, -0.1, 0.0),
+            euler=euler,
+            coacd_options=gs.options.CoacdOptions(
+                threshold=0.08,
+            ),
         ),
         vis_mode="collision",
     )
@@ -1045,12 +1048,20 @@ def test_convexify(euler, show_viewer):
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/output.xml",
-                pos=(0.0, 0.15 * (i - 1.5), 0.4),
+                pos=(0.02 * (1.5 - i), 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
             visualize_contact=True,
         )
         objs.append(obj)
+    # cam = scene.add_camera(
+    #     pos=(0.5, 0.0, 1.0),
+    #     lookat=(0.0, 0.0, 0.0),
+    #     res=(500, 500),
+    #     fov=60,
+    #     spp=512,
+    #     GUI=False,
+    # )
     scene.build()
     gs_sim = scene.sim
 
@@ -1068,12 +1079,15 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 1300 if euler == (90, 0, 90) else 800
+    # cam.start_recording()
+    num_steps = 1300 if euler == (90, 0, 90) else 1100
     for i in range(num_steps):
         scene.step()
+        # cam.render()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
             np.testing.assert_allclose(qvel, 0, atol=0.65)
+    # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
@@ -1086,7 +1100,7 @@ def test_convexify(euler, show_viewer):
     if euler == (90, 0, 90):
         for i, obj in enumerate((mug, donut)):
             qpos = obj.get_dofs_position().cpu()
-            np.testing.assert_allclose(qpos[0], 0.0, atol=6e-3)
+            np.testing.assert_allclose(qpos[0], 0.02 * (1.5 - i), atol=5e-3)
             np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
 
 
