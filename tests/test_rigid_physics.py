@@ -947,6 +947,62 @@ def test_nonconvex_collision(show_viewer):
 
 # FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
 @pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.parametrize("convexify", [True, False])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mesh_repair(convexify, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="work_table.glb",
+        max_workers=1,
+    )
+    table = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/work_table.glb",
+            pos=(0.4, 0.0, -0.525510208),
+            fixed=True,
+        ),
+        vis_mode="collision",
+    )
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="spoon.glb",
+        max_workers=1,
+    )
+    obj = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/spoon.glb",
+            pos=(0.3, 0, 0.015),
+            quat=(0.707, 0.707, 0, 0),
+            convexify=convexify,
+            scale=1.0,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    if convexify:
+        assert all(geom.metadata["decomposed"] for geom in obj.geoms)
+
+    for i in range(300):
+        scene.step()
+        if i > 200:
+            qvel = obj.get_dofs_velocity().cpu()
+            np.testing.assert_allclose(qvel, 0, atol=0.85)
+    qpos = obj.get_dofs_position().cpu()
+    np.testing.assert_allclose(qpos[:3], (0.3, 0, 0.015), atol=0.01)
+
+
+@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, show_viewer):
