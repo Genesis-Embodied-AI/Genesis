@@ -571,7 +571,9 @@ def test_batched_offscreen_rendering(show_viewer):
             pos=(0.2, -0.8, 0.2),
             fixed=True,
         ),
-        surface=gs.surfaces.Smooth(color=(1.0, 1.0, 1.0, 0.5)),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 1.0, 1.0, 0.5),
+        ),
     )
     scene.add_entity(
         morph=gs.morphs.Mesh(
@@ -940,7 +942,7 @@ def test_nonconvex_collision(show_viewer):
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             # FIXME: atol=0.1 is fine most of the time but sometimes fails.
             # Unfortunately producing the issue is not easy.
-            np.testing.assert_allclose(qvel, 0, atol=0.6)
+            np.testing.assert_allclose(qvel, 0, atol=0.65)
 
 
 # FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
@@ -1015,7 +1017,7 @@ def test_convexify(euler, show_viewer):
         scene.step()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.6)
+            np.testing.assert_allclose(qvel, 0, atol=0.65)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()

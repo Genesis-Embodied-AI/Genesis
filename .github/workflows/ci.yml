@@ -44,7 +44,7 @@ jobs:
             source \"\$HOME/.bash_profile\" && \
             cp -r /workspace /app && cd /app && \
             bash ./.github/workflows/setup_env.sh && \
-            pip install -e ".[dev]" && \
+            pip install -e '.[dev]' && \
             pytest -v ./tests && \
             pytest -v -m 'benchmarks' --backend gpu ./tests"
 
