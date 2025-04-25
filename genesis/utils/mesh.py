@@ -229,6 +229,15 @@ def postprocess_collision_geoms(
     if not g_infos:
         return []
 
+    # Try the repair meshes that may be "broken" but not beyond repair
+    for g_info in g_infos:
+        mesh = g_info["mesh"]
+        tmesh = mesh.trimesh
+        if g_info["type"] != gs.GEOM_TYPE.MESH:
+            continue
+        if tmesh.is_winding_consistent and not tmesh.is_watertight:
+            tmesh = tmesh.process(validate=True)
+
     # Check if all the geometries can be convexify without decomposition
     must_decompose = False
     if convexify:
