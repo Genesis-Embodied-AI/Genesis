@@ -1134,7 +1134,7 @@ class Viewer(pyglet.window.Window):
             if self.render_flags["env_separate_rigid"]:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, _ = renderer.render(scene, flags, is_first_pass=True)
+            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
             retval = retval + (normal_arr,)
 
             renderer._program_cache = old_cache

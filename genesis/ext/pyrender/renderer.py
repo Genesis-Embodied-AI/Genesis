@@ -428,86 +428,6 @@ class Renderer(object):
         except Exception:
             pass
 
-    def _forward_pass_legacy(self, scene, flags, seg_node_map=None, env_idx=-1):
-        # Set up viewport for render
-        self._configure_forward_pass_viewport(flags)
-
-        # Clear it
-        if bool(flags & RenderFlags.SEG):
-            glClearColor(0.0, 0.0, 0.0, 1.0)
-            if seg_node_map is None:
-                seg_node_map = {}
-        else:
-            glClearColor(*scene.bg_color)
-
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
-        if not bool(flags & RenderFlags.SEG):
-            glEnable(GL_MULTISAMPLE)
-        else:
-            glDisable(GL_MULTISAMPLE)
-
-        # Set up camera matrices
-        V, P = self._get_camera_matrices(scene)
-
-        program = None
-        # Now, render each object in sorted order
-        for node in scene.sorted_mesh_nodes():
-            mesh = node.mesh
-
-            # Skip the mesh if it's not visible
-            if not mesh.is_visible:
-                continue
-
-            # If SEG, set color
-            if bool(flags & RenderFlags.SEG):
-                if node not in seg_node_map:
-                    continue
-                color = seg_node_map[node]
-                if not isinstance(color, (list, tuple, np.ndarray)):
-                    color = np.repeat(color, 3)
-                else:
-                    color = np.asanyarray(color)
-                color = color / 255.0
-
-            for primitive in mesh.primitives:
-
-                # First, get and bind the appropriate program
-                program = self._get_primitive_program(primitive, flags, ProgramFlags.USE_MATERIAL)
-                program._bind()
-
-                # Set the camera uniforms
-                program.set_uniform("V", V)
-                program.set_uniform("P", P)
-                program.set_uniform("cam_pos", scene.get_pose(scene.main_camera_node)[:3, 3])
-                if bool(flags & RenderFlags.SEG):
-                    program.set_uniform("color", color)
-
-                # Next, bind the lighting
-                if not (flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.FLAT or flags & RenderFlags.SEG):
-                    self._bind_lighting(scene, program, node, flags)
-
-                # Finally, bind and draw the primitive
-                self._bind_and_draw_primitive(
-                    primitive=primitive,
-                    pose=scene.get_pose(node),
-                    program=program,
-                    flags=flags,
-                    env_idx=env_idx,
-                )
-                self._reset_active_textures()
-
-        # Unbind the shader and flush the output
-        if program is not None:
-            program._unbind()
-        glFlush()
-
-        # If doing offscreen render, copy result from framebuffer and return
-        if flags & RenderFlags.OFFSCREEN:
-            return self._read_main_framebuffer(scene, flags)
-        else:
-            return
-
     ###########################################################################
     # Rendering passes
     ###########################################################################
@@ -533,10 +453,6 @@ class Renderer(object):
             reflection_mat=self.jit.reflection_mat,
             env_idx=env_idx,
         )
-
-        # tmp = self.get_tex_image(self._floor_texture_color._texid, width=self.viewport_width, height=self.viewport_height)
-        # plt.imshow(tmp)
-        # plt.show()
 
     def _forward_pass(self, scene, flags, seg_node_map=None, env_idx=-1):
         # Set up viewport for render
@@ -592,8 +508,6 @@ class Renderer(object):
         # If doing offscreen render, copy result from framebuffer and return
         if flags & RenderFlags.OFFSCREEN:
             return self._read_main_framebuffer(scene, flags)
-        else:
-            return
 
     def _point_shadow_mapping_pass(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light
@@ -608,57 +522,6 @@ class Renderer(object):
         self.jit.point_shadow_mapping_pass(
             self, light_matrix, position, flags, ProgramFlags.POINT_SHADOW, env_idx=env_idx
         )
-
-    def _point_shadow_mapping_pass_legacy(self, scene, light_node, flags, env_idx=-1):
-        light = light_node.light
-        position = scene.get_pose(light_node)[:3, 3]
-        camera = light._get_shadow_camera(scene.scale)
-        projection = camera.get_projection_matrix()
-        view = light._get_view_matrices(position)
-        light_matrix = projection @ view
-
-        self._configure_point_shadow_mapping_viewport(light, flags)
-
-        for node in scene.sorted_mesh_nodes():
-            mesh = node.mesh
-
-            # Skip the mesh if it's not visible
-            if not mesh.is_visible:
-                continue
-
-            for primitive in mesh.primitives:
-
-                # First, get and bind the appropriate program
-                program = self._get_primitive_program(primitive, flags, ProgramFlags.POINT_SHADOW)
-                program._bind()
-
-                # Set the camera uniforms
-                for i in range(6):
-                    program.set_uniform("light_matrix[" + str(i) + "]", light_matrix[i])
-                program.set_uniform("light_pos", position)
-                # program.set_uniform(
-                #     'cam_pos', scene.get_pose(scene.main_camera_node)[:3,3]
-                # )
-
-                # Finally, bind and draw the primitive
-                self._bind_and_draw_primitive(
-                    primitive=primitive,
-                    pose=scene.get_pose(node),
-                    program=program,
-                    flags=RenderFlags.DEPTH_ONLY,
-                    env_idx=env_idx,
-                )
-                self._reset_active_textures()
-
-        # for i in range(6):
-        #     dep = self.get_depth_image(light.shadow_texture._texid, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_CUBE_MAP_POSITIVE_X+i)
-        #     print(dep.min(), dep.max())
-        #     plt.imshow(dep)
-        #     plt.show()
-
-        if program is not None:
-            program._unbind()
-        glFlush()
 
     def _shadow_mapping_pass(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light
@@ -675,55 +538,6 @@ class Renderer(object):
         # plt.imshow(dep)
         # plt.show()
         # plt.savefig('tmp/tmp_dep.jpg')
-
-    def _shadow_mapping_pass_legacy(self, scene, light_node, flags, env_idx=-1):
-        light = light_node.light
-
-        # Set up viewport for render
-        self._configure_shadow_mapping_viewport(light, flags)
-
-        # Set up camera matrices
-        V, P = self._get_light_cam_matrices(scene, light_node, flags)
-
-        # Now, render each object in sorted order
-        for node in scene.sorted_mesh_nodes():
-            mesh = node.mesh
-
-            # Skip the mesh if it's not visible
-            if not mesh.is_visible:
-                continue
-
-            for primitive in mesh.primitives:
-
-                # First, get and bind the appropriate program
-                program = self._get_primitive_program(primitive, flags, ProgramFlags.NONE)
-                program._bind()
-
-                # Set the camera uniforms
-                program.set_uniform("V", V)
-                program.set_uniform("P", P)
-                # program.set_uniform(
-                #     'cam_pos', scene.get_pose(scene.main_camera_node)[:3,3]
-                # )
-
-                # Finally, bind and draw the primitive
-                self._bind_and_draw_primitive(
-                    primitive=primitive,
-                    pose=scene.get_pose(node),
-                    program=program,
-                    flags=RenderFlags.DEPTH_ONLY,
-                    env_idx=env_idx,
-                )
-                self._reset_active_textures()
-
-        # dep = self.get_depth_image(light.shadow_texture._texid)
-        # plt.imshow(dep)
-        # plt.savefig('tmp/tmp_dep.jpg')
-
-        # Unbind the shader and flush the output
-        if program is not None:
-            program._unbind()
-        glFlush()
 
     def _normals_pass(self, scene, flags, env_idx=-1):
         # Set up viewport for render
@@ -742,7 +556,6 @@ class Renderer(object):
                 continue
 
             for primitive in mesh.primitives:
-
                 # Skip objects that don't have normals
                 if not primitive.buf_flags & BufFlags.NORMAL:
                     continue
@@ -826,8 +639,7 @@ class Renderer(object):
                 glEnable(GL_BLEND)
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             else:
-                glEnable(GL_BLEND)
-                glBlendFunc(GL_ONE, GL_ZERO)
+                glDisable(GL_BLEND)
 
             # Set wireframe mode
             wf = material.wireframe
@@ -846,9 +658,8 @@ class Renderer(object):
                 glCullFace(GL_BACK)
         else:
             glEnable(GL_CULL_FACE)
-            glEnable(GL_BLEND)
             glCullFace(GL_BACK)
-            glBlendFunc(GL_ONE, GL_ZERO)
+            glDisable(GL_BLEND)
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
         # Set point size if needed
@@ -1480,10 +1291,7 @@ class Renderer(object):
         glDepthFunc(GL_LESS)
         glDepthRange(0.0, 1.0)
 
-        w = self.viewport_width
-        h = self.viewport_height
-
-        num_nodes = len(light_nodes)
+        w, h = self.viewport_width, self.viewport_height
         viewport_dims = {
             (0, 2): [0, h // 2, w // 2, h],
             (1, 2): [w // 2, h // 2, w, h],
@@ -1496,40 +1304,28 @@ class Renderer(object):
             (3, 4): [w // 2, 0, w, h // 2],
         }
 
-        if tile:
-            for i, ln in enumerate(light_nodes):
-                light = ln.light
+        num_nodes = len(light_nodes)
+        for i, ln in enumerate(light_nodes):
+            light = ln.light
 
-                if light.shadow_texture is None:
-                    raise ValueError("Light does not have a shadow texture")
+            if light.shadow_texture is None:
+                raise ValueError("Light does not have a shadow texture")
 
+            if tile:
                 glViewport(*viewport_dims[(i, num_nodes + 1)])
-
-                program = self._get_debug_quad_program()
-                program._bind()
-                self._bind_texture(light.shadow_texture, "depthMap", program)
-                self._render_debug_quad()
-                self._reset_active_textures()
-                glFlush()
-            i += 1
-            glViewport(*viewport_dims[(i, num_nodes + 1)])
-            self._forward_pass_no_reset(scene, flags, env_idx=env_idx)
-        else:
-            for i, ln in enumerate(light_nodes):
-                light = ln.light
-
-                if light.shadow_texture is None:
-                    raise ValueError("Light does not have a shadow texture")
-
+            else:
                 glViewport(0, 0, self.viewport_width, self.viewport_height)
 
-                program = self._get_debug_quad_program()
-                program._bind()
-                self._bind_texture(light.shadow_texture, "depthMap", program)
-                self._render_debug_quad()
-                self._reset_active_textures()
-                glFlush()
+            program = self._get_debug_quad_program()
+            program._bind()
+            self._bind_texture(light.shadow_texture, "depthMap", program)
+            self._render_debug_quad()
+            self._reset_active_textures()
+            glFlush()
+            if not tile:
                 return
+        glViewport(*viewport_dims[(num_nodes, num_nodes + 1)])
+        self._forward_pass_no_reset(scene, flags, env_idx=env_idx)
 
     def _get_debug_quad_program(self):
         program = self._program_cache.get_program(vertex_shader="debug_quad.vert", fragment_shader="debug_quad.frag")

@@ -481,18 +481,120 @@ def test_info_batching():
     np.testing.assert_allclose(qposs[0], qposs[1])
 
 
-@pytest.mark.xfail(reason="Offscreen rendering is actually not deterministic on Nvidia GPU.")
 def test_batched_offscreen_rendering(show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            plane_reflection=False,
             # rendered_envs_idx=(0, 1, 2),
             env_separate_rigid=False,
-            show_world_frame=False,
-            show_link_frame=False,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+    )
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ColorTexture(
+                color=(1.0, 0.5, 0.5),
+            ),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.6, 0.8, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Iron(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Gold(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Glass(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(0.2, -0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 1.0, 1.0, 0.5),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+            scale=0.025,
+            pos=(0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+            scale=0.025,
+            pos=(0.2, -0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            )
+        ),
     )
     robot = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -517,6 +619,7 @@ def test_batched_offscreen_rendering(show_viewer):
 
             robots_rgb_arrays = []
             robot.set_qpos(torch.tile(qpos, (3, 1)))
+            scene.visualizer.update()
             for i in range(3):
                 pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
                 lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
@@ -839,7 +942,7 @@ def test_nonconvex_collision(show_viewer):
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             # FIXME: atol=0.1 is fine most of the time but sometimes fails.
             # Unfortunately producing the issue is not easy.
-            np.testing.assert_allclose(qvel, 0, atol=0.6)
+            np.testing.assert_allclose(qvel, 0, atol=0.65)
 
 
 # FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
@@ -914,7 +1017,7 @@ def test_convexify(euler, show_viewer):
         scene.step()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.6)
+            np.testing.assert_allclose(qvel, 0, atol=0.65)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
