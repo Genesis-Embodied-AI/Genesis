@@ -639,8 +639,7 @@ class Renderer(object):
                 glEnable(GL_BLEND)
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             else:
-                glEnable(GL_BLEND)
-                glBlendFunc(GL_ONE, GL_ZERO)
+                glDisable(GL_BLEND)
 
             # Set wireframe mode
             wf = material.wireframe
@@ -659,9 +658,8 @@ class Renderer(object):
                 glCullFace(GL_BACK)
         else:
             glEnable(GL_CULL_FACE)
-            glEnable(GL_BLEND)
             glCullFace(GL_BACK)
-            glBlendFunc(GL_ONE, GL_ZERO)
+            glDisable(GL_BLEND)
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
         # Set point size if needed

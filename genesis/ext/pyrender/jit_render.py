@@ -487,11 +487,12 @@ class JITRenderer:
                         set_uniform_3fv(pid, "material.glossiness_factor", spec_mat[id, 8:11], gl)
 
                     if render_flags[id, 0]:
+                        # FIXME: Note that enabling GL_BLEND yield non-deterministic results on Nvidia GPU.
+                        # As a result, it must only be enabled if absolutely necessary rather than systematically.
                         gl.glEnable(GL_BLEND)
                         gl.glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
                     else:
-                        gl.glEnable(GL_BLEND)
-                        gl.glBlendFunc(GL_ONE, GL_ZERO)
+                        gl.glDisable(GL_BLEND)
 
                     wf = render_flags[id, 1]
                     if flags & RenderFlags_FLIP_WIREFRAME:
@@ -508,9 +509,8 @@ class JITRenderer:
                         gl.glCullFace(GL_BACK if det_reflection > 0 else GL_FRONT)
                 else:
                     gl.glEnable(GL_CULL_FACE)
-                    gl.glEnable(GL_BLEND)
                     gl.glCullFace(GL_BACK if det_reflection > 0 else GL_FRONT)
-                    gl.glBlendFunc(GL_ONE, GL_ZERO)
+                    gl.glDisable(GL_BLEND)
                     gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
@@ -578,9 +578,8 @@ class JITRenderer:
                 gl.glBindVertexArray(vao_id[id])
 
                 gl.glEnable(GL_CULL_FACE)
-                gl.glEnable(GL_BLEND)
                 gl.glCullFace(GL_BACK)
-                gl.glBlendFunc(GL_ONE, GL_ZERO)
+                gl.glDisable(GL_BLEND)
                 gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
@@ -643,9 +642,8 @@ class JITRenderer:
                 gl.glBindVertexArray(vao_id[id])
 
                 gl.glEnable(GL_CULL_FACE)
-                gl.glEnable(GL_BLEND)
                 gl.glCullFace(GL_BACK)
-                gl.glBlendFunc(GL_ONE, GL_ZERO)
+                gl.glDisable(GL_BLEND)
                 gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
