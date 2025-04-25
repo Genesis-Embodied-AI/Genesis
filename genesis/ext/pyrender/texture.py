@@ -219,8 +219,8 @@ class Texture(object):
         glTexParameterfv(self.tex_type, GL_TEXTURE_BORDER_COLOR, border_color)
 
         if texture_filter_anisotropic.glInitTextureFilterAnisotropicEXT():
-            glTexParameterf(GL_TEXTURE_2D, texture_filter_anisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso)
             max_aniso = glGetFloat(texture_filter_anisotropic.GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+            glTexParameterf(GL_TEXTURE_2D, texture_filter_anisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso)
         else:
             gs.logger.debug("Current OpenGL context does not support anisotropic filtering. Disabling it...")
 
