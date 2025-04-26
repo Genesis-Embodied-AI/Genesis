@@ -253,42 +253,41 @@ def parse_glb_material(glb, material_index, surface):
         double_sided=double_sided,
     )
 
-    return material_surface, uvs_used
+    return material_surface, uvs_used, material.name
 
 
 def parse_glb_tree(glb, node_index):
     node = glb.nodes[node_index]
+    non_identity = False
     if node.matrix is not None:
         transform = np.array(node.matrix, dtype=np.float32).reshape((4, 4))
+        non_identity = True
+        # print("Load matrix", node.name, transform.T)
     else:
         transform = np.identity(4, dtype=np.float32)
         if node.translation is not None:
             transform[:3, 3] = node.translation
-            # translation = np.array(node.translation, dtype=float)
-            # translation_matrix = np.identity(4, dtype=float)
-            # translation_matrix[3, :3] = translation
-            # matrix = translation_matrix @ matrix
+            non_identity = True
         if node.rotation is not None:
             transform[:3, :3] = R.from_quat(node.rotation).as_matrix()  # xyzw
-            # rotation = np.array(node.rotation, dtype=float)
-            # rotation_matrix = np.identity(4, dtype=float)
-            # rotation = [rotation[3], rotation[0], rotation[1], rotation[2]]
-            # rotation_matrix[:3, :3] = trimesh.transformations.quaternion_matrix(rotation)[:3, :3].T
-            # matrix = rotation_matrix @ matrix
+            non_identity = True
         if node.scale is not None:
             transform[:3, :3] *= node.scale
-            # scale = np.array(node.scale, dtype=np.float32)
-            # matrix[:3, :3] *= scale[:, np.newaxis]
-            # scale_matrix = np.diag(np.append(scale, 1))
-            # matrix = scale_matrix @ matrix
+            non_identity = True
         transform = transform.T  # translation at bottom
+        # print("Load SRT", node.name)
+        # print(node.translation, node.rotation, node.scale, transform.T)
 
     mesh_list = []
     for sub_node_index in node.children:
         sub_mesh_list = parse_glb_tree(glb, sub_node_index)
         mesh_list += sub_mesh_list
-    for _, mesh_transform in mesh_list:
-        mesh_transform @= transform
+    if non_identity:
+        for _, mesh_transform in mesh_list:
+            # print("Before app:", mesh_transform.T, "\n")
+            mesh_transform @= transform
+            # print("After app:", mesh_transform.T, transform.T, "\n")
+
     if node.mesh is not None:
         mesh_list.append([node.mesh, transform])
     return mesh_list
@@ -310,14 +309,15 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
     mesh_infos = mu.MeshInfoGroup()
     materials = {}
 
-    for i, (mesh, mesh_transform) in enumerate(mesh_list):
+    for i, (mesh_index, mesh_transform) in enumerate(mesh_list):
+        mesh = glb.meshes[mesh_index]
+        mesh_name = mesh.name
+        
         for primitive in mesh.primitives:
-            group_idx = primitive.material if group_by_material else i
-
             if primitive.material is not None:
                 material, uv_used = materials.get(primitive.material, (None, 0))
                 if material is None:
-                    material, uv_used = materials.setdefault(
+                    material, uv_used, material_name = materials.setdefault(
                         primitive.material, parse_glb_material(glb, primitive.material, surface)
                     )
             else:
@@ -386,10 +386,22 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                     if primitive.attributes.TEXCOORD_1:
                         uvs = get_glb_data_from_accessor(glb, primitive.attributes.TEXCOORD_1).astype(np.float32)
 
+            points, normals = mu.apply_transform(mesh_transform, points, normals)
             if normals is None:
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
-            points, normals = mu.apply_transform(mesh_transform, points, normals)
+            # print("Transform in parse:", mesh_transform)
+            # print("Normals in parse:", normals[:5])
 
-            mesh_infos.append(group_idx, points, triangles, normals, uvs, material)
+            group_idx = primitive.material if group_by_material else i
+            mesh_info, first_created = mesh_infos.get(group_idx)
+            if first_created:
+                mesh_info.set_property(
+                    surface = material,
+                    metadata = {
+                        "path": path,
+                        "name": material_name if group_by_material else mesh_name
+                    })
 
-    return mesh_infos.export_meshes(scale=scale, path=path)
+            mesh_info.append(points, triangles, normals, uvs)
+
+    return mesh_infos.export_meshes(scale=scale)

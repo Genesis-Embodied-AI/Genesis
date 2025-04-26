@@ -51,13 +51,13 @@ class Mesh(RBC):
         decimate=False,
         decimate_face_num=500,
         decimate_aggressiveness=0,
-        metadata=dict(),
+        metadata=None,
     ):
         self._uid = gs.UID()
         self._mesh = mesh
         self._surface = surface
         self._uvs = uvs
-        self._metadata = metadata
+        self._metadata = metadata or {}
 
         if self._surface.requires_uv():  # check uvs here
             if self._uvs is None:
@@ -218,7 +218,7 @@ class Mesh(RBC):
         decimate=False,
         decimate_face_num=500,
         decimate_aggressiveness=2,
-        metadata=dict(),
+        metadata=None,
         surface=None,
     ):
         """

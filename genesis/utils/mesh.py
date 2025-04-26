@@ -2,8 +2,7 @@ import hashlib
 import math
 import os
 import pickle as pkl
-from io import BytesIO
-from urllib import request
+from scipy.spatial.transform import Rotation as R
 
 import numpy as np
 import trimesh
@@ -29,15 +28,24 @@ from .misc import (
     get_tet_cache_dir,
 )
 
+_identity4 = np.eye(4, dtype=np.float32)
+_identity4.flags.writeable = False
+_identity3 = np.eye(3, dtype=np.float32)
+_identity3.flags.writeable = False
 
 class MeshInfo:
-    def __init__(self, surface):
-        self.surface = surface
+    def __init__(self):
+        self.surface = None
+        self.metadata = {}
         self.verts = []
         self.faces = []
         self.normals = []
         self.uvs = []
         self.n_points = 0
+    
+    def set_property(self, surface=None, metadata=None):
+        self.surface = surface
+        self.metadata = metadata
 
     def append(self, verts, faces, normals, uvs):
         faces += self.n_points
@@ -47,7 +55,7 @@ class MeshInfo:
         self.uvs.append(uvs)
         self.n_points += len(verts)
 
-    def export_mesh(self, scale, path):
+    def export_mesh(self, scale):
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
                 if uvs is None:
@@ -68,7 +76,7 @@ class MeshInfo:
             uvs=uvs,
             scale=scale,
         )
-        mesh.metadata["mesh_path"] = path
+        mesh.metadata.update(self.metadata)
         return mesh
 
 
@@ -76,14 +84,16 @@ class MeshInfoGroup:
     def __init__(self):
         self.infos = dict()
 
-    def append(self, name, verts, faces, normals, uvs, surface):
+    def get(self, name):
+        first_created = False
         mesh_info = self.infos.get(name)
         if mesh_info is None:
-            mesh_info = self.infos.setdefault(name, MeshInfo(surface))
-        mesh_info.append(verts, faces, normals, uvs)
+            mesh_info = self.infos.setdefault(name, MeshInfo())
+            first_created = True
+        return mesh_info, first_created
 
-    def export_meshes(self, scale, path):
-        return [mesh_info.export_mesh(scale, path) for mesh_info in self.infos.values()]
+    def export_meshes(self, scale):
+        return [mesh_info.export_mesh(scale) for mesh_info in self.infos.values()]
 
 
 def get_asset_path(file):
@@ -446,11 +456,18 @@ def create_texture(image, factor, encoding):
         return None
 
 
-def apply_transform(matrix, positions, normals=None):
-    n = positions.shape[0]
-    transformed_positions = (np.hstack([positions, np.ones((n, 1))]) @ matrix)[:, :3]
+def apply_transform(transform, positions, normals=None):
+    transformed_positions = (np.column_stack([positions, np.ones(len(positions))]) @ transform)[:, :3]
     if normals is not None:
-        transformed_normals = (np.hstack([normals, np.zeros((n, 1))]) @ matrix)[:, :3]
+        trans_R = transform[:3, :3]
+        # print(np.ptp(trans_R - _identity3), np.ptp(trans_R - _identity3) < 1e-7)
+        if np.ptp(trans_R - _identity3) > 1e-7:     # has rotation
+            transformed_normals = normals @ trans_R
+            scale = np.linalg.norm(trans_R, axis=1, keepdims=True)
+            if np.abs(scale - 1.0).max() > 1e-7:    # has scale
+                transformed_normals /= np.linalg.norm(transformed_normals, axis=1, keepdims=True)
+        else:
+            transformed_normals = normals   # in place?
     else:
         transformed_normals = None
     return transformed_positions, transformed_normals
