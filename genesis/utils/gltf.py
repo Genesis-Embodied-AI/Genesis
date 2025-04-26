@@ -314,7 +314,7 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                         primitive.material, parse_glb_material(glb, primitive.material, surface)
                     )
             else:
-                material, uv_used = None, 0, ""
+                material, uv_used, material_name = None, 0, ""
 
             uvs = None
             if "KHR_draco_mesh_compression" in primitive.extensions:
