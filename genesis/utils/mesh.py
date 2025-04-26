@@ -29,6 +29,8 @@ from .misc import (
     get_tet_cache_dir,
 )
 
+MESH_REPAIR_ERROR_THRESHOLD = 0.01
+
 
 def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
@@ -229,14 +231,24 @@ def postprocess_collision_geoms(
     if not g_infos:
         return []
 
-    # Try the repair meshes that may be "broken" but not beyond repair
+    # Try the repair meshes that seems to be "broken" but not beyond repair.
+    # Note that this procedure is only applied if the estimated volume is significantly different before and after
+    # repair, to avoid altering the original mesh without actual benefit. Moreover, only duplicate faces are removed,
+    # which is less aggressive than `Trimesh.process(validate=True)`.
     for g_info in g_infos:
         mesh = g_info["mesh"]
         tmesh = mesh.trimesh
         if g_info["type"] != gs.GEOM_TYPE.MESH:
             continue
         if tmesh.is_winding_consistent and not tmesh.is_watertight:
-            tmesh = tmesh.process(validate=True)
+            tmesh_repaired = tmesh.copy()
+            tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
+            if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
+                gs.logger.info(
+                    "Collision mesh is not watertight and has ill-defined volume. It will be repaired by removing "
+                    "duplicate faces."
+                )
+                tmesh.update_faces(tmesh.unique_faces())
 
     # Check if all the geometries can be convexify without decomposition
     must_decompose = False
@@ -253,7 +265,7 @@ def postprocess_collision_geoms(
                 volume_err = float("inf")
                 must_decompose = True
             elif tmesh.volume > gs.EPS:
-                volume_err = cmesh.volume / tmesh.volume - 1.0
+                volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
                 if volume_err > decompose_error_threshold:
                     must_decompose = True
 
@@ -293,13 +305,13 @@ def postprocess_collision_geoms(
         tmesh = mesh.trimesh
         cmesh = trimesh.convex.convex_hull(tmesh)
         if tmesh.is_winding_consistent:
-            volume_err = cmesh.volume / tmesh.volume - 1.0
+            volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
             must_decompose = volume_err > decompose_error_threshold
 
     if must_decompose:
         if math.isinf(volume_err):
             gs.logger.info(
-                f"Collision mesh has inconsistent winding and 'decompose_error_threshold' != float('inf'). "
+                "Collision mesh has inconsistent winding and 'decompose_error_threshold' != float('inf'). "
                 "Falling back to more expensive convex decomposition (see FileMorph options)."
             )
         else:
@@ -315,11 +327,11 @@ def postprocess_collision_geoms(
                 volume_err = 0.0
             if not tmesh.is_winding_consistent:
                 volume_err = float("inf")
-            elif tmesh.volume < gs.EPS:
+            elif abs(tmesh.volume) < gs.EPS:
                 volume_err = 0.0
             else:
                 cmesh = trimesh.convex.convex_hull(tmesh)
-                volume_err = cmesh.volume / tmesh.volume - 1.0
+                volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
             if volume_err > decompose_error_threshold:  # Note that 'inf' is not larger than 'inf'
                 tmeshes = convex_decompose(tmesh, coacd_options)
                 meshes = [
