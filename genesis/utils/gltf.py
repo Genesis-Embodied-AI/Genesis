@@ -312,7 +312,7 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
     for i, (mesh_index, mesh_transform) in enumerate(mesh_list):
         mesh = glb.meshes[mesh_index]
         mesh_name = mesh.name
-        
+
         for primitive in mesh.primitives:
             if primitive.material is not None:
                 material, uv_used = materials.get(primitive.material, (None, 0))
@@ -396,11 +396,8 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
             mesh_info, first_created = mesh_infos.get(group_idx)
             if first_created:
                 mesh_info.set_property(
-                    surface = material,
-                    metadata = {
-                        "path": path,
-                        "name": material_name if group_by_material else mesh_name
-                    })
+                    surface=material, metadata={"path": path, "name": material_name if group_by_material else mesh_name}
+                )
 
             mesh_info.append(points, triangles, normals, uvs)
 

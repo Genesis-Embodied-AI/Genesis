@@ -33,6 +33,7 @@ _identity4.flags.writeable = False
 _identity3 = np.eye(3, dtype=np.float32)
 _identity3.flags.writeable = False
 
+
 class MeshInfo:
     def __init__(self):
         self.surface = None
@@ -42,7 +43,7 @@ class MeshInfo:
         self.normals = []
         self.uvs = []
         self.n_points = 0
-    
+
     def set_property(self, surface=None, metadata=None):
         self.surface = surface
         self.metadata = metadata
@@ -461,13 +462,13 @@ def apply_transform(transform, positions, normals=None):
     if normals is not None:
         trans_R = transform[:3, :3]
         # print(np.ptp(trans_R - _identity3), np.ptp(trans_R - _identity3) < 1e-7)
-        if np.ptp(trans_R - _identity3) > 1e-7:     # has rotation
+        if np.ptp(trans_R - _identity3) > 1e-7:  # has rotation
             transformed_normals = normals @ trans_R
             scale = np.linalg.norm(trans_R, axis=1, keepdims=True)
-            if np.abs(scale - 1.0).max() > 1e-7:    # has scale
+            if np.abs(scale - 1.0).max() > 1e-7:  # has scale
                 transformed_normals /= np.linalg.norm(transformed_normals, axis=1, keepdims=True)
         else:
-            transformed_normals = normals   # in place?
+            transformed_normals = normals  # in place?
     else:
         transformed_normals = None
     return transformed_positions, transformed_normals
