@@ -66,8 +66,6 @@ def get_glb_data_from_accessor(glb, accessor_index):
         byte_length = count * num_components * itemsize
         data = buffer_data[byte_offset : byte_offset + byte_length]
         array = np.frombuffer(data, dtype=dtype)
-        # if num_components > 1:
-        #     array = array.reshape((count, num_components))
     else:
         # Data is interleaved
         array = np.zeros((count, num_components), dtype=dtype)

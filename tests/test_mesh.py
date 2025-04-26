@@ -10,7 +10,7 @@ import genesis.utils.gltf as gltf_utils
 
 @pytest.mark.parametrize("glb_file", ["assets/cube.glb", "assets/combined_srt.glb", "assets/combined_transform.glb"])
 def test_glb_parse(glb_file):
-    print(f"Testing glb parsing...")
+    """Test glb mesh parsing."""
     glb_file = os.path.join(os.path.dirname(__file__), glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
@@ -19,12 +19,11 @@ def test_glb_parse(glb_file):
         surface=gs.surfaces.Default(),
     )
 
-    tm_scene = trimesh.load(glb_file, prcess=False)
+    tm_scene = trimesh.load(glb_file, process=False)
     tm_meshes = {}
     for node_name in tm_scene.graph.nodes_geometry:
         transform, geometry_name = tm_scene.graph[node_name]
         ts_mesh = tm_scene.geometry[geometry_name].copy(include_cache=True)
-        # print(ts_mesh._cache.cache.get("vertex_normals"))
         ts_mesh = ts_mesh.apply_transform(transform)
         tm_meshes[geometry_name] = ts_mesh
     assert len(tm_meshes) == len(gs_meshes)
