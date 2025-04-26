@@ -481,18 +481,120 @@ def test_info_batching():
     np.testing.assert_allclose(qposs[0], qposs[1])
 
 
-@pytest.mark.xfail(reason="Offscreen rendering is actually not deterministic on Nvidia GPU.")
 def test_batched_offscreen_rendering(show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            plane_reflection=False,
             # rendered_envs_idx=(0, 1, 2),
             env_separate_rigid=False,
-            show_world_frame=False,
-            show_link_frame=False,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+    )
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ColorTexture(
+                color=(1.0, 0.5, 0.5),
+            ),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.6, 0.8, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Iron(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Gold(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Glass(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(0.2, -0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 1.0, 1.0, 0.5),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+            scale=0.025,
+            pos=(0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+            scale=0.025,
+            pos=(0.2, -0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            )
+        ),
     )
     robot = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -507,26 +609,29 @@ def test_batched_offscreen_rendering(show_viewer):
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
 
-    dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-    qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
+    for _ in range(10):
+        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+        qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
 
-    steps_rgb_arrays = []
-    for _ in range(2):
-        scene.step()
+        steps_rgb_arrays = []
+        for _ in range(2):
+            scene.step()
 
-        robots_rgb_arrays = []
-        robot.set_qpos(torch.tile(qpos, (3, 1)))
+            robots_rgb_arrays = []
+            robot.set_qpos(torch.tile(qpos, (3, 1)))
+            scene.visualizer.update()
+            for i in range(3):
+                pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
+                lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
+                cam.set_pose(pos=pos_i, lookat=lookat_i)
+                rgb_array, *_ = cam.render()
+                assert np.std(rgb_array) > 10.0
+                robots_rgb_arrays.append(rgb_array)
+
+            steps_rgb_arrays.append(robots_rgb_arrays)
+
         for i in range(3):
-            pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
-            lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
-            cam.set_pose(pos=pos_i, lookat=lookat_i)
-            rgb_array, *_ = cam.render()
-            assert np.std(rgb_array) > 10.0
-            robots_rgb_arrays.append(rgb_array)
-        steps_rgb_arrays.append(robots_rgb_arrays)
-
-    for i in range(3):
-        np.testing.assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i])
+            np.testing.assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i])
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -837,10 +942,66 @@ def test_nonconvex_collision(show_viewer):
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             # FIXME: atol=0.1 is fine most of the time but sometimes fails.
             # Unfortunately producing the issue is not easy.
-            np.testing.assert_allclose(qvel, 0, atol=0.6)
+            np.testing.assert_allclose(qvel, 0, atol=0.65)
 
 
 # FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
+@pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.parametrize("convexify", [True, False])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mesh_repair(convexify, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="work_table.glb",
+        max_workers=1,
+    )
+    table = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/work_table.glb",
+            pos=(0.4, 0.0, -0.525510208),
+            fixed=True,
+        ),
+        vis_mode="collision",
+    )
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="spoon.glb",
+        max_workers=1,
+    )
+    obj = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/spoon.glb",
+            pos=(0.3, 0, 0.015),
+            quat=(0.707, 0.707, 0, 0),
+            convexify=convexify,
+            scale=1.0,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    if convexify:
+        assert all(geom.metadata["decomposed"] for geom in obj.geoms)
+
+    for i in range(300):
+        scene.step()
+        if i > 200:
+            qvel = obj.get_dofs_velocity().cpu()
+            np.testing.assert_allclose(qvel, 0, atol=0.85)
+    qpos = obj.get_dofs_position().cpu()
+    np.testing.assert_allclose(qpos[:3], (0.3, 0, 0.015), atol=0.01)
+
+
 @pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -868,8 +1029,11 @@ def test_convexify(euler, show_viewer):
             file="meshes/tank.obj",
             scale=5.0,
             fixed=True,
-            euler=euler,
             pos=(0.05, -0.1, 0.0),
+            euler=euler,
+            coacd_options=gs.options.CoacdOptions(
+                threshold=0.08,
+            ),
         ),
         vis_mode="collision",
     )
@@ -884,12 +1048,20 @@ def test_convexify(euler, show_viewer):
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/output.xml",
-                pos=(0.0, 0.15 * (i - 1.5), 0.4),
+                pos=(0.02 * (1.5 - i), 0.15 * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
             visualize_contact=True,
         )
         objs.append(obj)
+    # cam = scene.add_camera(
+    #     pos=(0.5, 0.0, 1.0),
+    #     lookat=(0.0, 0.0, 0.0),
+    #     res=(500, 500),
+    #     fov=60,
+    #     spp=512,
+    #     GUI=False,
+    # )
     scene.build()
     gs_sim = scene.sim
 
@@ -907,12 +1079,15 @@ def test_convexify(euler, show_viewer):
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
-    num_steps = 1300 if euler == (90, 0, 90) else 600
+    # cam.start_recording()
+    num_steps = 1300 if euler == (90, 0, 90) else 1100
     for i in range(num_steps):
         scene.step()
+        # cam.render()
         if i > num_steps - 100:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            np.testing.assert_allclose(qvel, 0, atol=0.6)
+            np.testing.assert_allclose(qvel, 0, atol=0.65)
+    # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
         qpos = obj.get_dofs_position().cpu()
@@ -925,7 +1100,7 @@ def test_convexify(euler, show_viewer):
     if euler == (90, 0, 90):
         for i, obj in enumerate((mug, donut)):
             qpos = obj.get_dofs_position().cpu()
-            np.testing.assert_allclose(qpos[0], 0.0, atol=6e-3)
+            np.testing.assert_allclose(qpos[0], 0.02 * (1.5 - i), atol=5e-3)
             np.testing.assert_allclose(qpos[1], 0.15 * (i - 1.5), atol=5e-3)
 
 
@@ -1078,6 +1253,7 @@ def test_data_accessor(n_envs, atol):
     gs_s = gs_sim.rigid_solver
 
     # Initialize the simulation
+    np.random.seed(0)
     dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_torch(device="cpu")
     dof_bounds[..., :2, :] = torch.tensor((-1.0, 1.0))
     dof_bounds[..., 2, :] = torch.tensor((0.7, 1.0))

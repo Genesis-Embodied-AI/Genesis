@@ -11,6 +11,7 @@ from threading import Event, RLock, Semaphore, Thread
 import imageio
 import numpy as np
 import OpenGL
+from OpenGL.GL import *
 
 import genesis as gs
 
@@ -62,6 +63,9 @@ from .shader_program import ShaderProgram, ShaderProgramCache
 from .trackball import Trackball
 
 pyglet.options["shadow_window"] = False
+
+
+MODULE_DIR = os.path.dirname(__file__)
 
 
 class Viewer(pyglet.window.Window):
@@ -1075,66 +1079,65 @@ class Viewer(pyglet.window.Window):
         elif self.scene.has_node(self._direct_light):
             self.scene.remove_node(self._direct_light)
 
-        if normal:
+        flags = RenderFlags.NONE
+        if self.render_flags["flip_wireframe"]:
+            flags |= RenderFlags.FLIP_WIREFRAME
+        elif self.render_flags["all_wireframe"]:
+            flags |= RenderFlags.ALL_WIREFRAME
+        elif self.render_flags["all_solid"]:
+            flags |= RenderFlags.ALL_SOLID
 
+        if self.render_flags["shadows"]:
+            flags |= RenderFlags.SHADOWS_ALL
+        if self.render_flags["plane_reflection"]:
+            flags |= RenderFlags.REFLECTIVE_FLOOR
+        if self.render_flags["env_separate_rigid"]:
+            flags |= RenderFlags.ENV_SEPARATE
+        if self.render_flags["vertex_normals"]:
+            flags |= RenderFlags.VERTEX_NORMALS
+        if self.render_flags["face_normals"]:
+            flags |= RenderFlags.FACE_NORMALS
+        if not self.render_flags["cull_faces"]:
+            flags |= RenderFlags.SKIP_CULL_FACES
+
+        if self.render_flags["offscreen"]:
+            flags |= RenderFlags.OFFSCREEN
+
+        seg_node_map = None
+        if self.render_flags["seg"]:
+            flags |= RenderFlags.SEG
+            seg_node_map = self._seg_node_map
+
+        if self.render_flags["depth"]:
+            flags |= RenderFlags.RET_DEPTH
+
+        retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+
+        if normal:
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None
 
                 def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
                     if self.program is None:
-                        absolute_path = os.path.abspath(__file__)
-                        print(absolute_path)
                         self.program = ShaderProgram(
-                            os.path.join(absolute_path.replace("viewer.py", ""), "shaders/mesh_normal.vert"),
-                            os.path.join(absolute_path.replace("viewer.py", ""), "shaders/mesh_normal.frag"),
+                            os.path.join(MODULE_DIR, "shaders/mesh_normal.vert"),
+                            os.path.join(MODULE_DIR, "shaders/mesh_normal.frag"),
                             defines=defines,
                         )
                     return self.program
 
+            old_cache = renderer._program_cache
             renderer._program_cache = CustomShaderCache()
 
             flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
             if self.render_flags["env_separate_rigid"]:
                 flags |= RenderFlags.ENV_SEPARATE
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
+            retval = retval + (normal_arr,)
 
-            retval = renderer.render(scene, flags)
-            renderer._program_cache = ShaderProgramCache()
-
-        else:
-            flags = RenderFlags.NONE
-            if self.render_flags["flip_wireframe"]:
-                flags |= RenderFlags.FLIP_WIREFRAME
-            elif self.render_flags["all_wireframe"]:
-                flags |= RenderFlags.ALL_WIREFRAME
-            elif self.render_flags["all_solid"]:
-                flags |= RenderFlags.ALL_SOLID
-
-            if self.render_flags["shadows"]:
-                flags |= RenderFlags.SHADOWS_ALL
-            if self.render_flags["plane_reflection"]:
-                flags |= RenderFlags.REFLECTIVE_FLOOR
-            if self.render_flags["env_separate_rigid"]:
-                flags |= RenderFlags.ENV_SEPARATE
-            if self.render_flags["vertex_normals"]:
-                flags |= RenderFlags.VERTEX_NORMALS
-            if self.render_flags["face_normals"]:
-                flags |= RenderFlags.FACE_NORMALS
-            if not self.render_flags["cull_faces"]:
-                flags |= RenderFlags.SKIP_CULL_FACES
-
-            if self.render_flags["offscreen"]:
-                flags |= RenderFlags.OFFSCREEN
-
-            seg_node_map = None
-            if self.render_flags["seg"]:
-                flags |= RenderFlags.SEG
-                seg_node_map = self._seg_node_map
-
-            if self.render_flags["depth"]:
-                flags |= RenderFlags.RET_DEPTH
-
-            retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+            renderer._program_cache = old_cache
 
         if camera_node is not None:
             self.scene.main_camera_node = saved_camera_node

@@ -308,8 +308,11 @@ def _custom_excepthook(exctype, value, tb):
     print("".join(traceback.format_exception(exctype, value, tb)))
 
     # Logger the exception right before exit if possible
-    if gs.logger is not None:
+    try:
         gs.logger.error(f"{exctype.__name__}: {value}")
+    except AttributeError:
+        # Logger may not be configured at this point
+        pass
 
 
 # Set the custom excepthook to handle GenesisException

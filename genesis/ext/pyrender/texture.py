@@ -9,6 +9,8 @@ import numpy as np
 from OpenGL.GL import *
 from OpenGL.GL.EXT import texture_filter_anisotropic
 
+import genesis as gs
+
 from .utils import format_texture_source
 from .sampler import Sampler
 
@@ -216,8 +218,11 @@ class Texture(object):
             border_color = np.ones(4).astype(np.float32)
         glTexParameterfv(self.tex_type, GL_TEXTURE_BORDER_COLOR, border_color)
 
-        max_aniso = glGetFloat(texture_filter_anisotropic.GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
-        glTexParameterf(GL_TEXTURE_2D, texture_filter_anisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso)
+        if texture_filter_anisotropic.glInitTextureFilterAnisotropicEXT():
+            max_aniso = glGetFloat(texture_filter_anisotropic.GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+            glTexParameterf(GL_TEXTURE_2D, texture_filter_anisotropic.GL_TEXTURE_MAX_ANISOTROPY_EXT, max_aniso)
+        else:
+            gs.logger.debug("Current OpenGL context does not support anisotropic filtering. Disabling it...")
 
         # Unbind texture
         glBindTexture(self.tex_type, 0)
