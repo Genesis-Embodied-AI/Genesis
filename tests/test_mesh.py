@@ -7,6 +7,7 @@ import genesis as gs
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 
+
 @pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
 def test_glb_parse(glb_file):
     """Test glb mesh parsing."""
