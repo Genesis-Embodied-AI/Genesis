@@ -103,13 +103,11 @@ log_cli_level = "WARNING"
 gs = "genesis._main:main"
 
 [project.optional-dependencies]
-gen = [
-    "openai",
-]
 dev = [
     "black",
     "pytest",
     "pytest-xdist",
+    "pytest-forked",
     "pytest-random-order",
     "huggingface_hub",
 ]

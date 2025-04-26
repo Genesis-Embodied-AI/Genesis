@@ -46,7 +46,7 @@ jobs:
             cp -r /workspace /app && cd /app && \
             bash ./.github/workflows/setup_env.sh && \
             pip install -e '.[dev]' && \
-            pytest -v ./tests && \
+            pytest -v --forked ./tests && \
             pytest -v -m 'benchmarks' --backend gpu ./tests"
 
           mkdir -p ./artifacts
