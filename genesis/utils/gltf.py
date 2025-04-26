@@ -262,7 +262,6 @@ def parse_glb_tree(glb, node_index):
     if node.matrix is not None:
         transform = np.array(node.matrix, dtype=np.float32).reshape((4, 4))
         non_identity = True
-        # print("Load matrix", node.name, transform.T)
     else:
         transform = np.identity(4, dtype=np.float32)
         if node.translation is not None:
@@ -275,8 +274,6 @@ def parse_glb_tree(glb, node_index):
             transform[:3, :3] *= node.scale
             non_identity = True
         transform = transform.T  # translation at bottom
-        # print("Load SRT", node.name)
-        # print(node.translation, node.rotation, node.scale, transform.T)
 
     mesh_list = []
     for sub_node_index in node.children:
@@ -284,9 +281,7 @@ def parse_glb_tree(glb, node_index):
         mesh_list += sub_mesh_list
     if non_identity:
         for _, mesh_transform in mesh_list:
-            # print("Before app:", mesh_transform.T, "\n")
             mesh_transform @= transform
-            # print("After app:", mesh_transform.T, transform.T, "\n")
 
     if node.mesh is not None:
         mesh_list.append([node.mesh, transform])
@@ -389,8 +384,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
             points, normals = mu.apply_transform(mesh_transform, points, normals)
             if normals is None:
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
-            # print("Transform in parse:", mesh_transform)
-            # print("Normals in parse:", normals[:5])
 
             group_idx = primitive.material if group_by_material else i
             mesh_info, first_created = mesh_infos.get(group_idx)

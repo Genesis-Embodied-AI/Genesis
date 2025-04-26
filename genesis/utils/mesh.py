@@ -470,7 +470,6 @@ def apply_transform(transform, positions, normals=None):
     transformed_positions = (np.column_stack([positions, np.ones(len(positions))]) @ transform)[:, :3]
     if normals is not None:
         trans_R = transform[:3, :3]
-        # print(np.ptp(trans_R - _identity3), np.ptp(trans_R - _identity3) < 1e-7)
         if np.ptp(trans_R - _identity3) > 1e-7:  # has rotation
             transformed_normals = normals @ trans_R
             scale = np.linalg.norm(trans_R, axis=1, keepdims=True)
