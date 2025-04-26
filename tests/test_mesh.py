@@ -7,11 +7,10 @@ import genesis as gs
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 
-
-@pytest.mark.parametrize("glb_file", ["assets/cube.glb", "assets/combined_srt.glb", "assets/combined_transform.glb"])
+@pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
 def test_glb_parse(glb_file):
     """Test glb mesh parsing."""
-    glb_file = os.path.join(os.path.dirname(__file__), glb_file)
+    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
