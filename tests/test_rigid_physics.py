@@ -1451,9 +1451,6 @@ def test_equality_weld(gs_sim, mj_sim):
 def test_one_ball_joint(gs_sim, mj_sim, atol):
     # Disable all constraints and actuation
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
-    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
-    gs_sim.rigid_solver._enable_collision = False
-    gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
 
     check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)

@@ -3359,9 +3359,7 @@ class RigidSolver(Solver):
                     for j in ti.static(range(3)):
                         self.qpos[q_start + j, i_b] = pos[j]
                 if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
-                    rot_offset = 3
-                    if joint_type == gs.JOINT_TYPE.SPHERICAL:
-                        rot_offset = 0
+                    rot_offset = 3 if joint_type == gs.JOINT_TYPE.FREE else 0
                     rot = ti.Vector(
                         [
                             self.qpos[q_start + rot_offset + 0, i_b],
