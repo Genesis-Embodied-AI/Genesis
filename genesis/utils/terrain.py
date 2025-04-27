@@ -1,7 +1,8 @@
 import os
+import math
+import pickle
 
 import numpy as np
-import pickle
 import trimesh
 
 import genesis as gs
@@ -352,3 +353,85 @@ def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale
     )
 
     return mesh, sdf_mesh
+
+
+def mesh_to_heightfield(
+    path: str,
+    spacing: float | tuple[float, float],
+    oversample: int = 1,
+    *,
+    up_axis: str = "z",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Parameters
+    ----------
+    path : str
+        .glb / .obj / … file containing the terrain mesh.
+    spacing : float  |  (float, float)
+        Desired grid spacing  Δx  (and  Δy).  Units must match the mesh.
+    oversample : int, default 3
+        Number of extra rays per coarse‑grid axis.  k = 1 reproduces the
+        simple single‑ray method; k ≥ 2 captures peaks inside a cell.
+    up_axis : {"z", "y"}, default "z"
+        Mesh’s up direction.  If "y" (common in glTF), the function
+        rotates the mesh so Z is up before sampling.
+
+    Returns
+    -------
+    heights : (nx, ny)  float32 ndarray
+        Highest elevation per coarse cell (NaN if no hit).
+    xs      : (nx,)     float32 ndarray
+    ys      : (ny,)     float32 ndarray
+        Coordinates of grid lines (cell centres).
+
+    Notes
+    -----
+    • Memory cost grows as  oversample².
+    """
+    if np.isscalar(spacing):
+        spacing = (spacing, spacing)
+
+    mesh = trimesh.load(path, force="mesh")
+
+    # -------------------------------- axis handling ---------------------------
+    if up_axis.lower() == "y":
+        # rotate so Z becomes up (‑90° around X)
+        T = trimesh.transformations.rotation_matrix(np.deg2rad(-90), [1, 0, 0])
+        mesh.apply_transform(T)
+
+    (minx, miny, _), (maxx, maxy, maxz) = mesh.bounds
+
+    # -------------------------------- coarse grid ----------------------------
+    dx, dy = spacing
+    nx = math.ceil((maxx - minx) / dx) + 1
+    ny = math.ceil((maxy - miny) / dy) + 1
+
+    xs = np.linspace(minx, maxx, nx, dtype=np.float32)
+    ys = np.linspace(miny, maxy, ny, dtype=np.float32)
+
+    # -------------------------------- fine grid ------------------------------
+    fx = nx * oversample
+    fy = ny * oversample
+    fx_lin = np.linspace(minx, maxx, fx, dtype=np.float32)
+    fy_lin = np.linspace(miny, maxy, fy, dtype=np.float32)
+    fxx, fyy = np.meshgrid(fx_lin, fy_lin, indexing="ij")
+
+    origins = np.stack((fxx.ravel(), fyy.ravel(), np.full(fxx.size, maxz + 1.0)), axis=-1)
+    directions = np.tile([0.0, 0.0, -1.0], (origins.shape[0], 1))
+
+    # -------------------------------- ray cast -------------------------------
+    locs, hit_ids, _ = mesh.ray.intersects_location(ray_origins=origins, ray_directions=directions, multiple_hits=False)
+
+    h_fine = np.full(fxx.size, np.nan, dtype=np.float32)
+    h_fine[hit_ids] = locs[:, 2]
+    h_fine = h_fine.reshape((fx, fy))  # (fx, fy) = (nx*k, ny*k)
+
+    # -------------------------------- down‑sample ----------------------------
+    # reshape to (nx, k, ny, k) then take max over the 2 fine axes
+    h_coarse = np.nanmax(h_fine.reshape(nx, oversample, ny, oversample).swapaxes(1, 2), axis=(2, 3))
+
+    # change nan to min
+    minz = mesh.bounds[0][2]
+    h_coarse = np.where(np.isnan(h_coarse), minz, h_coarse)
+
+    return h_coarse, xs, ys

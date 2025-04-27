@@ -1,4 +1,6 @@
+import gc
 import os
+import sys
 from enum import Enum
 
 import psutil
@@ -39,11 +41,28 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
 
 
 def pytest_xdist_auto_num_workers(config):
-    # Compute the default number of workers based on available RAM, VRAM, and number of physical cores
+    # Get available memory (RAM & VRAM) and number of physical cores.
     physical_core_count = psutil.cpu_count(logical=False)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
     _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
-    return min(int(ram_memory / 4.0), int(vram_memory / 1.0), physical_core_count)
+
+    # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
+    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
+    # does not completely release memory between each test.
+    if sys.platform == "darwin":
+        ram_memory_per_worker = 3.0
+        vram_memory_per_worker = 1.0  # Does not really makes sense on Apple Silicon
+    elif config.option.forked:
+        ram_memory_per_worker = 4.5
+        vram_memory_per_worker = 1.2
+    else:
+        ram_memory_per_worker = 7.5
+        vram_memory_per_worker = 1.6
+    return min(
+        int(ram_memory / ram_memory_per_worker),
+        int(vram_memory / vram_memory_per_worker),
+        physical_core_count,
+    )
 
 
 def pytest_addoption(parser):
@@ -92,6 +111,7 @@ def initialize_genesis(request, backend):
     finally:
         pyglet.app.exit()
         gs.destroy()
+        gc.collect()
 
 
 @pytest.fixture
