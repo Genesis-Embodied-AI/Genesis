@@ -1442,3 +1442,30 @@ def test_equality_weld(gs_sim, mj_sim):
     qpos = gs_sim.rigid_solver.dofs_state.pos.to_numpy()[:, 0]
     qpos[0], qpos[1], qpos[2] = 0.1, 0.1, 0.1
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, atol=atol)
+
+
+@pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_one_ball_joint(gs_sim, mj_sim, atol):
+    # Disable all constraints and actuation
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
+    # gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
+    gs_sim.rigid_solver._enable_collision = False
+    gs_sim.rigid_solver._enable_joint_limit = False
+    gs_sim.rigid_solver._disable_constraint = True
+
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
+
+    (gs_robot,) = gs_sim.entities
+    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    print("qpos", qpos.shape)
+    # init_simulators(gs_sim, mj_sim, qpos)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
+    # for _ in range(100):
+    #     check_mujoco_data_consistency(gs_sim, mj_sim, atol=atol)
+    #     gs_sim.scene.step()
+    #     mj_sim.step()
