@@ -431,6 +431,7 @@ def mesh_to_heightfield(
     h_coarse = np.nanmax(h_fine.reshape(nx, oversample, ny, oversample).swapaxes(1, 2), axis=(2, 3))
 
     # change nan to min
-    h_coarse = np.where(np.isnan(h_coarse), np.nanmin(h_coarse), h_coarse)
+    minz = mesh.bounds[0][2]
+    h_coarse = np.where(np.isnan(h_coarse), minz, h_coarse)
 
     return h_coarse, xs, ys

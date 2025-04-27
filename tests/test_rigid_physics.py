@@ -1,8 +1,8 @@
 import sys
 import xml.etree.ElementTree as ET
 import os
-import pytest
 
+import pytest
 import trimesh
 import torch
 import numpy as np
@@ -1152,5 +1152,4 @@ def test_mesh_to_heightfield(show_viewer):
 
     # speed is around 0
     qvel = ball.get_dofs_velocity().cpu()
-    qvel_norm = np.linalg.norm(qvel, axis=-1)
-    np.testing.assert_allclose(qvel_norm, 0, atol=1e-2)
+    np.testing.assert_allclose(qvel, 0, atol=1e-2)

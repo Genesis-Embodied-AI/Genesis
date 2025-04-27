@@ -1,7 +1,8 @@
-import genesis as gs
-import numpy as np
 import argparse
 import os
+
+import genesis as gs
+import numpy as np
 from genesis.utils.terrain import mesh_to_heightfield
 
 
@@ -16,11 +17,11 @@ def main():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
-        show_viewer=args.vis,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -50, 0),
             camera_lookat=(0, 0, 0),
         ),
+        show_viewer=args.vis,
     )
 
     horizontal_scale = 2.0
@@ -41,14 +42,6 @@ def main():
             pos=translation,
         ),
         vis_mode="collision",
-    )
-
-    terrain_ori = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=path_terrain,
-            fixed=True,
-            convexify=False,
-        ),
     )
 
     ball = scene.add_entity(
