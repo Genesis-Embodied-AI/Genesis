@@ -203,7 +203,7 @@ class Mesh(RBC):
         Copy the mesh.
         """
         return Mesh(
-            mesh=self._mesh.copy(),
+            mesh=self._mesh.copy(include_cache=True),
             surface=self._surface.copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
             metadata=self._metadata.copy(),
@@ -228,7 +228,7 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
         else:
             surface = surface.copy()
-        mesh = mesh.copy()
+        mesh = mesh.copy(include_cache=True)
 
         try:  # always parse uvs because roughness and normal map also need uvs
             uvs = mesh.visual.uv.copy()
@@ -253,7 +253,7 @@ class Mesh(RBC):
                     if material.baseColorTexture is not None:
                         color_image = mu.PIL_to_array(material.baseColorTexture)
                     if material.baseColorFactor is not None:
-                        color_factor = tuple(np.array(material.baseColorFactor, dtype=float) / 255.0)
+                        color_factor = tuple(np.array(material.baseColorFactor, dtype=np.float32) / 255.0)
 
                     if material.roughnessFactor is not None:
                         roughness_factor = (material.roughnessFactor,)
@@ -262,7 +262,7 @@ class Mesh(RBC):
                     if material.image is not None:
                         color_image = mu.PIL_to_array(material.image)
                     elif material.diffuse is not None:
-                        color_factor = tuple(np.array(material.diffuse, dtype=float) / 255.0)
+                        color_factor = tuple(np.array(material.diffuse, dtype=np.float32) / 255.0)
 
                     if material.glossiness is not None:
                         roughness_factor = ((2 / (material.glossiness + 2)) ** (1.0 / 4.0),)
@@ -278,7 +278,7 @@ class Mesh(RBC):
 
             else:
                 # TODO: support vertex/face colors in luisa
-                color_factor = tuple(np.array(mesh.visual.main_color, dtype=float) / 255.0)
+                color_factor = tuple(np.array(mesh.visual.main_color, dtype=np.float32) / 255.0)
 
         else:
             # use white color as default
