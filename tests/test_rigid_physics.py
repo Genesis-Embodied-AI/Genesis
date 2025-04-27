@@ -1450,9 +1450,21 @@ def test_equality_weld(gs_sim, mj_sim):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, atol=atol)
 
 
+@pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_one_ball_joint(gs_sim, mj_sim, atol):
+    # Disable all constraints and actuation
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    gs_sim.rigid_solver._disable_constraint = True
+
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
+
+
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mesh_to_heightfield(show_viewer):
-
     ########################## create a scene ##########################
     scene = gs.Scene(
         show_viewer=show_viewer,
