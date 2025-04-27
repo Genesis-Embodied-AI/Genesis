@@ -58,6 +58,7 @@ def test_glb_parse_geometry(glb_file):
                 err_msg=f"UVs match failed mesh {mesh_name}.",
             )
 
+
 @pytest.mark.parametrize("glb_file", ["tests/chopper.glb"])
 def test_glb_parse_material(glb_file):
     """Test glb mesh geometry parsing."""
@@ -81,14 +82,17 @@ def test_glb_parse_material(glb_file):
         gs_color = gs_texture.color if isinstance(gs_texture, gs.textures.ColorTexture) else gs_texture.image_color
         tm_color = tm_color or np.ones(dim)
         np.testing.assert_allclose(
-            tm_color, gs_color,
-            rtol=0, atol=1e-06,
+            tm_color,
+            gs_color,
+            rtol=0,
+            atol=1e-06,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
 
         if tm_texture is not None:
             np.testing.assert_array_equal(
-                tm_texture, gs_texture.image_array,
+                tm_texture,
+                gs_texture.image_array,
                 err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
             )
 
@@ -99,9 +103,12 @@ def test_glb_parse_material(glb_file):
 
         assert isinstance(tm_material, trimesh.visual.material.PBRMaterial)
         check_texture(
-            tm_material.baseColorFactor, np.array(tm_material.baseColorTexture),
+            tm_material.baseColorFactor,
+            np.array(tm_material.baseColorTexture),
             gs_material.get_texture(),
-            3, material_name, "color",
+            3,
+            material_name,
+            "color",
         )
 
         if tm_material.metallicRoughnessTexture is not None:
@@ -111,21 +118,30 @@ def test_glb_parse_material(glb_file):
         else:
             tm_roughness_image, tm_metallic_image = None, None
         check_texture(
-            tm_material.roughnessFactor, tm_roughness_image,
+            tm_material.roughnessFactor,
+            tm_roughness_image,
             gs_material.roughness_texture,
-            1, material_name, "roughness",
+            1,
+            material_name,
+            "roughness",
         )
         check_texture(
-            tm_material.metallicFactor, tm_metallic_image,
+            tm_material.metallicFactor,
+            tm_metallic_image,
             gs_material.metallic_texture,
-            1, material_name, "metallic", 
+            1,
+            material_name,
+            "metallic",
         )
 
         if tm_material.emissiveFactor is None and tm_material.emissiveFactor is None:
             assert gs_material.emissive_texture is None
         else:
             check_texture(
-                tm_material.emissiveFactor, np.array(tm_material.emissiveTexture),
+                tm_material.emissiveFactor,
+                np.array(tm_material.emissiveTexture),
                 gs_material.emissive_texture,
-                3, material_name, "emissive",
+                3,
+                material_name,
+                "emissive",
             )
