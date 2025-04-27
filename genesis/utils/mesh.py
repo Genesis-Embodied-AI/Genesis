@@ -315,6 +315,9 @@ def postprocess_collision_geoms(
                     "duplicate faces."
                 )
                 tmesh.update_faces(tmesh.unique_faces())
+                # BUG in trimesh: .volume will set .triangles, but update_faces() will not update .triangles,
+                # which will influence the calculation of .face_normal
+                tmesh._cache.clear(exclude=["vertex_normals"])
 
     # Check if all the geometries can be convexify without decomposition
     must_decompose = False
