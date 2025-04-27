@@ -1,5 +1,6 @@
 import sys
 import xml.etree.ElementTree as ET
+import os
 
 import pytest
 import trimesh
@@ -1447,3 +1448,55 @@ def test_equality_weld(gs_sim, mj_sim):
     qpos = gs_sim.rigid_solver.dofs_state.pos.to_numpy()[:, 0]
     qpos[0], qpos[1], qpos[2] = 0.1, 0.1, 0.1
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, atol=atol)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mesh_to_heightfield(show_viewer):
+
+    ########################## create a scene ##########################
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        sim_options=gs.options.SimOptions(
+            gravity=(2, 0, -2),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0, -50, 0),
+            camera_lookat=(0, 0, 0),
+        ),
+    )
+
+    horizontal_scale = 2.0
+    gs_root = os.path.dirname(os.path.abspath(gs.__file__))
+    path_terrain = os.path.join(gs_root, "assets", "meshes", "terrain_45.obj")
+    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
+
+    # default heightfield starts at 0, 0, 0
+    # translate to the center of the mesh
+    translation = np.array([np.nanmin(xs), np.nanmin(ys), 0])
+
+    terrain_heightfield = scene.add_entity(
+        morph=gs.morphs.Terrain(
+            horizontal_scale=horizontal_scale,
+            vertical_scale=1.0,
+            height_field=hf_terrain,
+            pos=translation,
+        ),
+        vis_mode="collision",
+    )
+
+    ball = scene.add_entity(
+        gs.morphs.Sphere(
+            pos=(10, 15, 10),
+            radius=1,
+        ),
+        vis_mode="collision",
+    )
+
+    scene.build()
+
+    for i in range(1000):
+        scene.step()
+
+    # speed is around 0
+    qvel = ball.get_dofs_velocity().cpu()
+    np.testing.assert_allclose(qvel, 0, atol=1e-2)
