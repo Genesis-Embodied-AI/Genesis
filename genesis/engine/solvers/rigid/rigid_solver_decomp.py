@@ -4337,11 +4337,23 @@ class RigidSolver(Solver):
                     )
                     quat = gu.ti_xyz_to_quat(xyz)
 
-                    for i_q in ti.static(range(3)):
+                    for i_q in range(3):
                         self.qpos[i_q + q_start, i_b] = self.dofs_state[i_q + dof_start, i_b].pos
 
-                    for i_q in ti.static(range(4)):
+                    for i_q in range(4):
                         self.qpos[i_q + 3 + q_start, i_b] = quat[i_q]
+                elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                    xyz = ti.Vector(
+                        [
+                            self.dofs_state[0 + dof_start, i_b].pos,
+                            self.dofs_state[1 + dof_start, i_b].pos,
+                            self.dofs_state[2 + dof_start, i_b].pos,
+                        ],
+                        dt=gs.ti_float,
+                    )
+                    quat = gu.ti_xyz_to_quat(xyz)
+                    for i_q in range(q_start, q_start + 4):
+                        self.qpos[i_q, i_b] = quat[i_q - q_start]
                 else:
                     for i_q in range(q_start, l_info.q_end):
                         self.qpos[i_q, i_b] = self.dofs_state[dof_start + i_q - q_start, i_b].pos
