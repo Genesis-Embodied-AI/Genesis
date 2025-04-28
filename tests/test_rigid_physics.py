@@ -1524,3 +1524,14 @@ def test_rope_ball(gs_sim, mj_sim, atol):
     gs_sim.rigid_solver.set_dofs_position(qpos[:3], dofs_idx=np.arange(3))
     atol = 1e-7  # 1e-8 cannot work
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
+
+
+@pytest.mark.parametrize("xml_path", ["xml/rope_hinge.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_rope_hinge(gs_sim, mj_sim, atol):
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
+    qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    gs_sim.rigid_solver.set_dofs_position(qpos[:3], dofs_idx=np.arange(3))
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
