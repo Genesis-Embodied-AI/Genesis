@@ -648,10 +648,12 @@ class RasterizerContext:
                         triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
                         - fem_entity.v_start
                     )
-                    # Filter to only the vertices used by the surface and reindex them
-                    surf_idx, inv = np.unique(triangles.flatten(), return_inverse=True)
+
+                    # Select only vertices used in surface triangles, then reindex triangles against the new vertex list
+                    surf_idx, inv = np.unique(triangles.flat, return_inverse=True)
                     triangles = inv.reshape(triangles.shape)
                     vertices = vertices[surf_idx]
+
                     mesh = trimesh.Trimesh(vertices, triangles, process=False)
                     mesh.visual = mu.surface_uvs_to_trimesh_visual(
                         fem_entity.surface, n_verts=fem_entity.n_surface_vertices
