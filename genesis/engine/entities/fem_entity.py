@@ -491,6 +491,10 @@ class FEMEntity(Entity):
         return self._n_surface_vertices
 
     @property
+    def surface_triangles(self):
+        return self._surface_tri_np
+
+    @property
     def tet_cfg(self):
         tet_cfg = dict(
             order=getattr(self.morph, "order", 1),
