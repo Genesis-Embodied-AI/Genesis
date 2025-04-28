@@ -143,9 +143,10 @@ class ConstraintSolverIsland:
 
             d1, d2 = gu.orthogonals(impact.normal)
 
-            t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+            # FIXME: Should use different coefficient for translational and rotation part
+            invweight = self._solver.links_info[link_a_maybe_batch].invweight[0] + self._solver.links_info[
                 link_b_maybe_batch
-            ].invweight * (link_b > -1)
+            ].invweight[0] * (link_b > -1)
 
             for i in range(4):
                 n = -d1 * f - impact.normal
@@ -207,7 +208,7 @@ class ConstraintSolverIsland:
 
                 imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel, -impact.penetration)
 
-                diag = t + impact.friction * impact.friction * t
+                diag = invweight + impact.friction * impact.friction * invweight
                 diag *= 2 * impact.friction * impact.friction * (1 - imp) / ti.max(imp, gs.EPS)
 
                 self.diag[n_con, i_b] = diag

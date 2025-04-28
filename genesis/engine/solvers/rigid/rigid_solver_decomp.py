@@ -231,7 +231,7 @@ class RigidSolver(Solver):
 
         offsets = self.links_state.i_pos.to_numpy()[:, 0, :]
 
-        invweight = np.zeros([self._n_links], dtype=gs.np_float)
+        invweight = np.zeros([self._n_links, 2], dtype=gs.np_float)
 
         if self._n_dofs > 0:
             for i_link in range(self._n_links):
@@ -255,7 +255,8 @@ class RigidSolver(Solver):
 
                 A = jac.T @ mass_mat_inv @ jac
 
-                invweight[i_link] = (A[0, 0] + A[1, 1] + A[2, 2]) / 3
+                invweight[i_link, 0] = (A[0, 0] + A[1, 1] + A[2, 2]) / 3
+                invweight[i_link, 1] = (A[3, 3] + A[4, 4] + A[5, 5]) / 3
 
         self._kernel_init_invweight(invweight)
 
@@ -266,8 +267,9 @@ class RigidSolver(Solver):
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.links_info):
-            if self.links_info[I].invweight < 0:
-                self.links_info[I].invweight = invweight[I[0]]
+            for j in range(2):
+                if self.links_info[I].invweight[j] < 0:
+                    self.links_info[I].invweight[j] = invweight[I[0], j]
 
     @ti.kernel
     def _kernel_init_meaninertia(self):
@@ -475,7 +477,7 @@ class RigidSolver(Solver):
             n_dofs=gs.ti_int,
             pos=gs.ti_vec3,
             quat=gs.ti_vec4,
-            invweight=gs.ti_float,
+            invweight=gs.ti_vec2,
             is_fixed=gs.ti_int,
             inertial_pos=gs.ti_vec3,
             inertial_quat=gs.ti_vec4,
@@ -652,9 +654,11 @@ class RigidSolver(Solver):
             self.links_info[I].dof_end = links_dof_end[i]
             self.links_info[I].joint_end = links_joint_end[i]
             self.links_info[I].n_dofs = links_dof_end[i] - links_dof_start[i]
-            self.links_info[I].invweight = links_invweight[i]
             self.links_info[I].is_fixed = links_is_fixed[i]
             self.links_info[I].entity_idx = links_entity_idx[i]
+
+            for j in ti.static(range(2)):
+                self.links_info[I].invweight[j] = links_invweight[i, j]
 
             for j in ti.static(range(4)):
                 self.links_info[I].quat[j] = links_quat[i, j]
@@ -1061,13 +1065,15 @@ class RigidSolver(Solver):
     ):
         if ti.static(self._options.batch_links_info):
             for i_b in range(self._B):
-                self.links_info[link_idx, i_b].invweight /= ratio
+                for j in range(2):
+                    self.links_info[link_idx, i_b].invweight[j] /= ratio
                 self.links_info[link_idx, i_b].inertial_mass *= ratio
                 for j1, j2 in ti.ndrange(3, 3):
                     self.links_info[link_idx, i_b].inertial_i[j1, j2] *= ratio
         else:
             for i_b in range(self._B):
-                self.links_info[link_idx].invweight /= ratio
+                for j in range(2):
+                    self.links_info[link_idx].invweight[j] /= ratio
                 self.links_info[link_idx].inertial_mass *= ratio
                 for j1, j2 in ti.ndrange(3, 3):
                     self.links_info[link_idx].inertial_i[j1, j2] *= ratio
@@ -3933,9 +3939,9 @@ class RigidSolver(Solver):
             for i in ti.static(range(3)):
                 self.links_state[links_idx[i_l_], envs_idx[i_b_]].i_pos_shift[i] = com[i_b_, i_l_, i]
 
-    def _set_links_info(self, tensor, links_idx, name, envs_idx=None, *, unsafe=False):
+    def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         _, links_idx, envs_idx = self._sanitize_1D_io_variables(
-            tensor,
+            mass,
             links_idx,
             self.n_links,
             envs_idx,
@@ -3945,16 +3951,8 @@ class RigidSolver(Solver):
             unsafe=unsafe,
         )
         if self.n_envs == 0 and self._options.batch_links_info:
-            tensor = tensor.unsqueeze(0)
-        if name == "invweight":
-            self._kernel_set_links_invweight(tensor, links_idx, envs_idx)
-        elif name == "inertial_mass":
-            self._kernel_set_links_inertial_mass(tensor, links_idx, envs_idx)
-        else:
-            gs.raise_exception(f"Invalid `name` {name}.")
-
-    def set_links_inertial_mass(self, invweight, links_idx=None, envs_idx=None, *, unsafe=False):
-        self._set_links_info(invweight, links_idx, "inertial_mass", envs_idx, unsafe=unsafe)
+            mass = mass.unsqueeze(0)
+        self._kernel_set_links_inertial_mass(mass, links_idx, envs_idx)
 
     @ti.kernel
     def _kernel_set_links_inertial_mass(
@@ -3972,7 +3970,20 @@ class RigidSolver(Solver):
                 self.links_info[links_idx[i_l_]].inertial_mass = inertial_mass[i_l_]
 
     def set_links_invweight(self, invweight, links_idx=None, envs_idx=None, *, unsafe=False):
-        self._set_links_info(invweight, links_idx, "invweight", envs_idx, unsafe=unsafe)
+        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
+            invweight,
+            links_idx,
+            self.n_links,
+            2,
+            envs_idx,
+            batched=self._options.batch_links_info,
+            skip_allocation=True,
+            idx_name="links_idx",
+            unsafe=unsafe,
+        )
+        if self.n_envs == 0 and self._options.batch_links_info:
+            invweight = invweight.unsqueeze(0)
+        self._kernel_set_links_invweight(invweight, links_idx, envs_idx)
 
     @ti.kernel
     def _kernel_set_links_invweight(
@@ -3983,11 +3994,11 @@ class RigidSolver(Solver):
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         if ti.static(self._options.batch_links_info):
-            for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-                self.links_info[links_idx[i_l_], envs_idx[i_b_]].invweight = invweight[i_b_, i_l_]
+            for i_l_, i_b_, j in ti.ndrange(links_idx.shape[0], envs_idx.shape[0], 2):
+                self.links_info[links_idx[i_l_], envs_idx[i_b_]].invweight[j] = invweight[i_b_, i_l_, j]
         else:
-            for i_l_ in range(links_idx.shape[0]):
-                self.links_info[links_idx[i_l_]].invweight = invweight[i_l_]
+            for i_l_, j in ti.ndrange(links_idx.shape[0], 2):
+                self.links_info[links_idx[i_l_]].invweight[j] = invweight[i_l_, j]
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None, *, unsafe=False):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_1D_io_variables(

@@ -250,7 +250,7 @@ def check_mujoco_model_consistency(
     # body
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
         gs_invweight_i = gs_sim.rigid_solver.links_info.invweight.to_numpy()[gs_i]
-        mj_invweight_i = mj_sim.model.body(mj_i).invweight0[0]
+        mj_invweight_i = mj_sim.model.body(mj_i).invweight0
         np.testing.assert_allclose(gs_invweight_i, mj_invweight_i, atol=atol)
         gs_inertia_i = gs_sim.rigid_solver.links_info.inertial_i.to_numpy()[gs_i, [0, 1, 2], [0, 1, 2]]
         mj_inertia_i = mj_sim.model.body(mj_i).inertia

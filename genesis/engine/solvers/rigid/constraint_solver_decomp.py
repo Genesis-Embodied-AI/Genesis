@@ -121,9 +121,10 @@ class ConstraintSolver:
 
                 d1, d2 = gu.orthogonals(impact.normal)
 
-                t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
-                    link_b_maybe_batch
-                ].invweight * (link_b > -1)
+                invweight = self._solver.links_info[link_a_maybe_batch].invweight[0]
+                if link_b > -1:
+                    invweight += self._solver.links_info[link_b_maybe_batch].invweight[0]
+
                 for i in range(4):
                     n = -d1 * f - impact.normal
                     if i == 1:
@@ -184,7 +185,7 @@ class ConstraintSolver:
                         self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
                     imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel, -impact.penetration)
 
-                    diag = t + impact.friction * impact.friction * t
+                    diag = invweight + impact.friction * impact.friction * invweight
                     diag *= 2 * impact.friction * impact.friction * (1 - imp) / ti.max(imp, gs.EPS)
 
                     self.diag[n_con, i_b] = diag
@@ -197,6 +198,8 @@ class ConstraintSolver:
         eq_info = self._solver.equality_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
+        link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
+        link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
         anchor1_pos = gs.ti_vec3([eq_info.eq_data[0], eq_info.eq_data[1], eq_info.eq_data[2]])
         anchor2_pos = gs.ti_vec3([eq_info.eq_data[3], eq_info.eq_data[4], eq_info.eq_data[5]])
         sol_params = eq_info.sol_params
@@ -213,11 +216,9 @@ class ConstraintSolver:
             quat=self._solver.links_state[link2_idx, i_b].quat,
         )
 
-        link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
-        link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
         invweight = (
-            self._solver.links_info[link_a_maybe_batch].invweight
-            + self._solver.links_info[link_b_maybe_batch].invweight
+            self._solver.links_info[link_a_maybe_batch].invweight[0]
+            + self._solver.links_info[link_b_maybe_batch].invweight[0]
         )
 
         for i_3 in range(3):
@@ -361,6 +362,8 @@ class ConstraintSolver:
         eq_info = self._solver.equality_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
+        link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
+        link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
 
         # For weld, eq_data layout:
         # [0:3]  : anchor1 (local pos in body1)
@@ -401,12 +404,11 @@ class ConstraintSolver:
         all_error = gs.ti_vec6([pos_error[0], pos_error[1], pos_error[2], rot_error[0], rot_error[1], rot_error[2]])
         pos_imp = all_error.norm()
 
-        link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
-        link_b_maybe_batch = [link2_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link2_idx
         # Compute inverse weight from both bodies.
-        link1_info = self._solver.links_info[link_a_maybe_batch]
-        link2_info = self._solver.links_info[link_b_maybe_batch]
-        invweight = link1_info.invweight + link2_info.invweight
+        invweight = (
+            self._solver.links_info[link_a_maybe_batch].invweight
+            + self._solver.links_info[link_b_maybe_batch].invweight
+        )
 
         # --- Position part (first 3 constraints) ---
         for i in range(3):
@@ -456,7 +458,7 @@ class ConstraintSolver:
 
             err_val = pos_error[i]
             imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, err_val)
-            diag = invweight * (1.0 - imp) / (imp + gs.EPS)
+            diag = invweight[0] * (1.0 - imp) / (imp + gs.EPS)
             self.diag[n_con, i_b] = diag
             self.aref[n_con, i_b] = aref
             self.efc_D[n_con, i_b] = 1.0 / ti.max(diag, gs.EPS)
@@ -508,8 +510,7 @@ class ConstraintSolver:
         for i_con in range(n_con, n_con + 3):
             err_val = rot_error[i_con - n_con]
             imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], err_val)
-            # TODO should use rotational invweight
-            diag = invweight * (1.0 - imp) / (imp + gs.EPS)
+            diag = invweight[1] * (1.0 - imp) / (imp + gs.EPS)
 
             self.diag[i_con, i_b] = diag
             self.aref[i_con, i_b] = aref
