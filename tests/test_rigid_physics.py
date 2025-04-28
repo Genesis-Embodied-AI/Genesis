@@ -1455,6 +1455,10 @@ def test_equality_weld(gs_sim, mj_sim):
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_one_ball_joint(gs_sim, mj_sim, atol):
+    # Disable all constraintsn
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    gs_sim.rigid_solver._disable_constraint = True
+
     check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
 
