@@ -553,7 +553,9 @@ class RigidEntity(Entity):
                     and _sol_params.shape[0] == 1
                     and (_sol_params[0][3] >= 1.0 or _sol_params[0][2] >= _sol_params[0][3])
                 ):
-                    gs.logger.warning(f"Joint {name}'s sol_params {_sol_params[0]} look not right, change to default.")
+                    gs.logger.warning(
+                        f"Joint {j_info['name']}'s sol_params {_sol_params[0]} look not right, change to default."
+                    )
                     _sol_params[:] = gu.default_solver_params(len(_sol_params))
 
             dofs_motion_ang = j_info.get("dofs_motion_ang")

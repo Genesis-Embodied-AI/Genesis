@@ -154,7 +154,7 @@ class Raytracer:
         )
 
         # light objects
-        self.lights = list()
+        self.lights = []
         for light in options.lights:
             light_intensity = light.get("intensity", 1.0)
             self.lights.append(
