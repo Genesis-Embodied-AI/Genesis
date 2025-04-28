@@ -1455,10 +1455,6 @@ def test_equality_weld(gs_sim, mj_sim):
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_one_ball_joint(gs_sim, mj_sim, atol):
-    # Disable all constraints and actuation
-    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
-    gs_sim.rigid_solver._disable_constraint = True
-
     check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
 
@@ -1512,3 +1508,13 @@ def test_mesh_to_heightfield(show_viewer):
     # speed is around 0
     qvel = ball.get_dofs_velocity().cpu()
     np.testing.assert_allclose(qvel, 0, atol=1e-2)
+
+
+@pytest.mark.parametrize("xml_path", ["xml/rope_ball.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_rope_ball(gs_sim, mj_sim, atol):
+    check_mujoco_model_consistency(gs_sim, mj_sim, atol=atol)
+    atol = 1e-7  # 1e-8 cannot work
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, atol=atol)
