@@ -1,0 +1,71 @@
+<mujoco model="capsule_rope">
+  <compiler angle="degree"/>
+  <option gravity="0 0 -9.8100000000000005"/>
+  <default>
+    <default class="/">
+      <joint damping="0.001"/>
+      <geom friction="1 0.0050000000000000001 0.0001" density="500"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.5" shininess="1" specular="1" texrepeat="60 60" texture="texplane"/>
+  </asset>
+
+  <worldbody>
+    <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane"/>
+
+    <body name="seg0" pos="0 0 0.2" euler="45 45 45">
+      <joint name="root" class="/" type="free"/>
+      <geom name="seg0_geom" class="/" type="sphere" size="0.01"/>
+      <body name="seg1" pos="0.02 0 0">
+        <joint name="hinge1_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+        <joint name="hinge1_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+        <geom name="seg1_geom" class="/" type="sphere" size="0.01"/>
+        <body name="seg2" pos="0.02 0 0">
+          <joint name="hinge2_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+          <joint name="hinge2_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+          <geom name="seg2_geom" class="/" type="sphere" size="0.01"/>
+          <body name="seg3" pos="0.02 0 0">
+            <joint name="hinge3_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+            <joint name="hinge3_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+            <geom name="seg3_geom" class="/" type="sphere" size="0.01"/>
+            <body name="seg4" pos="0.02 0 0">
+              <joint name="hinge4_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+              <joint name="hinge4_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+              <geom name="seg4_geom" class="/" type="sphere" size="0.01"/>
+              <body name="seg5" pos="0.02 0 0">
+                <joint name="hinge5_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+                <joint name="hinge5_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+                <geom name="seg5_geom" class="/" type="sphere" size="0.01"/>
+                <body name="seg6" pos="0.02 0 0">
+                  <joint name="hinge6_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+                  <joint name="hinge6_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+                  <geom name="seg6_geom" class="/" type="sphere" size="0.01"/>
+                  <body name="seg7" pos="0.02 0 0">
+                    <joint name="hinge7_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+                    <joint name="hinge7_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+                    <geom name="seg7_geom" class="/" type="sphere" size="0.01"/>
+                    <body name="seg8" pos="0.02 0 0">
+                      <joint name="hinge8_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+                      <joint name="hinge8_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+                      <geom name="seg8_geom" class="/" type="sphere" size="0.01"/>
+                      <body name="seg9" pos="0.02 0 0">
+                        <joint name="hinge9_z" class="/" type="hinge" axis="0 0 1" stiffness="0.01"/>
+                        <joint name="hinge9_y" class="/" type="hinge" axis="0 1 0" stiffness="0.01"/>
+                        <geom name="seg9_geom" class="/" type="sphere" size="0.01"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
