@@ -462,6 +462,8 @@ class Mesh(FileMorph):
         Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
     quality : bool, optional
         Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
     verbose : int, optional
         The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
     force_retet : bool, optional
@@ -484,6 +486,7 @@ class Mesh(FileMorph):
     minratio: float = 1.1
     nobisect: bool = True
     quality: bool = True
+    maxvolume: float = -1.0
     verbose: int = 0
 
     force_retet: bool = False

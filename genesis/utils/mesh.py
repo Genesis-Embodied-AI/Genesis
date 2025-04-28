@@ -815,12 +815,45 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
     return mesh
 
 
+def make_tetgen_switches(cfg):
+    flags = ["p"]
+
+    if cfg.get("quality", True):
+        r = cfg.get("minratio", 1.1)
+        di = cfg.get("mindihedral", 10)
+        flags.append(f"q{r}/{di}")
+
+    a = cfg.get("maxvolume", -1.0)
+    if a > 0:
+        flags.append(f"a{a}")
+
+    o = cfg.get("order", 1)
+    if o != 1:
+        flags.append(f"o{o}")
+
+    if cfg.get("nobisect", False):
+        flags.append("Y")
+
+    v = cfg.get("verbose", 0)
+    if v > 0:
+        flags.append("V" * v)
+
+    return "".join(flags)
+
+
 def tetrahedralize_mesh(mesh, tet_cfg):
     pv_obj = pv.PolyData(
         mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
     )
     tet = tetgen.TetGen(pv_obj)
-    verts, elems = tet.tetrahedralize(**tet_cfg)
+    # NOTE: Use the 'switches' string to pass options directly,
+    # because the tetgen wrapper may ignore some parameters (e.g., maxvolume).
+    # See: https://github.com/pyvista/tetgen/issues/24
+    # verts, elems = tet.tetrahedralize(**tet_cfg)
+    switches = make_tetgen_switches(tet_cfg)
+    print(switches)
+    verts, elems = tet.tetrahedralize(switches=switches)
+    print(verts.shape, elems.shape)
     # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
     return verts, elems
 

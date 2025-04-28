@@ -502,6 +502,7 @@ class FEMEntity(Entity):
             minratio=getattr(self.morph, "minratio", 1.1),
             nobisect=getattr(self.morph, "nobisect", True),
             quality=getattr(self.morph, "quality", True),
+            maxvolume=getattr(self.morph, "maxvolume", -1.0),
             verbose=getattr(self.morph, "verbose", 0),
         )
         return tet_cfg
