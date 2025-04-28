@@ -942,8 +942,6 @@ def test_nonconvex_collision(show_viewer):
         scene.step()
         if i > 1700:
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
-            # FIXME: atol=0.1 is fine most of the time but sometimes fails.
-            # Unfortunately producing the issue is not easy.
             np.testing.assert_allclose(qvel, 0, atol=0.65)
 
 
@@ -999,7 +997,7 @@ def test_mesh_repair(convexify, show_viewer):
         scene.step()
         if i > 200:
             qvel = obj.get_dofs_velocity().cpu()
-            # FIXME: The spoon keeps oscillating indefinely if convexify is enabled
+            # The spoon keeps oscillating indefinely if convexify is enabled
             np.testing.assert_allclose(qvel, 0, atol=1.3)
     qpos = obj.get_dofs_position().cpu()
     np.testing.assert_allclose(qpos[:3], (0.3, 0, 0.015), atol=0.01)
