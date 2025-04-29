@@ -816,14 +816,16 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
 
 
 def generate_tetgen_config_from_morph(morph):
+    if not isinstance(morph, gs.options.morphs.Morph):
+        raise TypeError(f"Expected instance of Morph, got {type(morph).__name__}")
     return dict(
-        order=getattr(morph, "order", 1),
-        mindihedral=getattr(morph, "mindihedral", 10),
-        minratio=getattr(morph, "minratio", 1.1),
-        nobisect=getattr(morph, "nobisect", True),
-        quality=getattr(morph, "quality", True),
-        maxvolume=getattr(morph, "maxvolume", -1.0),
-        verbose=getattr(morph, "verbose", 0),
+        order=morph.order,
+        mindihedral=morph.mindihedral,
+        minratio=morph.minratio,
+        nobisect=morph.nobisect,
+        quality=morph.quality,
+        maxvolume=morph.maxvolume,
+        verbose=morph.verbose,
     )
 
 

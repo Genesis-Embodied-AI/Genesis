@@ -52,6 +52,19 @@ class Morph(Options):
     requires_jac_and_IK: bool = False
     is_free: bool = True
 
+    # FEM specific
+    order: int = 1
+
+    # Volumetric mesh entity
+    mindihedral: int = 10
+    minratio: float = 1.1
+    nobisect: bool = True
+    quality: bool = True
+    maxvolume: float = -1.0
+    verbose: int = 0
+
+    force_retet: bool = False
+
     def __init__(self, **data):
         super().__init__(**data)
         if self.pos is not None:
@@ -156,6 +169,22 @@ class Box(Primitive):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    order : int, optional
+        The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
+    mindihedral : int, optional
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+    minratio : float, optional
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+    nobisect : bool, optional
+        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    quality : bool, optional
+        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+    verbose : int, optional
+        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+    force_retet : bool, optional
+        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     lower: Optional[tuple] = None
@@ -204,6 +233,22 @@ class Cylinder(Primitive):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    order : int, optional
+        The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
+    mindihedral : int, optional
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+    minratio : float, optional
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+    nobisect : bool, optional
+        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    quality : bool, optional
+        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+    verbose : int, optional
+        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+    force_retet : bool, optional
+        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     height: float = 1.0
@@ -232,6 +277,22 @@ class Sphere(Primitive):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    order : int, optional
+        The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
+    mindihedral : int, optional
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+    minratio : float, optional
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+    nobisect : bool, optional
+        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    quality : bool, optional
+        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+    verbose : int, optional
+        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+    force_retet : bool, optional
+        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     radius: float = 0.5
@@ -477,19 +538,6 @@ class Mesh(FileMorph):
     fixed: bool = False
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
-
-    # FEM specific
-    order: int = 1
-
-    # Volumetric mesh entity
-    mindihedral: int = 10
-    minratio: float = 1.1
-    nobisect: bool = True
-    quality: bool = True
-    maxvolume: float = -1.0
-    verbose: int = 0
-
-    force_retet: bool = False
 
 
 class MeshSet(Mesh):
