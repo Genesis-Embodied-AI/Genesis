@@ -1,10 +1,10 @@
 import multiprocessing
 import os
+import argparse
 
 import torch
 
 import genesis as gs
-import argparse
 
 
 def main():
