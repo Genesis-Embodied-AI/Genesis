@@ -292,12 +292,11 @@ def cube_verts_and_faces():
 
 
 @pytest.fixture(scope="session")
-def box_obj_path(tmp_path_factory, cube_verts_and_faces):
+def box_obj_path(asset_tmp_path, cube_verts_and_faces):
     """Fixture that generates a temporary cube .obj file"""
     verts, faces = cube_verts_and_faces
 
-    tmp_path = tmp_path_factory.mktemp("obj_fixtures")
-    filename = str(tmp_path / f"fixture_box_obj_path.obj")
+    filename = str(asset_tmp_path / f"fixture_box_obj_path.obj")
     with open(filename, "w", encoding="utf-8") as f:
         for x, y, z in verts:
             f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
