@@ -17,6 +17,10 @@ These are independent of backend solver type and are shared by different solvers
 
 
 class TetGenMixin(Options):
+    """
+    A mixin to introduce TetGen-related options into morph classes that support tetrahedralization using TetGen.
+    """
+
     # FEM specific
     order: int = 1
 
