@@ -815,6 +815,18 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
     return mesh
 
 
+def generate_tetgen_config_from_morph(morph):
+    return dict(
+        order=getattr(morph, "order", 1),
+        mindihedral=getattr(morph, "mindihedral", 10),
+        minratio=getattr(morph, "minratio", 1.1),
+        nobisect=getattr(morph, "nobisect", True),
+        quality=getattr(morph, "quality", True),
+        maxvolume=getattr(morph, "maxvolume", -1.0),
+        verbose=getattr(morph, "verbose", 0),
+    )
+
+
 def make_tetgen_switches(cfg):
     """Build a TetGen switches string from a config dict."""
     flags = ["p"]

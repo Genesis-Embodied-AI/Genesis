@@ -5,6 +5,7 @@ import torch
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
+import genesis.utils.mesh as mu
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor
@@ -496,13 +497,5 @@ class FEMEntity(Entity):
 
     @property
     def tet_cfg(self):
-        tet_cfg = dict(
-            order=getattr(self.morph, "order", 1),
-            mindihedral=getattr(self.morph, "mindihedral", 10),
-            minratio=getattr(self.morph, "minratio", 1.1),
-            nobisect=getattr(self.morph, "nobisect", True),
-            quality=getattr(self.morph, "quality", True),
-            maxvolume=getattr(self.morph, "maxvolume", -1.0),
-            verbose=getattr(self.morph, "verbose", 0),
-        )
+        tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         return tet_cfg

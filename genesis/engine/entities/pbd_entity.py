@@ -299,15 +299,7 @@ class PBD3DEntity(PBDTetEntity):
             gs.raise_exception("Input mesh has zero volume.")
         self._mass = self._vmesh.volume * self.material.rho
 
-        tet_cfg = dict(
-            order=getattr(self.morph, "order", 1),
-            mindihedral=getattr(self.morph, "mindihedral", 10),
-            minratio=getattr(self.morph, "minratio", 1.1),
-            nobisect=getattr(self.morph, "nobisect", True),
-            quality=getattr(self.morph, "quality", True),
-            maxvolume=getattr(self.morph, "maxvolume", -1.0),
-            verbose=getattr(self.morph, "verbose", 0),
-        )
+        tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         self._particles, self._elems = self._mesh.tetrahedralize(tet_cfg)
         self._edges = np.array(
             list(
