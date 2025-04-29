@@ -16,7 +16,6 @@ def pbd_material():
 def test_maxvolume(pbd_material, show_viewer, box_obj_path):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(),
         pbd_options=gs.options.PBDOptions(
             particle_size=0.1,
         ),

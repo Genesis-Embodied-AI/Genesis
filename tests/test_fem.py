@@ -128,8 +128,6 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, tmp_path):
         return verts, faces
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(),
-        fem_options=gs.options.FEMOptions(),
         show_viewer=show_viewer,
     )
 
@@ -241,8 +239,6 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, tmp_path):
 def test_maxvolume(fem_material, show_viewer, box_obj_path):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(),
-        fem_options=gs.options.FEMOptions(),
         show_viewer=show_viewer,
     )
 
