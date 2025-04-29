@@ -16,6 +16,21 @@ These are independent of backend solver type and are shared by different solvers
 """
 
 
+class TetGenMixin(Options):
+    # FEM specific
+    order: int = 1
+
+    # Volumetric mesh entity
+    mindihedral: int = 10
+    minratio: float = 1.1
+    nobisect: bool = True
+    quality: bool = True
+    maxvolume: float = -1.0
+    verbose: int = 0
+
+    force_retet: bool = False
+
+
 @gs.assert_initialized
 class Morph(Options):
     """
@@ -51,19 +66,6 @@ class Morph(Options):
     collision: bool = True
     requires_jac_and_IK: bool = False
     is_free: bool = True
-
-    # FEM specific
-    order: int = 1
-
-    # Volumetric mesh entity
-    mindihedral: int = 10
-    minratio: float = 1.1
-    nobisect: bool = True
-    quality: bool = True
-    maxvolume: float = -1.0
-    verbose: int = 0
-
-    force_retet: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -139,7 +141,7 @@ class Primitive(Morph):
     fixed: bool = False
 
 
-class Box(Primitive):
+class Box(Primitive, TetGenMixin):
     """
     Morph defined by a box shape.
 
@@ -209,7 +211,7 @@ class Box(Primitive):
                 gs.raise_exception("Invalid lower and upper corner.")
 
 
-class Cylinder(Primitive):
+class Cylinder(Primitive, TetGenMixin):
     """
     Morph defined by a cylinder shape.
 
@@ -255,7 +257,7 @@ class Cylinder(Primitive):
     radius: float = 0.5
 
 
-class Sphere(Primitive):
+class Sphere(Primitive, TetGenMixin):
     """
     Morph defined by a sphere shape.
 
@@ -452,7 +454,7 @@ class FileMorph(Morph):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
 
 
-class Mesh(FileMorph):
+class Mesh(FileMorph, TetGenMixin):
     """
     Morph loaded from a mesh file.
 
