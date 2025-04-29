@@ -817,7 +817,9 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
 
 def generate_tetgen_config_from_morph(morph):
     if not isinstance(morph, gs.options.morphs.TetGenMixin):
-        raise TypeError(f"Expected instance of Morph, got {type(morph).__name__}")
+        raise TypeError(
+            f"Expected an instance of a class that inherits from TetGenMixin, but got an instance of {type(morph).name}."
+        )
     return dict(
         order=morph.order,
         mindihedral=morph.mindihedral,
