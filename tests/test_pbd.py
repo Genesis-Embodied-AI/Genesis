@@ -29,7 +29,7 @@ def test_maxvolume(pbd_material, show_viewer, box_obj_path):
         material=pbd_material,
     )
 
-    # Mesh with maximum element volume limited to 0.01
+    # Mesh with maximum element volume limited to 0.001
     pbd2 = scene.add_entity(
         morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, maxvolume=0.001, verbose=1),
         material=pbd_material,
