@@ -264,9 +264,8 @@ def gs_sim(
 
 
 @pytest.fixture
-def box_obj_path(tmp_path):
-    """Fixture that generates a temporary cube .obj file"""
-    cx, cy, cz = (0.0, 0.0, 0.0)  # Center of the cube
+def cube_verts_and_faces():
+    cx, cy, cz = (0.0, 0.0, 0.0)
     edge_length = 1.0
 
     h = edge_length / 2.0
@@ -290,6 +289,13 @@ def box_obj_path(tmp_path):
         (3, 4, 8, 7),
         (4, 1, 5, 8),
     ]
+    return verts, faces
+
+
+@pytest.fixture
+def box_obj_path(tmp_path, cube_verts_and_faces):
+    """Fixture that generates a temporary cube .obj file"""
+    verts, faces = cube_verts_and_faces
 
     filename = str(tmp_path / f"{uuid.uuid4()}.obj")
     with open(filename, "w", encoding="utf-8") as f:
