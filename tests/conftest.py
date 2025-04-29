@@ -262,7 +262,7 @@ def gs_sim(
     return gs_sim
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def cube_verts_and_faces():
     cx, cy, cz = (0.0, 0.0, 0.0)
     edge_length = 1.0
@@ -291,11 +291,12 @@ def cube_verts_and_faces():
     return verts, faces
 
 
-@pytest.fixture
-def box_obj_path(tmp_path, cube_verts_and_faces):
+@pytest.fixture(scope="session")
+def box_obj_path(tmp_path_factory, cube_verts_and_faces):
     """Fixture that generates a temporary cube .obj file"""
     verts, faces = cube_verts_and_faces
 
+    tmp_path = tmp_path_factory.mktemp("obj_fixtures")
     filename = str(tmp_path / f"fixture_box_obj_path.obj")
     with open(filename, "w", encoding="utf-8") as f:
         for x, y, z in verts:
