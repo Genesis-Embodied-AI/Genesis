@@ -816,6 +816,7 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
 
 
 def make_tetgen_switches(cfg):
+    """Build a TetGen switches string from a config dict."""
     flags = ["p"]
 
     if cfg.get("quality", True):
@@ -846,14 +847,11 @@ def tetrahedralize_mesh(mesh, tet_cfg):
         mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
     )
     tet = tetgen.TetGen(pv_obj)
-    # NOTE: Use the 'switches' string to pass options directly,
-    # because the tetgen wrapper may ignore some parameters (e.g., maxvolume).
-    # See: https://github.com/pyvista/tetgen/issues/24
-    # verts, elems = tet.tetrahedralize(**tet_cfg)
+    # Build and apply the switches string directly, since
+    # the Python wrapper sometimes ignores certain kwargs
+    # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
     switches = make_tetgen_switches(tet_cfg)
-    print(switches)
     verts, elems = tet.tetrahedralize(switches=switches)
-    print(verts.shape, elems.shape)
     # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
     return verts, elems
 

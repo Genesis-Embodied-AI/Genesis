@@ -144,7 +144,7 @@ class Mesh(RBC):
         )
         self.clear_visuals()
 
-    def tetrahedralize(self, order, mindihedral, minratio, nobisect, quality, verbose):
+    def tetrahedralize(self, tet_cfg):
         """
         Tetrahedralize the mesh.
         """
@@ -152,9 +152,8 @@ class Mesh(RBC):
             self.verts, np.concatenate([np.full((self.faces.shape[0], 1), self.faces.shape[1]), self.faces], axis=1)
         )
         tet = tetgen.TetGen(pv_obj)
-        verts, elems = tet.tetrahedralize(
-            order=order, mindihedral=mindihedral, minratio=minratio, nobisect=nobisect, quality=quality, verbose=verbose
-        )
+        switches = mu.make_tetgen_switches(tet_cfg)
+        verts, elems = tet.tetrahedralize(switches=switches)
         # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
         return verts, elems
 

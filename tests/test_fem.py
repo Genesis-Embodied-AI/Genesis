@@ -235,3 +235,30 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, tmp_path):
         "FEM entity surface triangles and visualizer mesh triangles do not match.\n"
         f"Differences: {set(entity_tris) ^ set(viz_tris)}"
     )
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_maxvolume(fem_material, show_viewer, box_obj_path):
+    """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(),
+        fem_options=gs.options.FEMOptions(),
+        show_viewer=show_viewer,
+    )
+
+    # Mesh without any maximum-element-volume constraint
+    fem1 = scene.add_entity(
+        morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, verbose=1),
+        material=fem_material,
+    )
+
+    # Mesh with maximum element volume limited to 0.01
+    fem2 = scene.add_entity(
+        morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, maxvolume=0.01, verbose=1),
+        material=fem_material,
+    )
+
+    assert len(fem1.elems) < len(fem2.elems), (
+        f"Mesh with maxvolume=0.01 generated {len(fem2.elems)} elements; "
+        f"expected more than {len(fem1.elems)} elements without a volume limit."
+    )
