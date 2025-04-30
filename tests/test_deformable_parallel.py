@@ -5,7 +5,7 @@ import os
 
 
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_parallel(show_viewer):
+def test_deformable_parallel(show_viewer):
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -116,22 +116,6 @@ def test_parallel(show_viewer):
     # speed is around 0
     vel = cloth._solver.get_state(0).vel.cpu().numpy()
     np.testing.assert_allclose(vel, 0, atol=1e-2)
-
-
-    vel = water._solver.get_state(0).vel.cpu().numpy()
-    expected = np.zeros_like(vel)
-
-    # Compare with tolerance
-    mismatch = ~np.isclose(vel, expected, atol=2e-2)
-
-    # Print mismatching values (optionally with their indices)
-    if np.any(mismatch):
-        mismatch_indices = np.argwhere(mismatch)
-        print("Mismatched values (index, actual, expected):")
-        for idx in mismatch_indices:
-            print(f"Index: {tuple(idx)}, Actual: {vel[tuple(idx)]}, Expected: 0")
-    else:
-        print("All values are within the tolerance.")
 
     vel = water._solver.get_state(0).vel.cpu().numpy()
     np.testing.assert_allclose(vel, 0, atol=2e-2)
