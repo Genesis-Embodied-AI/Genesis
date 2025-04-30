@@ -426,13 +426,15 @@ class FEMSolver(Solver):
         tri2v: ti.types.ndarray(),
         tri2el: ti.types.ndarray(),
     ):
-        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+        n_verts_local = verts.shape[0]
+        for i_v, i_b in ti.ndrange(n_verts_local self._B):
             i_global = i_v + v_start
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
 
-        for i_e in range(self.n_elements):
+        n_elems_local = elems.shape[0]
+        for i_e in range(n_elems_local):
             i_global = i_e + el_start
 
             a = self.elements_v[f, elems[i_e, 0] + v_start, 0].pos
@@ -452,7 +454,7 @@ class FEMSolver(Solver):
             self.elements_i[i_global].muscle_group = 0
             self.elements_i[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
-        for i_e, i_b in ti.ndrange(self.n_elements, self._B):
+        for i_e, i_b in ti.ndrange(n_elems_local, self._B):
             i_global = i_e + el_start
             self.elements_el[f, i_global, i_b].actu = 0.0
             self.elements_el_ng[f, i_global, i_b].active = 1
