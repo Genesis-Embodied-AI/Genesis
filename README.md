@@ -79,7 +79,7 @@ Then, install Genesis via PyPI:
 pip install genesis-world  # Requires Python>=3.10,<3.13;
 ```
 
-For the latest version to date:
+For the latest version to date, make sure that `pip` is up-to-date via `pip install --upgrade pip`, then run command:
 ```bash
 pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
 ```

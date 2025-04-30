@@ -43,8 +43,11 @@ class FontCache(object):
 
     def clear(self):
         for key in self._font_cache:
-            self._font_cache[key].delete()
-        self._font_cache = {}
+            try:
+                self._font_cache[key].delete()
+            except OpenGL.error.GLError:
+                pass
+        self._font_cache.clear()
 
 
 class Character(object):

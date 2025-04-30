@@ -18,6 +18,8 @@ dependencies = [
     "trimesh",
     "scipy >= 1.14",
     "libigl",
+    # Cross-platform library to get various kind of CPU information such as model name
+    "py-cpuinfo",
     # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
     "mujoco >= 3.3.0, < 3.4.0",
@@ -46,8 +48,14 @@ dependencies = [
     "scikit-image",
     # Convex decomposition library
     "coacd",
+    # Ray casting used in mesh to height field conversion
+    "rtree",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
+    # Motion Planning library
+    # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
+    #          Fix OMPL DLL search directory.
+    "ompl>=1.7.0; platform_system != 'Windows'"
 ]
 
 [tool.setuptools.packages.find]
@@ -74,12 +82,14 @@ force-exclude = '''
 addopts = [
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
-    "--exitfirst",
+    # "--exitfirst",
     "--numprocesses=auto",
+    "--dist=loadgroup",
     "--random-order-bucket=global",
     "--random-order-seed=0",
+    "--max-worker-restart=0",
     "--durations=0",
-    "--durations-min=20.0",
+    "--durations-min=40.0",
     "-m not benchmarks",
 ]
 filterwarnings = [
@@ -95,13 +105,11 @@ log_cli_level = "WARNING"
 gs = "genesis._main:main"
 
 [project.optional-dependencies]
-gen = [
-    "openai",
-]
 dev = [
     "black",
     "pytest",
     "pytest-xdist",
+    "pytest-forked",
     "pytest-random-order",
     "huggingface_hub",
 ]

@@ -4,15 +4,25 @@ import numpy as np
 
 import genesis as gs
 
+config = {
+    "ur5e": {"mjcf_file": "xml/universal_robots_ur5e/ur5e.xml", "end_effector_link": "ee_virtual_link"},
+    "panda": {"mjcf_file": "xml/franka_emika_panda/panda.xml", "end_effector_link": "left_finger"},
+}
+
 
 def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument(
+        "-r", "--robot", choices=["panda", "ur5e"], default="ur5e", help="Select robot model (panda or ur5e)"
+    )
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="debug")
+    backend = gs.cpu if args.cpu else gs.gpu
+    gs.init(backend=backend)
 
     ########################## create a scene ##########################
     scene = gs.Scene(
@@ -28,6 +38,7 @@ def main():
             enable_collision=False,
             gravity=(0, 0, -0),
         ),
+        show_FPS=False,
     )
 
     ########################## entities ##########################
@@ -35,9 +46,14 @@ def main():
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
+
+    robot_config = config[args.robot]
+    mjcf_file = robot_config["mjcf_file"]
     robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/universal_robots_ur5e/ur5e.xml"),
+        gs.morphs.MJCF(file=mjcf_file),
     )
+
+    print("links=", robot.links)
 
     target_entity = scene.add_entity(
         gs.morphs.Mesh(
@@ -49,15 +65,14 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    robot.set_qpos([-1.5708, -1.5708, 1.5708, -1.5708, -1.5708, 0.0])
-
     target_quat = np.array([0, 1, 0, 0])
     center = np.array([0.5, 0, 0.5])
     r = 0.1
     damping = 1e-4
     diag = damping * np.eye(6)
 
-    ee_link = robot.get_link("ee_virtual_link")
+    end_effector_link = robot_config["end_effector_link"]
+    ee_link = robot.get_link(end_effector_link)
 
     for i in range(0, 2000):
         target_pos = center + np.array([np.cos(i / 360 * np.pi), np.sin(i / 360 * np.pi), 0]) * r
@@ -80,7 +95,7 @@ def main():
         q = robot.get_qpos().cpu().numpy() + dq
 
         # control
-        robot.control_dofs_position(q, np.arange(6))
+        robot.control_dofs_position(q)
         scene.step()
 
 

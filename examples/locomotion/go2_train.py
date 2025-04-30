@@ -2,15 +2,25 @@ import argparse
 import os
 import pickle
 import shutil
+from importlib import metadata
 
-from go2_env import Go2Env
+try:
+    try:
+        if metadata.version("rsl-rl"):
+            raise ImportError
+    except metadata.PackageNotFoundError:
+        if metadata.version("rsl-rl-lib") != "2.2.4":
+            raise ImportError
+except (metadata.PackageNotFoundError, ImportError) as e:
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
 
+from go2_env import Go2Env
+
 
 def get_train_cfg(exp_name, max_iterations):
-
     train_cfg_dict = {
         "algorithm": {
             "class_name": "PPO",
@@ -74,7 +84,7 @@ def get_cfgs():
             "RL_calf_joint": -1.5,
             "RR_calf_joint": -1.5,
         },
-        "dof_names": [
+        "joint_names": [
             "FR_hip_joint",
             "FR_thigh_joint",
             "FR_calf_joint",
@@ -161,7 +171,7 @@ def main():
         num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device="cuda:0")
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
 

@@ -1,4 +1,3 @@
-from itertools import chain
 from typing import Literal
 
 import numpy as np
@@ -57,6 +56,8 @@ class RigidSolver(Solver):
 
         # options
         self._enable_collision = options.enable_collision
+        self._enable_multi_contact = options.enable_multi_contact
+        self._enable_mpr_vanilla = options.enable_mpr_vanilla
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
         self._enable_adjacent_collision = options.enable_adjacent_collision
@@ -80,7 +81,10 @@ class RigidSolver(Solver):
 
         if options.contact_resolve_time is not None:
             self._sol_contact_resolve_time = options.contact_resolve_time
-            gs.logger.warning("contact_resolve_time is deprecated. Please use constraint_resolve_time instead.")
+            gs.logger.warning(
+                "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please use "
+                "'constraint_resolve_time' instead."
+            )
 
         self._options = options
 
@@ -161,7 +165,10 @@ class RigidSolver(Solver):
         self._equalities = self.equalities
 
         base_links_idx = []
-        for joint in chain.from_iterable(self.joints):
+        for link in self.links:
+            if link.parent_idx == -1 and link.is_fixed:
+                base_links_idx.append(link.idx)
+        for joint in self.joints:
             if joint.type == gs.JOINT_TYPE.FREE:
                 base_links_idx.append(joint.link.idx)
         self._base_links_idx = torch.tensor(base_links_idx, dtype=gs.tc_int, device=gs.device)
@@ -234,7 +241,7 @@ class RigidSolver(Solver):
                 offset = offsets[i_link]
 
                 this_link = i_link
-                while this_link >= 0:
+                while this_link != -1:
                     for i_d_ in range(dof_end[this_link] - dof_start[this_link]):
                         i_d = dof_end[this_link] - i_d_ - 1
                         jacr[i_d] = cdof_ang[i_d]
@@ -271,8 +278,9 @@ class RigidSolver(Solver):
                 for i_e in range(self.n_entities):
                     e_info = self.entities_info[i_e]
                     for i_d in range(e_info.dof_start, e_info.dof_end):
+                        I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
                         self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
-                        self.meaninertia[i_b] -= self.dofs_info[i_d].damping * self._substep_dt
+                        self.meaninertia[i_b] -= self.dofs_info[I_d].damping * self._substep_dt
                     self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
             else:
                 self.meaninertia[i_b] = 1.0
@@ -304,7 +312,7 @@ class RigidSolver(Solver):
 
         for i in range(self.n_links):
             j = i
-            while j >= 0:
+            while j != -1:
                 for i_d in range(self.links[i].dof_start, self.links[i].dof_end):
                     for j_d in range(self.links[j].dof_start, self.links[j].dof_end):
                         mass_parent_mask[i_d, j_d] = 1.0
@@ -373,7 +381,7 @@ class RigidSolver(Solver):
             shape=self._batch_shape(self.n_dofs_), needs_grad=False, layout=ti.Layout.SOA
         )
 
-        joints = tuple(chain.from_iterable(self.joints))
+        joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             # Make sure that the constraints parameters are valid
@@ -568,7 +576,7 @@ class RigidSolver(Solver):
         )
 
         # Make sure that the constraints parameters are valid
-        joints = tuple(chain.from_iterable(self.joints))
+        joints = self.joints
         joints_sol_params = np.concatenate([joint.sol_params for joint in joints], dtype=gs.np_float)
         joints_sol_params = _sanitize_sol_params(
             joints_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
@@ -584,12 +592,27 @@ class RigidSolver(Solver):
             joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
         )
 
-        self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
-            self.qpos.from_numpy(init_qpos)
             self.qpos0.from_numpy(init_qpos)
+
+        # Check if the initial configuration is out-of-bounds
+        self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
+        is_init_qpos_out_of_bounds = False
+        if self.n_qs > 0:
+            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            for joint in joints:
+                if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.dofs_limit[0, 1]).any()
+                    # init_qpos[joint.q_start] = np.clip(init_qpos[joint.q_start], *joint.dofs_limit[0])
+            self.qpos.from_numpy(init_qpos)
+        if is_init_qpos_out_of_bounds:
+            gs.logger.warning(
+                "Reference robot position exceeds joint limits."
+                # "Clipping initial position too make sure it is valid."
+            )
 
         # This is for IK use only
         # TODO: support IK with parallel envs
@@ -864,6 +887,7 @@ class RigidSolver(Solver):
             coup_softness=gs.ti_float,
             coup_restitution=gs.ti_float,
             is_free=gs.ti_int,
+            is_decomposed=gs.ti_int,
         )
         struct_geom_state = ti.types.struct(
             pos=gs.ti_vec3,
@@ -894,8 +918,21 @@ class RigidSolver(Solver):
                 geoms_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
             )
 
+            # Accurately compute the center of mass of each geometry if possible.
+            # Note that the mean vertex position is a bad approximation, which is impeding the ability of MPR to
+            # estimate the exact contact information.
+            geoms_center = []
+            for geom in geoms:
+                tmesh = geom.mesh.trimesh
+                if tmesh.is_watertight:
+                    geoms_center.append(tmesh.center_mass)
+                else:
+                    # Still fallback to mean vertex position if no better option...
+                    geoms_center.append(np.mean(tmesh.vertices, axis=0))
+
             self._kernel_init_geom_fields(
                 geoms_pos=np.array([geom.init_pos for geom in geoms], dtype=gs.np_float),
+                geoms_center=np.array(geoms_center, dtype=gs.np_float),
                 geoms_quat=np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 geoms_link_idx=np.array([geom.link.idx for geom in geoms], dtype=gs.np_int),
                 geoms_type=np.array([geom.type for geom in geoms], dtype=gs.np_int),
@@ -918,12 +955,14 @@ class RigidSolver(Solver):
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
                 geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
+                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_int),
             )
 
     @ti.kernel
     def _kernel_init_geom_fields(
         self,
         geoms_pos: ti.types.ndarray(),
+        geoms_center: ti.types.ndarray(),
         geoms_quat: ti.types.ndarray(),
         geoms_link_idx: ti.types.ndarray(),
         geoms_type: ti.types.ndarray(),
@@ -946,11 +985,13 @@ class RigidSolver(Solver):
         geoms_coup_friction: ti.types.ndarray(),
         geoms_coup_restitution: ti.types.ndarray(),
         geoms_is_free: ti.types.ndarray(),
+        geoms_is_decomp: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_geoms):
             for j in ti.static(range(3)):
                 self.geoms_info[i].pos[j] = geoms_pos[i, j]
+                self.geoms_info[i].center[j] = geoms_center[i, j]
 
             for j in ti.static(range(4)):
                 self.geoms_info[i].quat[j] = geoms_quat[i, j]
@@ -989,8 +1030,11 @@ class RigidSolver(Solver):
             self.geoms_info[i].coup_restitution = geoms_coup_restitution[i]
 
             self.geoms_info[i].is_free = geoms_is_free[i]
+            self.geoms_info[i].is_decomposed = geoms_is_decomp[i]
 
-            # compute init AABB
+            # compute init AABB.
+            # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
+            # in the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes.
             lower = gu.ti_vec3(ti.math.inf)
             upper = gu.ti_vec3(-ti.math.inf)
             for i_v in range(geoms_vert_start[i], geoms_vert_end[i]):
@@ -1004,14 +1048,6 @@ class RigidSolver(Solver):
             self.geoms_init_AABB[i, 5] = ti.Vector([upper[0], lower[1], upper[2]], dt=gs.ti_float)
             self.geoms_init_AABB[i, 6] = ti.Vector([upper[0], upper[1], lower[2]], dt=gs.ti_float)
             self.geoms_init_AABB[i, 7] = ti.Vector([upper[0], upper[1], upper[2]], dt=gs.ti_float)
-
-            # compute geom center
-            self.geoms_info[i].center = ti.Vector.zero(gs.ti_float, 3)
-            for i_v in range(self.geoms_info[i].vert_start, self.geoms_info[i].vert_end):
-                pos = self.verts_info[i_v].init_pos
-                self.geoms_info[i].center += pos
-
-            self.geoms_info[i].center /= self.geoms_info[i].vert_end - self.geoms_info[i].vert_start
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
@@ -1727,7 +1763,7 @@ class RigidSolver(Solver):
     def _process_dim(self, tensor, envs_idx=None):
         if self.n_envs == 0:
             if tensor.ndim == 1:
-                tensor = tensor[None, :]
+                tensor = tensor.unsqueeze(0)
             else:
                 gs.raise_exception(
                     f"Invalid input shape: {tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
@@ -1735,12 +1771,12 @@ class RigidSolver(Solver):
         else:
             if tensor.ndim == 2:
                 if envs_idx is not None:
-                    if tensor.shape[0] != len(envs_idx):
+                    if len(tensor) != len(envs_idx):
                         gs.raise_exception(
                             f"Invalid input shape: {tensor.shape}. 1st dimension of input does not match `envs_idx`."
                         )
                 else:
-                    if tensor.shape[0] != self.n_envs:
+                    if len(tensor) != self.n_envs:
                         gs.raise_exception(
                             f"Invalid input shape: {tensor.shape}. 1st dimension of input does not match `scene.n_envs`."
                         )
@@ -2279,7 +2315,7 @@ class RigidSolver(Solver):
 
             pos = l_info.pos
             quat = l_info.quat
-            if l_info.parent_idx >= 0:
+            if l_info.parent_idx != -1:
                 parent_pos = self.links_state[l_info.parent_idx, i_b].pos
                 parent_quat = self.links_state[l_info.parent_idx, i_b].quat
                 pos = parent_pos + gu.ti_transform_by_quat(pos, parent_quat)
@@ -2291,6 +2327,7 @@ class RigidSolver(Solver):
                 joint_type = j_info.type
                 q_start = j_info.q_start
                 dof_start = j_info.dof_start
+                I_d = [dof_start, i_b] if ti.static(self._options.batch_dofs_info) else dof_start
 
                 # compute axis and anchor
                 if joint_type == gs.JOINT_TYPE.FREE:
@@ -2303,9 +2340,9 @@ class RigidSolver(Solver):
                 else:
                     axis = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
                     if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                        axis = self.dofs_info[dof_start].motion_ang
+                        axis = self.dofs_info[I_d].motion_ang
                     elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-                        axis = self.dofs_info[dof_start].motion_vel
+                        axis = self.dofs_info[I_d].motion_vel
 
                     self.joints_state[i_j, i_b].xanchor = gu.ti_transform_by_quat(j_info.pos, quat) + pos
                     self.joints_state[i_j, i_b].xaxis = gu.ti_transform_by_quat(axis, quat)
@@ -2347,7 +2384,7 @@ class RigidSolver(Solver):
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
                     pos = self.joints_state[i_j, i_b].xanchor - gu.ti_transform_by_quat(j_info.pos, quat)
                 elif joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    axis = self.dofs_info[dof_start].motion_ang
+                    axis = self.dofs_info[I_d].motion_ang
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
                     qloc = gu.ti_rotvec_to_quat(axis * self.dofs_state[dof_start, i_b].pos)
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
@@ -2358,8 +2395,10 @@ class RigidSolver(Solver):
                 else:
                     print("unrecognized joint type", joint_type)
 
-            self.links_state[i_l, i_b].pos = pos
-            self.links_state[i_l, i_b].quat = quat
+            # Skip link pose update for fixed root links to allow the user for manually overwriting them
+            if not (l_info.is_fixed and l_info.parent_idx == -1):
+                self.links_state[i_l, i_b].pos = pos
+                self.links_state[i_l, i_b].quat = quat
 
     @ti.func
     def _func_forward_velocity_entity(self, i_e, i_b):
@@ -2369,7 +2408,7 @@ class RigidSolver(Solver):
 
             cvel_vel = ti.Vector.zero(gs.ti_float, 3)
             cvel_ang = ti.Vector.zero(gs.ti_float, 3)
-            if l_info.parent_idx >= 0:
+            if l_info.parent_idx != -1:
                 cvel_vel = self.links_state[l_info.parent_idx, i_b].cd_vel
                 cvel_ang = self.links_state[l_info.parent_idx, i_b].cd_ang
 
@@ -2749,7 +2788,6 @@ class RigidSolver(Solver):
         for i_e, i_b in ti.ndrange(self.n_entities, self._B):
             wakeup = False
             for i_l in range(self.entities_info[i_e].link_start, self.entities_info[i_e].link_end):
-                force = gs.ti_float(0.0)
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
                 l_info = self.links_info[I_l]
                 if l_info.n_dofs == 0:
@@ -2761,6 +2799,7 @@ class RigidSolver(Solver):
 
                 for i_d in range(l_info.dof_start, l_info.dof_end):
                     I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+                    force = gs.ti_float(0.0)
                     if self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.FORCE:
                         force = self.dofs_state[i_d, i_b].ctrl_force
                     elif self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY:
@@ -2825,6 +2864,7 @@ class RigidSolver(Solver):
                         self.dofs_state[i_d, i_b].qf_applied = ti.math.clamp(
                             force, self.dofs_info[I_d].force_range[0], self.dofs_info[I_d].force_range[1]
                         )
+
                         if ti.abs(force) > gs.EPS:
                             wakeup = True
 
@@ -2833,6 +2873,14 @@ class RigidSolver(Solver):
                     self._func_wakeup_entity(i_e, i_b)
 
         if ti.static(self._use_hibernation):
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(self._B):
+                for i_d_ in range(self.n_awake_dofs[i_b]):
+                    i_d = self.awake_dofs[i_d_, i_b]
+                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+
+                    self.dofs_state[i_d, i_b].qf_passive = -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
+
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self._B):
                 for i_l_ in range(self.n_awake_links[i_b]):
@@ -2855,18 +2903,15 @@ class RigidSolver(Solver):
                             I_d = (
                                 [dof_start + j_d, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + j_d
                             )
-                            self.dofs_state[dof_start + j_d, i_b].qf_passive = (
+                            self.dofs_state[dof_start + j_d, i_b].qf_passive += (
                                 -self.qpos[q_start + j_d, i_b] * self.dofs_info[I_d].stiffness
                             )
-
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_d_ in range(self.n_awake_dofs[i_b]):
-                    i_d = self.awake_dofs[i_d_, i_b]
-                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-
-                    self.dofs_state[i_d, i_b].qf_passive += -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
         else:
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
+                I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+                self.dofs_state[i_d, i_b].qf_passive = -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
+
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
                 I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
@@ -2885,14 +2930,9 @@ class RigidSolver(Solver):
 
                     for j_d in range(q_end - q_start):
                         I_d = [dof_start + j_d, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + j_d
-                        self.dofs_state[dof_start + j_d, i_b].qf_passive = (
+                        self.dofs_state[dof_start + j_d, i_b].qf_passive += (
                             -self.qpos[q_start + j_d, i_b] * self.dofs_info[I_d].stiffness
                         )
-
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                self.dofs_state[i_d, i_b].qf_passive += -self.dofs_info[I_d].damping * self.dofs_state[i_d, i_b].vel
 
     @ti.func
     def _func_system_update_acc(self, for_sensor):
@@ -3159,6 +3199,7 @@ class RigidSolver(Solver):
                     if i_d1_ < e_info.n_dofs:
                         i_d1 = e_info.dof_start + i_d1_
                         acc = gs.ti_float(0.0)
+                        # FIXME: It should be the non-damped inverse mass matrix.
                         for i_d2 in range(e_info.dof_start, e_info.dof_end):
                             acc += self.mass_mat_inv[i_d1, i_d2, i_b] * self.dofs_state[i_d2, i_b].force
                         self.dofs_state[i_d1, i_b].acc = acc
@@ -3171,6 +3212,7 @@ class RigidSolver(Solver):
                 if i_d1_ < e_info.n_dofs:
                     i_d1 = e_info.dof_start + i_d1_
                     acc = gs.ti_float(0.0)
+                    # FIXME: It should be the non-damped inverse mass matrix.
                     for i_d2 in range(e_info.dof_start, e_info.dof_end):
                         acc += self.mass_mat_inv[i_d1, i_d2, i_b] * self.dofs_state[i_d2, i_b].force
                     self.dofs_state[i_d1, i_b].acc = acc
@@ -3305,26 +3347,6 @@ class RigidSolver(Solver):
                 joint_type = self.joints_info[I_j].type
 
                 if joint_type == gs.JOINT_TYPE.FREE:
-                    rot = ti.Vector(
-                        [
-                            self.qpos[q_start + 3, i_b],
-                            self.qpos[q_start + 4, i_b],
-                            self.qpos[q_start + 5, i_b],
-                            self.qpos[q_start + 6, i_b],
-                        ]
-                    )
-                    ang = (
-                        ti.Vector(
-                            [
-                                self.dofs_state[dof_start + 3, i_b].vel,
-                                self.dofs_state[dof_start + 4, i_b].vel,
-                                self.dofs_state[dof_start + 5, i_b].vel,
-                            ]
-                        )
-                        * self._substep_dt
-                    )
-                    qrot = gu.ti_rotvec_to_quat(ang)
-                    rot = gu.ti_transform_quat_by_quat(qrot, rot)
                     pos = ti.Vector([self.qpos[q_start, i_b], self.qpos[q_start + 1, i_b], self.qpos[q_start + 2, i_b]])
                     vel = ti.Vector(
                         [
@@ -3336,8 +3358,30 @@ class RigidSolver(Solver):
                     pos = pos + vel * self._substep_dt
                     for j in ti.static(range(3)):
                         self.qpos[q_start + j, i_b] = pos[j]
-                    for j in ti.static(range(4)):
-                        self.qpos[q_start + j + 3, i_b] = rot[j]
+                if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
+                    rot_offset = 3 if joint_type == gs.JOINT_TYPE.FREE else 0
+                    rot = ti.Vector(
+                        [
+                            self.qpos[q_start + rot_offset + 0, i_b],
+                            self.qpos[q_start + rot_offset + 1, i_b],
+                            self.qpos[q_start + rot_offset + 2, i_b],
+                            self.qpos[q_start + rot_offset + 3, i_b],
+                        ]
+                    )
+                    ang = (
+                        ti.Vector(
+                            [
+                                self.dofs_state[dof_start + rot_offset + 0, i_b].vel,
+                                self.dofs_state[dof_start + rot_offset + 1, i_b].vel,
+                                self.dofs_state[dof_start + rot_offset + 2, i_b].vel,
+                            ]
+                        )
+                        * self._substep_dt
+                    )
+                    qrot = gu.ti_rotvec_to_quat(ang)
+                    rot = gu.ti_transform_quat_by_quat(qrot, rot)
+                    for j in range(4):
+                        self.qpos[q_start + j + rot_offset, i_b] = rot[j]
                 else:
                     for j in range(q_end - q_start):
                         self.qpos[q_start + j, i_b] = (
@@ -3610,7 +3654,7 @@ class RigidSolver(Solver):
         self,
         tensor,
         inputs_idx,
-        input_max,
+        input_size,
         envs_idx,
         batched=True,
         idx_name="dofs_idx",
@@ -3625,11 +3669,11 @@ class RigidSolver(Solver):
             envs_idx = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
 
         if inputs_idx is None:
-            inputs_idx = range(0, input_max)
+            inputs_idx = range(0, input_size)
         elif isinstance(inputs_idx, slice):
             inputs_idx = range(
                 inputs_idx.start or 0,
-                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
         elif isinstance(inputs_idx, int):
@@ -3648,21 +3692,24 @@ class RigidSolver(Solver):
             return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
-        _inputs_idx = torch.atleast_1d(torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
+        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
         if _inputs_idx is not inputs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        _inputs_idx = torch.atleast_1d(_inputs_idx)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
-        if inputs_start < 0 or input_max <= inputs_end:
-            gs.raise_exception("`{idx_name}` is out-of-range.")
+        if len(inputs_idx):
+            inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
+            if inputs_start < 0 or input_size <= inputs_end:
+                gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
             if _tensor is not tensor:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor
-            if tensor.shape[-1] != len(_inputs_idx):
+            tensor = _tensor.unsqueeze(0) if batched and self.n_envs and _tensor.ndim == 1 else _tensor
+
+            if tensor.shape[-1] != len(inputs_idx):
                 gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
 
             if batched:
@@ -3691,7 +3738,7 @@ class RigidSolver(Solver):
         self,
         tensor,
         inputs_idx,
-        input_max,
+        input_size,
         vec_size,
         envs_idx=None,
         batched=True,
@@ -3707,11 +3754,11 @@ class RigidSolver(Solver):
             envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
 
         if inputs_idx is None:
-            inputs_idx = range(0, input_max)
+            inputs_idx = range(0, input_size)
         elif isinstance(inputs_idx, slice):
             inputs_idx = range(
                 inputs_idx.start or 0,
-                inputs_idx.stop if inputs_idx.stop is not None else input_max,
+                inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
         elif isinstance(inputs_idx, int):
@@ -3733,18 +3780,20 @@ class RigidSolver(Solver):
         _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
         if _inputs_idx is not inputs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        _inputs_idx = torch.atleast_1d(_inputs_idx)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
         inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
-        if inputs_start < 0 or input_max <= inputs_end:
-            gs.raise_exception("`{idx_name}` is out-of-range.")
+        if inputs_start < 0 or input_size <= inputs_end:
+            gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
             if _tensor is not tensor:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor
-            if tensor.shape[-2] != len(_inputs_idx):
+            tensor = _tensor.unsqueeze(0) if batched and self.n_envs and _tensor.ndim == 2 else _tensor
+
+            if tensor.shape[-2] != len(inputs_idx):
                 gs.raise_exception(f"Second last dimension of the input tensor does not match length of `{idx_name}`.")
             if tensor.shape[-1] != vec_size:
                 gs.raise_exception(f"Last dimension of the input tensor must be {vec_size}.")
@@ -3787,7 +3836,7 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             pos = pos.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
-            gs.raise_exception("`links_idx` contains at least one link that is not a free-floating base link.")
+            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_pos(pos, links_idx, envs_idx)
         if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3805,12 +3854,13 @@ class RigidSolver(Solver):
             I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
             for i in ti.static(range(3)):
                 self.links_state[i_l, envs_idx[i_b_]].pos[i] = pos[i_b_, i_l_, i]
-            q_start = self.links_info[I_l].q_start
-            for i in ti.static(range(3)):
-                self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
+            if not (self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed):
+                q_start = self.links_info[I_l].q_start
+                for i in ti.static(range(3)):
+                    self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
-        raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
+        raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
         if links_idx is None:
@@ -3821,7 +3871,7 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             quat = quat.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
-            gs.raise_exception("`links_idx` contains at least one link that is not a free-floating base link.")
+            gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_quat(quat, links_idx, envs_idx)
         if skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
@@ -3839,9 +3889,10 @@ class RigidSolver(Solver):
             I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
             for i in ti.static(range(4)):
                 self.links_state[i_l, envs_idx[i_b_]].quat[i] = quat[i_b_, i_l_, i]
-            q_start = self.links_info[I_l].q_start
-            for i in ti.static(range(4)):
-                self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
+            if not (self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed):
+                q_start = self.links_info[I_l].q_start
+                for i in ti.static(range(4)):
+                    self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -4286,11 +4337,23 @@ class RigidSolver(Solver):
                     )
                     quat = gu.ti_xyz_to_quat(xyz)
 
-                    for i_q in ti.static(range(3)):
+                    for i_q in range(3):
                         self.qpos[i_q + q_start, i_b] = self.dofs_state[i_q + dof_start, i_b].pos
 
-                    for i_q in ti.static(range(4)):
+                    for i_q in range(4):
                         self.qpos[i_q + 3 + q_start, i_b] = quat[i_q]
+                elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                    xyz = ti.Vector(
+                        [
+                            self.dofs_state[0 + dof_start, i_b].pos,
+                            self.dofs_state[1 + dof_start, i_b].pos,
+                            self.dofs_state[2 + dof_start, i_b].pos,
+                        ],
+                        dt=gs.ti_float,
+                    )
+                    quat = gu.ti_xyz_to_quat(xyz)
+                    for i_q in range(q_start, q_start + 4):
+                        self.qpos[i_q, i_b] = quat[i_q - q_start]
                 else:
                     for i_q in range(q_start, l_info.q_end):
                         self.qpos[i_q, i_b] = self.dofs_state[dof_start + i_q - q_start, i_b].pos
@@ -4368,15 +4431,22 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "entity_com"] = "link_origin",
         unsafe: bool = False,
     ):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        assert ref in ("link_origin", "link_com")
-        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref=int(ref == "link_origin"))
+        if ref == "entity_com":
+            ref = 0
+        elif ref == "link_com":
+            ref = 1
+        elif ref == "link_origin":
+            ref = 2
+        else:
+            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'entity_com'.")
+        self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref)
         return _tensor
 
     @ti.kernel
@@ -4393,11 +4463,11 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             l_state = self.links_state[links_idx[i_l_], envs_idx[i_b_]]
-            xvel = l_state.vel
-            if ti.static(ref == 1):  # link's origin
-                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
-            else:  # link's CoM
+            xvel = l_state.vel  # entity's CoM
+            if ti.static(ref == 1):  # link's CoM
                 xvel = xvel + l_state.ang.cross(l_state.i_pos)
+            if ti.static(ref == 2):  # link's origin
+                xvel = xvel + l_state.ang.cross(l_state.pos - l_state.COM)
             for i in ti.static(range(3)):
                 tensor[i_b_, i_l_, i] = xvel[i]
 
@@ -4536,19 +4606,19 @@ class RigidSolver(Solver):
             )
 
     def get_dofs_kp(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.kp, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_kv(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.kv, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_force_range(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.force_range, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         if self.n_envs == 0 and self._options.batch_dofs_info:
@@ -4556,7 +4626,7 @@ class RigidSolver(Solver):
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_limit(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.limit, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         if self.n_envs == 0 and self._options.batch_dofs_info:
@@ -4564,25 +4634,25 @@ class RigidSolver(Solver):
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_stiffness(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.stiffness, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_invweight(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.invweight, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_armature(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.armature, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_damping(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        if not unsafe and self._options.batch_dofs_info and dofs_idx is not None:
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_field_to_torch(self.dofs_info.damping, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
@@ -4794,7 +4864,7 @@ class RigidSolver(Solver):
     def n_joints(self):
         if self.is_built:
             return self._n_joints
-        return sum(map(len, self.joints))
+        return len(self.joints)
 
     @property
     def n_geoms(self):

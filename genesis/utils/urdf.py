@@ -94,7 +94,7 @@ def parse_urdf(morph, surface):
             l_info["inertial_i"] = link.inertial.inertia
             l_info["inertial_mass"] = link.inertial.mass
 
-        l_info["g_infos"] = list()
+        l_info["g_infos"] = []
 
         for geom in link.collisions + link.visuals:
             geom_is_col = not isinstance(geom, urdfpy.Visual)
@@ -108,7 +108,6 @@ def parse_urdf(morph, surface):
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
                         scale=scale,
-                        convexify=geom_is_col and morph.convexify,
                         surface=gs.surfaces.Collision() if geom_is_col else surface,
                         metadata={
                             "mesh_path": urdfpy.utils.get_filename(
@@ -162,7 +161,6 @@ def parse_urdf(morph, surface):
                     tmesh,
                     scale=morph.scale,
                     surface=gs.surfaces.Collision() if geom_is_col else surface,
-                    convexify=True,
                 )
 
                 if not geom_is_col:
@@ -243,8 +241,8 @@ def parse_urdf(morph, surface):
             j_info["dofs_limit"] = np.array(
                 [
                     [
-                        joint.limit.lower if joint.limit.lower is not None else -np.inf,
-                        joint.limit.upper if joint.limit.upper is not None else np.inf,
+                        scale * joint.limit.lower if joint.limit.lower is not None else -np.inf,
+                        scale * joint.limit.upper if joint.limit.upper is not None else np.inf,
                     ]
                 ]
             )

@@ -29,7 +29,7 @@ robot = scene.add_entity(
 n_envs = 30000
 scene.build(n_envs=n_envs)
 
-joint_names = [
+joints_name = (
     "RH_HAA",
     "LH_HAA",
     "RF_HAA",
@@ -42,11 +42,11 @@ joint_names = [
     "LH_KFE",
     "RF_KFE",
     "LF_KFE",
-]
-motor_dofs = [robot.get_joint(name).dof_idx_local for name in joint_names]
+)
+motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-robot.set_dofs_kp(np.full(12, 1000), motor_dofs)
-robot.control_dofs_position(np.zeros((n_envs, 12)), motor_dofs)
+robot.set_dofs_kp(np.full(12, 1000), motors_dof_idx)
+robot.control_dofs_position(np.zeros((n_envs, 12)), motors_dof_idx)
 
 # Speed: 14.4M FPS
 for i in range(1000):

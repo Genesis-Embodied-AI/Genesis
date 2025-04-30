@@ -166,18 +166,24 @@ class ParticleEntity(Entity):
                 morph_i.euler = morph_i.eulers[i]
                 mesh_i = morph_i.file.copy()
                 mesh_i.vertices = mesh_i.vertices * morph_i.scale
-                if "pbs" in self.sampler:
-                    particles_i = pu.trimesh_to_particles_pbs(
-                        mesh=mesh_i,
-                        p_size=self._particle_size,
-                        sampler=self.sampler,
-                    )
-                else:
+
+                sampler = self.sampler
+                if "pbs" in sampler:
+                    try:
+                        particles_i = pu.trimesh_to_particles_pbs(
+                            mesh=mesh_i,
+                            p_size=self._particle_size,
+                            sampler=sampler,
+                        )
+                    except gs.GenesisException:
+                        sampler = "random"
+                if "pbs" not in sampler:
                     particles_i = pu.trimesh_to_particles_simple(
                         mesh=mesh_i,
                         p_size=self._particle_size,
-                        sampler=self.sampler,
+                        sampler=sampler,
                     )
+
                 particles_i += np.array(morph_i.pos)
                 particles.append(particles_i)
 
@@ -233,7 +239,7 @@ class ParticleEntity(Entity):
             else:
                 self._vverts = np.array([])
                 self._vfaces = np.array([])
-            origin = np.mean(self._morph.poss)
+            origin = np.mean(self._morph.poss, dtype=gs.np_float)
 
         else:
             # transform vmesh
@@ -255,8 +261,8 @@ class ParticleEntity(Entity):
                 self._vverts = np.array([])
                 self._vfaces = np.array([])
 
-        self._particles = particles.astype(gs.np_float)
-        self._init_particles_offset = (gs.tensor(particles).contiguous() - gs.tensor(origin)).contiguous()
+        self._particles = particles.astype(gs.np_float, order="C", copy=False)
+        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(origin)
         self._n_particles = len(self._particles)
 
         gs.logger.info(f"Sampled ~~<{self._n_particles:,}>~~ particles.")

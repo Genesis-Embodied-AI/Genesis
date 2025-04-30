@@ -436,14 +436,14 @@ class RigidLink(RBC):
         """
         The sequence of joints that connects the link to its parent link.
         """
-        return self._solver.joints[self._idx]
+        return self._solver.joints[self.joint_start : self.joint_end]
 
     @property
     def n_joints(self):
         """
         Number of the joints that connects the link to its parent link.
         """
-        return len(self.joints)
+        return self._n_joints
 
     @property
     def joint_start(self):
@@ -523,7 +523,7 @@ class RigidLink(RBC):
         """
         The local index of the link in the entity.
         """
-        return self._idx - self._entity._link_start
+        return self._idx - self._entity.link_start
 
     @property
     def parent_idx_local(self):
@@ -532,9 +532,8 @@ class RigidLink(RBC):
         """
         # TODO: check for parent links outside of the current entity (caused by scene.link_entities())
         if self._parent_idx >= 0:
-            return self._parent_idx - self._entity._link_start
-        else:
-            return self._parent_idx
+            return self._parent_idx - self._entity.link_start
+        return self._parent_idx
 
     @property
     def child_idxs_local(self):
@@ -542,7 +541,7 @@ class RigidLink(RBC):
         The local indices of the link's child links in the entity.
         """
         # TODO: check for child links outside of the current entity (caused by scene.link_entities())
-        return [idx - self._entity._link_start if idx >= 0 else idx for idx in self._child_idxs]
+        return [idx - self._entity.link_start if idx >= 0 else idx for idx in self._child_idxs]
 
     @property
     def is_leaf(self):

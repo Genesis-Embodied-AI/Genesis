@@ -1,6 +1,7 @@
 import numpy as np
 import taichi as ti
 import torch
+import torch.nn.functional as F
 from scipy.spatial.transform import Rotation
 import genesis as gs
 
@@ -285,30 +286,8 @@ def orthogonals(a):
     if -0.5 < a[1] and a[1] < 0.5:
         b = y
     b = b - a * a.dot(b)
-    # make b a normal vector. however if a is a zero vector, zero b as well.
     b = b.normalized()
-    if a.norm() < gs.EPS:
-        b = b * 0.0
     return b, a.cross(b)
-
-
-@ti.func
-def orthogonals2(a):
-    """Returns orthogonal vectors `b` and `c`, given a normal vector `a`."""
-    y, z = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float), ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
-    b = z
-    if -0.5 < a[1] and a[1] < 0.5:
-        b = y
-    b = b - a * a.dot(b)
-    # make b a normal vector. however if a is a zero vector, zero b as well.
-    b = b.normalized()
-    if a.norm() < gs.EPS:
-        b = b * 0.0
-
-    # perturb with some noise so that they do not align with world axes
-    c = (a.cross(b) + 0.1 * b).normalized()
-    b = c.cross(a).normalized()
-    return b, c
 
 
 @ti.func
@@ -437,6 +416,67 @@ def normalize(x, eps: float = 1e-9):
         return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), eps)
     else:
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(x)=}")
+
+
+def rot6d_to_quat(d6):
+    R = rot6d_to_R(d6)
+    return R_to_quat(R)
+
+
+def quat_to_rot6d(quat):
+    R = quat_to_R(quat)
+    return R_to_rot6d(R)
+
+
+def rot6d_to_R(d6):
+    """
+    Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    using Gram--Schmidt orthogonalization per Section B of [1].
+    Args:
+        d6: 6D rotation representation, of size (*, 6)
+
+    Returns:
+        batch of rotation matrices of size (*, 3, 3)
+
+    [1] http://arxiv.org/abs/1812.07035
+    """
+    if isinstance(d6, torch.Tensor):
+        a1, a2 = d6[..., :3], d6[..., 3:]
+        b1 = F.normalize(a1, dim=-1)
+        b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+        b2 = F.normalize(b2, dim=-1)
+        b3 = torch.cross(b1, b2, dim=-1)
+        return torch.stack((b1, b2, b3), dim=-2)
+    elif isinstance(d6, np.ndarray):
+        a1, a2 = d6[..., :3], d6[..., 3:]
+        b1 = a1 / np.linalg.norm(a1, axis=-1, keepdims=True)
+        dot = np.sum(b1 * a2, axis=-1, keepdims=True)
+        b2 = a2 - dot * b1
+        b2 = b2 / np.linalg.norm(b2, axis=-1, keepdims=True)
+        b3 = np.cross(b1, b2, axis=-1)
+        return np.stack((b1, b2, b3), axis=-2)
+    else:
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(d6)=}")
+
+
+def R_to_rot6d(R):
+    """
+    Converts rotation matrices to 6D rotation representation by Zhou et al. [1]
+    by dropping the last row. Note that 6D representation is not unique.
+    Args:
+        R: batch of rotation matrices of size (*, 3, 3)
+
+    Returns:
+        6D rotation representation, of size (*, 6)
+
+    [1] http://arxiv.org/abs/1812.07035
+    """
+    if isinstance(R, torch.Tensor):
+        return R[..., :2, :].clone().flatten(start_dim=-2)
+    elif isinstance(R, np.ndarray):
+        return R[..., :2, :].reshape(*R.shape[:-2], 6)
+    else:
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(R)=}")
 
 
 def quat_to_R(quat):

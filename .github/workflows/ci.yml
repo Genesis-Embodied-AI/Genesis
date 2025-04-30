@@ -35,27 +35,29 @@ jobs:
 
       - name: Run Tests
         run: |
-          container_id=$(uuidgen)
+          container_id="$(uuidgen)"
+          echo "container_id=${container_id}" >> $GITHUB_ENV
           artifacts_id="${container_id}_$(date +%Y%m%d_%H%M%S)"
           echo "artifacts_id=${artifacts_id}" >> $GITHUB_ENV
 
-          docker run --gpus all --name $container_id -v ${{ github.workspace }}:/workspace:ro cuda11:latest \
+          docker run --gpus all --name "${container_id}" -v ${{ github.workspace }}:/workspace:ro cuda11:latest \
           bash -c "
             source \"\$HOME/.bash_profile\" && \
             cp -r /workspace /app && cd /app && \
             bash ./.github/workflows/setup_env.sh && \
-            curl -sS 'https://api.github.com/repos/ompl/ompl/releases/tags/prerelease' \
-            | jq -r '.assets[].browser_download_url' \
-            | while IFS= read -r URL; do wget -q -c \"\$URL\"; done && \
-            pyenv shell "${{ matrix.python-version }}" && \
-            python -m pip install --no-index --find-links . ompl && \
-            pip install -e ".[dev]" && \
-            pytest -v tests && \
-            pytest -v -m 'benchmarks' tests"
+            pip install -e '.[dev]' && \
+            pytest -v --forked ./tests && \
+            pytest -v -m 'benchmarks' --backend gpu ./tests"
 
           mkdir -p ./artifacts
-          docker cp "$container_id:/app/speed_test.txt" "./artifacts/speed_test_${artifacts_id}.txt"
-          docker rm -f "$container_id"
+          docker cp "${container_id}:/app/speed_test.txt" "./artifacts/speed_test_${artifacts_id}.txt"
+
+      - name: Remove container
+        if: always()
+        run: |
+          if [ -n "${container_id}" ] ; then
+            docker rm -f "${container_id}"
+          fi
 
       - name: Display Speed Test
         run: |

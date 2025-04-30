@@ -40,52 +40,6 @@ exit_callbacks = []
 global_scene_list = set()
 
 
-############ fix python DLL search dir for OMPL ############
-try:
-    import ompl
-
-    _is_ompl_available = True
-except ImportError:
-    _is_ompl_available = False
-
-
-def dll_loader(lib, path):
-    # First, try the user-specified path
-    sys = system()
-    if sys == "Windows":
-        ext = ".dll"
-    elif sys == "Darwin":
-        ext = ".dylib"
-    else:  # Linux, other UNIX systems
-        ext = ".so"
-    fname = f"lib{lib}{ext}"
-    fpath = os.path.join(path, fname)
-
-    # Fallback to site-packages
-    if not os.path.isfile(fpath):
-        for sitepackagedir in site.getsitepackages():
-            if not os.path.exists(sitepackagedir):
-                continue
-            for _fname in os.listdir(sitepackagedir):
-                _fpath = os.path.join(sitepackagedir, _fname)
-                if os.path.isfile(_fpath):
-                    if _fname.startswith(fname):
-                        fpath = _fpath
-                        break
-
-    # Fallback to system loading and pray
-    if not os.path.isfile(fpath):
-        fpath = find_library(lib)
-
-    cdll = ctypes.CDLL(fpath, ctypes.RTLD_GLOBAL)
-    if cdll is None:
-        gs.raise_exception(f"Failed to load dynamic library '{lib}' (search path '{path}').")
-
-
-if _is_ompl_available:
-    ompl.dll_loader = dll_loader
-
-
 ########################## init ##########################
 def init(
     seed=None,
@@ -97,7 +51,7 @@ def init(
     theme="dark",
     logger_verbose_time=False,
 ):
-    # genesis._initialized
+    # Consider Genesis as initialized right away
     global _initialized
     if _initialized:
         raise_exception("Genesis already initialized.")
@@ -114,7 +68,7 @@ def init(
     if logging_level is None:
         logging_level = _logging.DEBUG if debug else _logging.INFO
     logger = Logger(logging_level, logger_verbose_time)
-    atexit.register(_gs_exit)
+    atexit.register(destroy)
 
     # Must delay raising exception after logger initialization
     if not is_theme_valid:
@@ -145,12 +99,6 @@ def init(
     # get default device and compute total device memory
     global device
     device, device_name, total_mem, backend = get_device(backend)
-
-    _globalize_backend(backend)
-
-    logger.info(
-        f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
-    )
 
     # dtype
     global ti_float
@@ -200,7 +148,7 @@ def init(
     ti_ivec4 = ti.types.vector(4, ti_int)
 
     global EPS
-    EPS = eps
+    EPS = max(eps, np.finfo(np_float).eps)
 
     taichi_kwargs = {}
     if gs.logger.level == _logging.CRITICAL:
@@ -250,6 +198,21 @@ def init(
             **taichi_kwargs,
         )
 
+    # Make sure that taichi arch is matching requirement
+    ti_runtime = ti.lang.impl.get_runtime()
+    taichi_arch = ti_runtime.prog.config().arch
+    if backend != gs.cpu and taichi_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+        device, device_name, total_mem, backend = get_device(gs.cpu)
+
+    _globalize_backend(backend)
+
+    # Update torch default device
+    torch.set_default_device(device)
+
+    logger.info(
+        f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
+    )
+
     for ti_output in _ti_outputs:
         logger.debug(ti_output)
     _ti_outputs.clear()
@@ -268,23 +231,42 @@ def destroy():
     A simple wrapper for ti.reset(). This call releases all gpu memories allocated and destroyes all runtime data, and also forces caching of compiled kernels.
     gs.init() needs to be called again to reinitialize the system after destroy.
     """
-    # genesis._initialized
+    # Early return if not initialized
     global _initialized
-    _initialized = False
-    ti.reset()
+    if not _initialized:
+        return
 
+    # Do not consider Genesis as initialized at this point
+    _initialized = False
+
+    # Unregister at-exit callback that is not longer relevant.
+    # This is important when `init` / `destory` is called multiple times, which is typically the case for unit tests.
+    atexit.unregister(destroy)
+
+    # Display any buffered error message if logger is configured
+    global logger
+    if logger:
+        logger.info("💤 Exiting Genesis and caching compiled kernels...")
+
+    # Call all exit callbacks
+    for cb in exit_callbacks:
+        cb()
+    exit_callbacks.clear()
+
+    # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
         if scene._visualizer is not None:
-            if scene._visualizer._rasterizer is not None:
-                scene._visualizer._rasterizer.destroy()
+            scene._visualizer.destroy()
+        del scene
     global_scene_list.clear()
 
-    global logger
+    # Reset taichi
+    ti.reset()
+
+    # Delete logger
     logger.removeHandler(logger.handler)
     logger = None
-
-    atexit.unregister(_gs_exit)
 
 
 def _globalize_backend(_backend):
@@ -323,35 +305,18 @@ class GenesisException(Exception):
 
 
 def _custom_excepthook(exctype, value, tb):
-    if issubclass(exctype, GenesisException):
-        # We don't want the traceback info to trace till this __init__.py file.
-        stack_trace = "".join(traceback.format_exception(exctype, value, tb)[:-2])
-        print(stack_trace)
-    else:
-        # Use the system's default excepthook for other exception types
-        sys.__excepthook__(exctype, value, tb)
+    print("".join(traceback.format_exception(exctype, value, tb)))
+
+    # Logger the exception right before exit if possible
+    try:
+        gs.logger.error(f"{exctype.__name__}: {value}")
+    except AttributeError:
+        # Logger may not be configured at this point
+        pass
 
 
 # Set the custom excepthook to handle GenesisException
 sys.excepthook = _custom_excepthook
-
-
-def _gs_exit():
-    # display error if it exists
-    if logger._error_msg is not None:
-        logger.error(logger._error_msg)
-
-    # This might raise error during unit test
-    try:
-        logger.info("💤 Exiting Genesis and caching compiled kernels...")
-    except:
-        pass
-
-    for cb in exit_callbacks:
-        cb()
-
-    destroy()
-
 
 ########################## shortcut imports for users ##########################
 
@@ -365,6 +330,13 @@ if sys.platform == "darwin":
     libc.dup2(devnull.fileno(), stderr_fileno)
 
 from .ext import _trimesh_patch
+from .utils.misc import get_src_dir as _get_src_dir
+
+try:
+    sys.path.append(os.path.join(_get_src_dir(), "ext/LuisaRender/build/bin"))
+    import LuisaRenderPy as _LuisaRenderPy
+except ImportError:
+    pass
 
 from .constants import (
     IntEnum,

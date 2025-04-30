@@ -21,9 +21,8 @@ def setup_txt_logging():
 
 
 @pytest.fixture
-def anymal_c(solver, n_envs):
+def anymal_c(solver, n_envs, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -33,6 +32,7 @@ def anymal_c(solver, n_envs):
             dt=0.01,
             constraint_solver=solver,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -49,7 +49,7 @@ def anymal_c(solver, n_envs):
     scene.build(n_envs=n_envs)
 
     ######################## simulate #########################
-    joint_names = [
+    joints_name = (
         "RH_HAA",
         "LH_HAA",
         "RF_HAA",
@@ -62,14 +62,14 @@ def anymal_c(solver, n_envs):
         "LH_KFE",
         "RF_KFE",
         "LF_KFE",
-    ]
-    motor_dofs = [robot.get_joint(name).dof_idx_local for name in joint_names]
+    )
+    motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-    robot.set_dofs_kp(np.full(12, 1000), motor_dofs)
+    robot.set_dofs_kp(np.full(12, 1000), motors_dof_idx)
     if n_envs > 0:
-        robot.control_dofs_position(np.zeros((n_envs, 12)), motor_dofs)
+        robot.control_dofs_position(np.zeros((n_envs, 12)), motors_dof_idx)
     else:
-        robot.control_dofs_position(np.zeros(12), motor_dofs)
+        robot.control_dofs_position(np.zeros(12), motors_dof_idx)
 
     vec_fps = []
     for i in range(1000):
@@ -80,9 +80,8 @@ def anymal_c(solver, n_envs):
 
 
 @pytest.fixture
-def batched_franka(solver, n_envs):
+def batched_franka(solver, n_envs, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -91,7 +90,10 @@ def batched_franka(solver, n_envs):
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             constraint_solver=solver,
+            # FIXME: Must disable self collision to avoid CUDA OOM error
+            enable_self_collision=False,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -116,9 +118,8 @@ def batched_franka(solver, n_envs):
 
 
 @pytest.fixture
-def random(solver, n_envs):
+def random(solver, n_envs, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -128,6 +129,7 @@ def random(solver, n_envs):
             dt=0.01,
             constraint_solver=solver,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -160,9 +162,8 @@ def random(solver, n_envs):
 
 
 @pytest.fixture
-def cubes(solver, n_envs, n_cubes, is_island):
+def cubes(solver, n_envs, n_cubes, is_island, show_viewer):
     scene = gs.Scene(
-        show_viewer=False,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -173,6 +174,7 @@ def cubes(solver, n_envs, n_cubes, is_island):
             constraint_solver=solver,
             use_contact_island=is_island,
         ),
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -213,7 +215,6 @@ def cubes(solver, n_envs, n_cubes, is_island):
     [gs.constraint_solver.CG, gs.constraint_solver.Newton],
 )
 @pytest.mark.parametrize("n_envs", [30000])
-@pytest.mark.parametrize("backend", [gs.gpu])
 def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs):
     total_fps = request.getfixturevalue(runnable)
     msg = f"{runnable} \t| {solver} \t| {total_fps:,.2f} fps \t| {n_envs} envs\n"
@@ -231,7 +232,6 @@ def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs):
 @pytest.mark.parametrize("n_cubes", [1, 10])
 @pytest.mark.parametrize("is_island", [False, True])
 @pytest.mark.parametrize("n_envs", [8192])
-@pytest.mark.parametrize("backend", [gs.gpu])
 def test_cubes(capsys, request, pytestconfig, solver, n_cubes, is_island, n_envs):
     total_fps = request.getfixturevalue("cubes")
     msg = f"{is_island} island \t| {n_cubes} cubes \t| {solver} \t| {total_fps:,.2f} fps \t| {n_envs} envs\n"

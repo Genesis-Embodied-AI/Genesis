@@ -343,16 +343,15 @@ class Scene(RBC):
         else:
             gs.raise_exception()
 
-        # Rigid entities will convexify geom by default
-        if hasattr(morph, "convexify") and morph.convexify is None:
-            if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar)):
-                morph.convexify = True
-            else:
-                morph.convexify = False
+        # Set material-dependent default options
+        if isinstance(morph, gs.morphs.FileMorph):
+            # Rigid entities will convexify geom by default
+            if morph.convexify is None:
+                morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
 
-        # Decimate if convexify by default
-        if hasattr(morph, "decimate") and morph.decimate is None:
-            morph.decimate = morph.convexify
+            # Decimate if convexify by default
+            if morph.decimate is None:
+                morph.decimate = morph.convexify
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 

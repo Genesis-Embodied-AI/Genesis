@@ -36,6 +36,7 @@ class Viewer(RBC):
         self._camera_up = options.camera_up
         self._camera_fov = options.camera_fov
 
+        self._pyrender_viewer = None
         self.context = context
 
         self._followed_entity = None
@@ -91,21 +92,35 @@ class Viewer(RBC):
             except OpenGL.error.Error:
                 # Invalid OpenGL context. Trying another platform if any...
                 gs.logger.debug(f"Invalid OpenGL context.")
+
+                # Clear broken OpenGL context if it went this far
+                if self._pyrender_viewer is not None:
+                    self._pyrender_viewer.close()
+                    self._pyrender_viewer = None
+
                 if i == len(all_opengl_platforms) - 1:
                     raise
+            finally:
+                if opengl_platform_orig is None:
+                    del os.environ["PYOPENGL_PLATFORM"]
+                else:
+                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
     def run(self):
+        if self._pyrender_viewer is None:
+            gs.raise_exception("Viewer must be built successfully before calling this method.")
         self._pyrender_viewer.run()
 
     def stop(self):
-        self._pyrender_viewer.close()
+        if self.is_alive():
+            self._pyrender_viewer.close()
 
     def is_alive(self):
-        return self._pyrender_viewer.is_active
+        return self._pyrender_viewer is not None and self._pyrender_viewer.is_active
 
     def setup_camera(self):
         pos = np.array(self._camera_init_pos)

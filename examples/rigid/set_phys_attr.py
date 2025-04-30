@@ -46,7 +46,7 @@ def main():
     ########################## build ##########################
     scene.build(n_envs=2)  # test with 2 different environments
 
-    jnt_names = [
+    joints_name = (
         "joint1",
         "joint2",
         "joint3",
@@ -56,10 +56,10 @@ def main():
         "joint7",
         "finger_joint1",
         "finger_joint2",
-    ]
-    dofs_idx = [franka.get_joint(name).dof_idx_local for name in jnt_names]
+    )
+    motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-    lnk_names = [
+    links_name = (
         "link0",
         "link1",
         "link2",
@@ -71,8 +71,8 @@ def main():
         "hand",
         "left_finger",
         "right_finger",
-    ]
-    links_idx = [franka.get_link(name).idx_local for name in lnk_names]
+    )
+    links_idx = [franka.get_link(name).idx_local for name in links_name]
 
     # Optional: set control gains
     franka.set_dofs_kp(
@@ -82,7 +82,7 @@ def main():
                 [100, 100, 2000, 2000, 2000, 3500, 3500, 4500, 4500],
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== kp ===\n", franka.get_dofs_kp())
     franka.set_dofs_kv(
@@ -92,7 +92,7 @@ def main():
                 [10, 10, 200, 200, 200, 350, 350, 450, 450],
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== kv ===\n", franka.get_dofs_kv())
     franka.set_dofs_force_range(
@@ -108,27 +108,27 @@ def main():
                 [100, 100, 12, 12, 12, 87, 87, 87, 87],
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== force range ===\n", franka.get_dofs_force_range())
     franka.set_dofs_armature(
         np.array(
             [
-                [0.1] * len(dofs_idx),
-                [0.2] * len(dofs_idx),
+                [0.1] * len(motors_dof_idx),
+                [0.2] * len(motors_dof_idx),
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== armature ===\n", franka.get_dofs_armature())
     franka.set_dofs_stiffness(
         np.array(
             [
-                [0.0] * len(dofs_idx),
-                [0.1] * len(dofs_idx),
+                [0.0] * len(motors_dof_idx),
+                [0.1] * len(motors_dof_idx),
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== stiffness ===\n", franka.get_dofs_stiffness())
     franka.set_dofs_invweight(
@@ -138,17 +138,17 @@ def main():
                 [8.6984, 8.6984, 9.4213, 6.6139, 7.8085, 3.9007, 6.8053, 0.9693, 5.5882],
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== invweight ===\n", franka.get_dofs_invweight())
     franka.set_dofs_damping(
         np.array(
             [
-                [1.0] * len(dofs_idx),
-                [2.0] * len(dofs_idx),
+                [1.0] * len(motors_dof_idx),
+                [2.0] * len(motors_dof_idx),
             ]
         ),
-        dofs_idx,
+        motors_dof_idx,
     )
     print("=== damping ===\n", franka.get_dofs_damping())
     franka.set_links_inertial_mass(
@@ -176,14 +176,16 @@ def main():
     for i in range(150):
         if i < 50:
             franka.set_dofs_position(
-                np.array([1, 1, 0, 0, 0, 0, 0, 0.04, 0.04])[None, :].repeat(scene.n_envs, 0), dofs_idx
+                np.array([1, 1, 0, 0, 0, 0, 0, 0.04, 0.04])[None, :].repeat(scene.n_envs, 0), motors_dof_idx
             )
         elif i < 100:
             franka.set_dofs_position(
-                np.array([-1, 0.8, 1, -2, 1, 0.5, -0.5, 0.04, 0.04])[None, :].repeat(scene.n_envs, 0), dofs_idx
+                np.array([-1, 0.8, 1, -2, 1, 0.5, -0.5, 0.04, 0.04])[None, :].repeat(scene.n_envs, 0), motors_dof_idx
             )
         else:
-            franka.set_dofs_position(np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])[None, :].repeat(scene.n_envs, 0), dofs_idx)
+            franka.set_dofs_position(
+                np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])[None, :].repeat(scene.n_envs, 0), motors_dof_idx
+            )
 
         scene.step()
 
@@ -192,36 +194,36 @@ def main():
         if i == 0:
             franka.control_dofs_position(
                 np.array([1, 1, 0, 0, 0, 0, 0, 0.04, 0.04])[None, :].repeat(scene.n_envs, 0),
-                dofs_idx,
+                motors_dof_idx,
             )
         elif i == 250:
             franka.control_dofs_position(
                 np.array([-1, 0.8, 1, -2, 1, 0.5, -0.5, 0.04, 0.04])[None, :].repeat(scene.n_envs, 0),
-                dofs_idx,
+                motors_dof_idx,
             )
         elif i == 500:
             franka.control_dofs_position(
                 np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])[None, :].repeat(scene.n_envs, 0),
-                dofs_idx,
+                motors_dof_idx,
             )
         elif i == 750:
             # control first dof with velocity, and the rest with position
             franka.control_dofs_position(
                 np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])[1:][None, :].repeat(scene.n_envs, 0),
-                dofs_idx[1:],
+                motors_dof_idx[1:],
             )
             franka.control_dofs_velocity(
                 np.array([1.0, 0, 0, 0, 0, 0, 0, 0, 0])[:1][None, :].repeat(scene.n_envs, 0),
-                dofs_idx[:1],
+                motors_dof_idx[:1],
             )
         elif i == 1000:
             franka.control_dofs_force(
                 np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])[None, :].repeat(scene.n_envs, 0),
-                dofs_idx,
+                motors_dof_idx,
             )
         # This is the internal control force computed based on the given control command
         # If using force control, it's the same as the given control command
-        print("control force:", franka.get_dofs_control_force(dofs_idx))
+        print("control force:", franka.get_dofs_control_force(motors_dof_idx))
 
         scene.step()
 

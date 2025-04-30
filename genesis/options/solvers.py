@@ -141,7 +141,7 @@ class RigidOptions(Options):
     enable_joint_limit : bool, optional
         Whether to enable joint limit. Defaults to True.
     enable_self_collision : bool, optional
-        Whether to enable self collision within each entity. Defaults to False.
+        Whether to enable self collision within each entity. Defaults to True.
     enable_adjacent_collision : bool, optional
         Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
     disable_constraint: bool, optional
@@ -165,7 +165,7 @@ class RigidOptions(Options):
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
     contact_resolve_time : float, optional
-        Please note that this argument will be deprecated in a future version. Use constraint_resolve_time instead.
+        Please note that this option will be deprecated in a future version. Use 'constraint_resolve_time' instead.
     constraint_resolve_time : float, optional
         Time to resolve a constraint. The smaller the value, the more stiff the constraint. Defaults to 0.02. (called timeconst in https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
     use_contact_island : bool, optional
@@ -188,7 +188,7 @@ class RigidOptions(Options):
     gravity: Optional[tuple] = None
     enable_collision: bool = True
     enable_joint_limit: bool = True
-    enable_self_collision: bool = False
+    enable_self_collision: bool = True
     enable_adjacent_collision: bool = False
     disable_constraint: bool = False
     max_collision_pairs: int = 300
@@ -221,6 +221,10 @@ class RigidOptions(Options):
 
     # for dynamic properties
     max_dynamic_constraints: int = 8
+
+    # Experimental options mainly intended for debug purpose and unit tests
+    enable_multi_contact: bool = True
+    enable_mpr_vanilla: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)

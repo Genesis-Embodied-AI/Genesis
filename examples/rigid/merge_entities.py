@@ -71,7 +71,7 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    arm_jnt_names = [
+    arm_joints_name = (
         "joint1",
         "joint2",
         "joint3",
@@ -79,8 +79,8 @@ def main():
         "joint5",
         "joint6",
         "joint7",
-    ]
-    arm_dofs_idx = [franka.get_joint(name).dof_idx_local for name in arm_jnt_names]
+    )
+    arm_dofs_idx = [franka.get_joint(name).dofs_idx_local[0] for name in arm_joints_name]
 
     # Optional: set control gains
     franka.set_dofs_kp(
@@ -97,11 +97,11 @@ def main():
         arm_dofs_idx,
     )
 
-    gripper_jnt_names = [
+    gripper_joints_name = (
         "finger_joint1",
         "finger_joint2",
-    ]
-    gripper_dofs_idx = [hand.get_joint(name).dof_idx_local for name in gripper_jnt_names]
+    )
+    gripper_dofs_idx = [franka.get_joint(name).dofs_idx_local[0] for name in gripper_joints_name]
 
     # Optional: set control gains
     hand.set_dofs_kp(

@@ -18,8 +18,8 @@ class MPR:
 
         if gs.ti_float == ti.f32:
             # It has been observed in practice that increasing this threshold makes collision detection instable,
-            # which is surprising since 1e-8 is above single precision (which has only 7 digits of precision).
-            self.CCD_EPS = 1e-8
+            # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
+            self.CCD_EPS = 1e-9
         else:
             self.CCD_EPS = 1e-10
         self.CCD_TOLERANCE = 1e-6
@@ -91,9 +91,9 @@ class MPR:
         AB_AB = AB.dot(AB)
         AP_AB = AP.dot(AB)
         t = AP_AB / AB_AB
-        if t < 0.0 or ti.abs(t) < self.CCD_EPS:
+        if t < self.CCD_EPS:
             t = gs.ti_float(0.0)
-        elif t > 1.0 or ti.abs(t - 1.0) < self.CCD_EPS:
+        elif t > 1.0 - self.CCD_EPS:
             t = gs.ti_float(1.0)
         Q = A + AB * t
 
@@ -121,11 +121,11 @@ class MPR:
             t = (-s * r - q) / w
 
         if (
-            (ti.abs(s) < self.CCD_EPS or s > 0.0)
-            and (ti.abs(s - 1.0) < self.CCD_EPS or s < 1.0)
-            and (ti.abs(t) < self.CCD_EPS or t > 0.0)
-            and (ti.abs(t - 1.0) < self.CCD_EPS or t < 1.0)
-            and (ti.abs(t + s - 1.0) < self.CCD_EPS or t + s < 1.0)
+            (s > -self.CCD_EPS)
+            and (s < 1.0 + self.CCD_EPS)
+            and (t > -self.CCD_EPS)
+            and (t < 1.0 + self.CCD_EPS)
+            and (t + s < 1.0 + self.CCD_EPS)
         ):
             pdir = x0 + d1 * s + d2 * t
             dist = ((P - pdir) ** 2).sum()
@@ -153,12 +153,12 @@ class MPR:
     @ti.func
     def mpr_portal_encapsules_origin(self, direction, i_ga, i_gb, i_b):
         dot = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(direction)
-        return ti.abs(dot) < self.CCD_EPS or dot > 0.0
+        return dot > -self.CCD_EPS
 
     @ti.func
     def mpr_portal_can_encapsule_origin(self, v, direction):
         dot = v.dot(direction)
-        return dot >= 0
+        return dot > -self.CCD_EPS
 
     @ti.func
     def mpr_portal_reach_tolerance(self, v, direction, i_ga, i_gb, i_b):
@@ -167,7 +167,7 @@ class MPR:
         dv3 = self.simplex_support[i_ga, i_gb, 3, i_b].v.dot(direction)
         dv4 = v.dot(direction)
         dot1 = ti.min(dv4 - dv1, dv4 - dv2, dv4 - dv3)
-        return ti.abs(dot1 - self.CCD_TOLERANCE) < self.CCD_EPS * ti.max(1.0, ti.abs(dot1)) or dot1 < self.CCD_TOLERANCE
+        return dot1 < self.CCD_TOLERANCE + self.CCD_EPS * ti.max(1.0, dot1)
 
     @ti.func
     def support_sphere(self, direction, i_g, i_b):
@@ -249,16 +249,12 @@ class MPR:
         return v, vid
 
     @ti.func
-    def support_driver(self, direction, i_g, i_b):
+    def support_driver_vertex(self, direction, i_g, i_b):
         v = ti.Vector.zero(gs.ti_float, 3)
         vid = 0
         geom_type = self._solver.geoms_info[i_g].type
         if geom_type == gs.GEOM_TYPE.SPHERE:
             v = self.support_sphere(direction, i_g, i_b)
-        if geom_type == gs.GEOM_TYPE.ELLIPSOID:
-            v = self.support_ellipsoid(direction, i_g, i_b)
-        elif geom_type == gs.GEOM_TYPE.CAPSULE:
-            v = self.support_capsule(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.BOX:
             v, vid = self.support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
@@ -266,13 +262,31 @@ class MPR:
                 v, vid = self.support_prism(direction, i_g, i_b)
         else:
             v, vid = self.support_field._func_support_world(direction, i_g, i_b)
-
         return v, vid
 
     @ti.func
+    def support_driver(self, direction, i_g, i_b):
+        v = ti.Vector.zero(gs.ti_float, 3)
+        geom_type = self._solver.geoms_info[i_g].type
+        if geom_type == gs.GEOM_TYPE.SPHERE:
+            v = self.support_sphere(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+            v = self.support_ellipsoid(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.CAPSULE:
+            v = self.support_capsule(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.BOX:
+            v, _ = self.support_box(direction, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.TERRAIN:
+            if ti.static(self._solver.collider._has_terrain):
+                v, _ = self.support_prism(direction, i_g, i_b)
+        else:
+            v, _ = self.support_field._func_support_world(direction, i_g, i_b)
+        return v
+
+    @ti.func
     def compute_support(self, direction, i_ga, i_gb, i_b):
-        v1, vid = self.support_driver(direction, i_ga, i_b)
-        v2, vid = self.support_driver(-direction, i_gb, i_b)
+        v1 = self.support_driver(direction, i_ga, i_b)
+        v2 = self.support_driver(-direction, i_gb, i_b)
 
         v = v1 - v2
         return v, v1, v2
@@ -324,44 +338,37 @@ class MPR:
     def mpr_find_pos(self, i_ga, i_gb, i_b):
         b = ti.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.ti_float)
 
-        direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
-
-        for i in range(4):
-            i1, i2, i3 = (i + 1) % 4, (i + 2) % 4, (i + 3) % 4
-            vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
-            b[i] = vec.dot(self.simplex_support[i_ga, i_gb, i3, i_b].v) * (1 - i % 2 * 2)
+        # Only look into the direction of the portal for consistency with penetration depth computation
+        if ti.static(self._solver._enable_mpr_vanilla):
+            for i in range(4):
+                i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
+                vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
+                b[i] = vec.dot(self.simplex_support[i_ga, i_gb, i3, i_b].v) * (1 - 2 * (((i + 1) // 2) % 2))
 
         sum_ = b.sum()
 
-        if sum_ <= 0:
+        if sum_ < self.CCD_EPS:
+            direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
             b[0] = 0.0
             for i in range(1, 4):
                 i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
                 vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
                 b[i] = vec.dot(direction)
-
-        sum_ = b.sum()
+            sum_ = b.sum()
 
         p1 = gs.ti_vec3([0.0, 0.0, 0.0])
         p2 = gs.ti_vec3([0.0, 0.0, 0.0])
         for i in range(4):
-            vec = self.simplex_support[i_ga, i_gb, i, i_b].v1 * b[i]
-            p1 += vec
-            vec = self.simplex_support[i_ga, i_gb, i, i_b].v2 * b[i]
-            p2 += vec
+            p1 += b[i] * self.simplex_support[i_ga, i_gb, i, i_b].v1
+            p2 += b[i] * self.simplex_support[i_ga, i_gb, i, i_b].v2
 
-        inv_ = 1 / sum_
-        p1 = p1 * inv_
-        p2 = p2 * inv_
-        pos = (p1 + p2) * 0.5
-
-        return pos
+        return (0.5 / sum_) * (p1 + p2)
 
     @ti.func
     def mpr_find_penetr_touch(self, i_ga, i_gb, i_b):
-        is_col = False
+        is_col = True
         penetration = gs.ti_float(0.0)
-        normal = gs.ti_vec3([1.0, 0.0, 0.0])
+        normal = -self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
         pos = (self.simplex_support[i_ga, i_gb, 1, i_b].v1 + self.simplex_support[i_ga, i_gb, 1, i_b].v2) * 0.5
         return is_col, normal, penetration, pos
 
@@ -369,7 +376,7 @@ class MPR:
     def mpr_find_penetr_segment(self, i_ga, i_gb, i_b):
         is_col = True
         penetration = self.simplex_support[i_ga, i_gb, 1, i_b].v.norm()
-        normal = self.simplex_support[i_ga, i_gb, 1, i_b].v * -1.0
+        normal = -self.simplex_support[i_ga, i_gb, 1, i_b].v.normalized()
         pos = (self.simplex_support[i_ga, i_gb, 1, i_b].v1 + self.simplex_support[i_ga, i_gb, 1, i_b].v2) * 0.5
 
         return is_col, normal, penetration, pos
@@ -379,29 +386,49 @@ class MPR:
         iterations = 0
 
         is_col = False
-        pos = gs.ti_vec3([1.0, 0.0, 0.0])
-        normal = gs.ti_vec3([1.0, 0.0, 0.0])
+        pos = gs.ti_vec3([0.0, 0.0, 0.0])
+        normal = gs.ti_vec3([0.0, 0.0, 0.0])
         penetration = gs.ti_float(0.0)
 
         while True:
             direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
             v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
             if self.mpr_portal_reach_tolerance(v, direction, i_ga, i_gb, i_b) or iterations > self.CCD_ITERATIONS:
-                depth, pdir = self.mpr_point_tri_depth(
-                    gs.ti_vec3([0.0, 0.0, 0.0]),
-                    self.simplex_support[i_ga, i_gb, 1, i_b].v,
-                    self.simplex_support[i_ga, i_gb, 2, i_b].v,
-                    self.simplex_support[i_ga, i_gb, 3, i_b].v,
-                )
-                if depth < self.CCD_EPS:
-                    pdir = gs.ti_vec3([0.0, 0.0, 0.0])
+                # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
+                # to the origin that lies inside the portal.
+                # Let's consider the portal as an infinite plane rather than a face triangle. This makes sense because
+                # the projection of the origin must be strictly included into the portal triangle for it to correspond
+                # to the true penetration depth.
+                # For reference about this propery, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
+                # https://modiasim.github.io/Modia3D.jl/resources/documentation/CollisionHandling_Neumayr_Otter_2017.pdf
+                #
+                # In theory, the center should have been shifted until to end up with the one and only portal satisfying
+                # this condition. However, a native implementation of this process must be avoided because it would be
+                # very costly. In practice, assuming the portal is infinite provides a decent approximation of the true
+                # penetration depth (it is actually a lower-bound estimate according to Theorem 4.3) and normal without
+                # requiring any additional computations.
+                # See: https://github.com/danfis/libccd/issues/71#issuecomment-660415008
+                #
+                # An improved version of MPR has been proposed to find the right portal in an efficient way.
+                # See: https://arxiv.org/pdf/2304.07357
+                # Implementation: https://github.com/weigao95/mind-fcl/blob/main/include/fcl/cvx_collide/mpr.h
+                #
+                # The original paper introducing MPR algorithm is available here:
+                # https://archive.org/details/game-programming-gems-7
+                if ti.static(self._solver._enable_mpr_vanilla):
+                    penetration, pdir = self.mpr_point_tri_depth(
+                        gs.ti_vec3([0.0, 0.0, 0.0]),
+                        self.simplex_support[i_ga, i_gb, 1, i_b].v,
+                        self.simplex_support[i_ga, i_gb, 2, i_b].v,
+                        self.simplex_support[i_ga, i_gb, 3, i_b].v,
+                    )
+                    normal = -pdir.normalized()
                 else:
-                    pdir = pdir.normalized()
+                    penetration = direction.dot(self.simplex_support[i_ga, i_gb, 1, i_b].v)
+                    normal = -direction
 
                 is_col = True
                 pos = self.mpr_find_pos(i_ga, i_gb, i_b)
-                normal = pdir * -1.0
-                penetration = depth
                 break
 
             self.mpr_expand_portal(v, v1, v2, i_ga, i_gb, i_b)
@@ -417,7 +444,6 @@ class MPR:
         if dot > 0:
             dot = self.simplex_support[i_ga, i_gb, 2, i_b].v.dot(v4v0)
             if dot > 0:
-
                 self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
                 self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
                 self.simplex_support[i_ga, i_gb, 1, i_b].v = v
@@ -440,28 +466,89 @@ class MPR:
                 self.simplex_support[i_ga, i_gb, 1, i_b].v = v
 
     @ti.func
-    def mpr_discover_portal(self, i_ga, i_gb, i_b):
+    def mpr_discover_portal(self, i_ga, i_gb, i_b, normal_ws):
+        # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
+        # proposed to extend its application to collision detection as it can provide the contact normal and penetration
+        # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
+        # portal. Beyond this specific scenario, it only provides an approximation, that gets worst and worst as the
+        # ray casting and portal normal are misaligned.
+        # For convex shape, one can show that everything should be fine for low penetration-to-size ratio for each
+        # geometry, and the probability to accurately estimate the contact point decreases as this ratio increases.
+        #
+        # This issue can be avoided by initializing the algorithm with the good seach direction, basically the one
+        # from the previous simulation timestep would do fine, as the penetration was smaller at that time and so the
+        # likely for this direction to be valid was larger. Alternatively, the direction of the linear velocity would
+        # be a good option.
+        #
+        # Enforcing a specific search direction to vanilla MPR is not straightforward, because the direction of the ray
+        # control by v0, which is defined as the difference between the respective centers of each geometry.
+        # The only option is to change the way the center of each geometry are defined, so as to make the ray casting
+        # from origin to v0 as colinear as possible with the direction we are interested, while remaining included in
+        # their respective geometry.
+        # The idea is to offset the original centers of each geometry by a ratio that corresponds to their respective
+        # (rotated) bounding box size along each axe. Each center cannot be moved more than half of its bound-box size
+        # along each axe. This could lead to a center that is outside the geometries if they do not collide, but
+        # should be fine otherwise. Anyway, this is not a big deal in practice and MPR is robust enough to converge to
+        # a meaningful solution and if the center is slightly off of each geometry. Nevertheless, if it turns out this
+        # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
+        # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
+        # signed distance is computed once again until to find a valid point. This procedure should be cheap.
+
         ret = 0
         self.simplex_size[i_ga, i_gb, i_b] = 0
 
-        g_info = self._solver.geoms_info[i_ga]
-        g_state = self._solver.geoms_state[i_ga, i_b]
+        # Completely different center logics depending on normal guess is provided or not
+        g_state_a = self._solver.geoms_state[i_ga, i_b]
+        g_state_b = self._solver.geoms_state[i_gb, i_b]
+        if (ti.abs(normal_ws) < self.CCD_EPS).all():
+            g_info = self._solver.geoms_info[i_ga]
+            center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
+            g_info = self._solver.geoms_info[i_gb]
+            center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
 
-        center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state.pos, g_state.quat)
+            self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a
+            self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b
+            self.simplex_support[i_ga, i_gb, 0, i_b].v = center_a - center_b
+            self.simplex_size[i_ga, i_gb, i_b] = 1
+        else:
+            # Start with the center of the bounding box. They will be shifted if necessary anyway.
+            center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
+            center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
+            center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
+            center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
+            delta = center_a - center_b
 
-        g_info = self._solver.geoms_info[i_gb]
-        g_state = self._solver.geoms_state[i_gb, i_b]
-        center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state.pos, g_state.quat)
+            # Offset the center of each geometry based on the desired search direction if provided
+            # Skip if almost colinear already.
+            normal = delta.normalized()
+            if (ti.abs(normal_ws) > self.CCD_EPS).any() or normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
+                # Compute the target offset
+                offset = delta.dot(normal_ws) * normal_ws - delta
+                offset_norm = offset.norm()
 
-        self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a
-        self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b
-        self.simplex_support[i_ga, i_gb, 0, i_b].v = center_a - center_b
-        self.simplex_size[i_ga, i_gb, i_b] = 1
+                if offset_norm > self.CCD_TOLERANCE:
+                    # Compute the size of the bounding boxes along the target offset direction.
+                    # First, move the direction in local box frame
+                    dir_offset = offset / offset_norm
+                    dir_offset_local_a = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_a.quat))
+                    dir_offset_local_b = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_b.quat))
+                    box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
+                    box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
+                    length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
+                    length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
 
-        if self.simplex_support[i_ga, i_gb, 0, i_b].v.norm() < self.CCD_EPS:
-            self.simplex_support[i_ga, i_gb, 0, i_b].v += gs.ti_vec3([10.0 * self.CCD_EPS, 0.0, 0.0])
+                    # Shift the center of each geometry
+                    offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a + dir_offset * length_a * offset_ratio
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b - dir_offset * length_b * offset_ratio
+                    self.simplex_support[i_ga, i_gb, 0, i_b].v = (
+                        self.simplex_support[i_ga, i_gb, 0, i_b].v1 - self.simplex_support[i_ga, i_gb, 0, i_b].v2
+                    )
 
-        direction = (self.simplex_support[i_ga, i_gb, 0, i_b].v * -1).normalized()
+        if (ti.abs(self.simplex_support[i_ga, i_gb, 0, i_b].v) < self.CCD_EPS).all():
+            self.simplex_support[i_ga, i_gb, 0, i_b].v[0] += 10.0 * self.CCD_EPS
+
+        direction = -self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
 
         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
 
@@ -472,7 +559,7 @@ class MPR:
 
         dot = v.dot(direction)
 
-        if ti.abs(dot) < self.CCD_EPS or dot < 0:
+        if dot < self.CCD_EPS:
             ret = -1
         else:
             direction = self.simplex_support[i_ga, i_gb, 0, i_b].v.cross(self.simplex_support[i_ga, i_gb, 1, i_b].v)
@@ -485,7 +572,7 @@ class MPR:
                 direction = direction.normalized()
                 v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                 dot = v.dot(direction)
-                if ti.abs(dot) < self.CCD_EPS or dot < 0:
+                if dot < self.CCD_EPS:
                     ret = -1
                 else:
                     self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
@@ -501,12 +588,12 @@ class MPR:
                     dot = direction.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
                     if dot > 0:
                         self.mpr_swap(1, 2, i_ga, i_gb, i_b)
-                        direction = direction * -1.0
+                        direction = -direction
 
                     while self.simplex_size[i_ga, i_gb, i_b] < 4:
                         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
-                        if ti.abs(dot) < self.CCD_EPS or dot < 0:
+                        if dot < self.CCD_EPS:
                             ret = -1
                             break
 
@@ -514,7 +601,7 @@ class MPR:
 
                         va = self.simplex_support[i_ga, i_gb, 1, i_b].v.cross(v)
                         dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-                        if dot < 0 and ti.abs(dot) > self.CCD_EPS:
+                        if dot < -self.CCD_EPS:
                             self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
                             self.simplex_support[i_ga, i_gb, 2, i_b].v2 = v2
                             self.simplex_support[i_ga, i_gb, 2, i_b].v = v
@@ -523,7 +610,7 @@ class MPR:
                         if not cont:
                             va = v.cross(self.simplex_support[i_ga, i_gb, 2, i_b].v)
                             dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-                            if dot < 0 and ti.abs(dot) > self.CCD_EPS:
+                            if dot < -self.CCD_EPS:
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
                                 self.simplex_support[i_ga, i_gb, 1, i_b].v = v
@@ -535,7 +622,6 @@ class MPR:
                             direction = va.cross(vb)
                             direction = direction.normalized()
                         else:
-
                             self.simplex_support[i_ga, i_gb, 3, i_b].v1 = v1
                             self.simplex_support[i_ga, i_gb, 3, i_b].v2 = v2
                             self.simplex_support[i_ga, i_gb, 3, i_b].v = v
@@ -544,12 +630,12 @@ class MPR:
         return ret
 
     @ti.func
-    def func_mpr_contact(self, i_ga, i_gb, i_b):
-        res = self.mpr_discover_portal(i_ga, i_gb, i_b)
+    def func_mpr_contact(self, i_ga, i_gb, i_b, normal_ws):
+        res = self.mpr_discover_portal(i_ga, i_gb, i_b, normal_ws)
 
         is_col = False
-        pos = gs.ti_vec3([1.0, 0.0, 0.0])
-        normal = gs.ti_vec3([1.0, 0.0, 0.0])
+        pos = gs.ti_vec3([0.0, 0.0, 0.0])
+        normal = gs.ti_vec3([0.0, 0.0, 0.0])
         penetration = gs.ti_float(0.0)
 
         if res == 1:
@@ -560,7 +646,5 @@ class MPR:
             res = self.mpr_refine_portal(i_ga, i_gb, i_b)
             if res >= 0:
                 is_col, normal, penetration, pos = self.mpr_find_penetration(i_ga, i_gb, i_b)
-        else:
-            pass
 
         return is_col, normal, penetration, pos

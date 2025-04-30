@@ -26,7 +26,7 @@ def get_cfgs():
             "RL_calf_joint": -1.5,
             "RR_calf_joint": -1.5,
         },
-        "dof_names": [
+        "joint_names": [
             "FR_hip_joint",
             "FR_thigh_joint",
             "FR_calf_joint",
@@ -132,7 +132,7 @@ def main():
     )
 
     policy = torch.jit.load(f"./backflip/{args.exp_name}.pt")
-    policy.to(device="cuda:0")
+    policy.to(device=gs.device)
 
     obs, _ = env.reset()
     with torch.no_grad():

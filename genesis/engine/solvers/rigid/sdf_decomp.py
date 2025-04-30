@@ -231,7 +231,7 @@ class SDF:
     @ti.func
     def _func_find_closest_vert(self, pos_world, geom_idx, i_b):
         """
-        Returns vert of geom that's cloest to pos_world
+        Returns vert of geom that's closest to pos_world
         """
         g_state = self.solver.geoms_state[geom_idx, i_b]
         geom_sdf_res = self.geoms_info[geom_idx].sdf_res
