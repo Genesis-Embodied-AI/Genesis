@@ -1593,16 +1593,16 @@ class RigidSolver(Solver):
     def substep(self):
         from genesis.utils.tools import create_timer
 
-        # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
+        timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         self._kernel_step_1()
-        # timer.stamp("kernel_step_1")
+        timer.stamp("kernel_step_1")
 
         # constraint force
         self._func_constraint_force()
-        # timer.stamp("constraint_force")
+        timer.stamp("constraint_force")
 
         self._kernel_step_2()
-        # timer.stamp("kernel_step_2")
+        timer.stamp("kernel_step_2")
 
     @ti.kernel
     def _kernel_step_1(self):
