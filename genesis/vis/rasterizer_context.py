@@ -742,7 +742,9 @@ class RasterizerContext:
         return node
 
     def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0)):
-        self.draw_debug_arrow(pos, tensor_to_array(force) * self.contact_force_scale, radius, persistent=False)
+        self.draw_debug_arrow(
+            pos, tensor_to_array(force) * self.contact_force_scale, radius, color=color, persistent=False
+        )
 
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
