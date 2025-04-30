@@ -3386,7 +3386,7 @@ class RigidSolver(Solver):
                     )
                     qrot = gu.ti_rotvec_to_quat(ang)
                     rot = gu.ti_transform_quat_by_quat(qrot, rot)
-                    for j in range(4):
+                    for j in ti.static(range(4)):
                         self.qpos[q_start + j + rot_offset, i_b] = rot[j]
                 else:
                     for j in range(q_end - q_start):
