@@ -412,7 +412,7 @@ class Coupler(RBC):
                 # FEM <-> SPH TODO: this doesn't work well
                 if ti.static(self._fem_sph):
                     for j in ti.static(range(3)):
-                        iv = self.fem_solver.surface[i, b].tri2v[j]
+                        iv = self.fem_solver.surface[i].tri2v[j]
                         pos = self.fem_solver.elements_v[f, iv, b].pos
                         vel_fem_sv = self.fem_solver.elements_v[f + 1, iv, b].vel
                         mass_fem_sv = mass / 4.0
@@ -452,10 +452,10 @@ class Coupler(RBC):
                                     self.sph_solver.sh.slot_start[slot_idx, b]
                                     + self.sph_solver.sh.slot_size[slot_idx, b],
                                 ):
-                                    if ti.abs(pos - self.sph_solver.particles_reordered.pos[k]).max() < dx * 0.5:
-                                        self.sph_solver.particles_reordered[k].vel = (
-                                            self.sph_solver.particles_reordered[k].vel
-                                            - delta_mv / self.sph_solver.particles_info_reordered[i, b].mass
+                                    if ti.abs(pos - self.sph_solver.particles_reordered.pos[k, b]).max() < dx * 0.5:
+                                        self.sph_solver.particles_reordered[k, b].vel = (
+                                            self.sph_solver.particles_reordered[k, b].vel
+                                            - delta_mv / self.sph_solver.particles_info_reordered[k, b].mass
                                         )
 
                             self.fem_solver.elements_v[f + 1, iv, b].vel = vel_fem_sv

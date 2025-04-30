@@ -427,7 +427,7 @@ class FEMSolver(Solver):
         tri2el: ti.types.ndarray(),
     ):
         n_verts_local = verts.shape[0]
-        for i_v, i_b in ti.ndrange(n_verts_local self._B):
+        for i_v, i_b in ti.ndrange(n_verts_local, self._B):
             i_global = i_v + v_start
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
