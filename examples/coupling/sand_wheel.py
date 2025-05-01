@@ -33,7 +33,6 @@ def main():
         ),
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
-            rendered_envs_idx=[0],
         ),
     )
 
@@ -103,7 +102,7 @@ def main():
             color=(1.0, 0.9, 0.6, 1.0),
         ),
     )
-    scene.build(n_envs=5)
+    scene.build()
 
     horizon = 1000
     for i in range(horizon):
