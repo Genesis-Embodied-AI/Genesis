@@ -9,6 +9,7 @@ import genesis.utils.geom as gu
 from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
+from genesis.styles import colors, formats
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
@@ -218,7 +219,7 @@ class RigidSolver(Solver):
         cdof_ang = self.dofs_state.cdof_ang.to_numpy()[:, 0, :]
         cdof_vel = self.dofs_state.cdof_vel.to_numpy()[:, 0, :]
 
-        mass_mat_inv = self.mass_mat_inv.to_numpy()[:, :, 0]
+        mass_mat = self.mass_mat.to_numpy()[:, :, 0]
         dof_start = self.links_info.dof_start.to_numpy()
         dof_end = self.links_info.dof_end.to_numpy()
         n_dofs = self.links_info.n_dofs.to_numpy()
@@ -253,7 +254,7 @@ class RigidSolver(Solver):
 
                 jac = np.concatenate([jacp, jacr], 1)
 
-                A = jac.T @ mass_mat_inv @ jac
+                A = jac.T @ np.linalg.inv(mass_mat) @ jac
 
                 invweight[i_link, 0] = (A[0, 0] + A[1, 1] + A[2, 2]) / 3
                 invweight[i_link, 1] = (A[3, 3] + A[4, 4] + A[5, 5]) / 3
@@ -1746,20 +1747,6 @@ class RigidSolver(Solver):
         self.constraint_solver.handle_constraints()
         timer.stamp("constraint_solver.handle_constraints")
 
-        # if self._enable_collision:
-        #     self.constraint_solver.contact_island.construct()
-
-        #     self.constraint_solver.add_collision_constraints()
-        #     timer.stamp('collision_constraints')
-
-        # if self._enable_joint_limit:
-        #     self.constraint_solver.add_joint_limit_constraints()
-        #     timer.stamp('joint_limit_constraints')
-
-        # if self._enable_collision or self._enable_joint_limit:
-        #     self.constraint_solver.resolve()
-        # timer.stamp('solve')
-
     def _batch_array(self, arr, first_dim=False):
         if first_dim:
             return np.tile(np.expand_dims(arr, 0), self._batch_shape(arr.ndim * (1,), True))
@@ -2395,11 +2382,9 @@ class RigidSolver(Solver):
                     qloc = gu.ti_rotvec_to_quat(axis * self.dofs_state[dof_start, i_b].pos)
                     quat = gu.ti_transform_quat_by_quat(qloc, quat)
                     pos = self.joints_state[i_j, i_b].xanchor - gu.ti_transform_by_quat(j_info.pos, quat)
-                elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
                     pos = pos + self.joints_state[i_j, i_b].xaxis * self.dofs_state[dof_start, i_b].pos
-                else:
-                    print("unrecognized joint type", joint_type)
 
             # Skip link pose update for fixed root links to allow the user for manually overwriting them
             if not (l_info.is_fixed and l_info.parent_idx == -1):
@@ -3324,18 +3309,6 @@ class RigidSolver(Solver):
                 self.dofs_state[i_d, i_b].vel = (
                     self.dofs_state[i_d, i_b].vel + self.dofs_state[i_d, i_b].acc * self._substep_dt
                 )
-
-            # for i_b in range(self._B):
-            #     is_exploded = False
-            #     for i_d in range(self.n_dofs):
-            #         self.dofs_state[i_d, i_b].vel = self.dofs_state[i_d, i_b].vel + self.dofs_state[i_d, i_b].acc * self._substep_dt
-            #         if ti.abs(self.dofs_state[i_d, i_b].acc) > 1e10:
-            #             is_exploded = True
-
-            #     if is_exploded:
-            #         print("WARNING! acc is too large, set to zero", i_b)
-            #         for i_d in range(self.n_dofs):
-            #             self.dofs_state[i_d, i_b].vel = gs.ti_float(0.)
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
@@ -4770,7 +4743,10 @@ class RigidSolver(Solver):
             i_b = envs_idx[i_b_]
             if self.constraint_solver.ti_n_equalities[i_b] >= self.n_equalities_candidate:
                 self.constraint_solver.ti_n_equalities[i_b] = self.n_equalities_candidate - 1
-                print("Warning: too many constraints, delete the last one.")
+                print(
+                    f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Too many constraints, delete the last one."
+                    f"{formats.RESET}"
+                )
             i_e = self.constraint_solver.ti_n_equalities[i_b]
 
             l1 = link1_idx[i_b]

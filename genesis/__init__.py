@@ -45,7 +45,7 @@ def init(
     seed=None,
     precision="32",
     debug=False,
-    eps=1e-12,
+    eps=1e-15,
     logging_level=None,
     backend=None,
     theme="dark",

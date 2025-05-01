@@ -1007,7 +1007,6 @@ class ConstraintSolverIsland:
 
     @ti.func
     def _func_update_gradient(self, island, i_b):
-
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]

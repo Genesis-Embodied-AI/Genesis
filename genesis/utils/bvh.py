@@ -2,8 +2,7 @@ import numpy as np
 import taichi as ti
 
 import genesis as gs
-
-# import genesis.engine.bodies.rigid_utils as ru
+from genesis.styles import colors, formats
 
 
 @ti.func
@@ -644,7 +643,6 @@ class BVHTree:
 
     @ti.kernel
     def cd_aggregate(self):
-
         for i in range(self.contact_aggregate.shape[0]):
             for j in range(self.contact_aggregate.shape[1]):
                 self.contact_aggregate[i, j].ctype = -1
@@ -660,7 +658,10 @@ class BVHTree:
                 penetration = self.narrow_candidate[i].penetration
 
                 if ga == gb:
-                    print("warning ga == gb", ga, gb, ctype)
+                    print(
+                        f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] ga ({ga}) == gb ({gb}) ({ctype})."
+                        f"{formats.RESET}"
+                    )
                 if ga >= gb:
                     ga, gb = gb, ga
                     n = n * -1

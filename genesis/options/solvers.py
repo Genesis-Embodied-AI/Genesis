@@ -149,7 +149,13 @@ class RigidOptions(Options):
     max_collision_pairs : int, optional
         Maximum number of collision pairs. Defaults to 100.
     integrator : gs.integrator, optional
-        Integrator type. Current supported integrators are 'gs.integrator.Euler', 'gs.integrator.implicitfast' and 'gs.integrator.approximate_implicitfast'. Defaults to 'approximate_implicitfast'.
+        Integrator type. Current supported integrators are 'gs.integrator.Euler', 'gs.integrator.implicitfast' and
+        'gs.integrator.approximate_implicitfast'. 'Euler' and 'implicitfast' are consistent with their Mujoco
+        counterpart. 'approximate_implicitfast' is an even faster approximation of 'implicitfast', which avoid
+        computing the inverse mass matrix twice by considering the first order correction terms of the implicit
+        integration scheme systematically, including for computing the acceleration resulting from the constraints
+        and external forces. Although this approximation is wrong in theory, it works resonably well in practice.
+        Defaults to 'approximate_implicitfast'.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage. Defaults to 6.
     constraint_solver : gs.constraint_solver, optional

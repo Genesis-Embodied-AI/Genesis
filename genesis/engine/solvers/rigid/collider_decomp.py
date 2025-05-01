@@ -1399,7 +1399,6 @@ class Collider:
 
         https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c
         """
-        mjMINVAL = gs.ti_float(1e-12)
         n = 0
         code = -1
         margin = gs.ti_float(0.0)
@@ -1468,8 +1467,7 @@ class Collider:
 
                 c1 = tmp2.norm()
                 tmp2 = tmp2 / c1
-                if c1 >= mjMINVAL:
-
+                if c1 >= gs.EPS:
                     c2 = pos21.dot(tmp2)
 
                     c3 = gs.ti_float(0.0)
@@ -1627,7 +1625,7 @@ class Collider:
                         b = self.box_lines[i, i_b][3 + q]
                         c = self.box_lines[i, i_b][1 - q]
                         d = self.box_lines[i, i_b][4 - q]
-                        if ti.abs(b) > mjMINVAL:
+                        if ti.abs(b) > gs.EPS:
                             for _j in range(2):
                                 j = 2 * _j - 1
                                 l = ss[q] * j
@@ -1807,7 +1805,7 @@ class Collider:
                 self.box_axi[1, i_b] = self.box_points[1, i_b] - self.box_points[0, i_b]
                 self.box_axi[2, i_b] = self.box_points[2, i_b] - self.box_points[0, i_b]
 
-                if ti.abs(rnorm[2]) < mjMINVAL:
+                if ti.abs(rnorm[2]) < gs.EPS:
                     is_return = True
                 if not is_return:
                     innorm = (1 / rnorm[2]) * (-1 if in_ else 1)
@@ -1860,7 +1858,7 @@ class Collider:
                             c = self.box_lines[i, i_b][1 - q]
                             d = self.box_lines[i, i_b][4 - q]
 
-                            if ti.abs(b) > mjMINVAL:
+                            if ti.abs(b) > gs.EPS:
                                 for _j in range(2):
                                     j = 2 * _j - 1
                                     if n < self.box_MAXCONPAIR:
