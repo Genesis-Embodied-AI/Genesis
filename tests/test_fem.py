@@ -84,7 +84,7 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
     scene.build()
 
     state = fem.get_state()
-    vertices = state.pos.cpu().numpy()
+    vertices = state.pos[0].cpu().numpy()
     surface_indices = np.unique(fem.surface_triangles)
 
     # Ensure there are interior vertices; this is a prerequisite for this test
