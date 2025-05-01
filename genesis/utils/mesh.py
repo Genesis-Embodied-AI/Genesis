@@ -481,9 +481,12 @@ def apply_transform(transform, positions, normals=None):
 
     transformed_normals = normals
     if normals is not None:
-        rot_mat = transform[:3, :3] / np.linalg.norm(transform[:3, :3], axis=1, keepdims=1)
-        if 3.0 - np.trace(rot_mat) > gs.EPS**2:  # has rotation, i.e. theta (= arccos((trace(R) - 1.0) / 2.0)) > gs.EPS
+        rot_mat = transform[:3, :3]
+        if np.abs(3.0 - np.trace(rot_mat)) > gs.EPS**2:  # has rotation or scaling
             transformed_normals = normals @ rot_mat
+            scale = np.linalg.norm(rot_mat, axis=1, keepdims=True)
+            if np.any(np.abs(scale - 1.0) > gs.EPS):  # has scale
+                transformed_normals /= np.linalg.norm(transformed_normals, axis=1, keepdims=True)
 
     return transformed_positions, transformed_normals
 

@@ -208,6 +208,7 @@ def init(
 
     # Update torch default device
     torch.set_default_device(device)
+    torch.set_default_dtype(tc_float)
 
     logger.info(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."

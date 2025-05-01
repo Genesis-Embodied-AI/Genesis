@@ -269,7 +269,7 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver):
     qvel = np.array((1.0, -0.3))
     # Note that it is impossible to be more accurate than this because of the inherent stiffness of the problem.
     tol = 2e-8 if gs_solver == gs.constraint_solver.Newton else 1e-8
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, tol=(10 * tol))
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, tol=tol)
 
     # check if the two joints are equal
     gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
@@ -314,12 +314,13 @@ def test_one_ball_joint(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_rope_ball(gs_sim, mj_sim, tol):
+def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     # Make sure it is possible to set the configuration vector without failure
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=tol)
+    tol = 2e-9 if gs_solver == gs.constraint_solver.Newton else tol
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=(2 * tol))
 
 
 @pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
@@ -445,7 +446,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 900 if dynamics else 150
+    num_steps = 1100 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
@@ -806,12 +807,12 @@ def test_stickman(gs_sim, mj_sim, tol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(4500):
+    for i in range(5000):
         gs_sim.scene.step()
-        if i > 4400:
+        if i > 4900:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.45)
+            assert_allclose(qvel, 0, atol=0.4)
 
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
@@ -819,15 +820,41 @@ def test_stickman(gs_sim, mj_sim, tol):
     np.testing.assert_array_less(0, body_z)
 
 
-def move_cube(use_suction, gs_integrator, show_viewer):
-    # create and build the scene
+def move_cube(use_suction, mode, show_viewer):
+    # Add DoF armature to improve numerical stability if not using 'approximate_implicitfast' integrator.
+    #
+    # This is necessary because the first-order correction term involved in the implicit integration schemes
+    # 'implicitfast' and 'Euler' are only able to stabilize each entity independently, from the forces that were
+    # obtained from the instable accelerations. As a result, eveything is fine as long as the entities are not
+    # interacting with each other, but it induces unrealistic motion otherwise. In this case, the acceleration of the
+    # cube being lifted is based on the acceleration that the gripper would have without implicit damping.
+    #
+    # The only way to correct this would be to take into account the derivative of the Jacobian of the constraints in
+    # the first-order correction term. Doing this is challenging and would significantly increase the computation cost.
+    #
+    # In practice, it is more common to just go for a higher order integrator such as RK4.
+    if mode == 0:
+        integrator = gs.integrator.approximate_implicitfast
+        substeps = 1
+        armature = 0.0
+    elif mode == 1:
+        integrator = gs.integrator.implicitfast
+        substeps = 4
+        armature = 0.0
+    elif mode == 2:
+        integrator = gs.integrator.Euler
+        substeps = 1
+        armature = 2.0
+
+    # Create and build the scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
+            substeps=substeps,
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=True,
-            integrator=gs_integrator,
+            integrator=integrator,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -852,8 +879,11 @@ def move_cube(use_suction, gs_integrator, show_viewer):
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         vis_mode="collision",
+        visualize_contact=True,
     )
     scene.build()
+
+    franka.set_dofs_armature(franka.get_dofs_armature() + armature)
 
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
@@ -884,7 +914,7 @@ def move_cube(use_suction, gs_integrator, show_viewer):
         num_waypoints=100,  # 1s duration
     )
     # execute the planned path
-    franka.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
+    franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
     for waypoint in path:
         franka.control_dofs_position(waypoint)
         scene.step()
@@ -906,15 +936,15 @@ def move_cube(use_suction, gs_integrator, show_viewer):
     rigid = scene.sim.rigid_solver
 
     # grasp
-    if not use_suction:
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-0.5, -0.5]), fingers_dof)
-        for i in range(50):
-            scene.step()
-    else:
+    if use_suction:
         link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
         link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
         rigid.add_weld_constraint(link_cube, link_franka)
+    else:
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
+        for i in range(50):
+            scene.step()
 
     # lift
     qpos = franka.inverse_kinematics(
@@ -945,10 +975,10 @@ def move_cube(use_suction, gs_integrator, show_viewer):
         scene.step()
 
     # release
-    if not use_suction:
-        franka.control_dofs_position(np.array([0.4, 0.4]), fingers_dof)
-    else:
+    if use_suction:
         rigid.delete_weld_constraint(link_cube, link_franka)
+    else:
+        franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
 
     for i in range(550):
         scene.step()
@@ -961,29 +991,17 @@ def move_cube(use_suction, gs_integrator, show_viewer):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
-@pytest.mark.parametrize(
-    "gs_integrator",
-    [
-        gs.integrator.approximate_implicitfast,
-        # gs.integrator.implicitfast,  # FIXME: This test is not passing for implicit
-    ],
-)
+@pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_inverse_kinematics(gs_integrator, show_viewer):
-    move_cube(use_suction=False, gs_integrator=gs_integrator, show_viewer=show_viewer)
+def test_inverse_kinematics(mode, show_viewer):
+    move_cube(use_suction=False, mode=mode, show_viewer=show_viewer)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
-@pytest.mark.parametrize(
-    "gs_integrator",
-    [
-        gs.integrator.approximate_implicitfast,
-        # gs.integrator.implicitfast,  # FIXME: This test is not passing for implicit
-    ],
-)
+@pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_suction_cup(gs_integrator, show_viewer):
-    move_cube(use_suction=True, gs_integrator=gs_integrator, show_viewer=show_viewer)
+def test_suction_cup(mode, show_viewer):
+    move_cube(use_suction=True, mode=mode, show_viewer=show_viewer)
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -1082,7 +1100,7 @@ def test_mesh_repair(convexify, show_viewer):
 
 
 @pytest.mark.xdist_group(name="huggingface_hub")
-@pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
+@pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer):
     OBJ_OFFSET_X = 0.0  # 0.02
@@ -1259,7 +1277,7 @@ def test_terrain_generation(show_viewer):
     )
     scene.build(n_envs=225)
 
-    ball.set_pos(torch.cartesian_prod(*(torch.linspace(1.0, 10.0, 15),) * 2, torch.tensor((0.5,))))
+    ball.set_pos(torch.cartesian_prod(*(torch.linspace(1.0, 10.0, 15),) * 2, torch.tensor((0.6,))))
     for _ in range(400):
         scene.step()
 

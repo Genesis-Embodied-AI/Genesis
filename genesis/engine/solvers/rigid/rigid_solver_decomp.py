@@ -58,7 +58,7 @@ class RigidSolver(Solver):
         # options
         self._enable_collision = options.enable_collision
         self._enable_multi_contact = options.enable_multi_contact
-        self._enable_mujoco_compability = options.enable_mujoco_compability
+        self._enable_mujoco_compatibility = options.enable_mujoco_compatibility
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
         self._enable_adjacent_collision = options.enable_adjacent_collision
@@ -307,7 +307,8 @@ class RigidSolver(Solver):
         self.mass_mat_L = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
         self.mass_mat_D_inv = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_,)))
 
-        self._is_mass_mat_factorized = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_entities_))
+        self._mass_mat_mask = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_entities_))
+        self._mass_mat_mask.fill(1)
 
         self.meaninertia = ti.field(dtype=gs.ti_float, shape=self._batch_shape())
 
@@ -1504,9 +1505,10 @@ class RigidSolver(Solver):
                 for i_e_ in range(self.n_awake_entities[i_b]):
                     i_e = self.awake_entities[i_e_, i_b]
 
-                    if self._is_mass_mat_factorized[i_e, i_b] == 0:
+                    if self._mass_mat_mask[i_e, i_b] == 1:
                         entity_dof_start = self.entities_info[i_e].dof_start
                         entity_dof_end = self.entities_info[i_e].dof_end
+                        n_dofs = self.entities_info[i_e].n_dofs
 
                         for i_d in range(entity_dof_start, entity_dof_end):
                             for j_d in range(entity_dof_start, i_d + 1):
@@ -1521,7 +1523,7 @@ class RigidSolver(Solver):
                                     ):
                                         self.mass_mat_L[i_d, i_d, i_b] += self.dofs_info[I_d].kv * self._substep_dt
 
-                        for i_d_ in range(entity_dof_end - entity_dof_start):
+                        for i_d_ in range(n_dofs):
                             i_d = entity_dof_end - i_d_ - 1
                             self.mass_mat_D_inv[i_d, i_b] = 1.0 / self.mass_mat_L[i_d, i_d, i_b]
 
@@ -1532,14 +1534,15 @@ class RigidSolver(Solver):
                                     self.mass_mat_L[j_d, k_d, i_b] -= a * self.mass_mat_L[i_d, k_d, i_b]
                                 self.mass_mat_L[i_d, j_d, i_b] = a
 
-                            # Diagonal coeffs of L are ignored in computations, so no need to update them.
-                            # self.mass_mat_L[i_d, i_d, i_b] = 1.0
+                            # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
+                            self.mass_mat_L[i_d, i_d, i_b] = 1.0
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
             for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-                if self._is_mass_mat_factorized[i_e, i_b] == 0:
+                if self._mass_mat_mask[i_e, i_b] == 1:
                     entity_dof_start = self.entities_info[i_e].dof_start
                     entity_dof_end = self.entities_info[i_e].dof_end
+                    n_dofs = self.entities_info[i_e].n_dofs
 
                     for i_d in range(entity_dof_start, entity_dof_end):
                         for j_d in range(entity_dof_start, i_d + 1):
@@ -1554,7 +1557,7 @@ class RigidSolver(Solver):
                                 ):
                                     self.mass_mat_L[i_d, i_d, i_b] += self.dofs_info[I_d].kv * self._substep_dt
 
-                    for i_d_ in range(entity_dof_end - entity_dof_start):
+                    for i_d_ in range(n_dofs):
                         i_d = entity_dof_end - i_d_ - 1
                         self.mass_mat_D_inv[i_d, i_b] = 1.0 / self.mass_mat_L[i_d, i_d, i_b]
 
@@ -1565,49 +1568,25 @@ class RigidSolver(Solver):
                                 self.mass_mat_L[j_d, k_d, i_b] -= a * self.mass_mat_L[i_d, k_d, i_b]
                             self.mass_mat_L[i_d, j_d, i_b] = a
 
-                        # Diagonal coeffs of L are ignored in computations, so no need to update them.
-                        # self.mass_mat_L[i_d, i_d, i_b] = 1.0
+                        # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
+                        self.mass_mat_L[i_d, i_d, i_b] = 1.0
 
     @ti.func
-    def _func_solve_mass(self, vec, out):
+    def _func_solve_mass_batched(self, vec, out, i_b):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for k_, i_b in ti.ndrange(self.entity_max_dofs, self._B):
-                for i_e_ in range(self.n_awake_entities[i_b]):
-                    i_e = self.awake_entities[i_e_, i_b]
+            for i_e_ in range(self.n_awake_entities[i_b]):
+                i_e = self.awake_entities[i_e_, i_b]
 
+                if self._mass_mat_mask[i_e, i_b] == 1:
                     entity_dof_start = self.entities_info[i_e].dof_start
                     entity_dof_end = self.entities_info[i_e].dof_end
+                    n_dofs = self.entities_info[i_e].n_dofs
 
-                    if self._is_mass_mat_factorized[i_e, i_b] == 0:
-                        # Step 1: Solve w st. L^T @ w = y
-                        for i_d in range(entity_dof_start, entity_dof_end):
-                            out[i_d, i_b] = vec[i_d, i_b]
-                        for i_d_ in range(entity_dof_end - entity_dof_start):
-                            i_d = entity_dof_end - i_d_ - 1
-                            for j_d in range(i_d + 1, entity_dof_end):
-                                out[i_d, i_b] -= self.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
-
-                        # Step 2: z = D^{-1} w
-                        for i_d in range(entity_dof_start, entity_dof_end):
-                            out[i_d, i_b] *= self.mass_mat_D_inv[i_d, i_b]
-
-                        # Step 3: Solve x st. L @ x = z
-                        for i_d in range(entity_dof_start, entity_dof_end):
-                            for j_d in range(entity_dof_start, i_d):
-                                out[i_d, i_b] -= self.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
-        else:
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-                entity_dof_start = self.entities_info[i_e].dof_start
-                entity_dof_end = self.entities_info[i_e].dof_end
-
-                if self._is_mass_mat_factorized[i_e, i_b] == 0:
                     # Step 1: Solve w st. L^T @ w = y
-                    for i_d in range(entity_dof_start, entity_dof_end):
-                        out[i_d, i_b] = vec[i_d, i_b]
-                    for i_d_ in range(entity_dof_end - entity_dof_start):
+                    for i_d_ in range(n_dofs):
                         i_d = entity_dof_end - i_d_ - 1
+                        out[i_d, i_b] = vec[i_d, i_b]
                         for j_d in range(i_d + 1, entity_dof_end):
                             out[i_d, i_b] -= self.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
 
@@ -1619,6 +1598,35 @@ class RigidSolver(Solver):
                     for i_d in range(entity_dof_start, entity_dof_end):
                         for j_d in range(entity_dof_start, i_d):
                             out[i_d, i_b] -= self.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
+        else:
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_e in range(self.n_entities):
+                if self._mass_mat_mask[i_e, i_b] == 1:
+                    entity_dof_start = self.entities_info[i_e].dof_start
+                    entity_dof_end = self.entities_info[i_e].dof_end
+                    n_dofs = self.entities_info[i_e].n_dofs
+
+                    # Step 1: Solve w st. L^T @ w = y
+                    for i_d_ in range(n_dofs):
+                        i_d = entity_dof_end - i_d_ - 1
+                        out[i_d, i_b] = vec[i_d, i_b]
+                        for j_d in range(i_d + 1, entity_dof_end):
+                            out[i_d, i_b] -= self.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
+
+                    # Step 2: z = D^{-1} w
+                    for i_d in range(entity_dof_start, entity_dof_end):
+                        out[i_d, i_b] *= self.mass_mat_D_inv[i_d, i_b]
+
+                    # Step 3: Solve x st. L @ x = z
+                    for i_d in range(entity_dof_start, entity_dof_end):
+                        for j_d in range(entity_dof_start, i_d):
+                            out[i_d, i_b] -= self.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
+
+    @ti.func
+    def _func_solve_mass(self, vec, out):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b in ti.ndrange(self._B):
+            self._func_solve_mass_batched(vec, out, i_b)
 
     @ti.kernel
     def _kernel_forward_dynamics(self):
@@ -1668,9 +1676,9 @@ class RigidSolver(Solver):
     def _func_implicit_damping(self):
         # Determine whether the mass matrix must be re-computed to take into account first-order correction terms.
         # Note that avoiding inverting the mass matrix twice would not only speed up simulation but also improving
-        # numerical stability as computinh post-damping accelerations from forces is not necessary anymore.
-        if ti.static(not self._enable_mujoco_compability or self._integrator == gs.integrator.Euler):
-            self._is_mass_mat_factorized.fill(1)
+        # numerical stability as computing post-damping accelerations from forces is not necessary anymore.
+        if ti.static(not self._enable_mujoco_compatibility or self._integrator == gs.integrator.Euler):
+            self._mass_mat_mask.fill(0)
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
             for i_e, i_b in ti.ndrange(self.n_entities, self._B):
                 entity_dof_start = self.entities_info[i_e].dof_start
@@ -1678,20 +1686,20 @@ class RigidSolver(Solver):
                 for i_d in range(entity_dof_start, entity_dof_end):
                     I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
                     if self.dofs_info[I_d].damping > gs.EPS:
-                        self._is_mass_mat_factorized[i_e, i_b] = 0
+                        self._mass_mat_mask[i_e, i_b] = 1
                     if ti.static(self._integrator != gs.integrator.Euler):
                         if (
                             (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION)
                             or (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY)
                         ) and self.dofs_info[I_d].kv > gs.EPS:
-                            self._is_mass_mat_factorized[i_e, i_b] = 0
+                            self._mass_mat_mask[i_e, i_b] = 1
 
         self._func_factor_mass(implicit_damping=True)
         self._func_solve_mass(self.dofs_state.force, self.dofs_state.acc)
 
         # Disable pre-computed factorization mask right away
-        if ti.static(not self._enable_mujoco_compability or self._integrator == gs.integrator.Euler):
-            self._is_mass_mat_factorized.fill(0)
+        if ti.static(not self._enable_mujoco_compatibility or self._integrator == gs.integrator.Euler):
+            self._mass_mat_mask.fill(1)
 
     @ti.kernel
     def _kernel_step_2(self):

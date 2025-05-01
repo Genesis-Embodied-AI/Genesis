@@ -123,7 +123,7 @@ class ConstraintSolver:
 
                 invweight = self._solver.links_info[link_a_maybe_batch].invweight[0]
                 if link_b > -1:
-                    invweight += self._solver.links_info[link_b_maybe_batch].invweight[0]
+                    invweight = invweight + self._solver.links_info[link_b_maybe_batch].invweight[0]
 
                 for i in range(4):
                     n = -d1 * f - impact.normal
@@ -1112,7 +1112,7 @@ class ConstraintSolver:
     def _func_solve_body(self, i_b):
         alpha = self._func_linesearch(i_b)
 
-        if alpha == 0:
+        if ti.abs(alpha) < gs.EPS:
             self.improved[i_b] = 0
         else:
             self.improved[i_b] = 1
@@ -1205,7 +1205,7 @@ class ConstraintSolver:
             )
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
-            self._solver._func_solve_mass(self.grad, self.Mgrad)
+            self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
 
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(i_b)

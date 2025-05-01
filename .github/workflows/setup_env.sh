@@ -16,5 +16,5 @@ apt install -y \
     libegl1-mesa-dev \
     libgles2-mesa-dev \
     libosmesa6-dev \
-    mesa-utils \
+    mesa-utils
 echo "Done!"

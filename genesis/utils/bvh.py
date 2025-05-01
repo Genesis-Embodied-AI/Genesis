@@ -725,21 +725,22 @@ class BVHTree:
         for ic1 in range(n_con):
             self.constraint_b[ic1] = 0.0
 
+        # FIXME: This does not work anymore as the inverse mass matrix is no longer computed explicitly.
+        # One should rather use `self._solver._func_solve_mass`, after refactoring it to support input matrix
+        # instead of only vector, which should be fairly straightforward.
         for ic1 in range(n_con):
             for ic2 in range(n_con):
                 for jd1 in range(n_dof):
                     for jd2 in range(n_dof):
-                        self.constraint_A[ic1, ic2] += (
-                            self.con_jac[ic1, jd1] * self.solver.mass_mat_inv[jd1, jd2] * self.con_jac[ic2, jd2]
+                        self.constraint_A[ic1, ic2] += self.con_jac[ic1, jd1] * (
+                            self.solver.mass_mat_inv[jd1, jd2] * self.con_jac[ic2, jd2]
                         )
 
         for ic1 in range(n_con):
             for jd1 in range(n_dof):
                 for jd2 in range(n_dof):
-                    self.constraint_b[ic1] += (
-                        self.con_jac[ic1, jd1]
-                        * self.solver.mass_mat_inv[jd1, jd2]
-                        * self.solver.dof_state.qf_smooth[jd2]
+                    self.constraint_b[ic1] += self.con_jac[ic1, jd1] * (
+                        self.solver.mass_mat_inv[jd1, jd2] * self.solver.dof_state.qf_smooth[jd2]
                     )
 
         for ic1 in range(n_con):

@@ -225,7 +225,7 @@ def gs_sim(
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,
             constraint_solver=gs_solver,
-            enable_mujoco_compability=mujoco_compatibility,
+            enable_mujoco_compatibility=mujoco_compatibility,
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,

@@ -230,7 +230,7 @@ class RigidOptions(Options):
 
     # Experimental options mainly intended for debug purpose and unit tests
     enable_multi_contact: bool = True
-    enable_mujoco_compability: bool = False
+    enable_mujoco_compatibility: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
