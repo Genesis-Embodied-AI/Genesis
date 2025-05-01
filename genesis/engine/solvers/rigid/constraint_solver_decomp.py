@@ -803,9 +803,10 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(self._solver.n_dofs, self._B):
             self._solver.dofs_state[i_d, i_b].acc = self.qacc[i_d, i_b]
-            self.qacc_ws[i_d, i_b] = self.qacc[i_d, i_b]
-
             self._solver.dofs_state[i_d, i_b].qf_constraint = self.qfrc_constraint[i_d, i_b]
+            self._solver.dofs_state[i_d, i_b].force += self.qfrc_constraint[i_d, i_b]
+
+            self.qacc_ws[i_d, i_b] = self.qacc[i_d, i_b]
 
     @ti.kernel
     def _func_solve(self):
