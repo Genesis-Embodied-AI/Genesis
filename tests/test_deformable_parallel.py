@@ -125,6 +125,3 @@ def test_deformable_parallel(show_viewer):
 
     vel = eneity_fem._solver.get_state(0).vel.cpu().numpy()
     np.testing.assert_allclose(vel, 0, atol=1e-2)
-
-
-

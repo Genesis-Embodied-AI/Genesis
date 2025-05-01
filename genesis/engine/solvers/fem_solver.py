@@ -242,7 +242,6 @@ class FEMSolver(Solver):
                 self.elements_v[f + 1, verts[k], i_b].vel += dv
                 self.elements_v[f + 1, verts[3], i_b].vel -= dv
 
-
     @ti.kernel
     def apply_uniform_force(self, f: ti.i32):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
@@ -261,7 +260,6 @@ class FEMSolver(Solver):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             dt = self.substep_dt
             self.elements_v[f + 1, i_v, i_b].pos += dt * self.elements_v[f + 1, i_v, i_b].vel
-
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -466,7 +464,6 @@ class FEMSolver(Solver):
             self.surface[i_global].tri2el = tri2el[i_s] + el_start
             self.surface[i_global].active = 1
 
-
     @ti.kernel
     def _kernel_set_elements_pos(
         self,
@@ -519,7 +516,6 @@ class FEMSolver(Solver):
             for k in ti.static(range(3)):
                 self.elements_v.grad[f, i_global, i_b].vel[k] = vel_grad[i_b, i_v, k]
 
-
     @ti.kernel
     def _kernel_set_elements_actu(
         self,
@@ -568,7 +564,6 @@ class FEMSolver(Solver):
         for i_e in range(n_elements):
             i_global = i_e + element_el_start
             self.elements_i[i_global].muscle_group = muscle_group[i_e]
-
 
     @ti.kernel
     def _kernel_set_muscle_direction(
@@ -647,7 +642,6 @@ class FEMSolver(Solver):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
                 self.elements_v.grad[f, i_v, i_b].vel[j] += vel_grad[i_b, i_v, j]
-
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

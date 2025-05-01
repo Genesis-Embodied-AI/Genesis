@@ -64,13 +64,21 @@ class MPMEntityState(RBC):
             scene=self._entity.scene,
         )
         self._C = gs.zeros(
-            base_shape + (3, 3,),
+            base_shape
+            + (
+                3,
+                3,
+            ),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
         )
         self._F = gs.zeros(
-            base_shape + (3, 3,),
+            base_shape
+            + (
+                3,
+                3,
+            ),
             dtype=float,
             requires_grad=self._entity.scene.requires_grad,
             scene=self._entity.scene,
@@ -181,12 +189,8 @@ class FEMEntityState:
         self._s_global = s_global
         base_shape = (self.entity.sim._B, self._entity.n_vertices, 3)
 
-        self._pos = gs.zeros(
-            base_shape, dtype=float, requires_grad=False, scene=self.entity.scene
-        )
-        self._vel = gs.zeros(
-            base_shape, dtype=float, requires_grad=False, scene=self.entity.scene
-        )
+        self._pos = gs.zeros(base_shape, dtype=float, requires_grad=False, scene=self.entity.scene)
+        self._vel = gs.zeros(base_shape, dtype=float, requires_grad=False, scene=self.entity.scene)
         self._active = gs.zeros(
             (
                 self.entity.sim._B,

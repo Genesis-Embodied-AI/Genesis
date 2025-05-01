@@ -91,7 +91,7 @@ def main():
     ########################## forward + backward twice ##########################
     w_list = []
     horizon = 150
-    v_list  = [gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True) for _ in range(horizon)]
+    v_list = [gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True) for _ in range(horizon)]
     for _ in range(2):
         scene.reset()
         init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)

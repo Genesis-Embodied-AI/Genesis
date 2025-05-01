@@ -306,7 +306,9 @@ class ParticleEntity(Entity):
 
         self._assert_active()
         if self.sim.requires_grad:
-            gs.logger.warning("Manally setting element velocities. This is not recommended and could break gradient flow.")
+            gs.logger.warning(
+                "Manally setting element velocities. This is not recommended and could break gradient flow."
+            )
 
         vel = to_gs_tensor(vel)
 
