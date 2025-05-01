@@ -21,6 +21,7 @@ def main():
         vis_options=gs.options.VisOptions(
             visualize_sph_boundary=True,
             visualize_mpm_boundary=True,
+            rendered_envs_idx=[0],
         ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(0.0, 0.0, -0.1),
@@ -36,7 +37,7 @@ def main():
             camera_fov=30,
             max_FPS=60,
         ),
-        show_viewer=True,
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################
@@ -69,7 +70,7 @@ def main():
         ),
     )
     ########################## build ##########################
-    scene.build()
+    scene.build(n_envs=5)
 
     for i in range(800):
         scene.step()

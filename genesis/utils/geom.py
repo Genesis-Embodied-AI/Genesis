@@ -1177,11 +1177,13 @@ class SpatialHasher:
         else:
             self.n_slots = n_slots
 
-    def build(self):
+    def build(self, n_batch):
+        self._B = n_batch
         # number of elements in each slot
-        self.slot_size = ti.field(gs.ti_int, shape=self.n_slots)
+        self.slot_size = ti.field(gs.ti_int, shape=(self.n_slots, self._B))
         # element index offset in each slot
-        self.slot_start = ti.field(gs.ti_int, shape=self.n_slots)
+        self.slot_start = ti.field(gs.ti_int, shape=(self.n_slots, self._B))
+        self.cur_cnt = ti.field(gs.ti_int, shape=self._B)
 
     @ti.func
     def compute_reordered_idx(self, n, pos, active, reordered_idx):
@@ -1200,34 +1202,28 @@ class SpatialHasher:
 
         self.slot_size.fill(0)
         self.slot_start.fill(0)
+        self.cur_cnt.fill(0)
 
-        for i in range(n):
-            if active[i]:
-                slot_idx = self.pos_to_slot(pos[i])
-                ti.atomic_add(self.slot_size[slot_idx], 1)
+        for i, b in ti.ndrange(n, self._B):
+            if active[i, b]:
+                slot_idx = self.pos_to_slot(pos[i, b])
+                ti.atomic_add(self.slot_size[slot_idx, b], 1)
 
-        cur_cnt = 0
         for i in range(self.n_slots):
-            self.slot_start[i] = ti.atomic_add(cur_cnt, self.slot_size[i])
+            for b in range(self._B):
+                self.slot_start[i, b] = ti.atomic_add(self.cur_cnt[b], self.slot_size[i, b])
 
-        for i in range(n):
-            if active[i]:
-                slot_idx = self.pos_to_slot(pos[i])
-                reordered_idx[i] = ti.atomic_add(self.slot_start[slot_idx], 1)
+        for i, b in ti.ndrange(n, self._B):
+            if active[i, b]:
+                slot_idx = self.pos_to_slot(pos[i, b])
+                reordered_idx[i, b] = ti.atomic_add(self.slot_start[slot_idx, b], 1)
 
         # recover slot_start
-        for i in range(self.n_slots):
-            self.slot_start[i] -= self.slot_size[i]
+        for i, b in ti.ndrange(self.n_slots, self._B):
+            self.slot_start[i, b] -= self.slot_size[i, b]
 
     @ti.func
-    def for_all_neighbors(
-        self,
-        i,
-        pos,
-        task_range,
-        ret: ti.template(),
-        task: ti.template(),
-    ):
+    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), b):
         """
         Iterates over all neighbors of a given position and performs a task on each neighbor.
         Elements are considered neighbors if they are within task_range.
@@ -1242,12 +1238,12 @@ class SpatialHasher:
         Returns:
             None
         """
-        base = self.pos_to_grid(pos[i])
+        base = self.pos_to_grid(pos[i, b])
         for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
             slot_idx = self.grid_to_slot(base + offset)
-            for j in range(self.slot_start[slot_idx], self.slot_size[slot_idx] + self.slot_start[slot_idx]):
-                if i != j and (pos[i] - pos[j]).norm() < task_range:
-                    task(i, j, ret)
+            for j in range(self.slot_start[slot_idx, b], self.slot_size[slot_idx, b] + self.slot_start[slot_idx, b]):
+                if i != j and (pos[i, b] - pos[j, b]).norm() < task_range:
+                    task(i, j, ret, b)
 
     @ti.func
     def pos_to_grid(self, pos):
