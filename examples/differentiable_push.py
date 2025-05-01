@@ -96,7 +96,7 @@ def main():
         scene.reset()
         init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)
 
-        # forward passW
+        # forward pass
         print("forward")
         timer = gs.tools.Timer()
         stick.set_position(init_pos)

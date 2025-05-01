@@ -1204,23 +1204,23 @@ class SpatialHasher:
         self.slot_start.fill(0)
         self.cur_cnt.fill(0)
 
-        for i, b in ti.ndrange(n, self._B):
-            if active[i, b]:
-                slot_idx = self.pos_to_slot(pos[i, b])
-                ti.atomic_add(self.slot_size[slot_idx, b], 1)
+        for i_n, i_b in ti.ndrange(n, self._B):
+            if active[i_n, i_b]:
+                slot_idx = self.pos_to_slot(pos[i_n, i_b])
+                ti.atomic_add(self.slot_size[slot_idx, i_b], 1)
 
-        for i in range(self.n_slots):
-            for b in range(self._B):
-                self.slot_start[i, b] = ti.atomic_add(self.cur_cnt[b], self.slot_size[i, b])
+        for i_n in range(self.n_slots):
+            for i_b in range(self._B):
+                self.slot_start[i_n, i_b] = ti.atomic_add(self.cur_cnt[i_b], self.slot_size[i_n, i_b])
 
-        for i, b in ti.ndrange(n, self._B):
-            if active[i, b]:
-                slot_idx = self.pos_to_slot(pos[i, b])
-                reordered_idx[i, b] = ti.atomic_add(self.slot_start[slot_idx, b], 1)
+        for i_n, i_b in ti.ndrange(n, self._B):
+            if active[i_n, i_b]:
+                slot_idx = self.pos_to_slot(pos[i_n, i_b])
+                reordered_idx[i_n, i_b] = ti.atomic_add(self.slot_start[slot_idx, i_b], 1)
 
         # recover slot_start
-        for i, b in ti.ndrange(self.n_slots, self._B):
-            self.slot_start[i, b] -= self.slot_size[i, b]
+        for i_s, i_b in ti.ndrange(self.n_slots, self._B):
+            self.slot_start[i_s, i_b] -= self.slot_size[i_s, i_b]
 
     @ti.func
     def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), b):

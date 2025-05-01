@@ -269,17 +269,10 @@ class Simulator(RBC):
             solver.process_input_grad()
 
     def substep(self, f):
-        from genesis.utils.tools import create_timer
-
-        # timer = create_timer("sph", level=1, ti_sync=True, skip_first_call=True)
         self._coupler.preprocess(f)
-        # timer.stamp("_coupler.preprocess")
         self.substep_pre_coupling(f)
-        # timer.stamp("substep_pre_coupling")
         self._coupler.couple(f)
-        # timer.stamp("_coupler.couple")
         self.substep_post_coupling(f)
-        # timer.stamp("substep_post_coupling")
 
     def sub_step_grad(self, f):
         self.substep_post_coupling_grad(f)

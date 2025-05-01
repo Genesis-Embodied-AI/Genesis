@@ -103,9 +103,9 @@ class PBDTetEntity(ParticleEntity):
 
     @ti.kernel
     def _kernel_get_particles(self, particles: ti.types.ndarray()):
-        for i, b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             for j in ti.static(range(3)):
-                particles[b, i, j] = self.solver.particles[i + self._particle_start, b].pos[j]
+                particles[i_b, i_p, j] = self.solver.particles[i_p + self._particle_start, i_b].pos[j]
 
     @gs.assert_built
     def find_closest_particle(self, pos, b=0):

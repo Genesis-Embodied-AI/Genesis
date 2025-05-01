@@ -79,9 +79,9 @@ class Mesh:
         self.vertex_normals = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
 
     @ti.func
-    def sdf(self, f, pos_world, b):
+    def sdf(self, f, pos_world, i_b):
         # sdf value from world coordinate
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, b], self.entity.quat[f, b])
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, i_b], self.entity.quat[f, i_b])
         pos_voxels = gu.ti_transform_by_T(pos_mesh, self.T_mesh_to_sdf[None])
 
         return self.sdf_(pos_voxels)

@@ -307,7 +307,7 @@ class ParticleEntity(Entity):
         self._assert_active()
         if self.sim.requires_grad:
             gs.logger.warning(
-                "Manally setting element velocities. This is not recommended and could break gradient flow."
+                "Manually setting particle velocities. This is not recommended and could break gradient flow."
             )
 
         vel = to_gs_tensor(vel)
@@ -319,9 +319,9 @@ class ParticleEntity(Entity):
         elif len(vel.shape) == 2:
             assert self.n_particles != n_groups
             if vel.shape == (self._n_particles, 3):
-                self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+                self._tgt["vel"] = torch.tile(vel.unsqueeze(0), [self._sim._B, 1, 1])
             elif vel.shape == (self._sim._B, 3):
-                self._tgt["vel"] = torch.tile(vel[:, None, :], [1, self._n_particles, 1])
+                self._tgt["vel"] = torch.tile(vel.unsqueeze(1), [1, self._n_particles, 1])
             else:
                 gs.raise_exception("Tensor shape not supported.")
 

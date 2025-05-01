@@ -77,14 +77,14 @@ class FEMEntity(Entity):
         if len(pos.shape) == 1:
             assert pos.shape == (3,)
             self._tgt["pos"] = self.init_positions_COM_offset + pos
-            self._tgt["pos"] = torch.tile(self._tgt["pos"].unsqueeze(0), [self._sim._B, 1, 1])
+            self._tgt["pos"] = torch.tile(self._tgt["pos"].unsqueeze(0), (self._sim._B, 1, 1))
 
         elif len(pos.shape) == 2:
             if pos.shape == (self.n_vertices, 3):
-                self._tgt["pos"] = torch.tile(pos.unsqueeze(0), [self._sim._B, 1, 1])
+                self._tgt["pos"] = torch.tile(pos.unsqueeze(0), (self._sim._B, 1, 1))
             elif pos.shape == (self._sim._B, 3):
                 # Tile COM position for each vertex
-                self._tgt["pos"] = torch.tile(pos.unsqueeze(1), [1, self.n_vertices, 1])
+                self._tgt["pos"] = torch.tile(pos.unsqueeze(1), (1, self.n_vertices, 1))
             else:
                 gs.raise_exception("Tensor shape not supported.")
 
