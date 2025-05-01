@@ -912,10 +912,11 @@ class ConstraintSolver:
         snorm = gs.ti_float(0.0)
         for jd in range(self._solver.n_dofs):
             snorm += self.search[jd, i_b] ** 2
-        snorm = ti.sqrt(snorm / self._solver.n_dofs_) * self._solver.meaninertia[i_b] * self._solver.n_dofs
-        self.gtol[i_b] = self.tolerance * self.ls_tolerance * snorm
-        gtol = self.tolerance * self.ls_tolerance * snorm
-        ## use adaptive linesearch tolerance
+        snorm = ti.sqrt(snorm)
+        scale = 1.0 / (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs))
+        gtol = self.tolerance * self.ls_tolerance * snorm / scale
+        slopescl = scale / snorm
+        self.gtol[i_b] = gtol
 
         self.ls_its[i_b] = 0
         self.ls_result[i_b] = 0
@@ -928,10 +929,6 @@ class ConstraintSolver:
             self.ls_result[i_b] = 1
             res_alpha = 0.0
         else:
-            scale = 1 / (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs))
-            gtol = self.tolerance * self.ls_tolerance * snorm
-            slopescl = scale / snorm
-
             self._func_ls_init(i_b)
 
             p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = self._func_ls_point_fn(i_b, gs.ti_float(0.0))
