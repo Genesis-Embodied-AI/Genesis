@@ -1207,13 +1207,7 @@ class ConstraintSolver:
             )
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
-            for i_e in range(self._solver.n_entities):
-                e_info = self._solver.entities_info[i_e]
-                for i_d1 in range(e_info.dof_start, e_info.dof_end):
-                    Mgrad = gs.ti_float(0.0)
-                    for i_d2 in range(e_info.dof_start, e_info.dof_end):
-                        Mgrad += self._solver.mass_mat_inv[i_d1, i_d2, i_b] * self.grad[i_d2, i_b]
-                    self.Mgrad[i_d1, i_b] = Mgrad
+            self._solver._func_solve_mass(self.grad, self.Mgrad)
 
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(i_b)
