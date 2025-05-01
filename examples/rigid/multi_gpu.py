@@ -11,7 +11,6 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -28,9 +27,6 @@ def main():
             camera_fov=40,
         ),
         show_viewer=args.vis,
-        rigid_options=gs.options.RigidOptions(
-            # constraint_solver=gs.constraint_solver.Newton,
-        ),
         show_FPS=False,
     )
 
@@ -49,20 +45,20 @@ def main():
         scene.step()
 
 
-def run(gpu_id, data_part, func):
+def run(gpu_id, func):
     # Set environment args
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    os.environ["EGL_DEVICE_ID"] = str(gpu_id)
     # main script
     func()
 
 
 if __name__ == "__main__":
     num_gpus = 2
-    data_partitions = ["A", "B"]
 
     processes = []
     for i in range(num_gpus):
-        p = multiprocessing.Process(target=run, args=(i, data_partitions[i], main))
+        p = multiprocessing.Process(target=run, args=(i, main))
         processes.append(p)
         p.start()
 
