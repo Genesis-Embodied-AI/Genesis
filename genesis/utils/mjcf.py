@@ -1,4 +1,5 @@
 import os
+from itertools import chain
 from bisect import bisect_right
 
 import numpy as np
@@ -6,6 +7,7 @@ import trimesh
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
+import z3
 import mujoco
 import genesis as gs
 
@@ -225,7 +227,8 @@ def parse_link(mj, i_l, scale):
     l_info["invweight"] /= scale**3
     for j_info in j_infos:
         j_info["pos"] *= scale
-    # exclude joints with 0 dofs in MJCF models to align with mujoco
+
+    # Exclude joints with 0 dofs in MJCF models to align with mujoco
     j_infos = [j_info for j_info in j_infos if j_info["n_dofs"] > 0]
 
     return l_info, j_infos
@@ -436,6 +439,77 @@ def parse_geoms(mj, scale, surface, xml_path):
         # assign geoms to link
         link_idx = mj.geom_bodyid[i_g]
         links_g_info[link_idx].append(g_info)
+
+    # Update contype and conaffinity to take into account any additional list of explicitly excluded collision pairs
+    if mj.nexclude:
+        # Extract the list of collision geometries
+        cg_infos = []
+        for g_info in chain.from_iterable(links_g_info):
+            if g_info["contype"] or g_info["conaffinity"]:
+                cg_infos.append(g_info)
+
+        # Compute the original of all the excluded collision pairs
+        invalid_set = set()
+        for i, g_info_1 in enumerate(cg_infos):
+            for j, g_info_2 in enumerate(cg_infos):
+                if i >= j:
+                    continue
+                if g_info_1["contype"] & g_info_2["conaffinity"]:
+                    continue
+                if g_info_2["contype"] & g_info_1["conaffinity"]:
+                    continue
+                invalid_set.add(frozenset((i, j)))
+
+        # Append all the explicitly excluded collision pairs
+        for exclude_signature in mj.exclude_signature:
+            body_1 = (exclude_signature >> 16) & 0xFFFF
+            body_2 = exclude_signature & 0xFFFF
+
+            geoms_1, geoms_2 = [], []
+            for body_idx, geoms_idx in ((body_1, geoms_1), (body_2, geoms_2)):
+                for g_info in links_g_info[body_idx]:
+                    for geom_idx, cg_info in enumerate(cg_infos):
+                        if g_info is cg_info:
+                            geoms_idx.append(geom_idx)
+                            break
+
+            for geom_1 in geoms_1:
+                for geom_2 in geoms_2:
+                    invalid_set.add(frozenset((geom_1, geom_2)))
+
+        # Compute updated contype and conaffinity from the complete list of invalid collision pairs
+        is_success = False
+        N = len(cg_infos)
+        for K in range(1, 32):
+            s = z3.Solver()
+            contype_bits = [[z3.Bool(f"contype_{i}_{b}") for b in range(K)] for i in range(N)]
+            conaffinity_bits = [[z3.Bool(f"conaffinity_{i}_{b}") for b in range(K)] for i in range(N)]
+            for i in range(N):
+                for j in range(i + 1, N):
+                    cond1 = z3.Or([z3.And(contype_bits[i][b], conaffinity_bits[j][b]) for b in range(K)])
+                    cond2 = z3.Or([z3.And(contype_bits[j][b], conaffinity_bits[i][b]) for b in range(K)])
+                    pair = frozenset((i, j))
+                    if pair in invalid_set:
+                        s.add(z3.Not(cond1), z3.Not(cond2))
+                    else:
+                        s.add(z3.Or(cond1, cond2))
+            if s.check() == z3.sat:
+                is_success = True
+                model = s.model()
+                for g_info, contype_bits_i, conaffinity_bits_i in zip(cg_infos, contype_bits, conaffinity_bits):
+                    g_info["contype"], g_info["conaffinity"] = (
+                        sum((1 << b) if z3.is_true(model[e]) else 0 for b, e in enumerate(bits))
+                        for bits in (contype_bits_i, conaffinity_bits_i)
+                    )
+                break
+
+        if not is_success:
+            gs.logger.warning(
+                "Compatible collision geometries cannot be described using bitmasks 'contype' and 'conaffinity'. "
+                "Using default values..."
+            )
+            for g_info in cg_infos:
+                g_info["contype"], g_info["conaffinity"] = 1, 1
 
     # Inform the user that collision geometries are not displayed by default
     if is_any_col and surface.vis_mode != "collision":
