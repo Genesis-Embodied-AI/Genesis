@@ -291,7 +291,7 @@ class RigidSolver(Solver):
 
         if shape is None:
             return (B,)
-        elif isinstance(shape, (list, tuple)):
+        elif type(shape) in [list, tuple]:
             return (B,) + shape if first_dim else shape + (B,)
         else:
             return (B, shape) if first_dim else (shape, B)
@@ -445,18 +445,18 @@ class RigidSolver(Solver):
             self.dofs_info[I].kv = dofs_kv[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-            self.dofs_state[i_d, i_b].ctrl_mode = gs.CTRL_MODE.FORCE
+        for i, b in ti.ndrange(self.n_dofs, self._B):
+            self.dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
 
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                self.dofs_state[i_d, i_b].hibernated = False
-                self.awake_dofs[i_d, i_b] = i_d
+            for i, b in ti.ndrange(self.n_dofs, self._B):
+                self.dofs_state[i, b].hibernated = False
+                self.awake_dofs[i, b] = i
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
-                self.n_awake_dofs[i_b] = self.n_dofs
+            for b in range(self._B):
+                self.n_awake_dofs[b] = self.n_dofs
 
     def _init_link_fields(self):
         if self._use_hibernation:
@@ -670,26 +670,26 @@ class RigidSolver(Solver):
                     self.links_info[I].inertial_i[j1, j2] = links_inertial_i[i, j1, j2]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l, i_b in ti.ndrange(self.n_links, self._B):
-            I = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
+        for i, b in ti.ndrange(self.n_links, self._B):
+            I = [i, b] if ti.static(self._options.batch_links_info) else i
 
             # Update state for root fixed link. Their state will not be updated in forward kinematics later but can be manually changed by user.
             if self.links_info[I].parent_idx == -1 and self.links_info[I].is_fixed:
                 for j in ti.static(range(4)):
-                    self.links_state[i_l, i_b].quat[j] = links_quat[i_l, j]
+                    self.links_state[i, b].quat[j] = links_quat[i, j]
 
                 for j in ti.static(range(3)):
-                    self.links_state[i_l, i_b].pos[j] = links_pos[i_l, j]
+                    self.links_state[i, b].pos[j] = links_pos[i, j]
 
             for j in ti.static(range(3)):
-                self.links_state[i_l, i_b].i_pos_shift[j] = 0.0
-            self.links_state[i_l, i_b].mass_shift = 0.0
+                self.links_state[i, b].i_pos_shift[j] = 0.0
+            self.links_state[i, b].mass_shift = 0.0
 
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_l, i_b in ti.ndrange(self.n_links, self._B):
-                self.links_state[i_l, i_b].hibernated = False
-                self.awake_links[i_l, i_b] = i_l
+            for i, b in ti.ndrange(self.n_links, self._B):
+                self.links_state[i, b].hibernated = False
+                self.awake_links[i, b] = i
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
             for b in range(self._B):
@@ -812,28 +812,28 @@ class RigidSolver(Solver):
         is_free: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_v in range(self.n_verts):
+        for i in range(self.n_verts):
             for j in ti.static(range(3)):
-                self.verts_info[i_v].init_pos[j] = verts[i_v, j]
-                self.verts_info[i_v].init_normal[j] = normals[i_v, j]
-                self.verts_info[i_v].init_center_pos[j] = init_center_pos[i_v, j]
+                self.verts_info[i].init_pos[j] = verts[i, j]
+                self.verts_info[i].init_normal[j] = normals[i, j]
+                self.verts_info[i].init_center_pos[j] = init_center_pos[i, j]
 
-            self.verts_info[i_v].geom_idx = verts_geom_idx[i_v]
-            self.verts_info[i_v].verts_state_idx = verts_state_idx[i_v]
-            self.verts_info[i_v].is_free = is_free[i_v]
+            self.verts_info[i].geom_idx = verts_geom_idx[i]
+            self.verts_info[i].verts_state_idx = verts_state_idx[i]
+            self.verts_info[i].is_free = is_free[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_f in range(self.n_faces):
+        for i in range(self.n_faces):
             for j in ti.static(range(3)):
-                self.faces_info[i_f].verts_idx[j] = faces[i_f, j]
-            self.faces_info[i_f].geom_idx = verts_geom_idx[faces[i_f, 0]]
+                self.faces_info[i].verts_idx[j] = faces[i, j]
+            self.faces_info[i].geom_idx = verts_geom_idx[faces[i, 0]]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_e in range(self.n_edges):
-            self.edges_info[i_e].v0 = edges[i_e, 0]
-            self.edges_info[i_e].v1 = edges[i_e, 1]
-            self.edges_info[i_e].length = (
-                self.verts_info[edges[i_e, 0]].init_pos - self.verts_info[edges[i_e, 1]].init_pos
+        for i in range(self.n_edges):
+            self.edges_info[i].v0 = edges[i, 0]
+            self.edges_info[i].v1 = edges[i, 1]
+            self.edges_info[i].length = (
+                self.verts_info[edges[i, 0]].init_pos - self.verts_info[edges[i, 1]].init_pos
             ).norm()
 
     @ti.kernel
@@ -845,18 +845,18 @@ class RigidSolver(Solver):
         vverts_vgeom_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_v in range(self.n_vverts):
+        for i in range(self.n_vverts):
             for j in ti.static(range(3)):
-                self.vverts_info[i_v].init_pos[j] = vverts[i_v, j]
-                self.vverts_info[i_v].init_vnormal[j] = vnormals[i_v, j]
+                self.vverts_info[i].init_pos[j] = vverts[i, j]
+                self.vverts_info[i].init_vnormal[j] = vnormals[i, j]
 
-            self.vverts_info[i_v].vgeom_idx = vverts_vgeom_idx[i_v]
+            self.vverts_info[i].vgeom_idx = vverts_vgeom_idx[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_f in range(self.n_vfaces):
+        for i in range(self.n_vfaces):
             for j in ti.static(range(3)):
-                self.vfaces_info[i_f].vverts_idx[j] = vfaces[i_f, j]
-            self.vfaces_info[i_f].vgeom_idx = vverts_vgeom_idx[vfaces[i_f, 0]]
+                self.vfaces_info[i].vverts_idx[j] = vfaces[i, j]
+            self.vfaces_info[i].vgeom_idx = vverts_vgeom_idx[vfaces[i, 0]]
 
     def _init_geom_fields(self):
         struct_geom_info = ti.types.struct(
@@ -1212,13 +1212,13 @@ class RigidSolver(Solver):
 
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-                self.entities_state[i_e, i_b].hibernated = False
-                self.awake_entities[i_e, i_b] = i_e
+            for i, b in ti.ndrange(self.n_entities, self._B):
+                self.entities_state[i, b].hibernated = False
+                self.awake_entities[i, b] = i
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
-                self.n_awake_entities[i_b] = self.n_entities
+            for b in range(self._B):
+                self.n_awake_entities[b] = self.n_entities
 
     def _init_equality_fields(self):
         struct_equality_info = ti.types.struct(
@@ -1264,14 +1264,14 @@ class RigidSolver(Solver):
     ):
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_eq, i_b in ti.ndrange(self.n_equalities, self._B):
-            self.equality_info[i_eq, i_b].eq_obj1id = equalities_eq_obj1id[i_eq]
-            self.equality_info[i_eq, i_b].eq_obj2id = equalities_eq_obj2id[i_eq]
-            self.equality_info[i_eq, i_b].eq_type = equalities_eq_type[i_eq]
+        for i, b in ti.ndrange(self.n_equalities, self._B):
+            self.equality_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
+            self.equality_info[i, b].eq_obj2id = equalities_eq_obj2id[i]
+            self.equality_info[i, b].eq_type = equalities_eq_type[i]
             for j in ti.static(range(11)):
-                self.equality_info[i_eq, i_b].eq_data[j] = equalities_eq_data[i_eq, j]
+                self.equality_info[i, b].eq_data[j] = equalities_eq_data[i, j]
             for j in ti.static(range(7)):
-                self.equality_info[i_eq, i_b].sol_params[j] = equalities_sol_params[i_eq, j]
+                self.equality_info[i, b].sol_params[j] = equalities_sol_params[i, j]
 
     def _init_envs_offset(self):
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
@@ -4054,21 +4054,21 @@ class RigidSolver(Solver):
                 self.geoms_info[i].sol_params[j] = sol_params[j]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_j, i_b in ti.ndrange(self.n_joints, self._B):
-            I = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
+        for i, b in ti.ndrange(self.n_joints, self._B):
+            I = [i, b] if ti.static(self._options.batch_joints_info) else i
             for j in ti.static(range(7)):
                 self.joints_info[I].sol_params[j] = sol_params[j]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-            I = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+        for i, b in ti.ndrange(self.n_dofs, self._B):
+            I = [i, b] if ti.static(self._options.batch_dofs_info) else i
             for j in ti.static(range(7)):
                 self.dofs_info[I].sol_params[j] = sol_params[j]
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None, *, unsafe=False):
         tensor_list = list(tensor_list)
-        for i_t, tensor in enumerate(tensor_list):
-            tensor_list[i_t], dofs_idx, envs_idx = self._sanitize_1D_io_variables(
+        for i, tensor in enumerate(tensor_list):
+            tensor_list[i], dofs_idx, envs_idx = self._sanitize_1D_io_variables(
                 tensor,
                 dofs_idx,
                 self.n_dofs,
@@ -4698,11 +4698,11 @@ class RigidSolver(Solver):
         """
         Update the angle of the vgeom in the propellers of a drone entity.
         """
-        for i_p, i_b in ti.ndrange(n_propellers, self._B):
-            rad = propellers_revs[i_p, i_b] * propellers_spin[i_p] * self._substep_dt * np.pi / 30
-            self.vgeoms_state[propellers_vgeom_idxs[i_p], i_b].quat = gu.ti_transform_quat_by_quat(
+        for i, b in ti.ndrange(n_propellers, self._B):
+            rad = propellers_revs[i, b] * propellers_spin[i] * self._substep_dt * np.pi / 30
+            self.vgeoms_state[propellers_vgeom_idxs[i], b].quat = gu.ti_transform_quat_by_quat(
                 gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad])),
-                self.vgeoms_state[propellers_vgeom_idxs[i_p], i_b].quat,
+                self.vgeoms_state[propellers_vgeom_idxs[i], b].quat,
             )
 
     def get_geoms_friction(self, geoms_idx=None, *, unsafe=False):
