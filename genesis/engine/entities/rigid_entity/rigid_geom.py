@@ -488,8 +488,8 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
-        for b in range(self._solver._B):
-            self._solver._func_update_verts_for_geom(self._idx, b)
+        for i_b in range(self._solver._B):
+            self._solver._func_update_verts_for_geom(self._idx, i_b)
 
         for i_v, j, i_b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i_v + self._verts_state_start

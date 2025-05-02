@@ -163,8 +163,8 @@ class ToolEntity(Entity):
         pass
 
     @ti.func
-    def collide(self, f, pos_world, vel_mat, b):
-        return self.mesh.collide(f, pos_world, vel_mat, b)
+    def collide(self, f, pos_world, vel_mat, i_b):
+        return self.mesh.collide(f, pos_world, vel_mat, i_b)
 
     @ti.func
     def pbd_collide(self, f, pos_world, thickness, dt):

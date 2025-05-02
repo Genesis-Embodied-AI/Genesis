@@ -175,10 +175,10 @@ class Coupler(RBC):
         return vel
 
     @ti.func
-    def _func_mpm_tool(self, f, pos_world, vel, b):
+    def _func_mpm_tool(self, f, pos_world, vel, i_b):
         for entity in ti.static(self.tool_solver.entities):
             if ti.static(entity.material.collision):
-                vel = entity.collide(f, pos_world, vel, b)
+                vel = entity.collide(f, pos_world, vel, i_b)
         return vel
 
     @ti.kernel

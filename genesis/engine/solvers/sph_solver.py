@@ -211,9 +211,9 @@ class SPHSolver(Solver):
                     ]
 
     @ti.func
-    def _task_compute_rho(self, i, j, ret: ti.template(), b):
+    def _task_compute_rho(self, i, j, ret: ti.template(), i_b):
         ret += self._p_vol * self.cubic_kernel(
-            (self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos).norm()
+            (self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos).norm()
         )
 
     @ti.kernel
@@ -232,8 +232,8 @@ class SPHSolver(Solver):
                 self.particles_reordered[i_p, i_b].rho *= self.particles_info_reordered[i_p, i_b].rho
 
     @ti.func
-    def _task_compute_non_pressure_forces(self, i, j, ret: ti.template(), b: ti.i32):
-        d_ij = self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos
+    def _task_compute_non_pressure_forces(self, i, j, ret: ti.template(), i_b: ti.i32):
+        d_ij = self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos
         dist = d_ij.norm()
 
         gamma_i = self.particles_info_reordered[i, b].gamma
@@ -293,21 +293,21 @@ class SPHSolver(Solver):
                 self.particles_reordered[i_p, i_b].acc = acc
 
     @ti.func
-    def _task_compute_pressure_forces(self, i, j, ret: ti.template(), b):
-        dp_i = self.particles_reordered[i, b].p / self.particles_reordered[i, b].rho ** 2
+    def _task_compute_pressure_forces(self, i, j, ret: ti.template(), i_b):
+        dp_i = self.particles_reordered[i, i_b].p / self.particles_reordered[i, i_b].rho ** 2
         rho_j = (
-            self.particles_reordered[j, b].rho
-            * self.particles_info_reordered[j, b].rho
-            / self.particles_info_reordered[j, b].rho
+            self.particles_reordered[j, i_b].rho
+            * self.particles_info_reordered[j, i_b].rho
+            / self.particles_info_reordered[j, i_b].rho
         )
-        dp_j = self.particles_reordered[j, b].p / rho_j**2
+        dp_j = self.particles_reordered[j, i_b].p / rho_j**2
 
         # Compute the pressure force contribution, Symmetric Formula
         ret += (
-            -self.particles_info_reordered[j, b].rho
+            -self.particles_info_reordered[j, i_b].rho
             * self._p_vol
             * (dp_i + dp_j)
-            * self.cubic_kernel_derivative(self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos)
+            * self.cubic_kernel_derivative(self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos)
         )
 
     @ti.kernel
@@ -329,12 +329,12 @@ class SPHSolver(Solver):
                 acc = ti.Vector.zero(gs.ti_float, 3)
 
                 self.sh.for_all_neighbors(
-                    i,
+                    i_p,
                     self.particles_reordered.pos,  # shape [n_particles, B, 3] or similar
                     self._support_radius,
                     acc,
                     self._task_compute_pressure_forces,
-                    b,
+                    i_b,
                 )
                 self.particles_reordered[i_p, i_b].acc += acc
 
@@ -365,10 +365,10 @@ class SPHSolver(Solver):
     # ------------------------------------- DFSPH ----------------------------------------
     # ------------------------------------------------------------------------------------
     @ti.func
-    def _task_compute_DFSPH_factor(self, i, j, ret: ti.template(), b):
+    def _task_compute_DFSPH_factor(self, i, j, ret: ti.template(), i_b):
         # Fluid neighbors
         grad_j = -self._p_vol * self.cubic_kernel_derivative(
-            self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos
+            self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos
         )
         ret[3] += grad_j.norm_sqr()  # sum_grad_p_k
         for ii in ti.static(range(3)):  # grad_p_i
@@ -402,12 +402,12 @@ class SPHSolver(Solver):
                 self.particles_reordered[i_p, i_b].dfsph_factor = factor
 
     @ti.func
-    def _task_compute_density_time_derivative(self, i, j, ret: ti.template(), b):
-        v_i = self.particles_reordered[i_p, i_b].vel
-        v_j = self.particles_reordered[j_p, i_b].vel
+    def _task_compute_density_time_derivative(self, i, j, ret: ti.template(), i_b):
+        v_i = self.particles_reordered[i, i_b].vel
+        v_j = self.particles_reordered[j, i_b].vel
 
-        x_i = self.particles_reordered[i_p, i_b].pos
-        x_j = self.particles_reordered[j_p, i_b].pos
+        x_i = self.particles_reordered[i, i_b].pos
+        x_j = self.particles_reordered[j, i_b].pos
 
         # Fluid neighbors
         ret.drho += self._p_vol * (v_i - v_j).dot(self.cubic_kernel_derivative(x_i - x_j))
@@ -438,16 +438,16 @@ class SPHSolver(Solver):
                 self.particles_reordered[i_p, i_b].drho = drho
 
     @ti.func
-    def _task_divergence_solver_iteration(self, i, j, ret: ti.template(), b):
+    def _task_divergence_solver_iteration(self, i, j, ret: ti.template(), i_b):
         # Fluid neighbors
-        b_j = self.particles_reordered[j, b].drho
-        k_j = b_j * self.particles_reordered[j, b].dfsph_factor
+        b_j = self.particles_reordered[j, i_b].drho
+        k_j = b_j * self.particles_reordered[j, i_b].dfsph_factor
         k_sum = (
             self._density0 / self._density0 * ret.k_i + k_j
         )  # TODO: make the neighbor density different for multiphase fluid
         if ti.abs(k_sum) > self._df_eps:
             grad_p_j = -self._p_vol * self.cubic_kernel_derivative(
-                self.particles_reordered.pos[i, b] - self.particles_reordered.pos[j, b]
+                self.particles_reordered.pos[i, i_b] - self.particles_reordered.pos[j, i_b]
             )
             ret.dv -= (
                 k_sum * grad_p_j
@@ -525,11 +525,11 @@ class SPHSolver(Solver):
                 self.particles_reordered[i_p, i_b].vel += self._substep_dt * self.particles_reordered[i_p, i_b].acc
 
     @ti.func
-    def _task_compute_density_star(self, i, j, ret: ti.template(), b):
-        v_i = self.particles_reordered[i, b].vel
-        v_j = self.particles_reordered[j, b].vel
-        x_i = self.particles_reordered[i, b].pos
-        x_j = self.particles_reordered[j, b].pos
+    def _task_compute_density_star(self, i, j, ret: ti.template(), i_b):
+        v_i = self.particles_reordered[i, i_b].vel
+        v_j = self.particles_reordered[j, i_b].vel
+        x_i = self.particles_reordered[i, i_b].pos
+        x_j = self.particles_reordered[j, i_b].pos
         ret += self._p_vol * (v_i - v_j).dot(self.cubic_kernel_derivative(x_i - x_j))
 
     @ti.kernel
@@ -544,16 +544,16 @@ class SPHSolver(Solver):
                 self.particles_reordered[i_p, i_b].drho = ti.max(drho, 1.0)  # - 1.0
 
     @ti.func
-    def density_solve_iteration_task(self, i, j, ret: ti.template(), b):
+    def density_solve_iteration_task(self, i, j, ret: ti.template(), i_b):
         # Fluid neighbors
-        b_j = self.particles_reordered[j, b].drho - 1.0
-        k_j = b_j * self.particles_reordered[j, b].dfsph_factor
+        b_j = self.particles_reordered[j, i_b].drho - 1.0
+        k_j = b_j * self.particles_reordered[j, i_b].dfsph_factor
         k_sum = (
             self._density0 / self._density0 * ret.k_i + k_j
         )  # TODO: make the neighbor density0 different for multiphase fluid
         if ti.abs(k_sum) > self._df_eps:
             grad_p_j = -self._p_vol * self.cubic_kernel_derivative(
-                self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos
+                self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos
             )
             # Directly update velocities instead of storing pressure accelerations
             ret.dv -= (

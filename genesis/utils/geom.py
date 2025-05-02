@@ -1223,7 +1223,7 @@ class SpatialHasher:
             self.slot_start[i_s, i_b] -= self.slot_size[i_s, i_b]
 
     @ti.func
-    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), b):
+    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), i_b):
         """
         Iterates over all neighbors of a given position and performs a task on each neighbor.
         Elements are considered neighbors if they are within task_range.
@@ -1238,12 +1238,14 @@ class SpatialHasher:
         Returns:
             None
         """
-        base = self.pos_to_grid(pos[i, b])
+        base = self.pos_to_grid(pos[i, i_b])
         for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
             slot_idx = self.grid_to_slot(base + offset)
-            for j in range(self.slot_start[slot_idx, b], self.slot_size[slot_idx, b] + self.slot_start[slot_idx, b]):
-                if i != j and (pos[i, b] - pos[j, b]).norm() < task_range:
-                    task(i, j, ret, b)
+            for j in range(
+                self.slot_start[slot_idx, i_b], self.slot_size[slot_idx, i_b] + self.slot_start[slot_idx, i_b]
+            ):
+                if i != j and (pos[i, i_b] - pos[j, i_b]).norm() < task_range:
+                    task(i, j, ret, i_b)
 
     @ti.func
     def pos_to_grid(self, pos):
