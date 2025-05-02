@@ -301,22 +301,32 @@ class ParticleEntity(Entity):
 
     def set_velocity(self, vel):
         """
-        Accepted tensor shape: (3,) or (self._n_particles, 3).
+        Accepted tensor shape: (3,) or (self._n_particles, 3) or (self._sim._B, self._n_particles, 3).
         """
+
         self._assert_active()
         if self.sim.requires_grad:
             gs.logger.warning(
-                "Manually setting particle velocities. This is not recommended and could break gradient flow."
+                "Manally setting element velocities. This is not recommended and could break gradient flow."
             )
 
         vel = to_gs_tensor(vel)
 
         if len(vel.shape) == 1:
             assert vel.shape == (3,)
-            self._tgt["vel"] = torch.tile(vel, [self._n_particles, 1])
+            self._tgt["vel"] = torch.tile(vel, [self._sim._B, self._n_particles, 1])
 
         elif len(vel.shape) == 2:
-            assert vel.shape == (self._n_particles, 3)
+            assert self.n_particles != n_groups
+            if vel.shape == (self._n_particles, 3):
+                self._tgt["vel"] = torch.tile(vel[None], [self._sim._B, 1, 1])
+            elif vel.shape == (self._sim._B, 3):
+                self._tgt["vel"] = torch.tile(vel[:, None, :], [1, self._n_particles, 1])
+            else:
+                gs.raise_exception("Tensor shape not supported.")
+
+        elif len(vel.shape) == 3:
+            assert vel.shape == (self._sim._B, self._n_particles, 3)
             self._tgt["vel"] = vel
 
         else:
@@ -338,9 +348,19 @@ class ParticleEntity(Entity):
         if len(pos.shape) == 1:
             assert pos.shape == (3,)
             self._tgt["pos"] = self._init_particles_offset + pos
+            self._tgt["pos"] = torch.tile(self._tgt["pos"].unsqueeze(0), (self._sim._B, 1, 1))
 
         elif len(pos.shape) == 2:
-            assert pos.shape == (self._n_particles, 3)
+            assert self.n_particles != n_groups
+            if pos.shape == (self._n_particles, 3):
+                self._tgt["pos"] = torch.tile(pos.unsqueeze(0), (self._sim._B, 1, 1))
+            elif pos.shape == (self._sim._B, 3):
+                self._tgt["pos"] = torch.tile(pos.unsqueeze(1), (1, self._n_particles, 1))
+            else:
+                gs.raise_exception("Tensor shape not supported.")
+
+        elif len(pos.shape) == 3:
+            assert pos.shape == (self._sim._B, self._n_particles, 3)
             self._tgt["pos"] = pos
 
         else:
@@ -423,7 +443,7 @@ class ParticleEntity(Entity):
 
     @gs.assert_built
     def get_particles(self):
-        particles = np.empty((self.n_particles, 3), dtype=gs.np_float)
+        particles = np.empty((self._sim._B, self.n_particles, 3), dtype=gs.np_float)
         self._kernel_get_particles(particles)
         return particles
 

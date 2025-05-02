@@ -39,7 +39,7 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    jnt_names = [
+    joints_name = (
         "joint1",
         "joint2",
         "joint3",
@@ -49,22 +49,22 @@ def main():
         "joint7",
         "finger_joint1",
         "finger_joint2",
-    ]
-    dofs_idx = [franka.get_joint(name).dof_idx_local for name in jnt_names]
+    )
+    motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
     # Optional: set control gains
     # franka.set_dofs_kp(
     #     np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
-    #     dofs_idx,
+    #     motors_dof_idx,
     # )
     # franka.set_dofs_kv(
     #     np.array([450, 450, 350, 350, 200, 200, 200, 10, 10]),
-    #     dofs_idx,
+    #     motors_dof_idx,
     # )
     # franka.set_dofs_force_range(
     #     np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
     #     np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
-    #     dofs_idx,
+    #     motors_dof_idx,
     # )
 
     last_link_vel = None
@@ -73,36 +73,36 @@ def main():
         # if i == 0:
         #     franka.control_dofs_position(
         #         np.array([1, 1, 0, 0, 0, 0, 0, 0.04, 0.04]),
-        #         dofs_idx,
+        #         motors_dof_idx,
         #     )
         # elif i == 250:
         #     franka.control_dofs_position(
         #         np.array([-1, 0.8, 1, -2, 1, 0.5, -0.5, 0.04, 0.04]),
-        #         dofs_idx,
+        #         motors_dof_idx,
         #     )
         # elif i == 500:
         #     franka.control_dofs_position(
         #         np.array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
-        #         dofs_idx,
+        #         motors_dof_idx,
         #     )
         # elif i == 750:
         #     # control first dof with velocity, and the rest with position
         #     franka.control_dofs_position(
         #         np.array([0, 0, 0, 0, 0, 0, 0, 0, 0])[1:],
-        #         dofs_idx[1:],
+        #         motors_dof_idx[1:],
         #     )
         #     franka.control_dofs_velocity(
         #         np.array([1.0, 0, 0, 0, 0, 0, 0, 0, 0])[:1],
-        #         dofs_idx[:1],
+        #         motors_dof_idx[:1],
         #     )
         # elif i == 1000:
         #     franka.control_dofs_force(
         #         np.array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
-        #         dofs_idx,
+        #         motors_dof_idx,
         #     )
         # This is the internal control force computed based on the given control command
         # If using force control, it's the same as the given control command
-        # print("control force:", franka.get_dofs_control_force(dofs_idx))
+        # print("control force:", franka.get_dofs_control_force(motors_dof_idx))
 
         scene.step()
 

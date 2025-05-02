@@ -1,5 +1,5 @@
 import os
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Sequence, Union
 
 import numpy as np
 
@@ -14,6 +14,25 @@ from .options import Options
 We define all types of morphologies here: shape primitives, meshes, URDF, MJCF, and soft robot description files.
 These are independent of backend solver type and are shared by different solvers. E.g. a mesh can be either loaded as a rigid object / MPM object / FEM object.
 """
+
+
+class TetGenMixin(Options):
+    """
+    A mixin to introduce TetGen-related options into morph classes that support tetrahedralization using TetGen.
+    """
+
+    # FEM specific
+    order: int = 1
+
+    # Volumetric mesh entity
+    mindihedral: int = 10
+    minratio: float = 1.1
+    nobisect: bool = True
+    quality: bool = True
+    maxvolume: float = -1.0
+    verbose: int = 0
+
+    force_retet: bool = False
 
 
 @gs.assert_initialized
@@ -126,7 +145,7 @@ class Primitive(Morph):
     fixed: bool = False
 
 
-class Box(Primitive):
+class Box(Primitive, TetGenMixin):
     """
     Morph defined by a box shape.
 
@@ -156,6 +175,22 @@ class Box(Primitive):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    order : int, optional
+        The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
+    mindihedral : int, optional
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+    minratio : float, optional
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+    nobisect : bool, optional
+        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    quality : bool, optional
+        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+    verbose : int, optional
+        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+    force_retet : bool, optional
+        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     lower: Optional[tuple] = None
@@ -180,7 +215,7 @@ class Box(Primitive):
                 gs.raise_exception("Invalid lower and upper corner.")
 
 
-class Cylinder(Primitive):
+class Cylinder(Primitive, TetGenMixin):
     """
     Morph defined by a cylinder shape.
 
@@ -204,13 +239,29 @@ class Cylinder(Primitive):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    order : int, optional
+        The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
+    mindihedral : int, optional
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+    minratio : float, optional
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+    nobisect : bool, optional
+        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    quality : bool, optional
+        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+    verbose : int, optional
+        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+    force_retet : bool, optional
+        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     height: float = 1.0
     radius: float = 0.5
 
 
-class Sphere(Primitive):
+class Sphere(Primitive, TetGenMixin):
     """
     Morph defined by a sphere shape.
 
@@ -232,6 +283,22 @@ class Sphere(Primitive):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    order : int, optional
+        The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
+    mindihedral : int, optional
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+    minratio : float, optional
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+    nobisect : bool, optional
+        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    quality : bool, optional
+        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+    verbose : int, optional
+        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+    force_retet : bool, optional
+        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     radius: float = 0.5
@@ -310,14 +377,19 @@ class FileMorph(Morph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -335,7 +407,8 @@ class FileMorph(Morph):
     decimate_aggressiveness: int = 2
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
-    decompose_error_threshold: float = 0.15
+    decompose_object_error_threshold: float = 0.15
+    decompose_robot_error_threshold: float = float("inf")
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
 
@@ -345,16 +418,20 @@ class FileMorph(Morph):
         if self.decompose_nonconvex is not None:
             if self.decompose_nonconvex:
                 self.convexify = True
-                self.decompose_error_threshold = 0.0
+                self.decompose_object_error_threshold = 0.0
+                self.decompose_robot_error_threshold = 0.0
             else:
                 self.convexify = False
-                self.decompose_error_threshold = float("inf")
+                self.decompose_object_error_threshold = float("inf")
+                self.decompose_robot_error_threshold = float("inf")
             gs.logger.warning(
-                "`decompose_nonconvex` is deprecated. Please use 'convexify' and 'decompose_error_threshold' instead."
+                "FileMorph option 'decompose_nonconvex' is deprecated and will be removed in future release. Please use "
+                "'convexify' and 'decompose_(robot|object)_error_threshold' instead."
             )
 
-        # Make sure that this threshold is positive to avoid decomposition of convex and primivie shapes
-        self.decompose_error_threshold = max(self.decompose_error_threshold, gs.EPS)
+        # Make sure that this threshold is positive to avoid decomposition of convex and primitive shapes
+        self.decompose_object_error_threshold = max(self.decompose_object_error_threshold, gs.EPS)
+        self.decompose_robot_error_threshold = max(self.decompose_robot_error_threshold, gs.EPS)
 
         if self.coacd_options is None:
             self.coacd_options = CoacdOptions()
@@ -381,7 +458,7 @@ class FileMorph(Morph):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
 
 
-class Mesh(FileMorph):
+class Mesh(FileMorph, TetGenMixin):
     """
     Morph loaded from a mesh file.
 
@@ -413,14 +490,19 @@ class Mesh(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     merge_submeshes_for_collision : bool, optional
@@ -447,6 +529,8 @@ class Mesh(FileMorph):
         Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
     quality : bool, optional
         Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+    maxvolume : float, optional
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
     verbose : int, optional
         The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
     force_retet : bool, optional
@@ -460,18 +544,6 @@ class Mesh(FileMorph):
     fixed: bool = False
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
-
-    # FEM specific
-    order: int = 1
-
-    # Volumetric mesh entity
-    mindihedral: int = 10
-    minratio: float = 1.1
-    nobisect: bool = True
-    quality: bool = True
-    verbose: int = 0
-
-    force_retet: bool = False
 
 
 class MeshSet(Mesh):
@@ -517,14 +589,19 @@ class MJCF(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -583,14 +660,19 @@ class URDF(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -656,14 +738,19 @@ class Drone(FileMorph):
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
-        sufficient to met the desired accuracy (see 'decompose_error_threshold' documentation). The module 'coacd' is
-        used for this decomposition process. If not given, it defaults to `True` for `RigidEntity` and `False` for
-        other deformable entities.
-    decompose_nonconvex: bool, optional
-        This parameter is deprecated. Please refers to 'convexify' and 'decompose_error_threshold' instead.
-    decompose_error_threshold : bool, optional:
-        Skip decompose if the relative difference between the volume of original mesh and its convex hull is lower than
-        this threashold. 0.0 to enforce decomposition, float("inf") to disable it completly. Defaults to 0.15 (15%).
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : bool, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : bool, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threashold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
@@ -678,9 +765,11 @@ class Drone(FileMorph):
         The model of the drone. Defaults to 'CF2X'. Supported models are 'CF2X', 'CF2P', and 'RACE'.
     COM_link_name : str, optional
         The name of the link that represents the center of mass. Defaults to 'center_of_mass_link'.
-    propellers_link_names : list of str, optional
+    propellers_link_names : sequence of str, optional
+        This option is deprecated and will be removed in the future. Please use 'propellers_link_name' instead.
+    propellers_link_name : sequence of str, optional
         The names of the links that represent the propellers. Defaults to ['prop0_link', 'prop1_link', 'prop2_link', 'prop3_link'].
-    propellers_spin : list of int, optional
+    propellers_spin : sequence of int, optional
         The spin direction of the propellers. 1: CCW, -1: CW. Defaults to [-1, 1, -1, 1].
     """
 
@@ -688,11 +777,20 @@ class Drone(FileMorph):
     fixed: bool = False
     prioritize_urdf_material: bool = False
     COM_link_name: str = "center_of_mass_link"
-    propellers_link_names: List[str] = ["prop0_link", "prop1_link", "prop2_link", "prop3_link"]
-    propellers_spin: List[int] = [-1, 1, -1, 1]  # 1: CCW, -1: CW
+    propellers_link_names: Optional[Sequence[str]] = None
+    propellers_link_name: Sequence[str] = ("prop0_link", "prop1_link", "prop2_link", "prop3_link")
+    propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
 
     def __init__(self, **data):
         super().__init__(**data)
+
+        if self.propellers_link_names is not None:
+            gs.logger.warning(
+                "Drone option 'propellers_link_names' is deprecated and will be remove in future release. Please use "
+                "'propellers_link_name' instead."
+            )
+            self.propellers_link_name = self.propellers_link_names
+
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
 

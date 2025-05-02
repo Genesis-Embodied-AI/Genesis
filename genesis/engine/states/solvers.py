@@ -180,21 +180,47 @@ class MPMSolverState(RBC):
     def __init__(self, scene):
         self._scene = scene
         self._pos = gs.zeros(
-            (scene.sim.mpm_solver.n_particles, 3), dtype=float, requires_grad=scene.requires_grad, scene=self._scene
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3),
+            dtype=float,
+            requires_grad=scene.requires_grad,
+            scene=self._scene,
         )
         self._vel = gs.zeros(
-            (scene.sim.mpm_solver.n_particles, 3), dtype=float, requires_grad=scene.requires_grad, scene=self._scene
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3),
+            dtype=float,
+            requires_grad=scene.requires_grad,
+            scene=self._scene,
         )
         self._C = gs.zeros(
-            (scene.sim.mpm_solver.n_particles, 3, 3), dtype=float, requires_grad=scene.requires_grad, scene=self._scene
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3),
+            dtype=float,
+            requires_grad=scene.requires_grad,
+            scene=self._scene,
         )
         self._F = gs.zeros(
-            (scene.sim.mpm_solver.n_particles, 3, 3), dtype=float, requires_grad=scene.requires_grad, scene=self._scene
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3),
+            dtype=float,
+            requires_grad=scene.requires_grad,
+            scene=self._scene,
         )
         self._Jp = gs.zeros(
-            (scene.sim.mpm_solver.n_particles,), dtype=float, requires_grad=scene.requires_grad, scene=self._scene
+            (
+                scene.sim._B,
+                scene.sim.mpm_solver.n_particles,
+            ),
+            dtype=float,
+            requires_grad=scene.requires_grad,
+            scene=self._scene,
         )
-        self._active = gs.zeros((scene.sim.mpm_solver.n_particles,), dtype=int, requires_grad=False, scene=self._scene)
+        self._active = gs.zeros(
+            (
+                scene.sim._B,
+                scene.sim.mpm_solver.n_particles,
+            ),
+            dtype=int,
+            requires_grad=False,
+            scene=self._scene,
+        )
 
     def serializable(self):
         self._scene = None
@@ -243,9 +269,21 @@ class SPHSolverState:
     def __init__(self, scene):
         self._scene = scene
 
-        self._pos = gs.zeros((scene.sim.sph_solver.n_particles, 3), dtype=float, requires_grad=False, scene=self._scene)
-        self._vel = gs.zeros((scene.sim.sph_solver.n_particles, 3), dtype=float, requires_grad=False, scene=self._scene)
-        self._active = gs.zeros(scene.sim.sph_solver.n_particles, dtype=int, requires_grad=False, scene=self._scene)
+        self._pos = gs.zeros(
+            (self._scene.sim._B, scene.sim.sph_solver.n_particles, 3),
+            dtype=float,
+            requires_grad=False,
+            scene=self._scene,
+        )
+        self._vel = gs.zeros(
+            (self._scene.sim._B, scene.sim.sph_solver.n_particles, 3),
+            dtype=float,
+            requires_grad=False,
+            scene=self._scene,
+        )
+        self._active = gs.zeros(
+            (self._scene.sim._B, scene.sim.sph_solver.n_particles), dtype=int, requires_grad=False, scene=self._scene
+        )
 
     @property
     def scene(self):
@@ -272,9 +310,21 @@ class PBDSolverState:
     def __init__(self, scene):
         self._scene = scene
 
-        self._pos = gs.zeros((scene.sim.pbd_solver.n_particles, 3), dtype=float, requires_grad=False, scene=self._scene)
-        self._vel = gs.zeros((scene.sim.pbd_solver.n_particles, 3), dtype=float, requires_grad=False, scene=self._scene)
-        self._free = gs.zeros(scene.sim.pbd_solver.n_particles, dtype=int, requires_grad=False, scene=self._scene)
+        self._pos = gs.zeros(
+            (self._scene.sim._B, scene.sim.pbd_solver.n_particles, 3),
+            dtype=float,
+            requires_grad=False,
+            scene=self._scene,
+        )
+        self._vel = gs.zeros(
+            (self._scene.sim._B, scene.sim.pbd_solver.n_particles, 3),
+            dtype=float,
+            requires_grad=False,
+            scene=self._scene,
+        )
+        self._free = gs.zeros(
+            (self._scene.sim._B, scene.sim.pbd_solver.n_particles), dtype=int, requires_grad=False, scene=self._scene
+        )
 
     @property
     def scene(self):
@@ -303,9 +353,21 @@ class FEMSolverState:
     def __init__(self, scene):
         self._scene = scene
 
-        self._pos = gs.zeros((scene.sim.fem_solver.n_vertices, 3), dtype=float, requires_grad=False, scene=self._scene)
-        self._vel = gs.zeros((scene.sim.fem_solver.n_vertices, 3), dtype=float, requires_grad=False, scene=self._scene)
-        self._active = gs.zeros((scene.sim.fem_solver.n_elements,), dtype=int, requires_grad=False, scene=self._scene)
+        self._pos = gs.zeros(
+            (scene.sim._B, scene.sim.fem_solver.n_vertices, 3), dtype=float, requires_grad=False, scene=self._scene
+        )
+        self._vel = gs.zeros(
+            (scene.sim._B, scene.sim.fem_solver.n_vertices, 3), dtype=float, requires_grad=False, scene=self._scene
+        )
+        self._active = gs.zeros(
+            (
+                scene.sim._B,
+                scene.sim.fem_solver.n_elements,
+            ),
+            dtype=int,
+            requires_grad=False,
+            scene=self._scene,
+        )
 
     def serializable(self):
         self._scene = None

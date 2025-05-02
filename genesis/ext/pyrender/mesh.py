@@ -266,7 +266,10 @@ class Mesh(object):
                     else:
                         colors = vc[mesh.faces].reshape((3 * len(mesh.faces), vc.shape[1]))
                 material = MetallicRoughnessMaterial(
-                    alphaMode="BLEND", baseColorFactor=[1.0, 1.0, 1.0, 1.0], metallicFactor=0.2, roughnessFactor=0.8
+                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                    metallicFactor=0.2,
+                    roughnessFactor=0.8,
                 )
             # Process face colors
             elif mesh.visual.kind == "face":
@@ -276,7 +279,10 @@ class Mesh(object):
                     colors = np.repeat(mesh.visual.face_colors, 3, axis=0)
 
                 material = MetallicRoughnessMaterial(
-                    alphaMode="BLEND", baseColorFactor=[1.0, 1.0, 1.0, 1.0], metallicFactor=0.2, roughnessFactor=0.8
+                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                    metallicFactor=0.2,
+                    roughnessFactor=0.8,
                 )
 
         # Process texture colors
@@ -314,7 +320,7 @@ class Mesh(object):
                         glossiness = float(glossiness[0])
                     roughness = (2 / (glossiness + 2)) ** (1.0 / 4.0)
                     material = MetallicRoughnessMaterial(
-                        alphaMode="BLEND",
+                        alphaMode="OPAQUE" if (np.asarray(mat.image.convert("RGBA"))[..., 3] == 255).all() else "BLEND",
                         roughnessFactor=roughness,
                         # NOTE: most assets seems to have incorrect mat.diffuse when texture image exists, So let's just use white for baseColorFactor
                         # baseColorFactor=np.array([255, 255, 255, 255], dtype=np.uint8) if mat.image is not None else mat.diffuse,

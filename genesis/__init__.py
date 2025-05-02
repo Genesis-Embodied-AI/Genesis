@@ -148,7 +148,7 @@ def init(
     ti_ivec4 = ti.types.vector(4, ti_int)
 
     global EPS
-    EPS = eps
+    EPS = max(eps, np.finfo(np_float).eps)
 
     taichi_kwargs = {}
     if gs.logger.level == _logging.CRITICAL:
@@ -305,12 +305,14 @@ class GenesisException(Exception):
 
 
 def _custom_excepthook(exctype, value, tb):
-    # We don't want the traceback info to trace till this __init__.py file.
-    print("".join(traceback.format_exception(exctype, value, tb)[:-2]))
+    print("".join(traceback.format_exception(exctype, value, tb)))
 
     # Logger the exception right before exit if possible
-    if gs.logger is not None:
+    try:
         gs.logger.error(f"{exctype.__name__}: {value}")
+    except AttributeError:
+        # Logger may not be configured at this point
+        pass
 
 
 # Set the custom excepthook to handle GenesisException

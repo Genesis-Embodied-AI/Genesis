@@ -22,7 +22,7 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        show_viewer=args.vis,
+        show_viewer=False,
         pbd_options=gs.options.PBDOptions(
             lower_bound=(0.0, 0.0, 0.0),
             upper_bound=(1.0, 1.0, 1.0),
@@ -37,7 +37,7 @@ def main():
         material=gs.materials.PBD.Liquid(rho=1.0, density_relaxation=1.0, viscosity_relaxation=0.0, sampler="regular"),
         morph=gs.morphs.Box(lower=(0.2, 0.1, 0.1), upper=(0.4, 0.3, 0.5)),
     )
-    scene.build()
+    scene.build(n_envs=5)
 
     for i in range(10000):
         scene.step()

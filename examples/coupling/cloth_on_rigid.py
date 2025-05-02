@@ -27,6 +27,9 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[1],
+        ),
         show_viewer=args.vis,
     )
 
@@ -62,7 +65,7 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build()
+    scene.build(n_envs=5)
 
     horizon = 500
 

@@ -55,37 +55,17 @@ class Rasterizer(RBC):
         del self._camera_targets[camera.uid]
 
     def render_camera(self, camera, rgb=True, depth=False, segmentation=False, normal=False):
-        if not self._offscreen:
-            if rgb or depth:
-                rgb_arr, depth_arr = self._viewer._pyrender_viewer.render_offscreen(
-                    self._camera_nodes[camera.uid], self._camera_targets[camera.uid], depth=depth
-                )
-
-            if segmentation:
-                seg_idxc_rgb_arr, _ = self._viewer._pyrender_viewer.render_offscreen(
-                    self._camera_nodes[camera.uid],
-                    self._camera_targets[camera.uid],
-                    seg=True,
-                )
-                seg_idxc_arr = self._context.seg_idxc_rgb_arr_to_idxc_arr(seg_idxc_rgb_arr)
-
-            if normal:
-                normal_arr, _ = self._viewer._pyrender_viewer.render_offscreen(
-                    self._camera_nodes[camera.uid],
-                    self._camera_targets[camera.uid],
-                    normal=True,
-                )
-
-        else:
-            if rgb or depth:  # depth is always rendered together with rgb
-                rgb_arr, depth_arr = self._renderer.render(
+        rgb_arr, depth_arr, seg_idxc_arr, normal_arr = None, None, None, None
+        if self._offscreen:
+            if rgb or depth or normal:
+                retval = self._renderer.render(
                     self._context._scene,
                     self._camera_targets[camera.uid],
                     camera_node=self._camera_nodes[camera.uid],
-                    shadow=self._context.shadow,
-                    plane_reflection=self._context.plane_reflection,
                     env_separate_rigid=self._context.env_separate_rigid,
                     ret_depth=depth,
+                    normal=normal,
+                    seg=False,
                 )
 
             if segmentation:
@@ -95,32 +75,35 @@ class Rasterizer(RBC):
                     camera_node=self._camera_nodes[camera.uid],
                     env_separate_rigid=self._context.env_separate_rigid,
                     ret_depth=False,
+                    normal=False,
                     seg=True,
                 )
-                seg_idxc_arr = self._context.seg_idxc_rgb_arr_to_idxc_arr(seg_idxc_rgb_arr)
-
-            if normal:
-                normal_arr = self._renderer.render(
-                    self._context._scene,
+        else:
+            if rgb or depth or normal:
+                retval = self._viewer._pyrender_viewer.render_offscreen(
+                    self._camera_nodes[camera.uid],
                     self._camera_targets[camera.uid],
-                    camera_node=self._camera_nodes[camera.uid],
-                    env_separate_rigid=self._context.env_separate_rigid,
-                    ret_depth=False,
-                    normal=True,
-                )[-1]
+                    depth=depth,
+                    normal=normal,
+                )
 
-        if not rgb:
-            rgb_arr = None
+            if segmentation:
+                seg_idxc_rgb_arr, _ = self._viewer._pyrender_viewer.render_offscreen(
+                    self._camera_nodes[camera.uid],
+                    self._camera_targets[camera.uid],
+                    depth=False,
+                    normal=False,
+                    seg=True,
+                )
 
-        if not depth:
-            depth_arr = None
-
-        if not segmentation:
-            seg_idxc_arr = None
-
-        if not normal:
-            normal_arr = None
-
+        if rgb:
+            rgb_arr = retval[0]
+        if depth:
+            depth_arr = retval[1]
+        if normal:
+            normal_arr = retval[2]
+        if segmentation:
+            seg_idxc_arr = self._context.seg_idxc_rgb_arr_to_idxc_arr(seg_idxc_rgb_arr)
         return rgb_arr, depth_arr, seg_idxc_arr, normal_arr
 
     def update_scene(self):

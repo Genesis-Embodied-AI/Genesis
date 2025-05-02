@@ -45,7 +45,7 @@ def main():
     )
     ########################## build ##########################
     scene.build()
-    dofs_idx = duck.base_joint.dof_idx
+    dofs_idx = duck.base_joint.dofs_idx
 
     duck.set_dofs_kv(
         np.array([1, 1, 1, 1, 1, 1]) * 50.0,

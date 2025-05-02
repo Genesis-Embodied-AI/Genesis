@@ -50,6 +50,8 @@ dependencies = [
     "scikit-image",
     # Convex decomposition library
     "coacd",
+    # Ray casting used in mesh to height field conversion
+    "rtree",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Motion Planning library
@@ -105,13 +107,11 @@ log_cli_level = "WARNING"
 gs = "genesis._main:main"
 
 [project.optional-dependencies]
-gen = [
-    "openai",
-]
 dev = [
     "black",
     "pytest",
     "pytest-xdist",
+    "pytest-forked",
     "pytest-random-order",
     "huggingface_hub",
 ]

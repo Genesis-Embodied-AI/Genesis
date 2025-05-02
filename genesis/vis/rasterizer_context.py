@@ -259,8 +259,8 @@ class RasterizerContext:
     def update_tool(self, buffer_updates):
         if self.sim.tool_solver.is_active():
             for tool_entity in self.sim.tool_solver.entities:
-                pos = tool_entity.pos[self.sim.cur_substep_local].to_numpy()
-                quat = tool_entity.quat[self.sim.cur_substep_local].to_numpy()
+                pos = tool_entity.pos[self.sim.cur_substep_local, 0].to_numpy()
+                quat = tool_entity.quat[self.sim.cur_substep_local, 0].to_numpy()
                 pose = gu.trans_quat_to_T(pos, quat)
                 self.set_node_pose(self.static_nodes[tool_entity.uid], pose=pose)
 
@@ -435,9 +435,11 @@ class RasterizerContext:
 
     def update_mpm(self, buffer_updates):
         if self.sim.mpm_solver.is_active():
-            particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()
-            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)
-            vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()
+            particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
+            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[
+                :, self.rendered_envs_idx[0]
+            ]
+            vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0], :]
 
             for mpm_entity in self.sim.mpm_solver.entities:
                 if mpm_entity.surface.vis_mode == "recon":
@@ -504,8 +506,10 @@ class RasterizerContext:
 
     def update_sph(self, buffer_updates):
         if self.sim.sph_solver.is_active():
-            particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()
-            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)
+            particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
+            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[
+                :, self.rendered_envs_idx[0]
+            ]
 
             for sph_entity in self.sim.sph_solver.entities:
                 if sph_entity.surface.vis_mode == "recon":
@@ -584,10 +588,12 @@ class RasterizerContext:
 
     def update_pbd(self, buffer_updates):
         if self.sim.pbd_solver.is_active():
-            particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()
-            particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()
-            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)
-            vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()
+            particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
+            particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, self.rendered_envs_idx[0]]
+            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[
+                :, self.rendered_envs_idx[0]
+            ]
+            vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
 
             for pbd_entity in self.sim.pbd_solver.entities:
                 if pbd_entity.surface.vis_mode == "recon":
@@ -638,7 +644,7 @@ class RasterizerContext:
     def on_fem(self):
         if self.sim.fem_solver.is_active():
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy(dtype="float")
+            vertices_all = vertices_all.to_numpy(dtype="float")[:, self.rendered_envs_idx[0], :]
             triangles_all = triangles_all.to_numpy(dtype="int").reshape([-1, 3])
 
             for fem_entity in self.sim.fem_solver.entities:
@@ -648,6 +654,12 @@ class RasterizerContext:
                         triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
                         - fem_entity.v_start
                     )
+
+                    # Select only vertices used in surface triangles, then reindex triangles against the new vertex list
+                    surf_idx, inv = np.unique(triangles.flat, return_inverse=True)
+                    triangles = inv.reshape(triangles.shape)
+                    vertices = vertices[surf_idx]
+
                     mesh = trimesh.Trimesh(vertices, triangles, process=False)
                     mesh.visual = mu.surface_uvs_to_trimesh_visual(
                         fem_entity.surface, n_verts=fem_entity.n_surface_vertices
@@ -659,7 +671,7 @@ class RasterizerContext:
     def update_fem(self, buffer_updates):
         if self.sim.fem_solver.is_active():
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy(dtype="float")
+            vertices_all = vertices_all.to_numpy(dtype="float")[:, self.rendered_envs_idx[0], :]
             triangles_all = triangles_all.to_numpy(dtype="int").reshape([-1, 3])
 
             for fem_entity in self.sim.fem_solver.entities:

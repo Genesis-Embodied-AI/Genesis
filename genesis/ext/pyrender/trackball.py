@@ -5,6 +5,9 @@ import numpy as np
 import trimesh.transformations as transformations
 
 
+EPSILON = np.finfo(np.float32).eps
+
+
 class Trackball(object):
     """A trackball class for creating camera transforms from mouse movements."""
 
@@ -101,20 +104,50 @@ class Trackball(object):
         mindim = 0.3 * np.min(self._size)
 
         target = self._target
-        x_axis = self._pose[:3, 0].flatten()
-        y_axis = self._pose[:3, 1].flatten()
-        z_axis = self._pose[:3, 2].flatten()
-        eye = self._pose[:3, 3].flatten()
+        x_axis = self._pose[:3, 0]
+        y_axis = self._pose[:3, 1]
+        z_axis = self._pose[:3, 2]
+        eye = self._pose[:3, 3]
 
         # Interpret drag as a rotation
         if self._state == Trackball.STATE_ROTATE:
-            x_angle = -dx / mindim
-            x_rot_mat = transformations.rotation_matrix(x_angle, y_axis, target)
+            # Compute updated azimut directly. No fancy math here because this angle can controlled freely.
+            roll_angle = np.arctan2(self._pose[2, 1], self._pose[2, 2])
+            world_up_axis = np.array([0.0, 0.0, np.sign(roll_angle)])
+            azimuth_angle = -dx / mindim
+            azimuth_transform = transformations.rotation_matrix(azimuth_angle, world_up_axis, target)
 
-            y_angle = dy / mindim
-            y_rot_mat = transformations.rotation_matrix(y_angle, x_axis, target)
+            # Compute current elevation angle
+            pose_after_azimuth = azimuth_transform.dot(self._pose)
+            eye_after_azimuth = pose_after_azimuth[:3, 3]
+            view_dir = target - eye_after_azimuth
+            current_elevation_angle = -np.arctan2(view_dir[2], np.linalg.norm(view_dir[:2]))
 
-            self._n_pose = y_rot_mat.dot(x_rot_mat.dot(self._pose))
+            # Update elevation angle based on mouse motion
+            desired_elevation_angle = current_elevation_angle - dy / mindim
+            clamped_elevation_angle = np.clip(desired_elevation_angle, np.radians(-89.0), np.radians(89.0))
+            delta_elevation_angle = desired_elevation_angle - current_elevation_angle
+
+            # Compute the elevation axis
+            norm_view_dir = np.linalg.norm(view_dir)
+            if norm_view_dir < EPSILON:
+                 elevation_axis = pose_after_azimuth[:3, 0]
+                 delta_elevation_angle = 0.0
+            else:
+                view_dir_normalized = view_dir / norm_view_dir
+                elevation_axis = np.cross(world_up_axis, view_dir_normalized)
+                elevation_axis_norm = np.linalg.norm(elevation_axis)
+                if elevation_axis_norm < EPSILON:
+                    elevation_axis = pose_after_azimuth[:3, 0]
+                else:
+                    elevation_axis = elevation_axis / elevation_axis_norm
+
+            # Apply the elevation rotation
+            elevation_rotation = transformations.rotation_matrix(delta_elevation_angle, elevation_axis, target)
+            self._n_pose = elevation_rotation.dot(pose_after_azimuth)
+
+            # Prevent locking the camera in the up/down direction
+            self._pdown[1] -= (desired_elevation_angle - clamped_elevation_angle) * mindim
 
         # Interpret drag as a roll about the camera axis
         elif self._state == Trackball.STATE_ROLL:

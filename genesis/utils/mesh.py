@@ -2,8 +2,7 @@ import hashlib
 import math
 import os
 import pickle as pkl
-from io import BytesIO
-from urllib import request
+from scipy.spatial.transform import Rotation as R
 
 import numpy as np
 import trimesh
@@ -28,6 +27,75 @@ from .misc import (
     get_src_dir,
     get_tet_cache_dir,
 )
+
+_identity4 = np.eye(4, dtype=np.float32)
+_identity4.flags.writeable = False
+_identity3 = np.eye(3, dtype=np.float32)
+_identity3.flags.writeable = False
+MESH_REPAIR_ERROR_THRESHOLD = 0.01
+
+
+class MeshInfo:
+    def __init__(self):
+        self.surface = None
+        self.metadata = {}
+        self.verts = []
+        self.faces = []
+        self.normals = []
+        self.uvs = []
+        self.n_points = 0
+
+    def set_property(self, surface=None, metadata=None):
+        self.surface = surface
+        self.metadata = metadata
+
+    def append(self, verts, faces, normals, uvs):
+        faces += self.n_points
+        self.verts.append(verts)
+        self.faces.append(faces)
+        self.normals.append(normals)
+        self.uvs.append(uvs)
+        self.n_points += len(verts)
+
+    def export_mesh(self, scale):
+        if self.uvs:
+            for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
+                if uvs is None:
+                    self.uvs[i] = np.zeros((len(verts), 2), dtype=np.float32)
+            uvs = np.concatenate(self.uvs, axis=0)
+        else:
+            uvs = None
+
+        verts = np.concatenate(self.verts, axis=0)
+        faces = np.concatenate(self.faces, axis=0)
+        normals = np.concatenate(self.normals, axis=0)
+
+        mesh = gs.Mesh.from_attrs(
+            verts=verts,
+            faces=faces,
+            normals=normals,
+            surface=self.surface,
+            uvs=uvs,
+            scale=scale,
+        )
+        mesh.metadata.update(self.metadata)
+        return mesh
+
+
+class MeshInfoGroup:
+    def __init__(self):
+        self.infos = dict()
+
+    def get(self, name):
+        first_created = False
+        mesh_info = self.infos.get(name)
+        if mesh_info is None:
+            mesh_info = self.infos.setdefault(name, MeshInfo())
+            first_created = True
+        return mesh_info, first_created
+
+    def export_meshes(self, scale):
+        return [mesh_info.export_mesh(scale) for mesh_info in self.infos.values()]
 
 
 class MeshInfo:
@@ -289,6 +357,28 @@ def postprocess_collision_geoms(
     if not g_infos:
         return []
 
+    # Try the repair meshes that seems to be "broken" but not beyond repair.
+    # Note that this procedure is only applied if the estimated volume is significantly different before and after
+    # repair, to avoid altering the original mesh without actual benefit. Moreover, only duplicate faces are removed,
+    # which is less aggressive than `Trimesh.process(validate=True)`.
+    for g_info in g_infos:
+        mesh = g_info["mesh"]
+        tmesh = mesh.trimesh
+        if g_info["type"] != gs.GEOM_TYPE.MESH:
+            continue
+        if tmesh.is_winding_consistent and not tmesh.is_watertight:
+            tmesh_repaired = tmesh.copy()
+            tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
+            if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
+                gs.logger.info(
+                    "Collision mesh is not watertight and has ill-defined volume. It will be repaired by removing "
+                    "duplicate faces."
+                )
+                tmesh.update_faces(tmesh.unique_faces())
+                # BUG in trimesh: .volume will set .triangles, but update_faces() will not update .triangles,
+                # which will influence the calculation of .face_normal
+                tmesh._cache.clear(exclude=["vertex_normals"])
+
     # Check if all the geometries can be convexify without decomposition
     must_decompose = False
     if convexify:
@@ -304,7 +394,7 @@ def postprocess_collision_geoms(
                 volume_err = float("inf")
                 must_decompose = True
             elif tmesh.volume > gs.EPS:
-                volume_err = cmesh.volume / tmesh.volume - 1.0
+                volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
                 if volume_err > decompose_error_threshold:
                     must_decompose = True
 
@@ -344,13 +434,13 @@ def postprocess_collision_geoms(
         tmesh = mesh.trimesh
         cmesh = trimesh.convex.convex_hull(tmesh)
         if tmesh.is_winding_consistent:
-            volume_err = cmesh.volume / tmesh.volume - 1.0
+            volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
             must_decompose = volume_err > decompose_error_threshold
 
     if must_decompose:
         if math.isinf(volume_err):
             gs.logger.info(
-                f"Collision mesh has inconsistent winding and 'decompose_error_threshold' != float('inf'). "
+                "Collision mesh has inconsistent winding and 'decompose_error_threshold' != float('inf'). "
                 "Falling back to more expensive convex decomposition (see FileMorph options)."
             )
         else:
@@ -366,11 +456,11 @@ def postprocess_collision_geoms(
                 volume_err = 0.0
             if not tmesh.is_winding_consistent:
                 volume_err = float("inf")
-            elif tmesh.volume < gs.EPS:
+            elif abs(tmesh.volume) < gs.EPS:
                 volume_err = 0.0
             else:
                 cmesh = trimesh.convex.convex_hull(tmesh)
-                volume_err = cmesh.volume / tmesh.volume - 1.0
+                volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
             if volume_err > decompose_error_threshold:  # Note that 'inf' is not larger than 'inf'
                 tmeshes = convex_decompose(tmesh, coacd_options)
                 meshes = [
@@ -427,10 +517,9 @@ def trimesh_to_mesh(mesh, scale, surface):
 def adjust_alpha_cutoff(alpha_cutoff, alpha_mode):
     if alpha_mode == 0:  # OPAQUE
         return 0.0
-    elif alpha_mode == 1:  # MASK
+    if alpha_mode == 1:  # MASK
         return alpha_cutoff
-    else:  # BLEND
-        return None
+    return None  # BLEND
 
 
 def PIL_to_array(image):
@@ -451,11 +540,17 @@ def create_texture(image, factor, encoding):
         return None
 
 
-def apply_transform(matrix, positions, normals=None):
-    n = positions.shape[0]
-    transformed_positions = (np.hstack([positions, np.ones((n, 1))]) @ matrix)[:, :3]
+def apply_transform(transform, positions, normals=None):
+    transformed_positions = (np.column_stack([positions, np.ones(len(positions))]) @ transform)[:, :3]
     if normals is not None:
-        transformed_normals = (np.hstack([normals, np.zeros((n, 1))]) @ matrix)[:, :3]
+        trans_R = transform[:3, :3]
+        if np.ptp(trans_R - _identity3) > 1e-7:  # has rotation
+            transformed_normals = normals @ trans_R
+            scale = np.linalg.norm(trans_R, axis=1, keepdims=True)
+            if np.abs(scale - 1.0).max() > 1e-7:  # has scale
+                transformed_normals /= np.linalg.norm(transformed_normals, axis=1, keepdims=True)
+        else:
+            transformed_normals = normals  # in place?
     else:
         transformed_normals = None
     return transformed_positions, transformed_normals
@@ -769,7 +864,7 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
                     [size, size],
                     [size, size],
                 ],
-                dtype=float,
+                dtype=np.float32,
             ),
             material=trimesh.visual.material.SimpleMaterial(
                 image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png")),
@@ -780,12 +875,59 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
     return mesh
 
 
+def generate_tetgen_config_from_morph(morph):
+    if not isinstance(morph, gs.options.morphs.TetGenMixin):
+        raise TypeError(
+            f"Expected an instance of a class that inherits from TetGenMixin, but got an instance of {type(morph).name}."
+        )
+    return dict(
+        order=morph.order,
+        mindihedral=morph.mindihedral,
+        minratio=morph.minratio,
+        nobisect=morph.nobisect,
+        quality=morph.quality,
+        maxvolume=morph.maxvolume,
+        verbose=morph.verbose,
+    )
+
+
+def make_tetgen_switches(cfg):
+    """Build a TetGen switches string from a config dict."""
+    flags = ["p"]
+
+    if cfg.get("quality", True):
+        r = cfg.get("minratio", 1.1)
+        di = cfg.get("mindihedral", 10)
+        flags.append(f"q{r}/{di}")
+
+    a = cfg.get("maxvolume", -1.0)
+    if a > 0:
+        flags.append(f"a{a}")
+
+    o = cfg.get("order", 1)
+    if o != 1:
+        flags.append(f"o{o}")
+
+    if cfg.get("nobisect", False):
+        flags.append("Y")
+
+    v = cfg.get("verbose", 0)
+    if v > 0:
+        flags.append("V" * v)
+
+    return "".join(flags)
+
+
 def tetrahedralize_mesh(mesh, tet_cfg):
     pv_obj = pv.PolyData(
         mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
     )
     tet = tetgen.TetGen(pv_obj)
-    verts, elems = tet.tetrahedralize(**tet_cfg)
+    # Build and apply the switches string directly, since
+    # the Python wrapper sometimes ignores certain kwargs
+    # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
+    switches = make_tetgen_switches(tet_cfg)
+    verts, elems = tet.tetrahedralize(switches=switches)
     # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
     return verts, elems
 
