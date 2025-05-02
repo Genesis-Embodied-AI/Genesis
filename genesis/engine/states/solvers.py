@@ -145,6 +145,7 @@ class MPMSolverState(RBC):
         self._C = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), **args)
         self._F = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), **args)
         self._Jp = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **args)
+        args["dtype"] = int
         self._active = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **args)
 
     def serializable(self):
@@ -200,6 +201,7 @@ class SPHSolverState:
         }
         self._pos = gs.zeros((scene.sim._B, scene.sim.sph_solver.n_particles, 3), **args)
         self._vel = gs.zeros((self._scene.sim._B, scene.sim.sph_solver.n_particles, 3), **args)
+        args["dtype"] = int
         self._active = gs.zeros((self._scene.sim._B, scene.sim.sph_solver.n_particles), **args)
 
     @property
@@ -233,6 +235,7 @@ class PBDSolverState:
         }
         self._pos = gs.zeros((scene.sim._B, scene.sim.pbd_solver.n_particles, 3), **args)
         self._vel = gs.zeros((self._scene.sim._B, scene.sim.pbd_solver.n_particles, 3), **args)
+        args["dtype"] = int
         self._free = gs.zeros((self._scene.sim._B, scene.sim.pbd_solver.n_particles), **args)
 
     @property
@@ -268,6 +271,7 @@ class FEMSolverState:
         }
         self._pos = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), **args)
         self._vel = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), **args)
+        args["dtype"] = int
         self._active = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_elements), **args)
 
     def serializable(self):
