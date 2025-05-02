@@ -391,7 +391,7 @@ class MPMEntity(ParticleEntity):
     @ti.kernel
     def _kernel_get_mass(self, mass: ti.types.ndarray()):
         total_mass = 0.0
-        for i in range(self.n_particles):
-            i_global = i + self._particle_start
+        for i_p in range(self.n_particles):
+            i_global = i_p + self._particle_start
             total_mass += self._solver.particles_info[i_global].mass / self._solver._p_vol_scale
         mass[0] = total_mass

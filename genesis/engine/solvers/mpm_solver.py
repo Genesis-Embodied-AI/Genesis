@@ -677,8 +677,8 @@ class MPMSolver(Solver):
         mat_rho: ti.f32,
         pos: ti.types.ndarray(),
     ):
-        for i in range(n_particles):
-            i_global = i + particle_start
+        for i_p in range(n_particles):
+            i_global = i_p + particle_start
 
             self.particles_info[i_global].mat_idx = mat_idx
             self.particles_info[i_global].default_Jp = mat_default_Jp
@@ -876,7 +876,7 @@ class MPMSolver(Solver):
         n_particles: ti.i32,
         free: ti.types.ndarray(),
     ):
-        for i in range(n_particles):
+        for i_p in range(n_particles):
             i_global = i_p + particle_start
             free[i_p] = self.particles_info[i_global].free
 

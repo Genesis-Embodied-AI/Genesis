@@ -314,14 +314,13 @@ class ParticleEntity(Entity):
 
         if len(vel.shape) == 1:
             assert vel.shape == (3,)
-            self._tgt["vel"] = torch.tile(vel, [self._sim._B, self._n_particles, 1])
+            self._tgt["vel"] = torch.tile(vel, (self._sim._B, self._n_particles, 1))
 
         elif len(vel.shape) == 2:
-            assert self.n_particles != n_groups
             if vel.shape == (self._n_particles, 3):
-                self._tgt["vel"] = torch.tile(vel.unsqueeze(0), [self._sim._B, 1, 1])
+                self._tgt["vel"] = torch.tile(vel.unsqueeze(0), (self._sim._B, 1, 1))
             elif vel.shape == (self._sim._B, 3):
-                self._tgt["vel"] = torch.tile(vel.unsqueeze(1), [1, self._n_particles, 1])
+                self._tgt["vel"] = torch.tile(vel.unsqueeze(1), (1, self._n_particles, 1))
             else:
                 gs.raise_exception("Tensor shape not supported.")
 
