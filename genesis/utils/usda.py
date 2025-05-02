@@ -370,7 +370,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 faces = np.arange(faces.shape[0])
 
             if np.max(faces_vertex_counts) > 3:
-                triangles = list()
+                triangles = []
                 bi = 0
                 for face_vertex_count in faces_vertex_counts:
                     if face_vertex_count == 3:
@@ -397,7 +397,7 @@ def parse_instance_usd(path):
     stage = Usd.Stage.Open(path)
     xform_cache = UsdGeom.XformCache()
 
-    instance_list = list()
+    instance_list = []
     for i, prim in enumerate(stage.Traverse()):
         if prim.IsA(UsdGeom.Xformable):
             if len(prim.GetPrimStack()) > 1:
