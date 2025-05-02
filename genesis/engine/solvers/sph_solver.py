@@ -236,11 +236,11 @@ class SPHSolver(Solver):
         d_ij = self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos
         dist = d_ij.norm()
 
-        gamma_i = self.particles_info_reordered[i, b].gamma
-        mass_i = self.particles_info_reordered[i, b].mass
-        mu_i = self.particles_info_reordered[i, b].mu
+        gamma_i = self.particles_info_reordered[i, i_b].gamma
+        mass_i = self.particles_info_reordered[i, i_b].mass
+        mu_i = self.particles_info_reordered[i, i_b].mu
 
-        mass_j = self.particles_info_reordered[j, b].mass
+        mass_j = self.particles_info_reordered[j, i_b].mass
 
         # -----------------------------
         # Surface Tension term
@@ -253,13 +253,13 @@ class SPHSolver(Solver):
         # -----------------------------
         # Viscosity Force
         # -----------------------------
-        v_ij = (self.particles_reordered[i, b].vel - self.particles_reordered[j, b].vel).dot(d_ij)
+        v_ij = (self.particles_reordered[i, i_b].vel - self.particles_reordered[j, i_b].vel).dot(d_ij)
 
         # Some constant factor used in the viscosity formula
         d = 2 * (3 + 2)
 
         # The density of the neighbor j in batch b
-        rho_j = self.particles_reordered[j, b].rho
+        rho_j = self.particles_reordered[j, i_b].rho
 
         f_v = (
             d
@@ -316,7 +316,7 @@ class SPHSolver(Solver):
             if self.particles_ng_reordered[i_p, i_b].active:
                 rho0 = self.particles_info_reordered[i_p, i_b].rho
                 stiff = self.particles_info_reordered[i_p, i_b].stiffness
-                expnt = self.particles_info_reordered[i, b].exponent
+                expnt = self.particles_info_reordered[i_p, i_b].exponent
 
                 self.particles_reordered[i_p, i_b].rho = ti.max(self.particles_reordered[i_p, i_b].rho, rho0)
 
@@ -744,7 +744,7 @@ class SPHSolver(Solver):
             i_global = i_p + particle_start
             self.particles_ng[i_global, i_b].active = active
             for j in ti.static(range(3)):
-                self.particles[i_global, i_b].pos[j] = pos[i_b, i_p, j]
+                self.particles[i_global, i_b].pos[j] = pos[i_p, j]
             self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
             self.particles[i_global, i_b].p = 0
 
@@ -781,7 +781,7 @@ class SPHSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].pos[k] = pos[i_b, i_p, k]
+                self.particles[i_global, i_b].pos[k] = pos[i_p, k]
 
             # we reset vel and acc when directly setting pos
             self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)

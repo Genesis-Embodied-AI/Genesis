@@ -192,13 +192,13 @@ class Coupler(RBC):
             if self.mpm_solver.grid[f, I, i_b].mass > gs.EPS:
                 #################### MPM grid op ####################
                 # Momentum to velocity
-                vel_mpm = (1 / self.mpm_solver.grid[f, I, b].mass) * self.mpm_solver.grid[f, I, b].vel_in
+                vel_mpm = (1 / self.mpm_solver.grid[f, I, i_b].mass) * self.mpm_solver.grid[f, I, i_b].vel_in
 
                 # gravity
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[None]
 
                 pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
-                mass_mpm = self.mpm_solver.grid[f, I, b].mass / self.mpm_solver._p_vol_scale
+                mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._p_vol_scale
 
                 # external force fields
                 for i_ff in ti.static(range(len(self.mpm_solver._ffs))):
@@ -397,7 +397,7 @@ class Coupler(RBC):
                                         mpm_grid_mass / mass_fem_sv
                                     )  # NOTE: use un-reweighted mass instead of mass_mpm_at_cell
                                     delta_mpm_vel_at_cell = delta_mpm_vel_at_cell_unmul * mass_mul_at_cell
-                                    self.mpm_solver.grid[f, mpm_grid_I, b].vel_out += delta_mpm_vel_at_cell
+                                    self.mpm_solver.grid[f, mpm_grid_I, i_b].vel_out += delta_mpm_vel_at_cell
 
                                     new_vel_fem_sv -= delta_mpm_vel_at_cell * mass_mpm_at_cell / mass_fem_sv
 
@@ -411,7 +411,7 @@ class Coupler(RBC):
                 # FEM <-> SPH TODO: this doesn't work well
                 if ti.static(self._fem_sph):
                     for j in ti.static(range(3)):
-                        iv = self.fem_solver.surface[i].tri2v[j]
+                        iv = self.fem_solver.surface[i_s].tri2v[j]
                         pos = self.fem_solver.elements_v[f, iv, i_b].pos
                         vel_fem_sv = self.fem_solver.elements_v[f + 1, iv, i_b].vel
                         mass_fem_sv = mass / 4.0
@@ -462,7 +462,7 @@ class Coupler(RBC):
 
                 # boundary condition
                 for j in ti.static(range(3)):
-                    iv = self.fem_solver.surface[i].tri2v[j]
+                    iv = self.fem_solver.surface[i_s].tri2v[j]
                     _, self.fem_solver.elements_v[f + 1, iv, i_b].vel = self.fem_solver.boundary.impose_pos_vel(
                         self.fem_solver.elements_v[f, iv, i_b].pos, self.fem_solver.elements_v[f + 1, iv, i_b].vel
                     )

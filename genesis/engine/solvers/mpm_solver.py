@@ -691,7 +691,7 @@ class MPMSolver(Solver):
             i_global = i_p + particle_start
             self.particles_ng[f, i_global, i_b].active = active
             for j in ti.static(range(3)):
-                self.particles[f, i_global, i_b].pos[j] = pos[i_b, i_p, j]
+                self.particles[f, i_global, i_b].pos[j] = pos[i_p, j]
             self.particles[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
             self.particles[f, i_global, i_b].F = ti.Matrix.identity(gs.ti_float, 3)
             self.particles[f, i_global, i_b].C = ti.Matrix.zero(gs.ti_float, 3, 3)

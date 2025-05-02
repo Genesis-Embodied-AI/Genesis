@@ -570,8 +570,8 @@ class PBDSolver(Solver):
                 for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                     slot_idx = self.sh.grid_to_slot(base + offset)
                     for j in range(
-                        self.sh.slot_start[slot_idx, b],
-                        self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
+                        self.sh.slot_start[slot_idx, i_b],
+                        self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                     ):
                         if i_p != j and not (
                             self.particles_info_reordered[i_p, i_b].mat_type == self.MATS.LIQUID
@@ -611,19 +611,19 @@ class PBDSolver(Solver):
                     for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                         slot_idx = self.sh.grid_to_slot(base + offset)
                         for j in range(
-                            self.sh.slot_start[slot_idx, b],
-                            self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
+                            self.sh.slot_start[slot_idx, i_b],
+                            self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                         ):
-                            pos_j = self.particles_reordered[j, b].pos
+                            pos_j = self.particles_reordered[j, i_b].pos
                             # ---Poly6---
-                            rho += self.poly6(pos_i - pos_j) * self.particles_info_reordered[j, b].mass
+                            rho += self.poly6(pos_i - pos_j) * self.particles_info_reordered[j, i_b].mass
                             # ---Spiky---
-                            s = self.spiky(pos_i - pos_j) / self.particles_info_reordered[i, b].rho_rest
+                            s = self.spiky(pos_i - pos_j) / self.particles_info_reordered[i_p, i_b].rho_rest
                             spiky_i += s
                             lower_sum += s.dot(s)
-                    constraint = (rho / self.particles_info_reordered[i, b].rho_rest) - 1.0
+                    constraint = (rho / self.particles_info_reordered[i_p, i_b].rho_rest) - 1.0
                     lower_sum += spiky_i.dot(spiky_i)
-                    self.particles_reordered[i, b].lam = -1.0 * (constraint / (lower_sum + self.lambda_epsilon))
+                    self.particles_reordered[i_p, i_b].lam = -1.0 * (constraint / (lower_sum + self.lambda_epsilon))
 
             # ---Calculate delta pos---
             for i_p, i_b in ti.ndrange(self._n_particles, self._B):
@@ -633,8 +633,8 @@ class PBDSolver(Solver):
                     for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                         slot_idx = self.sh.grid_to_slot(base + offset)
                         for j in range(
-                            self.sh.slot_start[slot_idx, b],
-                            self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
+                            self.sh.slot_start[slot_idx, i_b],
+                            self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                         ):
                             if i_p != j:
                                 pos_j = self.particles_reordered[j, i_b].pos
@@ -688,8 +688,8 @@ class PBDSolver(Solver):
                     for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                         slot_idx = self.sh.grid_to_slot(base + offset)
                         for j in range(
-                            self.sh.slot_start[slot_idx, b],
-                            self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
+                            self.sh.slot_start[slot_idx, i_b],
+                            self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                         ):
 
                             pos_j = self.particles_reordered[j, i_b].pos
@@ -839,7 +839,7 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].pos[k] = pos[i_b, i_p, k]
+                self.particles[i_global, i_b].pos[k] = pos[i_p, k]
             self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.kernel
@@ -853,7 +853,7 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].vel[k] = vel[i_b, i_p, k]
+                self.particles[i_global, i_b].vel[k] = vel[i_p, k]
 
     @ti.kernel
     def _kernel_set_particles_active(

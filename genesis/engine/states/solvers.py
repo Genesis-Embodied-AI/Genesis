@@ -135,6 +135,7 @@ class MPMSolverState(RBC):
     """
 
     def __init__(self, scene):
+        self._scene = scene
         args = {
             "dtype": float,
             "requires_grad": scene.requires_grad,

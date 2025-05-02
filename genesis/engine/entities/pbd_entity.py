@@ -115,8 +115,8 @@ class PBDTetEntity(ParticleEntity):
         return closest_idx
 
     @gs.assert_built
-    def fix_particle(self, particle_idx, b):
-        self.solver.fix_particle(particle_idx + self._particle_start)
+    def fix_particle(self, particle_idx, i_b):
+        self.solver.fix_particle(particle_idx + self._particle_start, i_b)
 
     @gs.assert_built
     def set_particle_position(self, particle_idx, pos):
