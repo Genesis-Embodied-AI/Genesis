@@ -79,6 +79,17 @@ class PBDSolver(Solver):
         # boundary
         self.setup_boundary()
 
+    def _batch_shape(self, shape=None, first_dim=False, B=None):
+        if B is None:
+            B = self._B
+
+        if shape is None:
+            return (B,)
+        elif type(shape) in [list, tuple]:
+            return (B,) + shape if first_dim else shape + (B,)
+        else:
+            return (B, shape) if first_dim else (shape, B)
+
     def setup_boundary(self):
         self.boundary = CubeBoundary(
             lower=self._lower_bound,
@@ -96,7 +107,9 @@ class PBDSolver(Solver):
             pos=gs.ti_vec3,
             active=gs.ti_int,
         )
-        self.vverts_render = struct_vvert_state_render.field(shape=max(1, self._n_vverts), layout=ti.Layout.SOA)
+        self.vverts_render = struct_vvert_state_render.field(
+            shape=self._batch_shape(shape=max(1, self._n_vverts)), layout=ti.Layout.SOA
+        )
 
     def init_particle_fields(self):
         # particles information (static)
@@ -136,15 +149,25 @@ class PBDSolver(Solver):
         )
 
         self.particles_info = struct_particle_info.field(shape=self._n_particles, layout=ti.Layout.SOA)
-        self.particles_info_reordered = struct_particle_info.field(shape=self._n_particles, layout=ti.Layout.SOA)
+        self.particles_info_reordered = struct_particle_info.field(
+            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
+        )
 
-        self.particles = struct_particle_state.field(shape=self._n_particles, layout=ti.Layout.SOA)
-        self.particles_reordered = struct_particle_state.field(shape=self._n_particles, layout=ti.Layout.SOA)
+        self.particles = struct_particle_state.field(shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA)
+        self.particles_reordered = struct_particle_state.field(
+            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
+        )
 
-        self.particles_ng = struct_particle_state_ng.field(shape=self._n_particles, layout=ti.Layout.SOA)
-        self.particles_ng_reordered = struct_particle_state_ng.field(shape=self._n_particles, layout=ti.Layout.SOA)
+        self.particles_ng = struct_particle_state_ng.field(
+            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
+        )
+        self.particles_ng_reordered = struct_particle_state_ng.field(
+            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
+        )
 
-        self.particles_render = struct_particle_state_render.field(shape=self._n_particles, layout=ti.Layout.SOA)
+        self.particles_render = struct_particle_state_render.field(
+            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
+        )
 
     def init_edge_fields(self):
         # edges information for stretch. edge: (v1, v2)
@@ -185,6 +208,7 @@ class PBDSolver(Solver):
         self._ckpt = dict()
 
     def build(self):
+        self._B = self._sim._B
         self._n_particles = self.n_particles
         self._n_fluid_particles = self.n_fluid_particles
         self._n_edges = self.n_edges
@@ -194,7 +218,7 @@ class PBDSolver(Solver):
         self._n_vfaces = self.n_vfaces
 
         if self.is_active():
-            self.sh.build()
+            self.sh.build(self._B)
 
             self.init_particle_fields()
             self.init_edge_fields()
@@ -323,8 +347,8 @@ class PBDSolver(Solver):
     # ------------------------------------------------------------------------------------
     @ti.kernel
     def _kernel_store_initial_pos(self, f: ti.i32):
-        for i in range(self._n_particles):
-            self.particles[i].ipos = self.particles[i].pos
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            self.particles[i, b].ipos = self.particles[i, b].pos
 
     @ti.kernel
     def _kernel_reorder_particles(self, f: ti.i32):
@@ -334,56 +358,58 @@ class PBDSolver(Solver):
 
         # copy to reordered
         self.particles_ng_reordered.active.fill(0)
-        for i in range(self._n_particles):
-            if self.particles_ng[i].active:
-                reordered_idx = self.particles_ng[i].reordered_idx
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            if self.particles_ng[i, b].active:
+                reordered_idx = self.particles_ng[i, b].reordered_idx
 
-                self.particles_reordered[reordered_idx] = self.particles[i]
-                self.particles_info_reordered[reordered_idx] = self.particles_info[i]
-                self.particles_ng_reordered[reordered_idx].active = self.particles_ng[i].active
+                self.particles_reordered[reordered_idx, b] = self.particles[i, b]
+                self.particles_info_reordered[reordered_idx, b] = self.particles_info[i]
+                self.particles_ng_reordered[reordered_idx, b].active = self.particles_ng[i, b].active
 
     @ti.kernel
     def _kernel_apply_external_force(self, f: ti.i32, t: ti.f32):
-        for i in range(self._n_particles):
-            if self.particles[i].free:
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            if self.particles[i, b].free:
                 # gravity
-                self.particles[i].vel = self.particles[i].vel + self._gravity[None] * self._substep_dt
+                self.particles[i, b].vel = self.particles[i, b].vel + self._gravity[None] * self._substep_dt
 
                 # external force fields
                 acc = ti.Vector.zero(gs.ti_float, 3)
                 for i_ff in ti.static(range(len(self._ffs))):
-                    acc += self._ffs[i_ff].get_acc(self.particles[i].pos, self.particles[i].vel, t, i)
-                self.particles[i].vel = self.particles[i].vel + acc * self._substep_dt
+                    acc += self._ffs[i_ff].get_acc(self.particles[i, b].pos, self.particles[i, b].vel, t, i)
+                self.particles[i, b].vel = self.particles[i, b].vel + acc * self._substep_dt
 
                 if self.particles_info[i].mat_type == self.MATS.CLOTH:
                     f_air_resistance = (
-                        self.particles_info[i].air_resistance * self.particles[i].vel.norm() * self.particles[i].vel
+                        self.particles_info[i].air_resistance
+                        * self.particles[i, b].vel.norm()
+                        * self.particles[i, b].vel
                     )
-                    self.particles[i].vel = (
-                        self.particles[i].vel - f_air_resistance / self.particles_info[i].mass * self._substep_dt
+                    self.particles[i, b].vel = (
+                        self.particles[i, b].vel - f_air_resistance / self.particles_info[i].mass * self._substep_dt
                     )
-            self.particles[i].pos = self.particles[i].pos + self.particles[i].vel * self._substep_dt
+            self.particles[i, b].pos = self.particles[i, b].pos + self.particles[i, b].vel * self._substep_dt
 
     @ti.kernel
     def _kernel_solve_stretch(self, f: ti.i32):
         for _ in ti.static(range(self._max_stretch_solver_iterations)):
-            for i_e in range(self._n_edges):
+            for i_e, b in ti.ndrange(self._n_edges, self._B):
                 v1 = self.edges_info[i_e].v1
                 v2 = self.edges_info[i_e].v2
 
-                w1 = 1.0 / self.particles_info[v1].mass * self.particles[v1].free
-                w2 = 1.0 / self.particles_info[v2].mass * self.particles[v2].free
-                n = self.particles[v1].pos - self.particles[v2].pos
+                w1 = 1.0 / self.particles_info[v1].mass * self.particles[v1, b].free
+                w2 = 1.0 / self.particles_info[v2].mass * self.particles[v2, b].free
+                n = self.particles[v1, b].pos - self.particles[v2, b].pos
                 C = n.norm() - self.edges_info[i_e].len_rest
                 alpha = self.edges_info[i_e].stretch_compliance / (self._substep_dt**2)
                 dp = -C / (w1 + w2 + alpha) * n / n.norm(gs.EPS) * self.edges_info[i_e].stretch_relaxation
-                self.particles[v1].dpos += dp * w1
-                self.particles[v2].dpos -= dp * w2
+                self.particles[v1, b].dpos += dp * w1
+                self.particles[v2, b].dpos -= dp * w2
 
-            for i in range(self._n_particles):
-                if self.particles[i].free and self.particles_info[i].mat_type != self.MATS.PARTICLE:
-                    self.particles[i].pos = self.particles[i].pos + self.particles[i].dpos
-                    self.particles[i].dpos.fill(0)
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if self.particles[i, b].free and self.particles_info[i].mat_type != self.MATS.PARTICLE:
+                    self.particles[i, b].pos = self.particles[i, b].pos + self.particles[i, b].dpos
+                    self.particles[i, b].dpos.fill(0)
 
     # @ti.kernel
     # def _kernel_solve_bending(self, f: ti.i32):
@@ -408,23 +434,23 @@ class PBDSolver(Solver):
     @ti.kernel
     def _kernel_solve_bending(self, f: ti.i32):
         for _ in ti.static(range(self._max_bending_solver_iterations)):
-            for i_ie in range(self._n_inner_edges):  # 140 - 142
+            for i_ie, b in ti.ndrange(self._n_inner_edges, self._B):  # 140 - 142
                 v1 = self.inner_edges_info[i_ie].v1
                 v2 = self.inner_edges_info[i_ie].v2
                 v3 = self.inner_edges_info[i_ie].v3
                 v4 = self.inner_edges_info[i_ie].v4
 
-                w1 = 1.0 / self.particles_info[v1].mass * self.particles[v1].free
-                w2 = 1.0 / self.particles_info[v2].mass * self.particles[v2].free
-                w3 = 1.0 / self.particles_info[v3].mass * self.particles[v3].free
-                w4 = 1.0 / self.particles_info[v4].mass * self.particles[v4].free
+                w1 = 1.0 / self.particles_info[v1].mass * self.particles[v1, b].free
+                w2 = 1.0 / self.particles_info[v2].mass * self.particles[v2, b].free
+                w3 = 1.0 / self.particles_info[v3].mass * self.particles[v3, b].free
+                w4 = 1.0 / self.particles_info[v4].mass * self.particles[v4, b].free
 
                 if w1 + w2 + w3 + w4 > 0.0:
                     # https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
                     # Appendix A: Bending Constraint Projection
-                    p2 = self.particles[v2].pos - self.particles[v1].pos
-                    p3 = self.particles[v3].pos - self.particles[v1].pos
-                    p4 = self.particles[v4].pos - self.particles[v1].pos
+                    p2 = self.particles[v2, b].pos - self.particles[v1, b].pos
+                    p3 = self.particles[v3, b].pos - self.particles[v1, b].pos
+                    p4 = self.particles[v4, b].pos - self.particles[v1, b].pos
                     l23 = p2.cross(p3).norm()
                     l24 = p2.cross(p4).norm()
                     n1 = p2.cross(p3) / l23
@@ -448,39 +474,39 @@ class PBDSolver(Solver):
                         * self.inner_edges_info[i_ie].bending_relaxation
                     )
 
-                    self.particles[v1].dpos += w1 * constraint * q1
-                    self.particles[v2].dpos += w2 * constraint * q2
-                    self.particles[v3].dpos += w3 * constraint * q3
-                    self.particles[v4].dpos += w4 * constraint * q4
+                    self.particles[v1, b].dpos += w1 * constraint * q1
+                    self.particles[v2, b].dpos += w2 * constraint * q2
+                    self.particles[v3, b].dpos += w3 * constraint * q3
+                    self.particles[v4, b].dpos += w4 * constraint * q4
 
-            for i in range(self._n_particles):
-                if self.particles[i].free and self.particles_info[i].mat_type != self.MATS.PARTICLE:
-                    self.particles[i].pos = self.particles[i].pos + self.particles[i].dpos
-                    self.particles[i].dpos.fill(0)
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if self.particles[i, b].free and self.particles_info[i].mat_type != self.MATS.PARTICLE:
+                    self.particles[i, b].pos = self.particles[i, b].pos + self.particles[i, b].dpos
+                    self.particles[i, b].dpos.fill(0)
 
     @ti.kernel
     def _kernel_solve_volume(self, f: ti.i32):
         for _ in ti.static(range(self._max_volume_solver_iterations)):
-            for i_el in range(self._n_elems):
+            for i_el, b in ti.ndrange(self._n_elems, self._B):
                 v1 = self.elems_info[i_el].v1
                 v2 = self.elems_info[i_el].v2
                 v3 = self.elems_info[i_el].v3
                 v4 = self.elems_info[i_el].v4
 
-                p1 = self.particles[v1].pos
-                p2 = self.particles[v2].pos
-                p3 = self.particles[v3].pos
-                p4 = self.particles[v4].pos
+                p1 = self.particles[v1, b].pos
+                p2 = self.particles[v2, b].pos
+                p3 = self.particles[v3, b].pos
+                p4 = self.particles[v4, b].pos
 
                 grad1 = (p4 - p2).cross(p3 - p2) / 6.0
                 grad2 = (p3 - p1).cross(p4 - p1) / 6.0
                 grad3 = (p4 - p1).cross(p2 - p1) / 6.0
                 grad4 = (p2 - p1).cross(p3 - p1) / 6.0
 
-                w1 = 1.0 / self.particles_info[v1].mass * grad1.norm_sqr() * self.particles[v1].free
-                w2 = 1.0 / self.particles_info[v2].mass * grad2.norm_sqr() * self.particles[v2].free
-                w3 = 1.0 / self.particles_info[v3].mass * grad3.norm_sqr() * self.particles[v3].free
-                w4 = 1.0 / self.particles_info[v4].mass * grad4.norm_sqr() * self.particles[v4].free
+                w1 = 1.0 / self.particles_info[v1].mass * grad1.norm_sqr() * self.particles[v1, b].free
+                w2 = 1.0 / self.particles_info[v2].mass * grad2.norm_sqr() * self.particles[v2, b].free
+                w3 = 1.0 / self.particles_info[v3].mass * grad3.norm_sqr() * self.particles[v3, b].free
+                w4 = 1.0 / self.particles_info[v4].mass * grad4.norm_sqr() * self.particles[v4, b].free
 
                 if w1 + w2 + w3 + w4 > 0.0:
                     vol = gu.ti_tet_vol(p1, p2, p3, p4)
@@ -488,83 +514,91 @@ class PBDSolver(Solver):
                     alpha = self.elems_info[i_el].volume_compliance / (self._substep_dt**2)
                     s = -C / (w1 + w2 + w3 + w4 + alpha) * self.elems_info[i_el].volume_relaxation
 
-                    self.particles[v1].dpos += s * w1 * grad1
-                    self.particles[v2].dpos += s * w2 * grad2
-                    self.particles[v3].dpos += s * w3 * grad3
-                    self.particles[v4].dpos += s * w4 * grad4
+                    self.particles[v1, b].dpos += s * w1 * grad1
+                    self.particles[v2, b].dpos += s * w2 * grad2
+                    self.particles[v3, b].dpos += s * w3 * grad3
+                    self.particles[v4, b].dpos += s * w4 * grad4
 
             for i in range(self._n_particles):
-                if self.particles[i].free and self.particles_info[i].mat_type != self.MATS.PARTICLE:
-                    self.particles[i].pos = self.particles[i].pos + self.particles[i].dpos
-                    self.particles[i].dpos.fill(0)
+                if self.particles[i, b].free and self.particles_info[i].mat_type != self.MATS.PARTICLE:
+                    self.particles[i, b].pos = self.particles[i, b].pos + self.particles[i, b].dpos
+                    self.particles[i, b].dpos.fill(0)
 
     @ti.func
-    def _func_solve_collision(self, i, j):
+    def _func_solve_collision(self, i, j, b):
         """j -> i"""
 
-        cur_dist = (self.particles_reordered[i].pos - self.particles_reordered[j].pos).norm(gs.EPS)
-        rest_dist = (self.particles_info_reordered[i].pos_rest - self.particles_info_reordered[j].pos_rest).norm(gs.EPS)
+        cur_dist = (self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos).norm(gs.EPS)
+        rest_dist = (self.particles_info_reordered[i, b].pos_rest - self.particles_info_reordered[j, b].pos_rest).norm(
+            gs.EPS
+        )
         target_dist = self._particle_size  # target particle distance is 2 * particle radius, i.e. particle_size
         if cur_dist < target_dist and rest_dist > target_dist:
-            wi = 1.0 / self.particles_info_reordered[i].mass * self.particles_reordered[i].free
-            wj = 1.0 / self.particles_info_reordered[j].mass * self.particles_reordered[j].free
-            n = (self.particles_reordered[i].pos - self.particles_reordered[j].pos) / cur_dist
+            wi = 1.0 / self.particles_info_reordered[i, b].mass * self.particles_reordered[i, b].free
+            wj = 1.0 / self.particles_info_reordered[j, b].mass * self.particles_reordered[j, b].free
+            n = (self.particles_reordered[i, b].pos - self.particles_reordered[j, b].pos) / cur_dist
 
             ### resolve collision ###
-            self.particles_reordered[i].dpos += wi / (wi + wj) * (target_dist - cur_dist) * n
+            self.particles_reordered[i, b].dpos += wi / (wi + wj) * (target_dist - cur_dist) * n
 
             ### apply friction ###
             # https://mmacklin.com/uppfrta_preprint.pdf
             # equation (23)
-            dv = (self.particles_reordered[i].pos - self.particles_reordered[i].ipos) - (
-                self.particles_reordered[j].pos - self.particles_reordered[j].ipos
+            dv = (self.particles_reordered[i, b].pos - self.particles_reordered[i, b].ipos) - (
+                self.particles_reordered[j, b].pos - self.particles_reordered[j, b].ipos
             )
             dpos = -(dv - n * n.dot(dv))
             # equation (24)
             d = target_dist - cur_dist
-            mu_s = ti.max(self.particles_info_reordered[i].mu_s, self.particles_info_reordered[j].mu_s)
-            mu_k = ti.max(self.particles_info_reordered[i].mu_k, self.particles_info_reordered[j].mu_k)
+            mu_s = ti.max(self.particles_info_reordered[i, b].mu_s, self.particles_info_reordered[j, b].mu_s)
+            mu_k = ti.max(self.particles_info_reordered[i, b].mu_k, self.particles_info_reordered[j, b].mu_k)
             if dpos.norm() < mu_s * d:
-                self.particles_reordered[i].dpos += wi / (wi + wj) * dpos
+                self.particles_reordered[i, b].dpos += wi / (wi + wj) * dpos
             else:
-                self.particles_reordered[i].dpos += wi / (wi + wj) * dpos * ti.min(1.0, mu_k * d / dpos.norm(gs.EPS))
+                self.particles_reordered[i, b].dpos += wi / (wi + wj) * dpos * ti.min(1.0, mu_k * d / dpos.norm(gs.EPS))
 
     @ti.kernel
     def _kernel_solve_collision(self, f: ti.i32):
-        for i in range(self._n_particles):
-            if self.particles_info_reordered[i].mat_type != self.MATS.PARTICLE:
-                base = self.sh.pos_to_grid(self.particles_reordered[i].pos)
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            if self.particles_info_reordered[i, b].mat_type != self.MATS.PARTICLE:
+                base = self.sh.pos_to_grid(self.particles_reordered[i, b].pos)
                 for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                     slot_idx = self.sh.grid_to_slot(base + offset)
                     for j in range(
-                        self.sh.slot_start[slot_idx], self.sh.slot_size[slot_idx] + self.sh.slot_start[slot_idx]
+                        self.sh.slot_start[slot_idx, b],
+                        self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
                     ):
                         if i != j and not (
-                            self.particles_info_reordered[i].mat_type == self.MATS.LIQUID
-                            and self.particles_info_reordered[j].mat_type == self.MATS.LIQUID
+                            self.particles_info_reordered[i, b].mat_type == self.MATS.LIQUID
+                            and self.particles_info_reordered[j, b].mat_type == self.MATS.LIQUID
                         ):
-                            self._func_solve_collision(i, j)
+                            self._func_solve_collision(i, j, b)
 
-        for i in range(self._n_particles):
-            if self.particles_reordered[i].free and self.particles_info_reordered[i].mat_type != self.MATS.PARTICLE:
-                self.particles_reordered[i].pos = self.particles_reordered[i].pos + self.particles_reordered[i].dpos
-                self.particles_reordered[i].dpos.fill(0)
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            if (
+                self.particles_reordered[i, b].free
+                and self.particles_info_reordered[i, b].mat_type != self.MATS.PARTICLE
+            ):
+                self.particles_reordered[i, b].pos = (
+                    self.particles_reordered[i, b].pos + self.particles_reordered[i, b].dpos
+                )
+                self.particles_reordered[i, b].dpos.fill(0)
 
     @ti.kernel
     def _kernel_solve_boundary_collision(self, f: ti.i32):
-        for i in range(self._n_particles):
+        for i, b in ti.ndrange(self._n_particles, self._B):
             # boundary is enforced regardless of whether free
-            pos_new, vel_new = self.boundary.impose_pos_vel(self.particles[i].pos, self.particles[i].vel)
-            self.particles[i].pos = pos_new
-            self.particles[i].vel = vel_new
+            pos_new, vel_new = self.boundary.impose_pos_vel(self.particles[i, b].pos, self.particles[i, b].vel)
+            self.particles[i, b].pos = pos_new
+            self.particles[i, b].vel = vel_new
 
     @ti.kernel
     def _kernel_solve_density(self, f: ti.i32):
         for _ in ti.static(range(self._max_density_solver_iterations)):
             # ---Calculate lambdas---
-            for i in range(self._n_particles):
-                if self.particles_info_reordered[i].mat_type == self.MATS.LIQUID:
-                    pos_i = self.particles_reordered[i].pos
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if self.particles_info_reordered[i, b].mat_type == self.MATS.LIQUID:
+                    pos_i = self.particles_reordered[i, b].pos
                     base = self.sh.pos_to_grid(pos_i)
                     lower_sum = 0.0
                     rho = 0.0
@@ -572,56 +606,62 @@ class PBDSolver(Solver):
                     for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                         slot_idx = self.sh.grid_to_slot(base + offset)
                         for j in range(
-                            self.sh.slot_start[slot_idx], self.sh.slot_size[slot_idx] + self.sh.slot_start[slot_idx]
+                            self.sh.slot_start[slot_idx, b],
+                            self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
                         ):
-
-                            pos_j = self.particles_reordered[j].pos
+                            pos_j = self.particles_reordered[j, b].pos
                             # ---Poly6---
-                            rho += self.poly6(pos_i - pos_j) * self.particles_info_reordered[j].mass
+                            rho += self.poly6(pos_i - pos_j) * self.particles_info_reordered[j, b].mass
                             # ---Spiky---
-                            s = self.spiky(pos_i - pos_j) / self.particles_info_reordered[i].rho_rest
+                            s = self.spiky(pos_i - pos_j) / self.particles_info_reordered[i, b].rho_rest
                             spiky_i += s
                             lower_sum += s.dot(s)
-                    constraint = (rho / self.particles_info_reordered[i].rho_rest) - 1.0
+                    constraint = (rho / self.particles_info_reordered[i, b].rho_rest) - 1.0
                     lower_sum += spiky_i.dot(spiky_i)
-                    self.particles_reordered[i].lam = -1.0 * (constraint / (lower_sum + self.lambda_epsilon))
+                    self.particles_reordered[i, b].lam = -1.0 * (constraint / (lower_sum + self.lambda_epsilon))
 
             # ---Calculate delta pos---
-            for i in range(self._n_particles):
-                if self.particles_info_reordered[i].mat_type == self.MATS.LIQUID:
-                    pos_i = self.particles_reordered[i].pos
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if self.particles_info_reordered[i, b].mat_type == self.MATS.LIQUID:
+                    pos_i = self.particles_reordered[i, b].pos
                     base = self.sh.pos_to_grid(pos_i)
                     for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                         slot_idx = self.sh.grid_to_slot(base + offset)
                         for j in range(
-                            self.sh.slot_start[slot_idx], self.sh.slot_size[slot_idx] + self.sh.slot_start[slot_idx]
+                            self.sh.slot_start[slot_idx, b],
+                            self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
                         ):
                             if i != j:
-                                pos_j = self.particles_reordered[j].pos
+                                pos_j = self.particles_reordered[j, b].pos
                                 # ---S_Corr---
                                 scorr = self.S_Corr(pos_i - pos_j)
-                                left = self.particles_reordered[i].lam + self.particles_reordered[j].lam + scorr
+                                left = self.particles_reordered[i, b].lam + self.particles_reordered[j, b].lam + scorr
                                 right = self.spiky(pos_i - pos_j)
-                                self.particles_reordered[i].dpos = (
-                                    self.particles_reordered[i].dpos
+                                self.particles_reordered[i, b].dpos = (
+                                    self.particles_reordered[i, b].dpos
                                     + left
                                     * right
-                                    / self.particles_info_reordered[i].rho_rest
+                                    / self.particles_info_reordered[i, b].rho_rest
                                     * self.dist_scale
-                                    * self.particles_info_reordered[i].density_relaxation
+                                    * self.particles_info_reordered[i, b].density_relaxation
                                 )
 
-            for i in range(self._n_particles):
-                if self.particles_info_reordered[i].mat_type == self.MATS.LIQUID and self.particles_reordered[i].free:
-                    self.particles_reordered[i].pos = self.particles_reordered[i].pos + self.particles_reordered[i].dpos
-                    self.particles_reordered[i].dpos.fill(0)
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if (
+                    self.particles_info_reordered[i, b].mat_type == self.MATS.LIQUID
+                    and self.particles_reordered[i, b].free
+                ):
+                    self.particles_reordered[i, b].pos = (
+                        self.particles_reordered[i, b].pos + self.particles_reordered[i, b].dpos
+                    )
+                    self.particles_reordered[i, b].dpos.fill(0)
 
     @ti.kernel
     def _kernel_solve_viscosity(self, f: ti.i32):
         for _ in ti.static(range(self._max_viscosity_solver_iterations)):
-            for i in range(self._n_particles):
-                if self.particles_info_reordered[i].mat_type == self.MATS.LIQUID:
-                    pos_i = self.particles_reordered[i].pos
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if self.particles_info_reordered[i, b].mat_type == self.MATS.LIQUID:
+                    pos_i = self.particles_reordered[i, b].pos
                     base = self.sh.pos_to_grid(pos_i)
                     xsph_sum = ti.Vector.zero(gs.ti_float, 3)
                     omega_sum = ti.Vector.zero(gs.ti_float, 3)
@@ -639,12 +679,13 @@ class PBDSolver(Solver):
                     for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
                         slot_idx = self.sh.grid_to_slot(base + offset)
                         for j in range(
-                            self.sh.slot_start[slot_idx], self.sh.slot_size[slot_idx] + self.sh.slot_start[slot_idx]
+                            self.sh.slot_start[slot_idx, b],
+                            self.sh.slot_size[slot_idx, b] + self.sh.slot_start[slot_idx, b],
                         ):
 
-                            pos_j = self.particles_reordered[j].pos
-                            v_ij = (self.particles_reordered[j].pos - self.particles_reordered[j].ipos) - (
-                                self.particles_reordered[i].pos - self.particles_reordered[i].ipos
+                            pos_j = self.particles_reordered[j, b].pos
+                            v_ij = (self.particles_reordered[j, b].pos - self.particles_reordered[j, b].ipos) - (
+                                self.particles_reordered[i, b].pos - self.particles_reordered[i, b].ipos
                             )
 
                             dist = pos_i - pos_j
@@ -671,28 +712,34 @@ class PBDSolver(Solver):
                     #     vorticity[p] = vorti_epsilon * big_n.cross(omega_sum)
 
                     # ---Viscosity---
-                    self.particles_reordered[i].dpos = (
-                        self.particles_reordered[i].dpos
-                        + xsph_sum * self.particles_info_reordered[i].viscosity_relaxation
+                    self.particles_reordered[i, b].dpos = (
+                        self.particles_reordered[i, b].dpos
+                        + xsph_sum * self.particles_info_reordered[i, b].viscosity_relaxation
                     )
 
-            for i in range(self._n_particles):
-                if self.particles_info_reordered[i].mat_type == self.MATS.LIQUID and self.particles_reordered[i].free:
-                    self.particles_reordered[i].pos = self.particles_reordered[i].pos + self.particles_reordered[i].dpos
-                    self.particles_reordered[i].dpos.fill(0)
+            for i, b in ti.ndrange(self._n_particles, self._B):
+                if (
+                    self.particles_info_reordered[i, b].mat_type == self.MATS.LIQUID
+                    and self.particles_reordered[i, b].free
+                ):
+                    self.particles_reordered[i, b].pos = (
+                        self.particles_reordered[i, b].pos + self.particles_reordered[i, b].dpos
+                    )
+                    self.particles_reordered[i, b].dpos.fill(0)
 
     @ti.kernel
     def _kernel_compute_velocity(self, f: ti.i32):
-        for i in range(self._n_particles):
-            self.particles_reordered[i].vel = (
-                self.particles_reordered[i].pos - self.particles_reordered[i].ipos
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            self.particles_reordered[i, b].vel = (
+                self.particles_reordered[i, b].pos - self.particles_reordered[i, b].ipos
             ) / self._substep_dt
 
     @ti.kernel
     def _kernel_copy_from_reordered(self, f: ti.i32):
-        for i in range(self._n_particles):
-            if self.particles_ng[i].active:
-                self.particles[i] = self.particles_reordered[self.particles_ng[i].reordered_idx]
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            if self.particles_ng[i, b].active:
+                reordered_idx = self.particles_ng[i, b].reordered_idx
+                self.particles[i, b] = self.particles_reordered[reordered_idx, b]
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -778,15 +825,13 @@ class PBDSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        pos: ti.types.ndarray(),
+        pos: ti.types.ndarray(),  # shape [B, n_particles, 3]
     ):
-        for i in range(n_particles):
+        for i, b in ti.ndrange(n_particles, self._B):
             i_global = i + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global].pos[k] = pos[i, k]
-
-            # we reset vel when directly setting pos
-            self.particles[i_global].vel = ti.Vector.zero(gs.ti_float, 3)
+                self.particles[i_global, b].pos[k] = pos[b, i, k]
+            self.particles[i_global, b].vel = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.kernel
     def _kernel_set_particles_vel(
@@ -794,12 +839,12 @@ class PBDSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        vel: ti.types.ndarray(),
+        vel: ti.types.ndarray(),  # shape [B, n_particles, 3]
     ):
-        for i in range(n_particles):
+        for i, b in ti.ndrange(n_particles, self._B):
             i_global = i + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global].vel[k] = vel[i, k]
+                self.particles[i_global, b].vel[k] = vel[b, i, k]
 
     @ti.kernel
     def _kernel_set_particles_active(
@@ -807,27 +852,39 @@ class PBDSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        active: ti.i32,
+        active: ti.i32,  # scalar flag (0 or 1)
     ):
-        for i in range(n_particles):
+        for i, b in ti.ndrange(n_particles, self._B):
             i_global = i + particle_start
-            self.particles_ng[i_global].active = active
+            self.particles_ng[i_global, b].active = active
 
     @ti.kernel
-    def _kernel_get_frame(self, f: ti.i32, pos: ti.types.ndarray(), vel: ti.types.ndarray(), free: ti.types.ndarray()):
-        for i in range(self._n_particles):
+    def _kernel_get_frame(
+        self,
+        f: ti.i32,
+        pos: ti.types.ndarray(),  # shape [B, _n_particles, 3]
+        vel: ti.types.ndarray(),  # shape [B, _n_particles, 3]
+        free: ti.types.ndarray(),  # shape [B, _n_particles]
+    ):
+        for i, b in ti.ndrange(self._n_particles, self._B):
             for j in ti.static(range(3)):
-                pos[i, j] = self.particles[i].pos[j]
-                vel[i, j] = self.particles[i].vel[j]
-            free[i] = self.particles[i].free
+                pos[b, i, j] = self.particles[i, b].pos[j]
+                vel[b, i, j] = self.particles[i, b].vel[j]
+            free[b, i] = self.particles[i, b].free
 
     @ti.kernel
-    def _kernel_set_frame(self, f: ti.i32, pos: ti.types.ndarray(), vel: ti.types.ndarray(), free: ti.types.ndarray()):
-        for i in range(self._n_particles):
+    def _kernel_set_frame(
+        self,
+        f: ti.i32,
+        pos: ti.types.ndarray(),  # shape [B, _n_particles, 3]
+        vel: ti.types.ndarray(),  # shape [B, _n_particles, 3]
+        free: ti.types.ndarray(),  # shape [B, _n_particles]
+    ):
+        for i, b in ti.ndrange(self._n_particles, self._B):
             for j in ti.static(range(3)):
-                self.particles[i].pos[j] = pos[i, j]
-                self.particles[i].vel[j] = vel[i, j]
-            self.particles[i].free = free[i]
+                self.particles[i, b].pos[j] = pos[b, i, j]
+                self.particles[i, b].vel[j] = vel[b, i, j]
+            self.particles[i, b].free = free[b, i]
 
     def get_state(self, f):
         if self.is_active():
@@ -843,61 +900,61 @@ class PBDSolver(Solver):
 
     @ti.kernel
     def _kernel_update_render_fields(self, f: ti.i32):
-        for i in range(self._n_particles):
-            if self.particles_ng[i].active:
-                self.particles_render[i].pos = self.particles[i].pos
-                self.particles_render[i].vel = self.particles[i].vel
+        for i, b in ti.ndrange(self._n_particles, self._B):
+            if self.particles_ng[i, b].active:
+                self.particles_render[i, b].pos = self.particles[i, b].pos
+                self.particles_render[i, b].vel = self.particles[i, b].vel
             else:
-                self.particles_render[i].pos = gu.ti_nowhere()
-            self.particles_render[i].active = self.particles_ng[i].active
+                self.particles_render[i, b].pos = gu.ti_nowhere()
+            self.particles_render[i, b].active = self.particles_ng[i, b].active
 
-        for i in range(self._n_vverts):
+        for i, b in ti.ndrange(self._n_vverts, self._B):
             vvert_pos = ti.Vector.zero(gs.ti_float, 3)
             for j in range(self._n_vvert_supports):
                 vvert_pos += (
-                    self.particles[self.vverts_info.support_idxs[i][j]].pos * self.vverts_info.support_weights[i][j]
+                    self.particles[self.vverts_info.support_idxs[i][j], b].pos * self.vverts_info.support_weights[i][j]
                 )
-            self.vverts_render[i].pos = vvert_pos
-            self.vverts_render[i].active = self.particles_render[self.vverts_info.support_idxs[i][0]].active
+            self.vverts_render[i, b].pos = vvert_pos
+            self.vverts_render[i, b].active = self.particles_render[self.vverts_info.support_idxs[i][0], b].active
 
     def update_render_fields(self):
         self._kernel_update_render_fields(self.sim.cur_substep_local)
 
     @gs.assert_built
-    def fix_particle(self, particle_idx):
-        self._kernel_fix_particle(particle_idx)
+    def fix_particle(self, particle_idx, b):
+        self._kernel_fix_particle(particle_idx, b)
 
     @ti.kernel
-    def _kernel_fix_particle(self, particle_idx: ti.i32):
-        self.particles[particle_idx].free = 0
+    def _kernel_fix_particle(self, particle_idx: ti.i32, b: ti.i32):
+        self.particles[particle_idx, b].free = 0
 
     @gs.assert_built
-    def set_particle_position(self, particle_idx, pos):
-        self._kernel_set_particle_position(particle_idx, pos)
+    def set_particle_position(self, particle_idx, pos, b):
+        self._kernel_set_particle_position(particle_idx, pos, b)
 
     @ti.kernel
-    def _kernel_set_particle_position(self, particle_idx: ti.i32, pos: ti.types.ndarray()):
+    def _kernel_set_particle_position(self, particle_idx: ti.i32, pos: ti.types.ndarray(), b: ti.i32):
         for i in range(3):
-            self.particles[particle_idx].pos[i] = pos[i]
+            self.particles[particle_idx].pos[i, b] = pos[i]
         self.particles[particle_idx].free = 0
 
     @gs.assert_built
-    def set_particle_velocity(self, particle_idx, vel):
-        self._kernel_set_particle_velocity(particle_idx, vel)
+    def set_particle_velocity(self, particle_idx, vel, b):
+        self._kernel_set_particle_velocity(particle_idx, vel, b)
 
     @ti.kernel
-    def _kernel_set_particle_velocity(self, particle_idx: ti.i32, vel: ti.types.ndarray()):
+    def _kernel_set_particle_velocity(self, particle_idx: ti.i32, vel: ti.types.ndarray(), b: ti.i32):
         for i in range(3):
-            self.particles[particle_idx].vel[i] = vel[i]
-        self.particles[particle_idx].free = 0
+            self.particles[particle_idx, b].vel[i] = vel[i]
+        self.particles[particle_idx, b].free = 0
 
     @gs.assert_built
-    def release_particle(self, particle_idx):
-        self._kernel_release_particle(particle_idx)
+    def release_particle(self, particle_idx, b):
+        self._kernel_release_particle(particle_idx, b)
 
     @ti.kernel
-    def _kernel_release_particle(self, particle_idx: ti.i32):
-        self.particles[particle_idx].free = 1
+    def _kernel_release_particle(self, particle_idx: ti.i32, b: ti.i32):
+        self.particles[particle_idx, b].free = 1
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -260,3 +260,48 @@ def gs_sim(
     scene.build()
 
     return gs_sim
+
+
+@pytest.fixture(scope="session")
+def cube_verts_and_faces():
+    cx, cy, cz = (0.0, 0.0, 0.0)
+    edge_length = 1.0
+
+    h = edge_length / 2.0
+
+    verts = [
+        (cx - h, cy - h, cz - h),  # v0
+        (cx + h, cy - h, cz - h),  # v1
+        (cx + h, cy + h, cz - h),  # v2
+        (cx - h, cy + h, cz - h),  # v3
+        (cx - h, cy - h, cz + h),  # v4
+        (cx + h, cy - h, cz + h),  # v5
+        (cx + h, cy + h, cz + h),  # v6
+        (cx - h, cy + h, cz + h),  # v7
+    ]
+
+    faces = [
+        (1, 2, 3, 4),
+        (5, 6, 7, 8),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 4, 8, 7),
+        (4, 1, 5, 8),
+    ]
+    return verts, faces
+
+
+@pytest.fixture(scope="session")
+def box_obj_path(asset_tmp_path, cube_verts_and_faces):
+    """Fixture that generates a temporary cube .obj file"""
+    verts, faces = cube_verts_and_faces
+
+    filename = str(asset_tmp_path / f"fixture_box_obj_path.obj")
+    with open(filename, "w", encoding="utf-8") as f:
+        for x, y, z in verts:
+            f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
+        f.write("\n")
+        for a, b, c, d in faces:
+            f.write(f"f {a} {b} {c} {d}\n")
+
+    return filename

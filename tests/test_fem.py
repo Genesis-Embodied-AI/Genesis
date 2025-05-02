@@ -57,96 +57,26 @@ def test_multiple_fem_entities(fem_material, show_viewer):
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_interior_tetrahedralized_vertex(fem_material, show_viewer, tmp_path):
+def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path, cube_verts_and_faces):
     """
-    Test tetrahedralization of a FEM entity with a mesh shape that introduces
+    Test tetrahedralization of a FEM entity with a small maxvolume value that introduces
     internal vertices during tetrahedralization:
       1. Verify all surface vertices lie exactly on the original quad faces of the mesh.
       2. Ensure the visualizer's mesh triangles match the FEM entity's surface triangles.
     """
-
-    def _write_extruded_box(center, large_length, small_length, filename):
-        cx, cy, cz = center
-        hL = large_length / 2.0
-        hl = small_length / 2.0
-
-        z0 = cz + hL
-        z1 = z0 + small_length
-
-        verts = [
-            # Vertices of large cube
-            (cx - hL, cy - hL, cz - hL),  # v1
-            (cx + hL, cy - hL, cz - hL),  # v2
-            (cx + hL, cy + hL, cz - hL),  # v3
-            (cx - hL, cy + hL, cz - hL),  # v4
-            (cx - hL, cy - hL, cz + hL),  # v5
-            (cx + hL, cy - hL, cz + hL),  # v6
-            (cx + hL, cy + hL, cz + hL),  # v7
-            (cx - hL, cy + hL, cz + hL),  # v8
-            # Vertices of a extruded small cube on +Z surface of the large cube
-            (cx - hl, cy - hl, z0),  # v9
-            (cx + hl, cy - hl, z0),  # v10
-            (cx + hl, cy + hl, z0),  # v11
-            (cx - hl, cy + hl, z0),  # v12
-            # Other vertices of the extruded small cube
-            (cx - hl, cy - hl, z1),  # v13
-            (cx + hl, cy - hl, z1),  # v14
-            (cx + hl, cy + hl, z1),  # v15
-            (cx - hl, cy + hl, z1),  # v16
-        ]
-
-        faces = []
-
-        # Large cube
-        faces += [
-            (1, 2, 3, 4),  # -Z
-            (1, 2, 6, 5),  # -Y
-            (2, 3, 7, 6),  # +X
-            (3, 4, 8, 7),  # +Y
-            (4, 1, 5, 8),  # -X
-        ]
-
-        # Large cube (+Z)
-        faces += [
-            (5, 6, 10, 9),
-            (6, 7, 11, 10),
-            (7, 8, 12, 11),
-            (8, 5, 9, 12),
-        ]
-
-        # Small cube (+Z)
-        faces += [(9, 10, 14, 13), (10, 11, 15, 14), (11, 12, 16, 15), (12, 9, 13, 16), (13, 14, 15, 16)]
-
-        # Write obj file
-        with open(filename, "w", encoding="utf-8") as f:
-            for x, y, z in verts:
-                f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
-            f.write("\n")
-            for face in faces:
-                f.write("f " + " ".join(str(idx) for idx in face) + "\n")
-
-        return verts, faces
+    verts, faces = cube_verts_and_faces
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(),
-        fem_options=gs.options.FEMOptions(),
         show_viewer=show_viewer,
-    )
-
-    obj_path = tmp_path / "fem.obj"
-    verts, faces = _write_extruded_box(
-        center=[0.0, 0.0, 0.0],
-        large_length=1.0,
-        small_length=0.1,
-        filename=str(obj_path),
     )
 
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=str(obj_path),
+            file=box_obj_path,
             nobisect=False,
             minratio=1.5,
             verbose=1,
+            maxvolume=0.01,
         ),
         material=fem_material,
     )
@@ -154,8 +84,11 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, tmp_path):
     scene.build()
 
     state = fem.get_state()
-    vertices = state.pos.cpu().numpy()
+    vertices = state.pos[0].cpu().numpy()
     surface_indices = np.unique(fem.surface_triangles)
+
+    # Ensure there are interior vertices; this is a prerequisite for this test
+    assert surface_indices.size < vertices.shape[0]
 
     # Verify each surface vertex lies on the original surface mesh
     def _point_on_surface(p, verts, faces, tol=1e-6):
@@ -234,4 +167,29 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, tmp_path):
     assert entity_tris == viz_tris, (
         "FEM entity surface triangles and visualizer mesh triangles do not match.\n"
         f"Differences: {set(entity_tris) ^ set(viz_tris)}"
+    )
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_maxvolume(fem_material, show_viewer, box_obj_path):
+    """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    # Mesh without any maximum-element-volume constraint
+    fem1 = scene.add_entity(
+        morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, verbose=1),
+        material=fem_material,
+    )
+
+    # Mesh with maximum element volume limited to 0.01
+    fem2 = scene.add_entity(
+        morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, maxvolume=0.01, verbose=1),
+        material=fem_material,
+    )
+
+    assert len(fem1.elems) < len(fem2.elems), (
+        f"Mesh with maxvolume=0.01 generated {len(fem2.elems)} elements; "
+        f"expected more than {len(fem1.elems)} elements without a volume limit."
     )

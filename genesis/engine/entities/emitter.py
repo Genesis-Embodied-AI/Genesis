@@ -101,12 +101,16 @@ class Emitter(RBC):
                 positions, gu.trans_R_to_T(pos, gu.z_to_R(direction) @ gu.axis_angle_to_R(np.array([0, 0, 1]), theta))
             ).astype(gs.np_float)
 
+            positions = np.tile(positions[np.newaxis], (self._sim._B, 1, 1))
+
             if not self._solver.boundary.is_inside(positions):
                 gs.raise_exception("Emitted particles are outside the boundary.")
 
-            n_particles = len(positions)
+            n_particles = positions.shape[1]
 
+            # Expand vels with batch dimension
             vels = np.tile(direction * speed, (n_particles, 1)).astype(gs.np_float)
+            vels = np.tile(vels[np.newaxis], (self._sim._B, 1, 1))
 
             if n_particles > self._entity.n_particles:
                 gs.logger.warning(

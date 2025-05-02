@@ -815,12 +815,59 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
     return mesh
 
 
+def generate_tetgen_config_from_morph(morph):
+    if not isinstance(morph, gs.options.morphs.TetGenMixin):
+        raise TypeError(
+            f"Expected an instance of a class that inherits from TetGenMixin, but got an instance of {type(morph).name}."
+        )
+    return dict(
+        order=morph.order,
+        mindihedral=morph.mindihedral,
+        minratio=morph.minratio,
+        nobisect=morph.nobisect,
+        quality=morph.quality,
+        maxvolume=morph.maxvolume,
+        verbose=morph.verbose,
+    )
+
+
+def make_tetgen_switches(cfg):
+    """Build a TetGen switches string from a config dict."""
+    flags = ["p"]
+
+    if cfg.get("quality", True):
+        r = cfg.get("minratio", 1.1)
+        di = cfg.get("mindihedral", 10)
+        flags.append(f"q{r}/{di}")
+
+    a = cfg.get("maxvolume", -1.0)
+    if a > 0:
+        flags.append(f"a{a}")
+
+    o = cfg.get("order", 1)
+    if o != 1:
+        flags.append(f"o{o}")
+
+    if cfg.get("nobisect", False):
+        flags.append("Y")
+
+    v = cfg.get("verbose", 0)
+    if v > 0:
+        flags.append("V" * v)
+
+    return "".join(flags)
+
+
 def tetrahedralize_mesh(mesh, tet_cfg):
     pv_obj = pv.PolyData(
         mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
     )
     tet = tetgen.TetGen(pv_obj)
-    verts, elems = tet.tetrahedralize(**tet_cfg)
+    # Build and apply the switches string directly, since
+    # the Python wrapper sometimes ignores certain kwargs
+    # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
+    switches = make_tetgen_switches(tet_cfg)
+    verts, elems = tet.tetrahedralize(switches=switches)
     # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
     return verts, elems
 
