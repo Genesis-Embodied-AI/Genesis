@@ -311,9 +311,8 @@ def postprocess_collision_geoms(
                     "duplicate faces."
                 )
                 tmesh.update_faces(tmesh.unique_faces())
-                # BUG in trimesh: .volume will set .triangles, but update_faces() will not update .triangles,
-                # which will influence the calculation of .face_normal
-                tmesh._cache.clear(exclude=["vertex_normals"])
+                tmesh._cache.clear()
+                tmesh.visual._cache.clear()
 
     # Check if all the geometries can be convexify without decomposition
     must_decompose = False
@@ -321,14 +320,23 @@ def postprocess_collision_geoms(
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
+
+            # Skip geometries that do not corresponds to mesh or have no enclosed volume
             if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
             cmesh = trimesh.convex.convex_hull(tmesh)
             if cmesh.volume < gs.EPS:
                 continue
+
+            # Fix mesh temporarily to make volume computation more reliable
+            if not tmesh.is_winding_consistent:
+                tmesh = tmesh.copy()
+                tmesh.process(validate=True)
+
+            # Compute volume approximation error between true geometry and its convex hull conservatively
             if not tmesh.is_winding_consistent:
                 volume_err = float("inf")
-                must_decompose = True
+                must_decompose = not math.isinf(decompose_error_threshold)
             elif tmesh.volume > gs.EPS:
                 volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
                 if volume_err > decompose_error_threshold:
@@ -338,7 +346,6 @@ def postprocess_collision_geoms(
     # * They are all meshes
     # * They belong to the same collision group (same contype and conaffinity)
     # * Their physical properties are the same (friction coef and contact solver parameters)
-    is_merged = False
     if must_decompose and len(g_infos) > 1:
         is_merged = all(g_info["type"] == gs.GEOM_TYPE.MESH for g_info in g_infos)
         for name in ("contype", "conaffinity", "friction", "sol_params"):
@@ -363,15 +370,17 @@ def postprocess_collision_geoms(
             mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata={"merged": True})
             g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
 
-    # Try again to convexify then apply convex decomposition if not possible
-    if is_merged:
-        (g_info,) = g_infos
-        mesh = g_info["mesh"]
-        tmesh = mesh.trimesh
-        cmesh = trimesh.convex.convex_hull(tmesh)
-        if tmesh.is_winding_consistent:
-            volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
-            must_decompose = volume_err > decompose_error_threshold
+        # Try again to convexify then apply convex decomposition if not possible
+        if is_merged:
+            return postprocess_collision_geoms(
+                g_infos,
+                decimate,
+                decimate_face_num,
+                decimate_aggressiveness,
+                convexify,
+                decompose_error_threshold,
+                coacd_options,
+            )
 
     if must_decompose:
         if math.isinf(volume_err):
