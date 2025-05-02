@@ -58,7 +58,7 @@ class RigidSolver(Solver):
         # options
         self._enable_collision = options.enable_collision
         self._enable_multi_contact = options.enable_multi_contact
-        self._enable_mpr_vanilla = options.enable_mpr_vanilla
+        self._enable_mujoco_compability = options.enable_mujoco_compability
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
         self._enable_adjacent_collision = options.enable_adjacent_collision
@@ -1669,27 +1669,29 @@ class RigidSolver(Solver):
         # Determine whether the mass matrix must be re-computed to take into account first-order correction terms.
         # Note that avoiding inverting the mass matrix twice would not only speed up simulation but also improving
         # numerical stability as computinh post-damping accelerations from forces is not necessary anymore.
-        self._is_mass_mat_factorized.fill(1)
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-            entity_dof_start = self.entities_info[i_e].dof_start
-            entity_dof_end = self.entities_info[i_e].dof_end
-            for i_d in range(entity_dof_start, entity_dof_end):
-                I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                if self.dofs_info[I_d].damping > gs.EPS:
-                    self._is_mass_mat_factorized[i_e, i_b] = 0
-                if ti.static(self._integrator != gs.integrator.Euler):
-                    if (
-                        (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION)
-                        or (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY)
-                    ) and self.dofs_info[I_d].kv > gs.EPS:
+        if ti.static(not self._enable_mujoco_compability or self._integrator == gs.integrator.Euler):
+            self._is_mass_mat_factorized.fill(1)
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_e, i_b in ti.ndrange(self.n_entities, self._B):
+                entity_dof_start = self.entities_info[i_e].dof_start
+                entity_dof_end = self.entities_info[i_e].dof_end
+                for i_d in range(entity_dof_start, entity_dof_end):
+                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
+                    if self.dofs_info[I_d].damping > gs.EPS:
                         self._is_mass_mat_factorized[i_e, i_b] = 0
+                    if ti.static(self._integrator != gs.integrator.Euler):
+                        if (
+                            (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION)
+                            or (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY)
+                        ) and self.dofs_info[I_d].kv > gs.EPS:
+                            self._is_mass_mat_factorized[i_e, i_b] = 0
 
         self._func_factor_mass(implicit_damping=True)
         self._func_solve_mass(self.dofs_state.force, self.dofs_state.acc)
 
         # Disable pre-computed factorization mask right away
-        self._is_mass_mat_factorized.fill(0)
+        if ti.static(not self._enable_mujoco_compability or self._integrator == gs.integrator.Euler):
+            self._is_mass_mat_factorized.fill(0)
 
     @ti.kernel
     def _kernel_step_2(self):

@@ -1309,7 +1309,7 @@ class Collider:
                         # to first make sure that the geometries are truly colliding and only after to run SDF if
                         # necessary. This would probably not be the case anymore if it was possible to rely on
                         # specialized SDF implementation for convex-convex collision detection in the first place.
-                        if ti.static(not self._solver._enable_mpr_vanilla):
+                        if ti.static(not self._solver._enable_mujoco_compability):
                             is_mpr_guess_direction_available = (
                                 ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
                             ).any()
@@ -1337,7 +1337,7 @@ class Collider:
                             axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal, i_b)
                             n_con = 1
 
-                        if ti.static(not self._solver._enable_mpr_vanilla):
+                        if ti.static(not self._solver._enable_mujoco_compability):
                             self.contact_cache[i_ga, i_gb, i_b].normal = normal
                     else:
                         # Clear collision normal cache if not in contact

@@ -89,7 +89,7 @@ def asset_tmp_path(tmp_path_factory):
 
 
 @pytest.fixture
-def atol():
+def tol():
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
@@ -115,16 +115,16 @@ def initialize_genesis(request, backend):
 
 
 @pytest.fixture
-def mpr_vanilla(request):
-    mpr_vanilla = None
-    for mark in request.node.iter_markers("mpr_vanilla"):
+def mujoco_compatibility(request):
+    mujoco_compatibility = None
+    for mark in request.node.iter_markers("mujoco_compatibility"):
         if mark.args:
-            if mpr_vanilla is not None:
-                pytest.fail("'mpr_vanilla' can only be specified once.")
-            (mpr_vanilla,) = mark.args
-    if mpr_vanilla is None:
-        mpr_vanilla = True
-    return mpr_vanilla
+            if mujoco_compatibility is not None:
+                pytest.fail("'mujoco_compatibility' can only be specified once.")
+            (mujoco_compatibility,) = mark.args
+    if mujoco_compatibility is None:
+        mujoco_compatibility = True
+    return mujoco_compatibility
 
 
 @pytest.fixture
@@ -206,7 +206,9 @@ def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision
 
 
 @pytest.fixture
-def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, mpr_vanilla, adjacent_collision, show_viewer, mj_sim):
+def gs_sim(
+    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -223,7 +225,7 @@ def gs_sim(xml_path, gs_solver, gs_integrator, multi_contact, mpr_vanilla, adjac
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,
             constraint_solver=gs_solver,
-            enable_mpr_vanilla=mpr_vanilla,
+            enable_mujoco_compability=mujoco_compatibility,
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,
