@@ -54,12 +54,12 @@ cloth_2 = scene.add_entity(
 ########################## build ##########################
 scene.build()
 
-cloth_1.fix_particle(cloth_1.find_closest_particle((-1, -1, 1.0)))
-cloth_1.fix_particle(cloth_1.find_closest_particle((1, 1, 1.0)))
-cloth_1.fix_particle(cloth_1.find_closest_particle((-1, 1, 1.0)))
-cloth_1.fix_particle(cloth_1.find_closest_particle((1, -1, 1.0)))
+cloth_1.fix_particle(cloth_1.find_closest_particle((-1, -1, 1.0)), 0)
+cloth_1.fix_particle(cloth_1.find_closest_particle((1, 1, 1.0)), 0)
+cloth_1.fix_particle(cloth_1.find_closest_particle((-1, 1, 1.0)), 0)
+cloth_1.fix_particle(cloth_1.find_closest_particle((1, -1, 1.0)), 0)
 
-cloth_2.fix_particle(cloth_2.find_closest_particle((-1, -1, 1.0)))
+cloth_2.fix_particle(cloth_2.find_closest_particle((-1, -1, 1.0)), 0)
 
 horizon = 1000
 for i in range(horizon):

@@ -1,12 +1,11 @@
 import numpy as np
-import genesis as gs
 import pytest
-import os
+
+import genesis as gs
 
 
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=2e-3,
@@ -45,8 +44,6 @@ def test_deformable_parallel(show_viewer):
         morph=gs.morphs.Plane(),
     )
 
-    # gs_root = os.path.dirname(os.path.abspath(__file__))
-    # path_cloth = os.path.join(gs_root, "meshes", "cloth.obj")
     path_cloth = "meshes/cloth.obj"
 
     # pbd
@@ -118,6 +115,7 @@ def test_deformable_parallel(show_viewer):
     np.testing.assert_allclose(vel, 0, atol=1e-2)
 
     vel = water._solver.get_state(0).vel.cpu().numpy()
+    # it's harder for fluids to be static
     np.testing.assert_allclose(vel, 0, atol=2e-2)
 
     vel = mpm_cube._solver.get_state(0).vel.cpu().numpy()

@@ -450,8 +450,8 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_pos(self, tensor: ti.types.ndarray()):
-        for i, b in ti.ndrange(3, self._solver._B):
-            tensor[b, i] = self._solver.geoms_state[self._idx, b].pos[i]
+        for i, i_b in ti.ndrange(3, self._solver._B):
+            tensor[i_b, i] = self._solver.geoms_state[self._idx, i_b].pos[i]
 
     @gs.assert_built
     def get_quat(self):
@@ -466,8 +466,8 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_quat(self, tensor: ti.types.ndarray()):
-        for i, b in ti.ndrange(4, self._solver._B):
-            tensor[b, i] = self._solver.geoms_state[self._idx, b].quat[i]
+        for i, i_b in ti.ndrange(4, self._solver._B):
+            tensor[i_b, i] = self._solver.geoms_state[self._idx, i_b].quat[i]
 
     @gs.assert_built
     def get_verts(self):
@@ -488,20 +488,20 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
-        for b in range(self._solver._B):
-            self._solver._func_update_verts_for_geom(self._idx, b)
+        for i_b in range(self._solver._B):
+            self._solver._func_update_verts_for_geom(self._idx, i_b)
 
-        for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+        for i_v, j, i_b in ti.ndrange(self.n_verts, 3, self._solver._B):
+            idx_vert = i_v + self._verts_state_start
+            tensor[i_b, i_v, j] = self._solver.free_verts_state[idx_vert, i_b].pos[j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
         self._solver._func_update_verts_for_geom(self._idx, 0)
 
-        for i, j in ti.ndrange(self.n_verts, 3):
-            idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+        for i_v, j in ti.ndrange(self.n_verts, 3):
+            idx_vert = i_v + self._verts_state_start
+            tensor[i_v, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
 
     @gs.assert_built
     def get_AABB(self):
