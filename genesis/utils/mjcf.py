@@ -26,8 +26,7 @@ def parse_link(mj, i_l, scale):
     l_info = dict()
 
     name_start = mj.name_bodyadr[i_l]
-    name_end = mj.name_bodyadr[i_l + 1] if i_l + 1 < mj.nbody else len(mj.names)
-    l_info["name"], _ = mj.names[name_start:].decode("utf-8").split("\x00", 1)
+    l_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
 
     l_info["pos"] = mj.body_pos[i_l]
     l_info["quat"] = mj.body_quat[i_l]
@@ -104,7 +103,7 @@ def parse_link(mj, i_l, scale):
             j_info["pos"] = np.array([0.0, 0.0, 0.0])
         else:
             name_start = mj.name_jntadr[i_j]
-            j_info["name"], _ = mj.names[name_start:].decode("utf-8").split("\x00", 1)
+            j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
             j_info["pos"] = mj.jnt_pos[i_j]
 
             mj_stiffness = mj.jnt_stiffness[i_j]
@@ -214,7 +213,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_force_range"] = np.minimum(
                     j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                 )
-        else:
+        elif gs_type == gs.JOINT_TYPE.FREE:
             gs.logger.debug(f"(MJCF) No actuator found for joint `{j_info['name']}`")
 
         j_infos.append(j_info)
@@ -384,7 +383,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         geom_data = None
 
         mesh_path_start = mj.mesh_pathadr[mj_mesh.id]
-        metadata["mesh_path"], _ = mj.paths[mesh_path_start:].decode("utf-8").split("\x00", 1)
+        metadata["mesh_path"], *_ = filter(None, mj.paths[mesh_path_start:].decode("utf-8").split("\x00"))
     else:
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
