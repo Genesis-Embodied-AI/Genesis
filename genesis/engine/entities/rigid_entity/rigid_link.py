@@ -98,7 +98,7 @@ class RigidLink(RBC):
         self.root_idx = gs.np_int(link.idx)
         self.is_fixed = gs.np_int(is_fixed)
 
-        # inertial_mass, invweight, and inertia_i
+        # inertial_mass and inertia_i
         if self._inertial_mass is None:
             if len(self._geoms) == 0 and len(self._vgeoms) == 0:
                 self._inertial_mass = 0.0
@@ -108,11 +108,9 @@ class RigidLink(RBC):
                 else:  # TODO: handle non-watertight mesh
                     self._inertial_mass = 1.0
 
+        # Postpone computation of inverse weight if not specified
         if self._invweight is None:
-            if self._inertial_mass > 0:
-                self._invweight = 1.0 / self.inertial_mass
-            else:
-                self._invweight = np.inf
+            self._invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
 
         # inertial_pos
         if self._inertial_pos is None:
@@ -151,7 +149,7 @@ class RigidLink(RBC):
 
         # override invweight if fixed
         if is_fixed:
-            self._invweight = 0.0
+            self._invweight = np.zeros((2,), dtype=gs.np_float)
 
     def _compose_init_mesh(self):
         if len(self._geoms) == 0 and len(self._vgeoms) == 0:
@@ -373,7 +371,8 @@ class RigidLink(RBC):
         ratio = mass / self._inertial_mass
         assert ratio > 0
         self._inertial_mass *= ratio
-        self._invweight /= ratio
+        if self._invweight is not None:
+            self._invweight /= ratio
         self._inertial_i *= ratio
 
         self._solver._kernel_adjust_link_inertia(self.idx, ratio)
@@ -555,6 +554,8 @@ class RigidLink(RBC):
         """
         The invweight of the link.
         """
+        if self._invweight is None:
+            self._invweight = self._solver.get_links_invweight([self._idx]).cpu().numpy()[..., 0, :]
         return self._invweight
 
     @property

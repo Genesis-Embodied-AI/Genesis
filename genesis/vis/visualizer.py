@@ -99,8 +99,7 @@ class Visualizer(RBC):
         if self._viewer is not None:
             self._viewer.stop()
             self._viewer = None
-        if self._rasterizer is not None and self._rasterizer is not self._raytracer:
-            # FIXME: Deleting raytracer twice would cause segfault because of a bug
+        if self._rasterizer is not None:
             self._rasterizer.destroy()
             self._rasterizer = None
         if self._raytracer is not None:

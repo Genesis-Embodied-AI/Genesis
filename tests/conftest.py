@@ -89,7 +89,7 @@ def asset_tmp_path(tmp_path_factory):
 
 
 @pytest.fixture
-def atol():
+def tol():
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
@@ -115,16 +115,16 @@ def initialize_genesis(request, backend):
 
 
 @pytest.fixture
-def mpr_vanilla(request):
-    mpr_vanilla = None
-    for mark in request.node.iter_markers("mpr_vanilla"):
+def mujoco_compatibility(request):
+    mujoco_compatibility = None
+    for mark in request.node.iter_markers("mujoco_compatibility"):
         if mark.args:
-            if mpr_vanilla is not None:
-                pytest.fail("'mpr_vanilla' can only be specified once.")
-            (mpr_vanilla,) = mark.args
-    if mpr_vanilla is None:
-        mpr_vanilla = True
-    return mpr_vanilla
+            if mujoco_compatibility is not None:
+                pytest.fail("'mujoco_compatibility' can only be specified once.")
+            (mujoco_compatibility,) = mark.args
+    if mujoco_compatibility is None:
+        mujoco_compatibility = True
+    return mujoco_compatibility
 
 
 @pytest.fixture
@@ -202,16 +202,12 @@ def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision
         model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
     data = mujoco.MjData(model)
 
-    # Joint damping is not properly supported in Genesis for now
-    if not dof_damping:
-        model.dof_damping[:] = 0.0
-
     return MjSim(model, data)
 
 
 @pytest.fixture
 def gs_sim(
-    xml_path, gs_solver, gs_integrator, multi_contact, mpr_vanilla, adjacent_collision, dof_damping, show_viewer, mj_sim
+    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -229,7 +225,7 @@ def gs_sim(
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,
             constraint_solver=gs_solver,
-            enable_mpr_vanilla=mpr_vanilla,
+            enable_mujoco_compatibility=mujoco_compatibility,
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,
@@ -251,11 +247,6 @@ def gs_sim(
     # Force matching Mujoco safety factor for constraint time constant.
     # Note that this time constant affects the penetration depth at rest.
     gs_sim.rigid_solver._sol_constraint_min_resolve_time = 2.0 * gs_sim._substep_dt
-
-    # Joint damping is not properly supported in Genesis for now
-    if not dof_damping:
-        for joint in gs_robot.joints:
-            joint.dofs_damping[:] = 0.0
 
     scene.build()
 

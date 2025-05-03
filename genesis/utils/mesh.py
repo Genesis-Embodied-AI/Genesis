@@ -28,10 +28,6 @@ from .misc import (
     get_tet_cache_dir,
 )
 
-_identity4 = np.eye(4, dtype=np.float32)
-_identity4.flags.writeable = False
-_identity3 = np.eye(3, dtype=np.float32)
-_identity3.flags.writeable = False
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
 
 
@@ -482,17 +478,16 @@ def create_texture(image, factor, encoding):
 
 def apply_transform(transform, positions, normals=None):
     transformed_positions = (np.column_stack([positions, np.ones(len(positions))]) @ transform)[:, :3]
+
+    transformed_normals = normals
     if normals is not None:
-        trans_R = transform[:3, :3]
-        if np.ptp(trans_R - _identity3) > 1e-7:  # has rotation
-            transformed_normals = normals @ trans_R
-            scale = np.linalg.norm(trans_R, axis=1, keepdims=True)
-            if np.abs(scale - 1.0).max() > 1e-7:  # has scale
+        rot_mat = transform[:3, :3]
+        if np.abs(3.0 - np.trace(rot_mat)) > gs.EPS**2:  # has rotation or scaling
+            transformed_normals = normals @ rot_mat
+            scale = np.linalg.norm(rot_mat, axis=1, keepdims=True)
+            if np.any(np.abs(scale - 1.0) > gs.EPS):  # has scale
                 transformed_normals /= np.linalg.norm(transformed_normals, axis=1, keepdims=True)
-        else:
-            transformed_normals = normals  # in place?
-    else:
-        transformed_normals = None
+
     return transformed_positions, transformed_normals
 
 

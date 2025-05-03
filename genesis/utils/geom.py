@@ -292,7 +292,6 @@ def orthogonals(a):
 
 @ti.func
 def imp_aref(params, neg_penetration, vel, pos):
-    # The first term in parms is the timeconst parsed from mjcf. However, we don't use it here but use the one passed in, which is 2*substep_dt.
     timeconst, dampratio, dmin, dmax, width, mid, power = params
 
     imp_x = ti.abs(neg_penetration) / width

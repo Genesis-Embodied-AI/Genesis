@@ -7,21 +7,13 @@
       <geom friction="1 0.005 0.0001" density="500"/>
     </default>
   </default>
-  <asset>
-    <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
-    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
-    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
-    <material name="MatPlane" reflectance="0.5" shininess="1" specular="1" texrepeat="60 60" texture="texplane"/>
-  </asset>
-  <worldbody>
-    <!-- <geom conaffinity="1" condim="3" material="MatPlane" name="floor" pos="0 0 0" rgba="0.8 0.9 0.8 1" size="40 40 40" type="plane"/> -->
 
+  <worldbody>
     <body name="seg0" pos="0 0 0.2" euler="45 45 45">
-      <!-- <joint name="root" class="/" type="free"/> -->
-      <geom name="seg0_geom" class="/" type="capsule" size="0.02 0.05" fromto="-0 0 0 0.1 0 0"/>
+      <geom name="seg0_geom" class="/" type="capsule" size="0.02 0.05" rgba="1 0 0 1" fromto="-0 0 0 0.1 0 0"/>
       <body name="seg1" pos="0.1 0 0">
         <joint name="ball1" class="/" type="ball" stiffness="0"/>
-        <geom name="seg1_geom" class="/" type="capsule" size="0.02 0.05" fromto="-0 0 0 0.1 0 0"/>
+        <geom name="seg1_geom" class="/" type="capsule" size="0.02 0.05" rgba="0 1 0 1" fromto="-0 0 0 0.1 0 0"/>
       </body>
     </body>
   </worldbody>

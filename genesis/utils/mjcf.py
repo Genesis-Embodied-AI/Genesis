@@ -34,7 +34,7 @@ def parse_link(mj, i_l, scale):
     l_info["inertial_i"] = np.diag(mj.body_inertia[i_l])
     l_info["inertial_mass"] = float(mj.body_mass[i_l])
     l_info["parent_idx"] = int(mj.body_parentid[i_l] - 1)
-    l_info["invweight"] = float(mj.body_invweight0[i_l, 0])
+    l_info["invweight"] = mj.body_invweight0[i_l]
 
     jnt_adr = mj.body_jntadr[i_l]
     jnt_num = mj.body_jntnum[i_l]

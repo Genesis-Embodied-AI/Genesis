@@ -339,7 +339,7 @@ class MPR:
         b = ti.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.ti_float)
 
         # Only look into the direction of the portal for consistency with penetration depth computation
-        if ti.static(self._solver._enable_mpr_vanilla):
+        if ti.static(self._solver._enable_mujoco_compatibility):
             for i in range(4):
                 i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
                 vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
@@ -415,7 +415,7 @@ class MPR:
                 #
                 # The original paper introducing MPR algorithm is available here:
                 # https://archive.org/details/game-programming-gems-7
-                if ti.static(self._solver._enable_mpr_vanilla):
+                if ti.static(self._solver._enable_mujoco_compatibility):
                     penetration, pdir = self.mpr_point_tri_depth(
                         gs.ti_vec3([0.0, 0.0, 0.0]),
                         self.simplex_support[i_ga, i_gb, 1, i_b].v,

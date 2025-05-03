@@ -143,9 +143,9 @@ class ConstraintSolverIsland:
 
             d1, d2 = gu.orthogonals(impact.normal)
 
-            t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+            invweight = self._solver.links_info[link_a_maybe_batch].invweight[0] + self._solver.links_info[
                 link_b_maybe_batch
-            ].invweight * (link_b > -1)
+            ].invweight[0] * (link_b > -1)
 
             for i in range(4):
                 n = -d1 * f - impact.normal
@@ -207,7 +207,7 @@ class ConstraintSolverIsland:
 
                 imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel, -impact.penetration)
 
-                diag = t + impact.friction * impact.friction * t
+                diag = invweight + impact.friction * impact.friction * invweight
                 diag *= 2 * impact.friction * impact.friction * (1 - imp) / ti.max(imp, gs.EPS)
 
                 self.diag[n_con, i_b] = diag
@@ -454,7 +454,6 @@ class ConstraintSolverIsland:
 
     @ti.func
     def _func_nt_chol_solve(self, island, i_b):
-
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
@@ -1006,7 +1005,6 @@ class ConstraintSolverIsland:
 
     @ti.func
     def _func_update_gradient(self, island, i_b):
-
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
@@ -1017,16 +1015,15 @@ class ConstraintSolverIsland:
                 )
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
+            for i_e in range(self._solver.n_entities):
+                self._solver._mass_mat_mask[i_e, i_b] = 0
             for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
                 i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                 i_e = self.contact_island.entity_id[i_e_, i_b]
-                e_info = self.entities_info[i_e]
-
-                for i_d1 in range(e_info.dof_start, e_info.dof_end):
-                    Mgrad = gs.ti_float(0.0)
-                    for i_d2 in range(e_info.dof_start, e_info.dof_end):
-                        Mgrad += self._solver.mass_mat_inv[i_d1, i_d2, i_b] * self.grad[i_d2, i_b]
-                    self.Mgrad[i_d1, i_b] = Mgrad
+                self._solver._mass_mat_mask[i_e_, i_b] = 1
+            self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
+            for i_e in range(self._solver.n_entities):
+                self._solver._mass_mat_mask[i_e, i_b] = 1
 
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(island, i_b)
