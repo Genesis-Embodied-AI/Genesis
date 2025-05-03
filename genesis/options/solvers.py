@@ -157,13 +157,15 @@ class RigidOptions(Options):
         and external forces. Although this approximation is wrong in theory, it works resonably well in practice.
         Defaults to 'approximate_implicitfast'.
     IK_max_targets : int, optional
-        Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage. Defaults to 6.
+        Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
+        Defaults to 6.
     constraint_solver : gs.constraint_solver, optional
-        Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient) and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'CG'.
+        Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
+        and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.
     iterations : int, optional
-        Number of iterations for the constraint solver. Defaults to 100.
+        Number of iterations for the constraint solver. Defaults to 50.
     tolerance : float, optional
-        Tolerance for the constraint solver. Defaults to 1e-5.
+        Tolerance for the constraint solver. Defaults to 1e-8.
     ls_iterations : int, optional
         Number of line search iterations for the constraint solver. Defaults to 50.
     ls_tolerance : float, optional
@@ -173,7 +175,9 @@ class RigidOptions(Options):
     contact_resolve_time : float, optional
         Please note that this option will be deprecated in a future version. Use 'constraint_resolve_time' instead.
     constraint_resolve_time : float, optional
-        Time to resolve a constraint. The smaller the value, the more stiff the constraint. Defaults to 0.02. (called timeconst in https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
+        Time to resolve a constraint. The smaller the value, the more stiff the constraint. This parameter is called
+        'timeconst' in Mujoco (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters).
+        Defaults to 0.02.
     use_contact_island : bool, optional
         Whether to use contact island to speed up contact resolving. Defaults to False.
     use_hibernation : bool, optional
@@ -207,9 +211,9 @@ class RigidOptions(Options):
     batch_dofs_info: Optional[bool] = False
 
     # constraint solver
-    constraint_solver: gs.constraint_solver = gs.constraint_solver.CG
-    iterations: int = 100
-    tolerance: float = 1e-5
+    constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton
+    iterations: int = 50
+    tolerance: float = 1e-8
     ls_iterations: int = 50
     ls_tolerance: float = 1e-2
     sparse_solve: bool = False
