@@ -337,20 +337,21 @@ class RigidEntity(Entity):
             l_infos, links_j_infos, links_g_infos
         )
 
-        # Define flag to determine whether the link at hand is associated with a robot
-        world_l_info["is_robot"] = False
+        # Define flag to determine whether the link at hand is associated with a robot.
+        # Note that 0d array is used rather than native type because this algo requires mutable objects.
+        world_l_info["is_robot"] = np.array(False, dtype=np.bool_)
         for i, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
             if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
-                if l_info["parent_idx"] > 0:
+                if l_info["parent_idx"] >= 0:
                     l_info["is_robot"] = l_infos[l_info["parent_idx"]]["is_robot"]
                 else:
-                    l_info["is_robot"] = False
+                    l_info["is_robot"] = np.array(False, dtype=np.bool_)
             elif all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
-                l_info["is_robot"] = False
+                l_info["is_robot"] = np.array(False, dtype=np.bool_)
             else:
-                l_info["is_robot"] = True
-                if l_info["parent_idx"] > 0:
-                    l_infos[l_info["parent_idx"]]["is_robot"] = True
+                l_info["is_robot"] = np.array(True, dtype=np.bool_)
+                if l_info["parent_idx"] >= 0:
+                    l_infos[l_info["parent_idx"]]["is_robot"][()] = True
 
         # Add all bodies to this entity
         all_infos = list(zip(l_infos, links_j_infos, links_g_infos))
