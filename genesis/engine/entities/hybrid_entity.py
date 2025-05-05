@@ -231,7 +231,6 @@ class HybridEntity(Entity):
 
     @ti.kernel
     def _kernel_update_soft_part_mpm(self, f: ti.i32):
-
         for i_p_, i_b in ti.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
             if self._solver_soft.particles_ng[f, i_p_, i_b].active:
                 i_global = i_p_ + self._part_soft.particle_start
