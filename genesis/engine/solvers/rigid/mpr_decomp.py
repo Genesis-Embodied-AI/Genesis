@@ -249,22 +249,6 @@ class MPR:
         return v, vid
 
     @ti.func
-    def support_driver_vertex(self, direction, i_g, i_b):
-        v = ti.Vector.zero(gs.ti_float, 3)
-        vid = 0
-        geom_type = self._solver.geoms_info[i_g].type
-        if geom_type == gs.GEOM_TYPE.SPHERE:
-            v = self.support_sphere(direction, i_g, i_b)
-        elif geom_type == gs.GEOM_TYPE.BOX:
-            v, vid = self.support_box(direction, i_g, i_b)
-        elif geom_type == gs.GEOM_TYPE.TERRAIN:
-            if ti.static(self._solver.collider._has_terrain):
-                v, vid = self.support_prism(direction, i_g, i_b)
-        else:
-            v, vid = self.support_field._func_support_world(direction, i_g, i_b)
-        return v, vid
-
-    @ti.func
     def support_driver(self, direction, i_g, i_b):
         v = ti.Vector.zero(gs.ti_float, 3)
         geom_type = self._solver.geoms_info[i_g].type
