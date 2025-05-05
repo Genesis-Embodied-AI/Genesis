@@ -108,7 +108,7 @@ class Collider:
 
                 n_possible_pairs += 1
 
-        self._n_contacts_per_pair = 5
+        self._n_contacts_per_pair = 5  # CONSTANT. CANNOT NOT BE CHANGED.
         self._max_possible_pairs = n_possible_pairs
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
@@ -957,21 +957,31 @@ class Collider:
                 i_ga = self.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
+                if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+                    i_gb, i_ga = i_ga, i_gb
+
                 if (
                     self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
                     or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
                 ):
                     pass
                 elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
-                    if ti.static(self._solver._box_box_detection):
-                        if (
-                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                        ):
+                    is_specialized = False
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
+                        if ti.static(self._solver._box_box_detection):
                             self._func_box_box_contact(i_ga, i_gb, i_b)
-                        else:
-                            self._func_mpr(i_ga, i_gb, i_b)
-                    else:
+                            is_specialized = True
+                    elif (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
+                        if ti.static(self._solver._enable_multi_contact):
+                            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                            is_specialized = True
+                    if not is_specialized:
                         self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
@@ -1091,6 +1101,39 @@ class Collider:
                                 self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
+    def _func_plane_box_multi_contact(self, i_ga, i_gb, i_b):
+        ga_info = self._solver.geoms_info[i_ga]
+        gb_info = self._solver.geoms_info[i_gb]
+        ga_state = self._solver.geoms_state[i_ga, i_b]
+        gb_state = self._solver.geoms_state[i_gb, i_b]
+
+        plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
+        plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
+        normal = -plane_dir.normalized()
+
+        v1 = self._mpr.support_driver(normal, i_gb, i_b)
+        penetration = normal.dot(v1 - ga_state.pos)
+
+        if penetration > 0.0:
+            contact_pos = v1 - 0.5 * penetration * normal
+            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+
+            n_con = 1
+            contact_pos_0 = contact_pos
+            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+            for i_v in range(gb_info.vert_start, gb_info.vert_end):
+                if n_con < self._n_contacts_per_pair:
+                    pos_corner = gu.ti_transform_by_trans_quat(
+                        self._solver.verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
+                    )
+                    penetration = normal.dot(pos_corner - ga_state.pos)
+                    if penetration > 0.0:
+                        contact_pos = pos_corner - 0.5 * penetration * normal
+                        if (contact_pos - contact_pos_0).norm() > tolerance:
+                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                            n_con = n_con + 1
+
+    @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
         i_col = self.n_contacts[i_b]
 
@@ -1167,9 +1210,6 @@ class Collider:
     ## only one mpr
     @ti.func
     def _func_mpr(self, i_ga, i_gb, i_b):
-        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
-            i_gb, i_ga = i_ga, i_gb
-
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
 
