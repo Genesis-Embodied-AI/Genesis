@@ -385,8 +385,8 @@ class MPMSolver(Solver):
                         sep_geom_idx = -1
                         for i_g in range(self.sim.rigid_solver.n_geoms):
                             if self.sim.rigid_solver.geoms_info[i_g].needs_coup:
-                                sdf_normal_particle = self._coupler.mpm_rigid_normal[i, i_g, b]
-                                sdf_normal_cell = self.sim.rigid_solver.sdf.sdf_normal_world(cell_pos, i_g, b)
+                                sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
+                                sdf_normal_cell = self.sim.rigid_solver.sdf.sdf_normal_world(cell_pos, i_g, i_b)
                                 if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g
                                     sep_geom_idx = i_g
                                     break
@@ -432,7 +432,7 @@ class MPMSolver(Solver):
                                 self.particles[f, i_p, i_b].pos,
                                 self.particles[f, i_p, i_b].vel,
                                 self.particles_info[i_p].mass * weight / self._p_vol_scale,
-                                self._coupler.mpm_rigid_normal[i_p, offset[0], offset[1], offset[2], i_b],
+                                self._coupler.mpm_rigid_normal[i_p, sep_geom_idx, i_b],
                                 1.0,
                                 sep_geom_idx,
                                 i_b,

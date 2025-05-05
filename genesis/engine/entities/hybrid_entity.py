@@ -231,10 +231,9 @@ class HybridEntity(Entity):
 
     @ti.kernel
     def _kernel_update_soft_part_mpm(self, f: ti.i32):
-        for i in range(self._part_soft.n_particles):
-            if self._solver_soft.particles_ng[f, i].active:
-                i_global = i + self._part_soft.particle_start
-                i_b = 0  # batch index always the first
+        for i_p_, i_b in ti.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
+            if self._solver_soft.particles_ng[f, i_p_, i_b].active:
+                i_global = i_p_ + self._part_soft.particle_start
                 f_ = f
                 if ti.static(not self._update_soft_part_at_pre_coupling):
                     f_ = f + 1  # NOTE: this is after g2p and thus we use f + 1
@@ -251,7 +250,7 @@ class HybridEntity(Entity):
                 geom_info = self._solver_rigid.geoms_info[geom_idx]
 
                 # compute new pos in minimal coordinate using rigid-bodied dynamics
-                x_init_pos = self._part_soft_init_positions[i]
+                x_init_pos = self._part_soft_init_positions[i_p_]
                 x_init_local = gu.ti_inv_transform_by_trans_quat(
                     x_init_pos, trans_local_to_global, quat_local_to_global
                 )
@@ -276,11 +275,11 @@ class HybridEntity(Entity):
                 dt_scale = (
                     self._solver_soft.substep_dt / self._solver_rigid.dt
                 )  # NOTE: move soft part incrementally at soft solver's substeps
-                x_pos = self._solver_soft.particles[f_, i_global].pos
+                x_pos = self._solver_soft.particles[f_, i_global, i_b].pos
                 xd_vel = (new_x_pos - x_pos) / dt
                 xd_vel *= dt_scale  # assume linear scaling between the timestep difference of soft/rigid solver
 
-                vel_d = xd_vel - self._solver_soft.particles[f_, i_global].vel
+                vel_d = xd_vel - self._solver_soft.particles[f_, i_global, i_b].vel
                 vel_d *= ti.exp(-self._solver_soft.dt * self.material.damping)
 
                 # soft-to-rigid coupling
@@ -295,7 +294,7 @@ class HybridEntity(Entity):
                 self._solver_rigid.links_state[link_idx, i_b].cfrc_ext_ang += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
-                self._solver_soft.particles[f_, i_global].vel += vel_d * self.material.soft_dv_coef
+                self._solver_soft.particles[f_, i_global, i_b].vel += vel_d * self.material.soft_dv_coef
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
