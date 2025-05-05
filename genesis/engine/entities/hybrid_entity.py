@@ -234,7 +234,6 @@ class HybridEntity(Entity):
         for i_p_, i_b in ti.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
             if self._solver_soft.particles_ng[f, i_p_, i_b].active:
                 i_global = i_p_ + self._part_soft.particle_start
-                i_b = 0  # batch index always the first
                 f_ = f
                 if ti.static(not self._update_soft_part_at_pre_coupling):
                     f_ = f + 1  # NOTE: this is after g2p and thus we use f + 1
