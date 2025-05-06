@@ -26,6 +26,28 @@ from .mpm_entity import MPMEntity
 
 @ti.data_oriented
 class HybridEntity(Entity):
+    """
+    A hybrid simulation entity composed of both rigid and soft components.
+
+    This class encapsulates logic for initializing, coupling, and simulating
+    a physically hybrid object that has rigid bodies (e.g., from URDF or meshes)
+    and soft materials (e.g., MPM). The coupling allows for bi-directional force
+    and motion interaction between the rigid and soft parts during simulation.
+
+    Parameters
+    ----------
+    idx : int
+        The index of the entity within the scene.
+    scene : genesis.Scene
+        The simulation scene where the entity is added.
+    material : genesis.materials.Hybrid
+        The hybrid material that includes both rigid and soft sub-materials,
+        and defines coupling behavior.
+    morph : genesis.morphs.Morph
+        The shape/morphology of the entity. Must be either a `URDF` or `Mesh`.
+    surface : genesis.surfaces.Surface
+        The surface properties applied to the soft part of the entity.
+    """
     def __init__(
         self,
         idx,
@@ -185,30 +207,137 @@ class HybridEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def get_dofs_position(self, *args, **kwargs):
+        """
+        Get the current generalized coordinates (positions) of the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_position method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor containing the position values of the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_position(*args, **kwargs)
 
     def get_dofs_velocity(self, *args, **kwargs):
+        """
+        Get the current generalized velocities of the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_velocity method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor containing the velocity values of the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_velocity(*args, **kwargs)
 
     def get_dofs_force(self, *args, **kwargs):
+        """
+        Get the current generalized forces applied on the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_force method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor representing forces acting on the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_force(*args, **kwargs)
 
     def get_dofs_control_force(self, *args, **kwargs):
+        """
+        Get the control forces currently applied to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_control_force method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor containing the control force values for the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_control_force(*args, **kwargs)
 
     def set_dofs_velocity(self, *args, **kwargs):
+        """
+        Set the generalized velocities for the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's set_dofs_velocity method.
+        """
         self._part_rigid.set_dofs_velocity(*args, **kwargs)
 
     def set_dofs_force(self, *args, **kwargs):
+        """
+        Set the generalized forces for the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's set_dofs_force method.
+        """
         self._part_rigid.set_dofs_force(*args, **kwargs)
 
     def control_dofs_position(self, *args, **kwargs):
+        """
+        Apply position control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_position method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for position adjustment of the rigid body's DOFs.
+        """
         return self._part_rigid.control_dofs_position(*args, **kwargs)
 
     def control_dofs_velocity(self, *args, **kwargs):
+        """
+        Apply velocity control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_velocity method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for velocity adjustment of the rigid body's DOFs.
+        """
         self._part_rigid.control_dofs_velocity(*args, **kwargs)
 
     def control_dofs_force(self, *args, **kwargs):
+        """
+        Apply force control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_force method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for force adjustment of the rigid body's DOFs.
+        """
         self._part_rigid.control_dofs_force(*args, **kwargs)
 
     # ------------------------------------------------------------------------------------
@@ -216,6 +345,9 @@ class HybridEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def build(self):
+        """
+        Finalize the hybrid entity setup during simulation build.
+        """
         # can only be called here (at sim build)
         if not self.material.use_default_coupling and self._muscle_group_cache is not None:
             self._part_soft.set_muscle(
@@ -224,6 +356,14 @@ class HybridEntity(Entity):
             )
 
     def update_soft_part(self, f):
+        """
+        Update the state of the soft part of the hybrid entity based on the current simulation frame.
+
+        Parameters
+        ----------
+        f : int
+            The current simulation frame index.
+        """
         if isinstance(self._part_soft, MPMEntity):
             self._kernel_update_soft_part_mpm(f=f)
         else:
@@ -302,26 +442,32 @@ class HybridEntity(Entity):
 
     @property
     def n_dofs(self) -> int:
+        """The number of degrees of freedom of the hybrid entity (inherited from the rigid part)."""
         return self._part_rigid.n_dofs
 
     @property
     def fixed(self) -> bool:
+        """Check whether the hybrid entity is fixed in space (inherited from the rigid morph)."""
         return self._part_rigid.morph.fixed
 
     @property
     def part_rigid(self):
+        """The rigid part of the hybrid entity."""
         return self._part_rigid
 
     @property
     def part_soft(self):
+        """The soft part of the hybrid entity."""
         return self._part_soft
 
     @property
     def solver_rigid(self):
+        """The solver associated with the rigid part of the hybrid entity."""
         return self._solver_rigid
 
     @property
     def solver_soft(self):
+        """The solver associated with the soft part of the hybrid entity."""
         return self._solver_soft
 
 

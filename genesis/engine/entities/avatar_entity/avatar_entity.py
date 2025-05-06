@@ -19,6 +19,35 @@ class AvatarEntity(RigidEntity):
         parent_idx,
         invweight,
     ):
+        """
+        Add a new link (AvatarLink) to the entity.
+
+        Parameters
+        ----------
+        name : str
+            Name of the link.
+        pos : array-like
+            Position of the link in world or parent frame.
+        quat : array-like
+            Orientation (quaternion) of the link.
+        inertial_pos : array-like
+            Position of the inertial frame relative to the link.
+        inertial_quat : array-like
+            Orientation of the inertial frame.
+        inertial_i : array-like
+            Inertia tensor in the local frame.
+        inertial_mass : float
+            Mass of the link.
+        parent_idx : int
+            Index of the parent link in the kinematic tree.
+        invweight : float
+            Inverse weight for optimization or simulation purposes.
+
+        Returns
+        -------
+        link : AvatarLink
+            The created AvatarLink instance.
+        """
         link = AvatarLink(
             entity=self,
             name=name,
@@ -65,6 +94,53 @@ class AvatarEntity(RigidEntity):
         dofs_force_range,
         init_q,
     ):
+        """
+        Add a new joint (AvatarJoint) to the entity.
+
+        Parameters
+        ----------
+        name : str
+            Name of the joint.
+        n_qs : int
+            Number of configuration variables (generalized coordinates).
+        n_dofs : int
+            Number of degrees of freedom for the joint.
+        type : str
+            Type of the joint (e.g., "revolute", "prismatic").
+        pos : array-like
+            Position of the joint frame.
+        quat : array-like
+            Orientation (quaternion) of the joint frame.
+        dofs_motion_ang : array-like
+            Angular motions allowed for each DOF.
+        dofs_motion_vel : array-like
+            Velocity directions for each DOF.
+        dofs_limit : array-like
+            Limits for each DOF (e.g., min/max).
+        dofs_invweight : array-like
+            Inverse weight for each DOF.
+        dofs_stiffness : array-like
+            Stiffness values for each DOF.
+        dofs_sol_params : array-like
+            Solver parameters for each DOF.
+        dofs_damping : array-like
+            Damping values for each DOF.
+        dofs_armature : array-like
+            Armature inertia values.
+        dofs_kp : array-like
+            Proportional gains for control.
+        dofs_kv : array-like
+            Derivative gains for control.
+        dofs_force_range : array-like
+            Allowed force/torque range for each DOF.
+        init_q : array-like
+            Initial configuration (position/orientation) for the joint.
+
+        Returns
+        -------
+        joint : AvatarJoint
+            The created AvatarJoint instance.
+        """
         joint = AvatarJoint(
             entity=self,
             name=name,

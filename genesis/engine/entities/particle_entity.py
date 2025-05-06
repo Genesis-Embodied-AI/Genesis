@@ -18,6 +18,31 @@ from .base_entity import Entity
 class ParticleEntity(Entity):
     """
     Base class for particle-based entity.
+
+    Parameters
+    ----------
+    scene : Scene
+        The scene object that this entity belongs to.
+    solver : Solver
+        The physics solver responsible for simulating the entity's particles.
+    material : Material
+        The material definition, including sampling strategy and physical properties.
+    morph : Morph
+        Geometry or volumetric shape used for sampling particles (e.g., mesh, primitive).
+    surface : Surface
+        Surface material or texture information associated with the entity.
+    particle_size : float
+        Size of each particle, determining resolution and sampling density.
+    idx : int
+        Index of this entity in the simulation.
+    particle_start : int
+        Global index offset for this entity’s particles in the solver.
+    vvert_start : int, optional
+        Global index offset for vertex-based rendering, used for skinning.
+    vface_start : int, optional
+        Global index offset for visual faces, used for skinning.
+    need_skinning : bool, default=True
+        Whether to enable skinning for rendering this entity's mesh.
     """
 
     def __init__(
@@ -75,6 +100,14 @@ class ParticleEntity(Entity):
         self.active = False  # This attribute is only used in forward pass. It should NOT be used during backward pass.
 
     def init_sampler(self):
+        """
+        Initialize the particle sampling strategy based on the material's sampler field.
+
+        Raises
+        ------
+        GenesisException
+            If the specified sampler is not supported or incorrectly formatted.
+        """
         self.sampler = self._material.sampler
 
         valid = True
@@ -99,6 +132,9 @@ class ParticleEntity(Entity):
             )
 
     def init_tgt_keys(self):
+        """
+        Initialize the list of keys used for controlling entity state (position, velocity, activation).
+        """
         self._tgt_keys = ["vel", "pos", "act"]
 
     def _add_to_solver(self):
@@ -155,6 +191,14 @@ class ParticleEntity(Entity):
         )
 
     def sample(self):
+        """
+        Sample particles from the morph based on its type and the specified sampler.
+
+        Raises
+        ------
+        GenesisException
+            If no particles are sampled, or sampled particles lie outside the solver's domain.
+        """
         self.init_sampler()
 
         if isinstance(self._morph, gs.options.morphs.MeshSet):
@@ -268,6 +312,9 @@ class ParticleEntity(Entity):
         gs.logger.info(f"Sampled ~~<{self._n_particles:,}>~~ particles.")
 
     def init_tgt_vars(self):
+        """
+        Initialize target buffers used for controlling and differentiating entity state over time.
+        """
         # temp variable to store targets for next step
         self._tgt = dict()
         self._tgt_buffer = dict()
@@ -278,9 +325,20 @@ class ParticleEntity(Entity):
             self._tgt_buffer[key] = list()
 
     def init_ckpt(self):
+        """
+        Initialize checkpoint storage for simulation state.
+        """
         self._ckpt = dict()
 
     def save_ckpt(self, ckpt_name):
+        """
+        Save the current target state buffers to a checkpoint.
+
+        Parameters
+        ----------
+        ckpt_name : str
+            Name of the checkpoint to save.
+        """
         if ckpt_name not in self._ckpt:
             self._ckpt[ckpt_name] = {
                 "_tgt_buffer": dict(),
@@ -291,17 +349,44 @@ class ParticleEntity(Entity):
             self._tgt_buffer[key].clear()
 
     def load_ckpt(self, ckpt_name):
+        """
+        Restore target state buffers from a previously saved checkpoint.
+
+        Parameters
+        ----------
+        ckpt_name : str
+            Name of the checkpoint to load.
+        """
         for key in self._tgt_keys:
             self._tgt_buffer[key] = list(self._ckpt[ckpt_name]["_tgt_buffer"][key])
 
     def reset_grad(self):
+        """
+        Clear target buffers and any externally queried simulation states.
+
+        Used before backpropagation to reset gradients.
+        """
         for key in self._tgt_keys:
             self._tgt_buffer[key].clear()
         self._queried_states.clear()
 
     def set_velocity(self, vel):
         """
-        Accepted tensor shape: (3,) or (self._n_particles, 3) or (self._sim._B, self._n_particles, 3).
+        Set target particle velocity.
+
+        Parameters
+        ----------
+        vel : torch.Tensor
+            Desired velocity. Accepted shapes:
+            - (3,)
+            - (n_particles, 3)
+            - (B, n_particles, 3)
+            - (B, 3)
+
+        Raises
+        ------
+        GenesisException
+            If the shape of `vel` is not supported.
         """
 
         self._assert_active()
@@ -333,8 +418,21 @@ class ParticleEntity(Entity):
 
     def set_position(self, pos):
         """
-        Accepted tensor shape: (3,) for COM position or (self._n_particles, 3) for particle-wise position.
-        When COM position is given, the particles will be restored to the entity's initial shape.
+        Set target particle position or center-of-mass (COM) position.
+
+        Parameters
+        ----------
+        pos : torch.Tensor
+            Desired position. Accepted shapes:
+            - (3,) to reposition COM
+            - (n_particles, 3)
+            - (B, n_particles, 3)
+            - (B, 3)
+
+        Raises
+        ------
+        GenesisException
+            If the shape of `pos` is not supported.
         """
         self._assert_active()
         if self.sim.requires_grad:
@@ -366,16 +464,30 @@ class ParticleEntity(Entity):
             gs.raise_exception("Tensor shape not supported.")
 
     def get_mass(self):
+        """
+        Return the total mass of the entity.
+
+        Returns
+        -------
+        mass : float
+            The computed total mass.
+        """
         mass = np.zeros(1, dtype=gs.np_float)
         self._kernel_get_mass(mass)
         return mass[0]
 
     def deactivate(self):
+        """
+        Deactivate the entity in simulation (will not receive updates).
+        """
         gs.logger.info(f"{self.__class__.__name__} <{self._uid}> deactivated.")
         self._tgt["act"] = gs.INACTIVE
         self.active = False
 
     def activate(self):
+        """
+        Activate the entity in simulation (eligible for updates).
+        """
         gs.logger.info(f"{self.__class__.__name__} <{self._uid}> activated.")
         self._tgt["act"] = gs.ACTIVE
         self.active = True
@@ -385,6 +497,14 @@ class ParticleEntity(Entity):
             gs.raise_exception(f"{self.__class__.__name__} is inactive. Call `entity.activate()` first.")
 
     def process_input(self, in_backward=False):
+        """
+        Push position, velocity, and activation target states into the simulator.
+
+        Parameters
+        ----------
+        in_backward : bool, default=False
+            Whether the simulation is in the backward (gradient) pass.
+        """
         if in_backward:
             # use negative index because buffer length might not be full
             index = self._sim.cur_step_local - self._sim.max_steps_local
@@ -414,6 +534,14 @@ class ParticleEntity(Entity):
             self._tgt[key] = None
 
     def process_input_grad(self):
+        """
+        Process gradients of input states and propagate them backward.
+
+        Notes
+        -----
+        Automatically applies the backward hooks for position, velocity, and actuation tensors.
+        Clears the gradients in the solver to avoid double accumulation.
+        """
         _tgt_vel = self._tgt_buffer["vel"].pop()
         _tgt_pos = self._tgt_buffer["pos"].pop()
 
@@ -442,74 +570,99 @@ class ParticleEntity(Entity):
 
     @gs.assert_built
     def get_particles(self):
+        """
+        Get the current particle positions from the simulation.
+
+        Returns
+        -------
+        particles : np.ndarray
+            Particle positions with shape (B, n_particles, 3).
+        """
         particles = np.empty((self._sim._B, self.n_particles, 3), dtype=gs.np_float)
         self._kernel_get_particles(particles)
         return particles
 
     @property
     def uid(self):
+        """Unique identifier for the entity."""
         return self._uid
 
     @property
     def idx(self):
+        """Index of the entity within the simulation."""
         return self._idx
 
     @property
     def morph(self):
+        """Morphological representation used for particle sampling."""
         return self._morph
 
     @property
     def vmesh(self):
+        """Visual mesh used for skinning and rendering."""
         return self._vmesh
 
     @property
     def n_vverts(self):
+        """Number of visual mesh vertices."""
         return len(self._vverts)
 
     @property
     def n_vfaces(self):
+        """Number of visual mesh faces."""
         return len(self._vfaces)
 
     @property
     def n_particles(self):
+        """Number of particles"""
         return self._n_particles
 
     @property
     def particle_start(self):
+        """Starting index of the entity's particles in the global buffer."""
         return self._particle_start
 
     @property
     def particle_end(self):
+        """Ending index (exclusive) of the entity's particles."""
         return self._particle_start + self._n_particles
 
     @property
     def vvert_start(self):
+        """Starting index for visual mesh vertices."""
         return self._vvert_start
 
     @property
     def vvert_end(self):
+        """Ending index (exclusive) for visual mesh vertices."""
         return self._vvert_start + self.n_vverts
 
     @property
     def vface_start(self):
+        """Starting index for visual mesh faces."""
         return self._vface_start
 
     @property
     def vface_end(self):
+        """Ending index (exclusive) for visual mesh faces."""
         return self._vface_start + self.n_vfaces
 
     @property
     def particle_size(self):
+        """Diameter of individual particles."""
         return self._particle_size
 
     @property
     def init_particles(self):
+        """Initial sampled particle positions."""
         return self._particles
 
     @property
     def material(self):
+        """Material of this entity."""
         return self._material
 
     @property
     def surface(self):
+        """Surface for rendering."""
         return self._surface
