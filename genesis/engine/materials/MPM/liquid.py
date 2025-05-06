@@ -10,7 +10,7 @@ class Liquid(Base):
     """
     The liquid material class for MPM.
 
-    Paramters
+    Parameters
     ----------
     E: float, optional
         Young's modulus. Default is 1e6.

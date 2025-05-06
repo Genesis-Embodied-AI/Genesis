@@ -8,7 +8,7 @@ class Cloth(Base):
     """
     The cloth material class for PBD.
 
-    Paramters
+    Parameters
     ----------
     rho: float, optional
         The density of the cloth. Default is 4.0.

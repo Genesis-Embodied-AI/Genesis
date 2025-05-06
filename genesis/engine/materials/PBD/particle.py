@@ -14,7 +14,7 @@ class Particle(Base):
     This is useful for creating particle-based animations.
     This material will be handled by the PBD solver, but there's actually nothing to solve really. It's just hosted under the PBD system.
 
-    Paramters
+    Parameters
     ----------
     rho: float, optional
         The rest density. Default is 1000.0.

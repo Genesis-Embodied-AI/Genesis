@@ -8,7 +8,7 @@ class Liquid(Base):
     """
     The liquid material class for PBD.
 
-    Paramters
+    Parameters
     ----------
     rho: float, optional
         The rest density of the fluid in kg/m³. Default is 1000.0.

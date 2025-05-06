@@ -8,7 +8,7 @@ class Muscle(Elastic):
     """
     The muscle material class for FEM.
 
-    Paramters
+    Parameters
     ----------
     E: float, optional
         Young's modulus, which controls stiffness. Default is 1e6.

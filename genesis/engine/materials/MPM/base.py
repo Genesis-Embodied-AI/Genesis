@@ -14,7 +14,7 @@ class Base(Material):
     ----
     This class should *not* be instantiated directly.
 
-    Paramters
+    Parameters
     ----------
     E: float, optional
         Young's modulus. Default is 1e6.

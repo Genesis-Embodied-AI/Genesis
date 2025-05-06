@@ -15,7 +15,7 @@ class Elastic(Base):
     Reference for the default values of `E` and `nu`: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L201
     Elastic objects is softened by multiplying the default E by 0.3.
 
-    Paramters
+    Parameters
     ----------
     E: float, optional
         Young's modulus. Default is 1e6.

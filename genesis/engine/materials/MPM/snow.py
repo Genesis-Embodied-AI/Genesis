@@ -15,7 +15,7 @@ class Snow(ElastoPlastic):
     Snow is a special type of ElastoPlastic that get's harder when compressed.
     It doesn't support von Mises yield criterion.
 
-    Paramters
+    Parameters
     ----------
     E: float, optional
         Young's modulus. Default is 1e6.

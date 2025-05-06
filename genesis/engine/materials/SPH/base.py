@@ -12,7 +12,7 @@ class Base(Material):
     ----
     This class should *not* be instantiated directly.
 
-    Paramters
+    Parameters
     ----------
     sampler: str, optional
         Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.

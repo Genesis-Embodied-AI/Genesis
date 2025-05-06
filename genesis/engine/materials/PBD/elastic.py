@@ -8,7 +8,7 @@ class Elastic(Base):
     """
     The 3D elastic volumentric material class for PBD.
 
-    Paramters
+    Parameters
     ----------
     rho: float, optional
         The density of the elastic material (kg/m^3). Default is 1000.0.

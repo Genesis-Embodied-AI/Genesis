@@ -8,7 +8,7 @@ class Hybrid(Material):
     """
     The class for hybrid body material (soft skin actuated by inner rigid skeleton).
 
-    Paramters
+    Parameters
     ----------
     mat_rigid: gs.materials.base.Material
         The material of the rigid body.

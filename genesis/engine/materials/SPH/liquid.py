@@ -8,7 +8,7 @@ class Liquid(Base):
     """
     The liquid material class for SPH.
 
-    Paramters
+    Parameters
     ----------
     rho: float, optional
         The density (kg/m^3) the material tends to maintain in equilibrium (i.e., the “rest” or undeformed state). Default is 1000.
