@@ -211,7 +211,7 @@ def parse_glb_material(glb, material_index, surface):
             texture = glb.textures[material.emissiveTexture.index]
             if material.emissiveTexture.texCoord is not None:
                 uvs_used = material.emissiveTexture.texCoord
-            emissive_image = get_glb_image(texture.source, "RGB")
+            emissive_image = get_glb_image(glb, texture.source, "RGB")
 
         emissive_factor = None
         if material.emissiveFactor is not None:
