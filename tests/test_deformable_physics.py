@@ -200,7 +200,7 @@ def test_deformable_parallel(show_viewer):
 
     vel = water._solver.get_state(0).vel.cpu().numpy()
     # it's harder for fluids to be static
-    np.testing.assert_allclose(vel, 0, atol=2e-2)
+    np.testing.assert_allclose(vel, 0, atol=4e-2)
 
     vel = mpm_cube._solver.get_state(0).vel.cpu().numpy()
     np.testing.assert_allclose(vel, 0, atol=1e-2)

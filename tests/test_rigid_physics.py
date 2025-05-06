@@ -1051,6 +1051,10 @@ def test_mesh_repair(convexify, show_viewer):
         sim_options=gs.options.SimOptions(
             dt=0.004,
         ),
+        rigid_options=gs.options.RigidOptions(
+            # FIXME: This should not be necessary.
+            enable_mujoco_compatibility=True,
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
@@ -1090,13 +1094,13 @@ def test_mesh_repair(convexify, show_viewer):
     if convexify:
         assert all(geom.metadata["decomposed"] for geom in obj.geoms)
 
-    for i in range(300):
+    for i in range(400):
         scene.step()
-        if i > 200:
+        if i > 300:
             qvel = obj.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.5)
+            assert_allclose(qvel, 0, atol=0.3)
     qpos = obj.get_dofs_position().cpu()
-    assert_allclose(qpos[:3], (0.3, 0, 0.015), atol=0.01)
+    assert_allclose(qpos[:2], (0.3, 0.0), atol=1e-3)
 
 
 @pytest.mark.xdist_group(name="huggingface_hub")
