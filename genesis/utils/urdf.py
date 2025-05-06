@@ -238,14 +238,23 @@ def parse_urdf(morph, surface):
         elif joint.joint_type == "prismatic":
             j_info["dofs_motion_ang"] = np.zeros((1, 3))
             j_info["dofs_motion_vel"] = np.array([joint.axis])
-            j_info["dofs_limit"] = np.array(
-                [
+            if isinstance(scale, np.ndarray):
+                # NOTE: deal with URDF with scale option. e.g., scale="0.001 0.001 0.001"
+                j_info["dofs_limit"] = np.array(
                     [
                         scale * joint.limit.lower if joint.limit.lower is not None else -np.inf,
                         scale * joint.limit.upper if joint.limit.upper is not None else np.inf,
                     ]
-                ]
-            )
+                ).T
+            else:
+                j_info["dofs_limit"] = np.array(
+                    [
+                        [
+                            scale * joint.limit.lower if joint.limit.lower is not None else -np.inf,
+                            scale * joint.limit.upper if joint.limit.upper is not None else np.inf,
+                        ]
+                    ]
+                )
             j_info["dofs_stiffness"] = np.array([0.0])
 
             j_info["type"] = gs.JOINT_TYPE.PRISMATIC
