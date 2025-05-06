@@ -1247,7 +1247,7 @@ class Collider:
         n_con = gs.ti_int(0)
         axis_0 = ti.Vector.zero(gs.ti_float, 3)
         axis_1 = ti.Vector.zero(gs.ti_float, 3)
-        axis = ti.Vector.zero(gs.ti_float, 3)
+        qrot = ti.Vector.zero(gs.ti_float, 4)
 
         ga_state = self._solver.geoms_state[i_ga, i_b]
         gb_state = self._solver.geoms_state[i_gb, i_b]
@@ -1346,19 +1346,36 @@ class Collider:
                             repeated = True
 
                 if not repeated:
-                    # Apply first-order correction of small rotation perturbation.
-                    # First, unrotate the normal direction, then cancel virtual penetation over-estimation.
+                    # 1. Project the contact point on both geometries
+                    # 2. Revert the effect of small rotation
+                    # 3. Update contact point
+                    contact_point_a = (
+                        gu.ti_transform_by_quat(
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                            gu.ti_inv_quat(qrot),
+                        )
+                        + contact_pos_0
+                    )
+                    contact_point_b = (
+                        gu.ti_transform_by_quat(
+                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                            qrot,
+                        )
+                        + contact_pos_0
+                    )
+                    contact_point = 0.5 * (contact_point_a + contact_point_b)
+
+                    # First-order correction of the normal direction.
                     # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let
-                    # compute the mininal rotation that makes the corrected twisted normal as closed as
-                    # possible to the original one, up to the scale of the perturbation, then apply
-                    # first-order Taylor expension of Rodrigues' rotation formula.
+                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                    # the mininal rotation that makes the corrected twisted normal as closed as possible to the
+                    # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                    # Rodrigues' rotation formula.
                     twist_rotvec = ti.math.clamp(normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation)
                     normal += twist_rotvec.cross(normal)
-                    contact_shift = contact_pos - contact_pos_0
-                    depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
-                    penetration = ti.min(penetration - 2 * self._mc_perturbation * depth_lever, penetration_0)
 
+                    # Make sure that the penetration is still positive before adding contact point
+                    penetration = normal.dot(contact_point_b - contact_point_a)
                     if penetration > 0.0:
                         self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
                         n_con = n_con + 1
