@@ -370,6 +370,53 @@ class ParticleEntity(Entity):
             self._tgt_buffer[key].clear()
         self._queried_states.clear()
 
+    def set_position(self, pos):
+        """
+        Set target particle position or center-of-mass (COM) position.
+
+        Parameters
+        ----------
+        pos : torch.Tensor
+            Desired position. Accepted shapes:
+            - (3,) to reposition COM
+            - (n_particles, 3)
+            - (B, n_particles, 3)
+            - (B, 3)
+
+        Raises
+        ------
+        GenesisException
+            If the shape of `pos` is not supported.
+        """
+        self._assert_active()
+        if self.sim.requires_grad:
+            gs.logger.warning(
+                "Manually setting particle positions. This is not recommended and could break gradient flow. This also resets particle stress and velocities."
+            )
+
+        pos = to_gs_tensor(pos)
+
+        is_valid = False
+        if pos.ndim == 1:
+            if pos.shape == (3,):
+                pos = self._init_particles_offset + pos
+                self._tgt["pos"] = pos.unsqueeze(0).tile((self._sim._B, 1, 1))
+                is_valid = True
+        elif pos.ndim == 2:
+            if pos.shape == (self._n_particles, 3):
+                self._tgt["pos"] = pos.unsqueeze(0).tile((self._sim._B, 1, 1))
+                is_valid = True
+            elif pos.shape == (self._sim._B, 3):
+                pos = self._init_particles_offset.unsqueeze(0) + pos.unsqueeze(1)
+                self._tgt["pos"] = pos
+                is_valid = True
+        elif pos.ndim == 3:
+            if pos.shape == (self._sim._B, self._n_particles, 3):
+                self._tgt["pos"] = pos
+                is_valid = True
+        if not is_valid:
+            gs.raise_exception("Tensor shape not supported.")
+
     def set_velocity(self, vel):
         """
         Set target particle velocity.
@@ -397,70 +444,23 @@ class ParticleEntity(Entity):
 
         vel = to_gs_tensor(vel)
 
-        if len(vel.shape) == 1:
-            assert vel.shape == (3,)
-            self._tgt["vel"] = torch.tile(vel, (self._sim._B, self._n_particles, 1))
-
-        elif len(vel.shape) == 2:
+        is_valid = False
+        if vel.ndim == 1:
+            if vel.shape == (3,):
+                self._tgt["vel"] = vel.tile((self._sim._B, self._n_particles, 1))
+                is_valid = True
+        elif vel.ndim == 2:
             if vel.shape == (self._n_particles, 3):
-                self._tgt["vel"] = torch.tile(vel.unsqueeze(0), (self._sim._B, 1, 1))
+                self._tgt["vel"] = vel.unsqueeze(0).tile((self._sim._B, 1, 1))
+                is_valid = True
             elif vel.shape == (self._sim._B, 3):
-                self._tgt["vel"] = torch.tile(vel.unsqueeze(1), (1, self._n_particles, 1))
-            else:
-                gs.raise_exception("Tensor shape not supported.")
-
-        elif len(vel.shape) == 3:
-            assert vel.shape == (self._sim._B, self._n_particles, 3)
-            self._tgt["vel"] = vel
-
-        else:
-            gs.raise_exception("Tensor shape not supported.")
-
-    def set_position(self, pos):
-        """
-        Set target particle position or center-of-mass (COM) position.
-
-        Parameters
-        ----------
-        pos : torch.Tensor
-            Desired position. Accepted shapes:
-            - (3,) to reposition COM
-            - (n_particles, 3)
-            - (B, n_particles, 3)
-            - (B, 3)
-
-        Raises
-        ------
-        GenesisException
-            If the shape of `pos` is not supported.
-        """
-        self._assert_active()
-        if self.sim.requires_grad:
-            gs.logger.warning(
-                "Manually setting particle positions. This is not recommended and could break gradient flow. This also resets particle stress and velocities."
-            )
-
-        pos = to_gs_tensor(pos)
-
-        if len(pos.shape) == 1:
-            assert pos.shape == (3,)
-            self._tgt["pos"] = self._init_particles_offset + pos
-            self._tgt["pos"] = torch.tile(self._tgt["pos"].unsqueeze(0), (self._sim._B, 1, 1))
-
-        elif len(pos.shape) == 2:
-            assert self.n_particles != n_groups
-            if pos.shape == (self._n_particles, 3):
-                self._tgt["pos"] = torch.tile(pos.unsqueeze(0), (self._sim._B, 1, 1))
-            elif pos.shape == (self._sim._B, 3):
-                self._tgt["pos"] = torch.tile(pos.unsqueeze(1), (1, self._n_particles, 1))
-            else:
-                gs.raise_exception("Tensor shape not supported.")
-
-        elif len(pos.shape) == 3:
-            assert pos.shape == (self._sim._B, self._n_particles, 3)
-            self._tgt["pos"] = pos
-
-        else:
+                self._tgt["vel"] = vel.unsqueeze(1).tile((1, self._n_particles, 1))
+                is_valid = True
+        elif vel.ndim == 3:
+            if vel.shape == (self._sim._B, self._n_particles, 3):
+                self._tgt["vel"] = vel
+                is_valid = True
+        if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
     def get_mass(self):

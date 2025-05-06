@@ -116,25 +116,25 @@ class FEMEntity(Entity):
 
         pos = to_gs_tensor(pos)
 
-        if len(pos.shape) == 1:
-            assert pos.shape == (3,)
-            self._tgt["pos"] = self.init_positions_COM_offset + pos
-            self._tgt["pos"] = torch.tile(self._tgt["pos"].unsqueeze(0), (self._sim._B, 1, 1))
-
-        elif len(pos.shape) == 2:
+        is_valid = False
+        if pos.ndim == 1:
+            if pos.shape == (3,):
+                pos = self.init_positions_COM_offset + pos
+                self._tgt["pos"] = pos.unsqueeze(0).tile((self._sim._B, 1, 1))
+                is_valid = True
+        elif pos.ndim == 2:
             if pos.shape == (self.n_vertices, 3):
-                self._tgt["pos"] = torch.tile(pos.unsqueeze(0), (self._sim._B, 1, 1))
+                self._tgt["pos"] = pos.unsqueeze(0).tile((self._sim._B, 1, 1))
+                is_valid = True
             elif pos.shape == (self._sim._B, 3):
-                # Tile COM position for each vertex
-                self._tgt["pos"] = torch.tile(pos.unsqueeze(1), (1, self.n_vertices, 1))
-            else:
-                gs.raise_exception("Tensor shape not supported.")
-
-        elif len(pos.shape) == 3:
-            assert pos.shape == (self._sim._B, self.n_vertices, 3)
-            self._tgt["pos"] = pos
-
-        else:
+                pos = self.init_positions_COM_offset.unsqueeze(0) + pos.unsqueeze(1)
+                self._tgt["pos"] = pos
+                is_valid = True
+        elif pos.ndim == 3:
+            if pos.shape == (self._sim._B, self.n_vertices, 3):
+                self._tgt["pos"] = pos
+                is_valid = True
+        if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
     def set_velocity(self, vel):
@@ -160,23 +160,23 @@ class FEMEntity(Entity):
 
         vel = to_gs_tensor(vel)
 
-        if len(vel.shape) == 1:
-            assert vel.shape == (3,)
-            self._tgt["vel"] = torch.tile(vel, [self._sim._B, self.n_vertices, 1])
-
-        elif len(vel.shape) == 2:
+        is_valid = False
+        if vel.ndim == 1:
+            if vel.shape == (3,):
+                self._tgt["vel"] = vel.tile((self._sim._B, self.n_vertices, 1))
+                is_valid = True
+        elif vel.ndim == 2:
             if vel.shape == (self.n_vertices, 3):
-                self._tgt["vel"] = torch.tile(vel.unsqueeze(0), [self._sim._B, 1, 1])
+                self._tgt["vel"] = vel.unsqueeze(0).tile((self._sim._B, 1, 1))
+                is_valid = True
             elif vel.shape == (self._sim._B, 3):
-                self._tgt["vel"] = torch.tile(vel.unsqueeze(1), [1, self.n_vertices, 1])
-            else:
-                gs.raise_exception("Tensor shape not supported.")
-
-        elif len(vel.shape) == 3:
-            assert vel.shape == (self._sim._B, self.n_vertices, 3)
-            self._tgt["vel"] = vel
-
-        else:
+                self._tgt["vel"] = vel.unsqueeze(1).tile((1, self.n_vertices, 1))
+                is_valid = True
+        elif vel.ndim == 3:
+            if vel.shape == (self._sim._B, self.n_vertices, 3):
+                self._tgt["vel"] = vel
+                is_valid = True
+        if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
     def set_actuation(self, actu):
@@ -202,22 +202,21 @@ class FEMEntity(Entity):
 
         n_groups = getattr(self.material, "n_groups", 1)
 
-        if len(actu.shape) == 0:
-            assert actu.shape == ()
-            self._tgt["actu"] = torch.tile(actu, [self._sim._B, n_groups])
-
-        elif len(actu.shape) == 1:
-            if actu.shape[0] == n_groups:
-                assert self.n_elements != n_groups  # ambiguous
-            else:
-                assert actu.shape == (self.n_elements,)
-                gs.raise_exception("Cannot set per-element actuation")
-            self._tgt["actu"] = torch.tile(actu.unsqueeze(0), [self._sim._B, 1])
-
-        elif len(actu.shape) == 2:
-            assert actu.shape == (self._sim._B, n_groups)
-            self._tgt["actu"] = actu
-        else:
+        is_valid = False
+        if actu.ndim == 0:
+            self._tgt["actu"] = actu.tile((self._sim._B, n_groups))
+            is_valid = True
+        elif actu.ndim == 1:
+            if actu.shape == (n_groups,):
+                self._tgt["actu"] = actu.unsqueeze(0).tile((self._sim._B, 1))
+                is_valid = True
+            elif actu.shape == (n_elements,):
+                gs.raise_exception("Cannot set per-element actuation.")
+        elif actu.ndim == 2:
+            if actu.shape == (self._sim._B, n_groups):
+                self._tgt["actu"] = actu
+                is_valid = True
+        if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
     def set_muscle(self, muscle_group=None, muscle_direction=None):
@@ -303,11 +302,10 @@ class FEMEntity(Entity):
         Exception
             If no vertices are provided.
         """
-
         # rotate
         R = gu.quat_to_R(np.array(self.morph.quat))
         verts_COM = verts.mean(0)
-        init_positions = (R @ (verts - verts_COM).T).T + verts_COM
+        init_positions = (verts - verts_COM) @ R.T + verts_COM
 
         if not init_positions.shape[0] > 0:
             gs.raise_exception(f"Entity has zero vertices.")
