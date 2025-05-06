@@ -52,13 +52,14 @@ class MPMEntityState(RBC):
             "requires_grad": self._entity.scene.requires_grad,
             "scene": self._entity.scene,
         }
-        self._pos = gs.zeros(base_shape + (3), **args)
-        self._vel = gs.zeros(base_shape + (3), **args)
+        self._pos = gs.zeros(base_shape + (3,), **args)
+        self._vel = gs.zeros(base_shape + (3,), **args)
         self._C = gs.zeros(base_shape + (3, 3), **args)
         self._F = gs.zeros(base_shape + (3, 3), **args)
         self._Jp = gs.zeros(base_shape, **args)
 
         args["dtype"] = int
+        args["requires_grad"] = False
         self._active = gs.zeros(base_shape, **args)
 
     def serializable(self):
@@ -158,6 +159,7 @@ class FEMEntityState:
         self._vel = gs.zeros(base_shape, **args)
 
         args["dtype"] = int
+        args["requires_grad"] = False
         self._active = gs.zeros((self.entity.sim._B, self.entity.n_elements), **args)
 
     def serializable(self):

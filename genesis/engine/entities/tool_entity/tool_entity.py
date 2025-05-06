@@ -172,7 +172,7 @@ class ToolEntity(Entity):
 
     @ti.kernel
     def update_latest_pos(self, f: ti.i32):
-        self.latest_pos[0] = self.pos[f, 0], gs.ti_float
+        self.latest_pos[0] = self.pos[f, 0]
 
     @ti.kernel
     def advect(self, f: ti.i32):
@@ -308,9 +308,9 @@ class ToolEntity(Entity):
     def set_init_state(self, pos: ti.types.ndarray(), quat: ti.types.ndarray()):
         for i_b in range(self._sim._B):
             for i in ti.static(range(3)):
-                self.pos[0, i_b][i] = pos[i_b, i]
+                self.pos[0, i_b][i] = pos[i]
             for i in ti.static(range(4)):
-                self.quat[0, i_b][i] = quat[i_b, i]
+                self.quat[0, i_b][i] = quat[i]
 
     @ti.kernel
     def set_vel(self, s: ti.i32, vel: ti.types.ndarray()):
