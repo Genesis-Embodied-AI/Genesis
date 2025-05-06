@@ -281,7 +281,7 @@ class MPMEntity(ParticleEntity):
         ----------
         actu : torch.Tensor
             A tensor with shape matching the number of groups or the batch size and number of groups.
-            Supported shapes: (), (n_groups,), (B, n_groups).
+            Supported shapes: (), (n_groups,), (n_particles,), (B, n_groups), (B, n_particles), (B, self.n_particles, n_groups).
         """
         self._assert_active()
 
@@ -289,22 +289,29 @@ class MPMEntity(ParticleEntity):
 
         n_groups = getattr(self.material, "n_groups", 1)
 
-        if len(actu.shape) == 0:
-            assert actu.shape == ()
-            self._tgt["actu"] = torch.tile(actu, [self._sim._B, n_groups])
-
-        elif len(actu.shape) == 1:
-            if actu.shape[0] == n_groups:
-                assert self.n_particles != n_groups  # ambiguous
-            else:
-                assert actu.shape == (self.n_particles,)
-                gs.raise_exception("Cannot set per-particle actuation")
-            self._tgt["actu"] = actu.tile([self._sim._B, 1])
-
-        elif len(actu.shape) == 2:
-            assert actu.shape == (self._sim._B, n_groups)
-            self._tgt["actu"] = actu
-        else:
+        is_valid = False
+        if actu.ndim == 0:
+            self._tgt["actu"] = actu.tile((self._sim._B, self.n_particles, n_groups))
+            is_valid = True
+        elif actu.ndim == 1:
+            if actu.shape == (n_groups,):
+                self._tgt["actu"] = actu.reshape((1, 1, -1)).tile((self._sim._B, self.n_particles, 1))
+                is_valid = True
+            elif actu.shape == (n_particles,):
+                self._tgt["actu"] = actu.reshape((1, -1, 1)).tile((self._sim._B, 1, n_groups))
+                is_valid = True
+        elif actu.ndim == 2:
+            if actu.shape == (self._sim._B, n_groups):
+                self._tgt["actu"] = actu.unsqueeze(1).tile((1, self.n_particles, 1))
+                is_valid = True
+            if actu.shape == (self._sim._B, n_particles):
+                self._tgt["actu"] = actu.unsqueeze(2).tile((1, 1, n_groups))
+                is_valid = True
+        elif actu.ndim == 3:
+            if actu.shape == (self._sim._B, self.n_particles, n_groups):
+                self._tgt["actu"] = actu
+                is_valid = True
+        if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
     def set_muscle(self, muscle_group=None, muscle_direction=None):
