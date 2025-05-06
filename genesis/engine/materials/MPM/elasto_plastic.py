@@ -9,7 +9,7 @@ from .base import Base
 class ElastoPlastic(Base):
     """
     The elasto-plastic material class for MPM.
-    
+
     Note
     ----
     Default yield ratio comes from the SNOW material in taichi's MPM implementation: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L434

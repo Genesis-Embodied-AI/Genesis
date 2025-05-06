@@ -780,7 +780,7 @@ class FEMEntity(Entity):
 
         Notes
         -----
-        This method is primarily used during backward passes to manually reset gradients 
+        This method is primarily used during backward passes to manually reset gradients
         that may be corrupted by explicit state setting.
         """
         # TODO: not well-tested

@@ -13,7 +13,7 @@ from .particle_entity import ParticleEntity
 class MPMEntity(ParticleEntity):
     """
     MPM-based particle entity.
-    
+
     Parameters
     ----------
     scene : Scene

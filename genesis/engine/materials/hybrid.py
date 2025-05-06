@@ -31,6 +31,7 @@ class Hybrid(Material):
     func_instantiate_rigid_soft_association: callable, optional
         The function that determines the association of the rigid and the soft body. Default is None.
     """
+
     def __init__(
         self,
         mat_rigid,

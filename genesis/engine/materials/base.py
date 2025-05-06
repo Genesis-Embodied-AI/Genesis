@@ -13,6 +13,7 @@ class Material(RBC):
     ----
     This class should *not* be instantiated directly.
     """
+
     def __init__(self):
         self._uid = gs.UID()
 

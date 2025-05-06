@@ -262,7 +262,7 @@ class PBDTetEntity(ParticleEntity):
 class PBD2DEntity(PBDTetEntity):
     """
     PBD entity represented by a 2D mesh.
-    
+
     Parameters
     ----------
     scene : Scene
@@ -399,7 +399,7 @@ class PBD2DEntity(PBDTetEntity):
 class PBD3DEntity(PBDTetEntity):
     """
     PBD entity represented by a 3D mesh.
-    
+
     Parameters
     ----------
     scene : Scene
@@ -534,7 +534,7 @@ class PBD3DEntity(PBDTetEntity):
 class PBDParticleEntity(ParticleEntity):
     """
     PBD entity represented solely by particles.
-    
+
     Parameters
     ----------
     scene : Scene
@@ -622,7 +622,7 @@ class PBDParticleEntity(ParticleEntity):
 class PBDFreeParticleEntity(ParticleEntity):
     """
     PBD-based entity represented by non-physics particles
-    
+
     Parameters
     ----------
     scene : Scene

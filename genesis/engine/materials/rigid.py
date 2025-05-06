@@ -38,6 +38,7 @@ class Rigid(Material):
         gravity_compensation : float, optional
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
     """
+
     def __init__(
         self,
         rho=200.0,

@@ -48,6 +48,7 @@ class HybridEntity(Entity):
     surface : genesis.surfaces.Surface
         The surface properties applied to the soft part of the entity.
     """
+
     def __init__(
         self,
         idx,

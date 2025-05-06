@@ -39,7 +39,7 @@ class SPHEntity(ParticleEntity):
     def init_sampler(self):
         """
         Initialize the particle sampler based on the material's sampling method.
-        
+
         Raises
         ------
         GenesisException
