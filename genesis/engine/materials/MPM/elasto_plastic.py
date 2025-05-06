@@ -8,7 +8,34 @@ from .base import Base
 @ti.data_oriented
 class ElastoPlastic(Base):
     """
+    The elasto-plastic material class for MPM.
+
+    Note
+    ----
     Default yield ratio comes from the SNOW material in taichi's MPM implementation: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L434
+
+    Parameters
+    ----------
+    E: float, optional
+        Young's modulus. Default is 1e6.
+    nu: float, optional
+        Poisson ratio. Default is 0.2.
+    rho: float, optional
+        Density (kg/m^3). Default is 1000.
+    lam: float, optional
+        The first Lame's parameter. Default is None, computed by E and nu.
+    mu: float, optional
+        The second Lame's parameter. Default is None, computed by E and nu.
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+    yield_lower: float, optional
+        Lower bound for the yield clamp (ignored if using von Mises). Default is 2.5e-2.
+    yield_higher: float, optional
+        Upper bound for the yield clamp (ignored if using von Mises). Default is 4.5e-2.
+    use_von_mises: bool, optional
+        Whether to use von Mises yield criterion. Default is True.
+    von_mises_yield_stress: float, optional
+        Yield stress for von Mises criterion. Default is 10000.
     """
 
     def __init__(
@@ -62,16 +89,20 @@ class ElastoPlastic(Base):
 
     @property
     def yield_lower(self):
+        """Lower bound for the yield clamp (ignored if using von Mises)."""
         return self._yield_lower
 
     @property
     def yield_higher(self):
+        """Upper bound for the yield clamp (ignored if using von Mises)."""
         return self._yield_higher
 
     @property
     def use_von_mises(self):
+        """Whether to use von Mises yield criterion."""
         return self._use_von_mises
 
     @property
     def von_mises_yield_stress(self):
+        """Yield stress for von Mises criterion."""
         return self._von_mises_yield_stress

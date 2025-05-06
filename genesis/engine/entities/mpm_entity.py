@@ -13,6 +13,29 @@ from .particle_entity import ParticleEntity
 class MPMEntity(ParticleEntity):
     """
     MPM-based particle entity.
+
+    Parameters
+    ----------
+    scene : Scene
+        Scene object this entity belongs to.
+    solver : Solver
+        The solver responsible for simulating this entity.
+    material : Material
+        Material used to determine physical behavior (e.g., Snow, Sand).
+    morph : Morph
+        Shape description used for particle sampling.
+    surface : Surface
+        Surface or texture representation.
+    particle_size : float
+        Particle size for discretization.
+    idx : int
+        Unique index of the entity.
+    particle_start : int
+        Starting particle index.
+    vvert_start : int
+        Start index for visual vertices (unused if no skinning).
+    vface_start : int
+        Start index for visual faces (unused if no skinning).
     """
 
     def __init__(
@@ -38,6 +61,11 @@ class MPMEntity(ParticleEntity):
         )
 
     def init_tgt_keys(self):
+        """
+        Initialize target keys used for buffer-based state tracking.
+
+        Sets up the list of keys for target states, including velocity, position, activeness, and actuation.
+        """
         self._tgt_keys = ["vel", "pos", "act", "actu"]
 
     def _add_to_solver_(self):
@@ -53,6 +81,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_pos(self, f, pos):
+        """
+        Set particle positions at a specific frame.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        pos : gs.Tensor
+            A tensor of shape (n_particles, 3) representing particle positions.
+        """
         self.solver._kernel_set_particles_pos(
             f,
             self._particle_start,
@@ -61,6 +99,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_pos_grad(self, f, pos_grad):
+        """
+        Set gradients for particle positions at a specific frame.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        pos_grad : gs.Tensor
+            A tensor of shape (n_particles, 3) containing gradients for particle positions.
+        """
         self.solver._kernel_set_particles_pos_grad(
             f,
             self._particle_start,
@@ -69,6 +117,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_vel(self, f, vel):
+        """
+        Set particle velocities at a specific frame.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        vel : gs.Tensor
+            A tensor of shape (n_particles, 3) representing particle velocities.
+        """
         self.solver._kernel_set_particles_vel(
             f,
             self._particle_start,
@@ -77,6 +135,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_vel_grad(self, f, vel_grad):
+        """
+        Set gradients for particle velocities at a specific frame.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        vel_grad : gs.Tensor
+            A tensor of shape (n_particles, 3) containing gradients for particle velocities.
+        """
         self.solver._kernel_set_particles_vel_grad(
             f,
             self._particle_start,
@@ -85,6 +153,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_actu(self, f, actu):
+        """
+        Set particle actuation values at a specific frame.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        actu : gs.Tensor
+            A tensor of shape (n_particles,) or (n_groups,) or (B, n_groups) representing actuation values.
+        """
         self.solver._kernel_set_particles_actu(
             f,
             self._particle_start,
@@ -94,6 +172,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_actu_grad(self, f, actu_grad):
+        """
+        Set gradients for particle actuation values.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        actu_grad : gs.Tensor
+            A tensor containing gradients for actuation inputs.
+        """
         self.solver._kernel_set_particles_actu_grad(
             f,
             self._particle_start,
@@ -102,6 +190,14 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_muscle_group(self, muscle_group):
+        """
+        Set the muscle group index for each particle.
+
+        Parameters
+        ----------
+        muscle_group : gs.Tensor
+            A tensor of shape (n_particles,) with integer group IDs.
+        """
         self.solver._kernel_set_muscle_group(
             self._particle_start,
             self._n_particles,
@@ -109,6 +205,14 @@ class MPMEntity(ParticleEntity):
         )
 
     def get_muscle_group(self):
+        """
+        Retrieve the muscle group index for each particle.
+
+        Returns
+        -------
+        muscle_group : gs.Tensor
+            A tensor of shape (n_particles,) containing the muscle group ID of each particle.
+        """
         muscle_group = gs.zeros((self._n_particles,), dtype=int, requires_grad=False, scene=self._scene)
         self.solver._kernel_get_muscle_group(
             self._particle_start,
@@ -119,6 +223,14 @@ class MPMEntity(ParticleEntity):
         return muscle_group
 
     def set_muscle_direction(self, muscle_direction):
+        """
+        Set the muscle fiber direction for each particle.
+
+        Parameters
+        ----------
+        muscle_direction : gs.Tensor
+            A tensor of shape (n_particles, 3) with unit vectors representing muscle directions.
+        """
         self.solver._kernel_set_muscle_direction(
             self._particle_start,
             self._n_particles,
@@ -126,6 +238,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_active(self, f, active):
+        """
+        Set the activeness state of all particles.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        active : int
+            Value indicating whether particles are active (gs.ACTIVE) or inactive (gs.INACTIVE).
+        """
         self.solver._kernel_set_particles_active(
             f,
             self._particle_start,
@@ -134,6 +256,16 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_active_arr(self, f, active):
+        """
+        Set per-particle activeness using an array.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        active : gs.Tensor
+            A tensor of shape (n_particles,) with activeness values.
+        """
         self.solver._kernel_set_particles_active_arr(
             f,
             self._particle_start,
@@ -142,6 +274,15 @@ class MPMEntity(ParticleEntity):
         )
 
     def set_actuation(self, actu):
+        """
+        Set actuation values for muscle groups.
+
+        Parameters
+        ----------
+        actu : torch.Tensor
+            A tensor with shape matching the number of groups or the batch size and number of groups.
+            Supported shapes: (), (n_groups,), (B, n_groups).
+        """
         self._assert_active()
 
         actu = to_gs_tensor(actu)
@@ -167,6 +308,16 @@ class MPMEntity(ParticleEntity):
             gs.raise_exception("Tensor shape not supported.")
 
     def set_muscle(self, muscle_group=None, muscle_direction=None):
+        """
+        Set both the muscle group indices and direction vectors.
+
+        Parameters
+        ----------
+        muscle_group : torch.Tensor, optional
+            A tensor of shape (n_particles,) with group indices.
+        muscle_direction : torch.Tensor, optional
+            A tensor of shape (n_particles, 3) with unit vectors.
+        """
         self._assert_active()
 
         if muscle_group is not None:
@@ -188,6 +339,14 @@ class MPMEntity(ParticleEntity):
             self.set_muscle_direction(muscle_direction)
 
     def set_free(self, free):
+        """
+        Set particles as free or constrained.
+
+        Parameters
+        ----------
+        free : gs.Tensor
+            A tensor of shape (n_particles,) indicating if each particle is free (1) or fixed (0).
+        """
         self._assert_active()
 
         self.solver._kernel_set_free(
@@ -197,6 +356,14 @@ class MPMEntity(ParticleEntity):
         )
 
     def get_free(self):
+        """
+        Get free/fixed status for all particles.
+
+        Returns
+        -------
+        free : gs.Tensor
+            A tensor of shape (n_particles,) indicating free (1) or fixed (0) status.
+        """
         self._assert_active()
 
         free = gs.zeros((self._n_particles,), dtype=int, requires_grad=False, scene=self._scene)
@@ -210,6 +377,14 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def clear_grad(self, f: ti.i32):
+        """
+        Clear all gradients for particle properties at the given substep.
+
+        Parameters
+        ----------
+        f : int
+            The current substep index.
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             self._solver.particles.grad[f, i_global, i_b].pos = 0
@@ -224,6 +399,14 @@ class MPMEntity(ParticleEntity):
             self._solver.particles.grad[f, i_global, i_b].actu = 0
 
     def process_input(self, in_backward=False):
+        """
+        Process buffered target inputs and set them into the solver.
+
+        Parameters
+        ----------
+        in_backward : bool, optional
+            Whether to load target values from the backward pass buffer.
+        """
         if in_backward:
             # use negative index because buffer length might not be full
             index = self._sim.cur_step_local - self._sim._steps_local
@@ -258,6 +441,9 @@ class MPMEntity(ParticleEntity):
             self._tgt[key] = None
 
     def process_input_grad(self):
+        """
+        Process gradients for buffered inputs and backpropagate using custom kernels.
+        """
         _tgt_actu = self._tgt_buffer["actu"].pop()
         _tgt_vel = self._tgt_buffer["vel"].pop()
         _tgt_pos = self._tgt_buffer["pos"].pop()
@@ -286,6 +472,26 @@ class MPMEntity(ParticleEntity):
         Jp: ti.types.ndarray(),  # shape [B, n_particles]
         active: ti.types.ndarray(),  # shape [B, n_particles]
     ):
+        """
+        Extract the state of particles at the given frame.
+
+        Parameters
+        ----------
+        f : int
+            Frame index to query.
+        pos : ndarray
+            Particle positions, shape (B, n_particles, 3).
+        vel : ndarray
+            Particle velocities, shape (B, n_particles, 3).
+        C : ndarray
+            Affine matrix C, shape (B, n_particles, 3, 3).
+        F : ndarray
+            Deformation gradient F, shape (B, n_particles, 3, 3).
+        Jp : ndarray
+            Volume ratio, shape (B, n_particles).
+        active : ndarray
+            Particle activeness state, shape (B, n_particles).
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             # Copy pos, vel
@@ -302,6 +508,16 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def set_frame_add_grad_pos(self, f: ti.i32, pos_grad: ti.types.ndarray()):
+        """
+        Accumulate gradients to particle positions for a frame.
+
+        Parameters
+        ----------
+        f : int
+            Frame index.
+        pos_grad : ndarray
+            Gradient of particle positions, shape (B, n_particles, 3).
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
@@ -309,6 +525,16 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def set_frame_add_grad_vel(self, f: ti.i32, vel_grad: ti.types.ndarray()):
+        """
+        Accumulate gradients to particle velocities for a frame.
+
+        Parameters
+        ----------
+        f : int
+            Frame index.
+        vel_grad : ndarray
+            Gradient of particle velocities, shape (B, n_particles, 3).
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
@@ -316,6 +542,16 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def set_frame_add_grad_C(self, f: ti.i32, C_grad: ti.types.ndarray()):
+        """
+        Accumulate gradients to affine matrices C for a frame.
+
+        Parameters
+        ----------
+        f : int
+            Frame index.
+        C_grad : ndarray
+            Gradient of C matrices, shape (B, n_particles, 3, 3).
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
@@ -324,6 +560,16 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def set_frame_add_grad_F(self, f: ti.i32, F_grad: ti.types.ndarray()):
+        """
+        Accumulate gradients to deformation gradients F for a frame.
+
+        Parameters
+        ----------
+        f : int
+            Frame index.
+        F_grad : ndarray
+            Gradient of F matrices, shape (B, n_particles, 3, 3).
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             for j in ti.static(range(3)):
@@ -332,11 +578,29 @@ class MPMEntity(ParticleEntity):
 
     @ti.kernel
     def set_frame_add_grad_Jp(self, f: ti.i32, Jp_grad: ti.types.ndarray()):
+        """
+        Accumulate gradients to plastic volume ratios Jp for a frame.
+
+        Parameters
+        ----------
+        f : int
+            Frame index.
+        Jp_grad : ndarray
+            Gradient of Jp values, shape (B, n_particles).
+        """
         for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             self._solver.particles.grad[f, i_global, i_b].Jp += Jp_grad[i_b, i_p]
 
     def add_grad_from_state(self, state):
+        """
+        Accumulate gradients from a recorded state back into the solver.
+
+        Parameters
+        ----------
+        state : MPMEntityState
+            The state object containing gradients for physical quantities.
+        """
         if state.pos.grad is not None:
             state.pos.assert_contiguous()
             self.set_frame_add_grad_pos(self._sim.cur_substep_local, state.pos.grad)
@@ -359,6 +623,14 @@ class MPMEntity(ParticleEntity):
 
     @gs.assert_built
     def get_particles(self):
+        """
+        Retrieve current particle positions from the solver.
+
+        Returns
+        -------
+        pos : np.ndarray
+            Array of particle positions, shape (B, n_particles, 3).
+        """
         pos = np.empty((self._sim._B, self.n_particles, 3), dtype=gs.np_float)
         self._kernel_get_particles(self._sim.cur_substep_local, pos)
         return pos
@@ -372,6 +644,14 @@ class MPMEntity(ParticleEntity):
 
     @gs.assert_built
     def get_state(self):
+        """
+        Get the current physical state of the particle entity.
+
+        Returns
+        -------
+        state : MPMEntityState
+            The current state of all physical properties of the entity.
+        """
         state = MPMEntityState(self, self._sim.cur_step_global)
         self.get_frame(  # TODO: merge with self._solver.get_state?!
             f=self._sim.cur_substep_local,

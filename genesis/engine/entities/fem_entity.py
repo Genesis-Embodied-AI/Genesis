@@ -16,7 +16,32 @@ from .base_entity import Entity
 @ti.data_oriented
 class FEMEntity(Entity):
     """
-    FEM-based entity.
+    A finite element method (FEM)-based entity for deformable simulation.
+
+    This class represents a deformable object using tetrahedral elements. It interfaces with
+    the physics solver to handle state updates, checkpointing, gradients, and actuation
+    for physics-based simulation in batched environments.
+
+    Parameters
+    ----------
+    scene : Scene
+        The simulation scene that this entity belongs to.
+    solver : Solver
+        The physics solver instance used for simulation.
+    material : Material
+        The material properties defining elasticity, density, etc.
+    morph : Morph
+        The morph specification that defines the entity's shape.
+    surface : Surface
+        The surface mesh associated with the entity (for rendering or collision).
+    idx : int
+        Unique identifier of the entity within the scene.
+    v_start : int, optional
+        Starting index of this entity's vertices in the global vertex array (default is 0).
+    el_start : int, optional
+        Starting index of this entity's elements in the global element array (default is 0).
+    s_start : int, optional
+        Starting index of this entity's surface triangles in the global surface array (default is 0).
     """
 
     def __init__(self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0):
@@ -69,6 +94,23 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def set_position(self, pos):
+        """
+        Set the target position(s) for the FEM entity.
+
+        Parameters
+        ----------
+        pos : torch.Tensor or array-like
+            The desired position(s). Can be:
+            - (3,): a single COM offset vector.
+            - (n_vertices, 3): per-vertex positions for all vertices.
+            - (n_envs, 3): per-environment COM offsets.
+            - (n_envs, n_vertices, 3): full batched per-vertex positions.
+
+        Raises
+        ------
+        Exception
+            If the tensor shape is not supported.
+        """
         self._assert_active()
         gs.logger.warning("Manally setting element positions. This is not recommended and could break gradient flow.")
 
@@ -96,6 +138,23 @@ class FEMEntity(Entity):
             gs.raise_exception("Tensor shape not supported.")
 
     def set_velocity(self, vel):
+        """
+        Set the target velocity(ies) for the FEM entity.
+
+        Parameters
+        ----------
+        vel : torch.Tensor or array-like
+            The desired velocity(ies). Can be:
+            - (3,): a global velocity vector for all vertices.
+            - (n_vertices, 3): per-vertex velocities.
+            - (n_envs, 3): per-environment velocities broadcast to all vertices.
+            - (n_envs, n_vertices, 3): full batched per-vertex velocities.
+
+        Raises
+        ------
+        Exception
+            If the tensor shape is not supported.
+        """
         self._assert_active()
         gs.logger.warning("Manally setting element velocities. This is not recommended and could break gradient flow.")
 
@@ -121,6 +180,22 @@ class FEMEntity(Entity):
             gs.raise_exception("Tensor shape not supported.")
 
     def set_actuation(self, actu):
+        """
+        Set the actuation signal for the FEM entity.
+
+        Parameters
+        ----------
+        actu : torch.Tensor or array-like
+            The actuation tensor. Can be:
+            - (): a single scalar for all groups.
+            - (n_groups,): group-level actuation.
+            - (n_envs, n_groups): batch of group-level actuation signals.
+
+        Raises
+        ------
+        Exception
+            If the tensor shape is not supported or per-element actuation is attempted.
+        """
         self._assert_active()
 
         actu = to_gs_tensor(actu)
@@ -146,6 +221,23 @@ class FEMEntity(Entity):
             gs.raise_exception("Tensor shape not supported.")
 
     def set_muscle(self, muscle_group=None, muscle_direction=None):
+        """
+        Set the muscle group and/or muscle direction for the FEM entity.
+
+        Parameters
+        ----------
+        muscle_group : torch.Tensor or array-like, optional
+            Tensor of shape (n_elements,) specifying the muscle group ID for each element.
+
+        muscle_direction : torch.Tensor or array-like, optional
+            Tensor of shape (n_elements, 3) specifying unit direction vectors for muscle forces.
+
+        Raises
+        ------
+        AssertionError
+            If tensor shapes are incorrect or normalization fails.
+        """
+
         self._assert_active()
 
         if muscle_group is not None:
@@ -195,6 +287,23 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def instantiate(self, verts, elems):
+        """
+        Initialize FEM entity with given vertices and elements.
+
+        Parameters
+        ----------
+        verts : np.ndarray
+            Array of vertex positions with shape (n_vertices, 3).
+
+        elems : np.ndarray
+            Array of tetrahedral elements with shape (n_elements, 4), indexing into verts.
+
+        Raises
+        ------
+        Exception
+            If no vertices are provided.
+        """
+
         # rotate
         R = gu.quat_to_R(np.array(self.morph.quat))
         verts_COM = verts.mean(0)
@@ -209,6 +318,15 @@ class FEMEntity(Entity):
         self.elems = elems
 
     def sample(self):
+        """
+        Sample mesh and elements based on the entity's morph type.
+
+        Raises
+        ------
+        Exception
+            If the morph type is unsupported.
+        """
+
         if isinstance(self.morph, gs.options.morphs.Sphere):
             verts, elems = eu.sphere_to_elements(
                 pos=self._morph.pos,
@@ -268,9 +386,20 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def init_tgt_keys(self):
+        """
+        Initialize the keys used in target state management.
+
+        This defines which physical properties (e.g., position, velocity) will be tracked for checkpointing and buffering.
+        """
         self._tgt_keys = ["vel", "pos", "act", "actu"]
 
     def init_tgt_vars(self):
+        """
+        Initialize the target state variables and their buffers.
+
+        This sets up internal dictionaries to store per-step target values for properties like velocity, position, actuation, and activation.
+        """
+
         # temp variable to store targets for next step
         self._tgt = dict()
         self._tgt_buffer = dict()
@@ -281,9 +410,28 @@ class FEMEntity(Entity):
             self._tgt_buffer[key] = list()
 
     def init_ckpt(self):
+        """
+        Initialize the checkpoint storage dictionary.
+
+        Creates an empty container for storing simulation checkpoints.
+        """
+
         self._ckpt = dict()
 
     def save_ckpt(self, ckpt_name):
+        """
+        Save the current target state buffers to a named checkpoint.
+
+        Parameters
+        ----------
+        ckpt_name : str
+            The name to identify the checkpoint.
+
+        Notes
+        -----
+        After saving, the internal target buffers are cleared to prepare for new input.
+        """
+
         if not ckpt_name in self._ckpt:
             self._ckpt[ckpt_name] = {
                 "_tgt_buffer": dict(),
@@ -294,15 +442,43 @@ class FEMEntity(Entity):
             self._tgt_buffer[key].clear()
 
     def load_ckpt(self, ckpt_name):
+        """
+        Load a previously saved target state buffer from a named checkpoint.
+
+        Parameters
+        ----------
+        ckpt_name : str
+            The name of the checkpoint to load.
+
+        Raises
+        ------
+        KeyError
+            If the checkpoint name is not found.
+        """
+
         for key in self._tgt_keys:
             self._tgt_buffer[key] = list(self._ckpt[ckpt_name]["_tgt_buffer"][key])
 
     def reset_grad(self):
+        """
+        Clear all stored gradient-related buffers.
+
+        This resets the target buffer and clears any queried states used for gradient tracking.
+        """
+
         for key in self._tgt_keys:
             self._tgt_buffer[key].clear()
         self._queried_states.clear()
 
     def process_input(self, in_backward=False):
+        """
+        Push position, velocity, and activation target states into the simulator.
+
+        Parameters
+        ----------
+        in_backward : bool, default=False
+            Whether the simulation is in the backward (gradient) pass.
+        """
         if in_backward:
             # use negative index because buffer length might not be full
             index = self._sim.cur_step_local - self._sim.max_steps_local
@@ -337,6 +513,14 @@ class FEMEntity(Entity):
             self._tgt[key] = None
 
     def process_input_grad(self):
+        """
+        Process gradients of input states and propagate them backward.
+
+        Notes
+        -----
+        Automatically applies the backward hooks for position, velocity, and actuation tensors.
+        Clears the gradients in the solver to avoid double accumulation.
+        """
         _tgt_actu = self._tgt_buffer["actu"].pop()
         _tgt_vel = self._tgt_buffer["vel"].pop()
         _tgt_pos = self._tgt_buffer["pos"].pop()
@@ -363,6 +547,18 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def set_pos(self, f, pos):
+        """
+        Set element positions in the solver.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        pos : gs.Tensor
+            Tensor of shape (n_envs, n_vertices, 3) containing new positions.
+        """
+
         self.solver._kernel_set_elements_pos(
             f=f,
             element_v_start=self._v_start,
@@ -371,6 +567,18 @@ class FEMEntity(Entity):
         )
 
     def set_pos_grad(self, f, pos_grad):
+        """
+        Set gradient of element positions in the solver.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        pos_grad : gs.Tensor
+            Tensor of shape (n_envs, n_vertices, 3) containing gradients of positions.
+        """
+
         self.solver._kernel_set_elements_pos_grad(
             f=f,
             element_v_start=self._v_start,
@@ -379,6 +587,18 @@ class FEMEntity(Entity):
         )
 
     def set_vel(self, f, vel):
+        """
+        Set element velocities in the solver.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        vel : gs.Tensor
+            Tensor of shape (n_envs, n_vertices, 3) containing velocities.
+        """
+
         self.solver._kernel_set_elements_vel(
             f=f,
             element_v_start=self._v_start,
@@ -387,6 +607,18 @@ class FEMEntity(Entity):
         )
 
     def set_vel_grad(self, f, vel_grad):
+        """
+        Set gradient of element velocities in the solver.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        vel_grad : gs.Tensor
+            Tensor of shape (n_envs, n_vertices, 3) containing gradients of velocities.
+        """
+
         self.solver._kernel_set_elements_vel_grad(
             f=f,
             element_v_start=self._v_start,
@@ -395,6 +627,18 @@ class FEMEntity(Entity):
         )
 
     def set_actu(self, f, actu):
+        """
+        Set actuation values for elements in the solver.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        actu : gs.Tensor
+            Tensor of shape (n_envs, n_groups) specifying actuation values.
+        """
+
         self.solver._kernel_set_elements_actu(
             f=f,
             element_el_start=self._el_start,
@@ -404,6 +648,18 @@ class FEMEntity(Entity):
         )
 
     def set_actu_grad(self, f, actu_grad):
+        """
+        Set gradient of actuation values in the solver.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        actu_grad : gs.Tensor
+            Tensor of shape (n_envs, n_groups) specifying gradients of actuation.
+        """
+
         self.solver._kernel_set_elements_actu(
             f=f,
             element_el_start=self._el_start,
@@ -412,6 +668,18 @@ class FEMEntity(Entity):
         )
 
     def set_active(self, f, active):
+        """
+        Set the active status of each element.
+
+        Parameters
+        ----------
+        f : int
+            Current substep/frame index.
+
+        active : int
+            Activity flag (gs.ACTIVE or gs.INACTIVE).
+        """
+
         self.solver._kernel_set_active(
             f=f,
             element_el_start=self._el_start,
@@ -420,6 +688,15 @@ class FEMEntity(Entity):
         )
 
     def set_muscle_group(self, muscle_group):
+        """
+        Set muscle group index for each element.
+
+        Parameters
+        ----------
+        muscle_group : torch.Tensor
+            Tensor of shape (n_elements,) specifying muscle group IDs.
+        """
+
         self.solver._kernel_set_muscle_group(
             element_el_start=self._el_start,
             n_elements=self.n_elements,
@@ -427,6 +704,15 @@ class FEMEntity(Entity):
         )
 
     def set_muscle_direction(self, muscle_direction):
+        """
+        Set muscle force direction for each element.
+
+        Parameters
+        ----------
+        muscle_direction : torch.Tensor
+            Tensor of shape (n_elements, 3) with unit direction vectors.
+        """
+
         self.solver._kernel_set_muscle_direction(
             element_el_start=self._el_start,
             n_elements=self.n_elements,
@@ -434,6 +720,15 @@ class FEMEntity(Entity):
         )
 
     def get_el2v(self):
+        """
+        Retrieve the element-to-vertex mapping.
+
+        Returns
+        -------
+        el2v : gs.Tensor
+            Tensor of shape (n_elements, 4) mapping each element to its vertex indices.
+        """
+
         el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)
         self.solver._kernel_get_el2v(
             element_el_start=self._el_start,
@@ -445,6 +740,24 @@ class FEMEntity(Entity):
 
     @ti.kernel
     def get_frame(self, f: ti.i32, pos: ti.types.ndarray(), vel: ti.types.ndarray(), active: ti.types.ndarray()):
+        """
+        Fetch the position, velocity, and activation state of the FEM entity at a specific substep.
+
+        Parameters
+        ----------
+        f : int
+            The substep/frame index to fetch the state from.
+
+        pos : np.ndarray
+            Output array of shape (n_envs, n_vertices, 3) to store positions.
+
+        vel : np.ndarray
+            Output array of shape (n_envs, n_vertices, 3) to store velocities.
+
+        active : np.ndarray
+            Output array of shape (n_envs, n_elements) to store active flags.
+        """
+
         for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
             for j in ti.static(range(3)):
@@ -457,6 +770,19 @@ class FEMEntity(Entity):
 
     @ti.kernel
     def clear_grad(self, f: ti.i32):
+        """
+        Zero out the gradients of position, velocity, and actuation for the current substep.
+
+        Parameters
+        ----------
+        f : int
+            The substep/frame index for which to clear gradients.
+
+        Notes
+        -----
+        This method is primarily used during backward passes to manually reset gradients
+        that may be corrupted by explicit state setting.
+        """
         # TODO: not well-tested
         for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
@@ -473,49 +799,61 @@ class FEMEntity(Entity):
 
     @property
     def n_vertices(self):
+        """Number of vertices in the FEM entity."""
         return len(self.init_positions)
 
     @property
     def n_elements(self):
+        """Number of tetrahedral elements in the FEM entity."""
         return len(self.elems)
 
     @property
     def n_surfaces(self):
+        """Number of surface triangles extracted from the FEM mesh."""
         return self._n_surfaces
 
     @property
     def v_start(self):
+        """Global vertex index offset for this entity."""
         return self._v_start
 
     @property
     def el_start(self):
+        """Global element index offset for this entity."""
         return self._el_start
 
     @property
     def s_start(self):
+        """Global surface triangle index offset for this entity."""
         return self._s_start
 
     @property
     def morph(self):
+        """Morph specification used to generate the FEM mesh."""
         return self._morph
 
     @property
     def material(self):
+        """Material properties of the FEM entity."""
         return self._material
 
     @property
     def surface(self):
+        """Surface for rendering."""
         return self._surface
 
     @property
     def n_surface_vertices(self):
+        """Number of unique vertices involved in surface triangles."""
         return self._n_surface_vertices
 
     @property
     def surface_triangles(self):
+        """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
 
     @property
     def tet_cfg(self):
+        """Configuration of tetrahedralization."""
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         return tet_cfg

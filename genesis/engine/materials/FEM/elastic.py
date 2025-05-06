@@ -7,6 +7,24 @@ from .base import Base
 
 @ti.data_oriented
 class Elastic(Base):
+    """
+    The elastic material class for FEM.
+
+    Parameters
+    ----------
+    E: float, optional
+        Young's modulus, which controls stiffness. Default is 1e6.
+    nu: float, optional
+        Poisson ratio, describing the material's volume change under stress. Default is 0.2.
+    rho: float, optional
+        Material density (kg/m^3). Default is 1000.
+    model: str, optional
+        Constitutive model to use for stress computation. Options are:
+        - 'linear': Linear elasticity model
+        - 'stable_neohooken': A numerically stable Neo-Hookean model
+        Default is 'linear'.
+    """
+
     def __init__(
         self,
         E=1e6,  # Young's modulus
@@ -46,4 +64,5 @@ class Elastic(Base):
 
     @property
     def model(self):
+        """The name of the constitutive model ('linear' or 'stable_neohooken')."""
         return self._model

@@ -8,8 +8,31 @@ from .elasto_plastic import ElastoPlastic
 @ti.data_oriented
 class Snow(ElastoPlastic):
     """
+    The snow material class for MPM.
+
+    Note
+    ----
     Snow is a special type of ElastoPlastic that get's harder when compressed.
     It doesn't support von Mises yield criterion.
+
+    Parameters
+    ----------
+    E: float, optional
+        Young's modulus. Default is 1e6.
+    nu: float, optional
+        Poisson ratio. Default is 0.2.
+    rho: float, optional
+        Density (kg/m^3). Default is 1000.
+    lam: float, optional
+        The first Lame's parameter. Default is None, computed by E and nu.
+    mu: float, optional
+        The second Lame's parameter. Default is None, computed by E and nu.
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'random'.
+    yield_lower: float, optional
+        Lower bound of yield condition. Default is 2.5e-2.
+    yield_higher: float, optional
+        Upper bound of yield condition. Default is 4.5e-3.
     """
 
     def __init__(

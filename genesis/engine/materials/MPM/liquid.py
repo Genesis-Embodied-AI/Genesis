@@ -7,6 +7,27 @@ from .base import Base
 
 @ti.data_oriented
 class Liquid(Base):
+    """
+    The liquid material class for MPM.
+
+    Parameters
+    ----------
+    E: float, optional
+        Young's modulus. Default is 1e6.
+    nu: float, optional
+        Poisson ratio. Default is 0.2.
+    rho: float, optional
+        Density (kg/m^3). Default is 1000.
+    lam: float, optional
+        The first Lame's parameter. Default is None, computed by E and nu.
+    mu: float, optional
+        The second Lame's parameter. Default is None, computed by E and nu.
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+    viscous: str, bool
+        Whether the liquid is viscous. Simply set mu to zero when non-viscuous. Default is False.
+    """
+
     def __init__(
         self,
         E=1e6,
