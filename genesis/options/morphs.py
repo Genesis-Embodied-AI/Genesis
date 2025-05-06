@@ -622,8 +622,23 @@ class MJCF(FileMorph):
         if not self.file.endswith(".xml"):
             gs.raise_exception(f"Expected `.xml` extension for MJCF file: {self.file}")
 
-        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
-            gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+        # What you want to do with scaling is kinda "zoom" the world from the perspective of the entity, i.e. scale the
+        # geometric properties of an entity wrt its root pose. In the general case, ie for a 3D vector scale, (x, y, z)
+        # dimensions are scaled independently along (x, y, z) world axes respectively. With this definition, it is an
+        # intrinsic uniquely-defined geometric property of the entity, and as such, it does not depend on its current
+        # configuration (aka. position vector).
+        # For rigid non-articulated objects, this is all good and dimension-wise scaling makes sense, but it is no
+        # longer the case for poly-articulated robot. This is due to the fact that the position of each geometry in
+        # world frame depends on their parent link poses, which themselves depends on the current configuration of the
+        # entity. This is problematic as it means that the effect of scaling would depends on the initial configuration
+        # of the robot rather then being a intrinsic uniquely-defined geometric property. There is no another way to
+        # avoid this inconsistency than limiting scaling to a scalar factor. In this case, scaling between anisotropic
+        # and does not depends on the orientation of each geometry anymore, and therefore is independent of the
+        # configuration of the entity, which is precisely the property that we want to enforce.
+        if isinstance(self.scale, np.ndarray):
+            if self.scale.std() > gs.EPS:
+                gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+            self.scale = self.scale.mean()
 
 
 class URDF(FileMorph):
@@ -702,8 +717,11 @@ class URDF(FileMorph):
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Expected `.urdf` extension for URDF file: {self.file}")
 
+        # Anisotropic scaling is ill-defined for poly-articulated robots. See related MJCF about this for details.
         if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
-            gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
+            if self.scale.std() > gs.EPS:
+                gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+            self.scale = self.scale.mean()
 
 
 class Drone(FileMorph):
