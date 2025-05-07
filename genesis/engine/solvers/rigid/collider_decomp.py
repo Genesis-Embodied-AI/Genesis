@@ -1047,6 +1047,26 @@ class Collider:
                                     )
 
                                     if is_col:
+                                        # 1. Project the contact point on both geometries
+                                        # 2. Revert the effect of small rotation
+                                        # 3. Update contact point
+                                        contact_point_a = (
+                                            gu.ti_transform_by_quat(
+                                                (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                                                gu.ti_inv_quat(qrot),
+                                            )
+                                            + contact_pos_0
+                                        )
+                                        contact_point_b = (
+                                            gu.ti_transform_by_quat(
+                                                (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                                                qrot,
+                                            )
+                                            + contact_pos_0
+                                        )
+                                        contact_point = 0.5 * (contact_point_a + contact_point_b)
+
+                                        # Discard contact point is repeated
                                         repeated = False
                                         for i_con in range(n_con):
                                             if not repeated:
@@ -1056,25 +1076,6 @@ class Collider:
                                                     repeated = True
 
                                         if not repeated:
-                                            # 1. Project the contact point on both geometries
-                                            # 2. Revert the effect of small rotation
-                                            # 3. Update contact point
-                                            contact_point_a = (
-                                                gu.ti_transform_by_quat(
-                                                    (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                                                    gu.ti_inv_quat(qrot),
-                                                )
-                                                + contact_pos_0
-                                            )
-                                            contact_point_b = (
-                                                gu.ti_transform_by_quat(
-                                                    (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                                                    qrot,
-                                                )
-                                                + contact_pos_0
-                                            )
-                                            contact_point = 0.5 * (contact_point_a + contact_point_b)
-
                                             # First-order correction of the normal direction
                                             twist_rotvec = ti.math.clamp(
                                                 normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
@@ -1209,7 +1210,6 @@ class Collider:
 
         return axis_0, axis_1
 
-    ## only one mpr
     @ti.func
     def _func_mpr(self, i_ga, i_gb, i_b):
         i_la = self._solver.geoms_info[i_ga].link_idx
@@ -1295,6 +1295,18 @@ class Collider:
                             i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].normal
                         )
 
+                        # Try without warm-start if no contact was detected using it.
+                        # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
+                        # contact while they actually are. This helps to improve contact persistence without increasing
+                        # much the overall computational cost since the fallback should not be triggered very often.
+                        is_mpr_guess_direction_available = (
+                            ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
+                        ).any()
+                        if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
+                            is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
+                                i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
+                            )
+
                         # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
                         # initial penetration is already quite large, because the contact information provided by MPR
                         # may be unreliable in such a case.
@@ -1303,9 +1315,6 @@ class Collider:
                         # necessary. This would probably not be the case anymore if it was possible to rely on
                         # specialized SDF implementation for convex-convex collision detection in the first place.
                         if ti.static(not self._solver._enable_mujoco_compatibility):
-                            is_mpr_guess_direction_available = (
-                                ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
-                            ).any()
                             if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
                                 # Note that SDF may detect different collision points depending on geometry ordering.
                                 # Because of this, it is necessary to run it twice and take the contact information
@@ -1337,6 +1346,26 @@ class Collider:
                     self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
             elif multi_contact and is_col_0 > 0 and is_col > 0:
+                # 1. Project the contact point on both geometries
+                # 2. Revert the effect of small rotation
+                # 3. Update contact point
+                contact_point_a = (
+                    gu.ti_transform_by_quat(
+                        (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                        gu.ti_inv_quat(qrot),
+                    )
+                    + contact_pos_0
+                )
+                contact_point_b = (
+                    gu.ti_transform_by_quat(
+                        (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                        qrot,
+                    )
+                    + contact_pos_0
+                )
+                contact_point = 0.5 * (contact_point_a + contact_point_b)
+
+                # Discard contact point is repeated
                 repeated = False
                 for i_con in range(n_con):
                     if not repeated:
@@ -1346,25 +1375,6 @@ class Collider:
                             repeated = True
 
                 if not repeated:
-                    # 1. Project the contact point on both geometries
-                    # 2. Revert the effect of small rotation
-                    # 3. Update contact point
-                    contact_point_a = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.ti_inv_quat(qrot),
-                        )
-                        + contact_pos_0
-                    )
-                    contact_point_b = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
-                        + contact_pos_0
-                    )
-                    contact_point = 0.5 * (contact_point_a + contact_point_b)
-
                     # First-order correction of the normal direction.
                     # The way the contact normal gets twisted by applying perturbation of geometry poses is
                     # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
@@ -1374,9 +1384,13 @@ class Collider:
                     twist_rotvec = ti.math.clamp(normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation)
                     normal += twist_rotvec.cross(normal)
 
-                    # Make sure that the penetration is still positive before adding contact point
+                    # Make sure that the penetration is still positive before adding contact point.
+                    # Note that adding some negative tolerance improves physical stability by encouraging persistent
+                    # contact points and thefore more continuous contact forces, without changing the mean-field
+                    # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
-                    if penetration > 0.0:
+                    if penetration > -tolerance:
+                        penetration = ti.max(penetration, 0.0)
                         self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
                         n_con = n_con + 1
 
