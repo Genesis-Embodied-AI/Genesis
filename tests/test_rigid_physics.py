@@ -215,7 +215,7 @@ def chain_capsule_hinge_capsule(asset_tmp_path):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_box_plan_dynamics(gs_sim, mj_sim, tol):
+def test_box_plane_dynamics(gs_sim, mj_sim, tol):
     cube_pos = np.array([0.0, 0.0, 0.6])
     cube_quat = np.random.rand(4)
     cube_quat /= np.linalg.norm(cube_quat)
@@ -1051,10 +1051,6 @@ def test_mesh_repair(convexify, show_viewer):
         sim_options=gs.options.SimOptions(
             dt=0.004,
         ),
-        rigid_options=gs.options.RigidOptions(
-            # FIXME: This should not be necessary.
-            enable_mujoco_compatibility=True,
-        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
@@ -1094,11 +1090,12 @@ def test_mesh_repair(convexify, show_viewer):
     if convexify:
         assert all(geom.metadata["decomposed"] for geom in obj.geoms)
 
+    # MPR collision detection is significantly less reliable than SDF in terms of penetration depth estimation.
     tol_pos = 0.05 if convexify else 1e-6
-    tol_rot = 1.8 if convexify else 1e-4
-    for i in range(5000):
+    tol_rot = 1.3 if convexify else 1e-4
+    for i in range(400):
         scene.step()
-        if i > 400:
+        if i > 300:
             qvel = obj.get_dofs_velocity().cpu()
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
@@ -1275,11 +1272,11 @@ def test_collision_plane_convex(show_viewer, tol):
 
         scene.build()
 
-        for i in range(900):
+        for i in range(500):
             scene.step()
-            if i > 800:
+            if i > 400:
                 qvel = asset.get_dofs_velocity()
-                assert_allclose(qvel, 0, atol=0.4)
+                assert_allclose(qvel, 0, atol=0.05)
 
 
 # @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")

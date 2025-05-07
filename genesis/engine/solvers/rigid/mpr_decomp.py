@@ -425,29 +425,18 @@ class MPR:
         v4v0 = v.cross(self.simplex_support[i_ga, i_gb, 0, i_b].v)
         dot = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(v4v0)
 
+        i_s = gs.ti_int(0)
         if dot > 0:
             dot = self.simplex_support[i_ga, i_gb, 2, i_b].v.dot(v4v0)
-            if dot > 0:
-                self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
-                self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
-                self.simplex_support[i_ga, i_gb, 1, i_b].v = v
-
-            else:
-                self.simplex_support[i_ga, i_gb, 3, i_b].v1 = v1
-                self.simplex_support[i_ga, i_gb, 3, i_b].v2 = v2
-                self.simplex_support[i_ga, i_gb, 3, i_b].v = v
+            i_s = 1 if dot > 0 else 3
 
         else:
             dot = self.simplex_support[i_ga, i_gb, 3, i_b].v.dot(v4v0)
-            if dot > 0:
-                self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
-                self.simplex_support[i_ga, i_gb, 2, i_b].v2 = v2
-                self.simplex_support[i_ga, i_gb, 2, i_b].v = v
+            i_s = 2 if dot > 0 else 1
 
-            else:
-                self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
-                self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
-                self.simplex_support[i_ga, i_gb, 1, i_b].v = v
+        self.simplex_support[i_ga, i_gb, i_s, i_b].v1 = v1
+        self.simplex_support[i_ga, i_gb, i_s, i_b].v2 = v2
+        self.simplex_support[i_ga, i_gb, i_s, i_b].v = v
 
     @ti.func
     def mpr_discover_portal(self, i_ga, i_gb, i_b, normal_ws):
