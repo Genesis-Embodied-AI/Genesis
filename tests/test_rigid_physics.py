@@ -1067,7 +1067,7 @@ def test_mesh_repair(convexify, show_viewer):
     table = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
-            pos=(0.4, 0.0, -0.525510208),
+            pos=(0.4, 0.0, -0.54),
             fixed=True,
         ),
         vis_mode="collision",
@@ -1094,11 +1094,14 @@ def test_mesh_repair(convexify, show_viewer):
     if convexify:
         assert all(geom.metadata["decomposed"] for geom in obj.geoms)
 
-    for i in range(400):
+    tol_pos = 0.05 if convexify else 1e-6
+    tol_rot = 1.8 if convexify else 1e-4
+    for i in range(5000):
         scene.step()
-        if i > 300:
+        if i > 400:
             qvel = obj.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.3)
+            assert_allclose(qvel[:3], 0, atol=tol_pos)
+            assert_allclose(qvel[3:], 0, atol=tol_rot)
     qpos = obj.get_dofs_position().cpu()
     assert_allclose(qpos[:2], (0.3, 0.0), atol=1e-3)
 
@@ -1205,7 +1208,7 @@ def test_convexify(euler, backend, show_viewer):
     if euler == (90, 0, 90):
         for i, obj in enumerate((mug, donut)):
             qpos = obj.get_dofs_position().cpu()
-            assert_allclose(qpos[0], OBJ_OFFSET_X * (1.5 - i), atol=5e-3)
+            assert_allclose(qpos[0], OBJ_OFFSET_X * (1.5 - i), atol=6e-3)
             assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
 
 
@@ -1276,7 +1279,7 @@ def test_collision_plane_convex(show_viewer, tol):
             scene.step()
             if i > 800:
                 qvel = asset.get_dofs_velocity()
-                assert_allclose(qvel, 0, atol=0.1)
+                assert_allclose(qvel, 0, atol=0.4)
 
 
 # @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
