@@ -1051,6 +1051,10 @@ def test_mesh_repair(convexify, show_viewer):
         sim_options=gs.options.SimOptions(
             dt=0.004,
         ),
+        rigid_options=gs.options.RigidOptions(
+            # FIXME: This should not be necessary.
+            enable_mujoco_compatibility=True,
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
@@ -1090,14 +1094,13 @@ def test_mesh_repair(convexify, show_viewer):
     if convexify:
         assert all(geom.metadata["decomposed"] for geom in obj.geoms)
 
-    for i in range(300):
+    for i in range(400):
         scene.step()
-        if i > 200:
+        if i > 300:
             qvel = obj.get_dofs_velocity().cpu()
-            # The spoon keeps oscillating indefinely if convexify is enabled
-            assert_allclose(qvel, 0, atol=1.3)
+            assert_allclose(qvel, 0, atol=0.3)
     qpos = obj.get_dofs_position().cpu()
-    assert_allclose(qpos[:3], (0.3, 0, 0.015), atol=0.01)
+    assert_allclose(qpos[:2], (0.3, 0.0), atol=1e-3)
 
 
 @pytest.mark.xdist_group(name="huggingface_hub")
@@ -1221,6 +1224,59 @@ def test_collision_edge_cases(gs_sim, mode):
     assert_allclose(qvel, 0, atol=1e-2)
     qpos = gs_sim.rigid_solver.get_dofs_position().cpu()
     assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
+
+
+@pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_collision_plane_convex(show_viewer, tol):
+    for morph in (
+        gs.morphs.Plane(),
+        gs.morphs.Box(
+            pos=(0.5, 0.0, -0.5),
+            size=(1.0, 1.0, 1.0),
+            fixed=True,
+        ),
+    ):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=0.001,
+            ),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(1.0, -0.5, 0.5),
+                camera_lookat=(0.5, 0.0, 0.0),
+                camera_fov=30,
+                max_FPS=60,
+            ),
+            show_viewer=show_viewer,
+            show_FPS=False,
+        )
+
+        scene.add_entity(morph)
+
+        asset_path = snapshot_download(
+            repo_type="dataset",
+            repo_id="Genesis-Intelligence/assets",
+            allow_patterns="image_0000_segmented.glb",
+            max_workers=1,
+        )
+        asset = scene.add_entity(
+            gs.morphs.Mesh(
+                file=f"{asset_path}/image_0000_segmented.glb",
+                scale=0.03196910891804585,
+                pos=(0.45184245, 0.05020455, 0.02),
+                quat=(0.51982231, 0.44427745, 0.49720965, 0.53402704),
+            ),
+            vis_mode="collision",
+            visualize_contact=True,
+        )
+
+        scene.build()
+
+        for i in range(900):
+            scene.step()
+            if i > 800:
+                qvel = asset.get_dofs_velocity()
+                assert_allclose(qvel, 0, atol=0.1)
 
 
 # @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")

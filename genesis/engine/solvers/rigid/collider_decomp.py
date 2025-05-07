@@ -36,7 +36,7 @@ class Collider:
         self._mpr = MPR(rigid_solver)
 
         # multi contact perturbation and tolerance
-        self._mc_perturbation = 1e-3
+        self._mc_perturbation = 1e-2
         self._mc_tolerance = 1e-2
         self._mpr_to_sdf_overlap_ratio = 0.5
 
@@ -108,7 +108,7 @@ class Collider:
 
                 n_possible_pairs += 1
 
-        self._n_contacts_per_pair = 5
+        self._n_contacts_per_pair = 5  # CONSTANT. CANNOT NOT BE CHANGED.
         self._max_possible_pairs = n_possible_pairs
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
@@ -289,7 +289,7 @@ class Collider:
         )
 
     @ti.func
-    def _func_geom_overlap_ratio(self, i_ga, i_gb, i_b):
+    def _func_convex_geoms_overlap_ratio(self, i_ga, i_gb, i_b):
         # Check if one geom 'i_ga' is likely fully (1) or partially (2) enclosed in another geom 'i_gb'.
         # 1. 'Broad phase': Check if bounding box 'i_ga' is fully enclosed into the other bounding box
         # 2. 'Mid phase': Check if rotated bounding box 'i_ga' is fully enclosed into the other bounding box
@@ -321,7 +321,7 @@ class Collider:
         # Narrow phase 3
         dists = ti.Vector.zero(gs.ti_float, 8)
         if is_enclosed_dims.all():
-            # Check whether the bound box 'i_ga' is fully enclosed
+            # Check whether the bounding box 'i_ga' is fully enclosed in true geometry
             is_enclosed = True
             for i_corner in range(8):
                 corner_pos = gu.ti_transform_by_trans_quat(
@@ -393,15 +393,17 @@ class Collider:
         contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
         for i_v in range(ga_info.vert_start, ga_info.vert_end):
-            p = gu.ti_transform_by_trans_quat(self._solver.verts_info[i_v].init_pos, ga_pos, ga_quat)
-            if self._func_point_in_geom_aabb(p, i_gb, i_b):
-                new_penetration = -self._solver.sdf.sdf_world(p, i_gb, i_b)
-
+            vertex_pos = gu.ti_transform_by_trans_quat(self._solver.verts_info[i_v].init_pos, ga_pos, ga_quat)
+            if self._func_point_in_geom_aabb(vertex_pos, i_gb, i_b):
+                new_penetration = -self._solver.sdf.sdf_world(vertex_pos, i_gb, i_b)
                 if new_penetration > penetration:
                     is_col = True
-                    normal = self._solver.sdf.sdf_normal_world(p, i_gb, i_b)
-                    contact_pos = p
+                    contact_pos = vertex_pos
                     penetration = new_penetration
+
+        # Compute contact normal only once, and only in case of contact
+        if is_col:
+            normal = self._solver.sdf.sdf_normal_world(contact_pos, i_gb, i_b)
 
         # The contact point must be offsetted by half the penetration depth
         contact_pos += 0.5 * penetration * normal
@@ -957,21 +959,31 @@ class Collider:
                 i_ga = self.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
+                if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+                    i_gb, i_ga = i_ga, i_gb
+
                 if (
                     self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
                     or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
                 ):
                     pass
                 elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
-                    if ti.static(self._solver._box_box_detection):
-                        if (
-                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                        ):
+                    is_specialized = False
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
+                        if ti.static(self._solver._box_box_detection):
                             self._func_box_box_contact(i_ga, i_gb, i_b)
-                        else:
-                            self._func_mpr(i_ga, i_gb, i_b)
-                    else:
+                            is_specialized = True
+                    elif (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
+                        if ti.static(self._solver._enable_multi_contact):
+                            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                            is_specialized = True
+                    if not is_specialized:
                         self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
@@ -1010,23 +1022,17 @@ class Collider:
                                 i_ga, i_gb, i_b
                             )
 
-                            penetrated = normal_0.dot(self.contact_cache[i_ga, i_gb, i_b].normal) >= 0
-                            if (not is_col_0) or penetrated:
-                                self.contact_cache[i_ga, i_gb, i_b].penetration = penetration_0
-                                self.contact_cache[i_ga, i_gb, i_b].normal = normal_0
-
                             if is_col_0:
                                 self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
 
                             if is_col_0 and ti.static(self._solver._enable_multi_contact):
-                                # perturb geom_a around two orthogonal axes to find multiple contacts
-                                axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal_0, i_b)
-
                                 ga_state = self._solver.geoms_state[i_ga, i_b]
                                 gb_state = self._solver.geoms_state[i_gb, i_b]
-
                                 ga_pos, ga_quat = ga_state.pos, ga_state.quat
                                 gb_pos, gb_quat = gb_state.pos, gb_state.quat
+
+                                # Perturb geom_a around two orthogonal axes to find multiple contacts
+                                axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal_0, i_b)
 
                                 n_con = 1
                                 for i_rot in range(1, 5):
@@ -1040,12 +1046,6 @@ class Collider:
                                         i_ga, i_gb, i_b
                                     )
 
-                                    if penetrated:
-                                        normal = self.contact_cache[i_ga, i_gb, i_b].normal
-                                        penetration = self.contact_cache[i_ga, i_gb, i_b].penetration
-                                    else:
-                                        penetration = penetration_0
-
                                     if is_col:
                                         repeated = False
                                         for i_con in range(n_con):
@@ -1056,21 +1056,33 @@ class Collider:
                                                     repeated = True
 
                                         if not repeated:
-                                            # Apply first-order correction of small rotation perturbation.
-                                            # See MPR comment for details about this procedure.
-                                            normal_proj = (normal - axis.dot(normal) * axis).normalized()
-                                            twist_angle = ti.math.clamp(
-                                                normal_proj.cross(normal_0).dot(axis) / normal_proj.dot(normal_0),
-                                                -self._mc_perturbation,
-                                                self._mc_perturbation,
+                                            # 1. Project the contact point on both geometries
+                                            # 2. Revert the effect of small rotation
+                                            # 3. Update contact point
+                                            contact_point_a = (
+                                                gu.ti_transform_by_quat(
+                                                    (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                                                    gu.ti_inv_quat(qrot),
+                                                )
+                                                + contact_pos_0
                                             )
-                                            normal += twist_angle * axis.cross(normal)
-                                            contact_shift = contact_pos - contact_pos_0
-                                            depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
-                                            penetration = ti.min(
-                                                penetration - 2 * self._mc_perturbation * depth_lever, penetration_0
+                                            contact_point_b = (
+                                                gu.ti_transform_by_quat(
+                                                    (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                                                    qrot,
+                                                )
+                                                + contact_pos_0
                                             )
+                                            contact_point = 0.5 * (contact_point_a + contact_point_b)
 
+                                            # First-order correction of the normal direction
+                                            twist_rotvec = ti.math.clamp(
+                                                normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
+                                            )
+                                            normal += twist_rotvec.cross(normal)
+
+                                            # Make sure that the penetration is still positive
+                                            penetration = normal.dot(contact_point_b - contact_point_a)
                                             if penetration > 0.0:
                                                 self._func_add_contact(
                                                     i_ga, i_gb, normal, contact_pos, penetration, i_b
@@ -1091,67 +1103,37 @@ class Collider:
                                 self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
-    def _func_plane_contact(self, i_ga, i_gb, multi_contact, i_b):
+    def _func_plane_box_multi_contact(self, i_ga, i_gb, i_b):
         ga_info = self._solver.geoms_info[i_ga]
         gb_info = self._solver.geoms_info[i_gb]
         ga_state = self._solver.geoms_state[i_ga, i_b]
         gb_state = self._solver.geoms_state[i_gb, i_b]
+
         plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
-        plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat).normalized()
+        plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
+        normal = -plane_dir.normalized()
 
-        # For multi-contact, falling back to vertex-based support computation is necessary.
-        v1 = ti.Vector.zero(gs.ti_float, 3)
-        vid = gs.ti_int(0)
-        if multi_contact:
-            v1, vid = self._mpr.support_driver_vertex(-plane_dir, i_gb, i_b)
-        else:
-            v1 = self._mpr.support_driver(-plane_dir, i_gb, i_b)
+        v1 = self._mpr.support_driver(normal, i_gb, i_b)
+        penetration = normal.dot(v1 - ga_state.pos)
 
-        dist_vec = v1 - ga_state.pos
-        cdist = plane_dir.dot(dist_vec)
-        is_col = cdist < 0
-
-        if is_col:
-            penetration = -cdist
-            normal = -plane_dir
-            contact_pos = v1 - normal * penetration * 0.5
+        if penetration > 0.0:
+            contact_pos = v1 - 0.5 * penetration * normal
             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+
+            n_con = 1
             contact_pos_0 = contact_pos
-
-            if multi_contact:
-                n_con = 1
-                i_v = self._solver.geoms_info[i_gb].vert_start + vid
-                tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
-
-                neighbor_start, neighbor_end = gb_info.vert_start, gb_info.vert_end
-                if self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.BOX:
-                    neighbor_start, neighbor_end = (
-                        self.vert_neighbor_start[i_v],
-                        self.vert_neighbor_start[i_v] + self.vert_n_neighbors[i_v],
+            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+            for i_v in range(gb_info.vert_start, gb_info.vert_end):
+                if n_con < self._n_contacts_per_pair:
+                    pos_corner = gu.ti_transform_by_trans_quat(
+                        self._solver.verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
                     )
-
-                for i_neighbor_ in range(neighbor_start, neighbor_end):
-                    i_neighbor = i_neighbor_
-                    if self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.BOX:
-                        i_neighbor = self.vert_neighbors[i_neighbor_]
-
-                    pos_neighbor = gu.ti_transform_by_trans_quat(
-                        self._solver.verts_info[i_neighbor].init_pos, gb_state.pos, gb_state.quat
-                    )
-                    dist_vec = pos_neighbor - ga_state.pos
-                    cdist = plane_dir.dot(dist_vec)
-                    is_col = cdist < 0
-                    if is_col:
-                        penetration = -cdist
-                        normal = -plane_dir
-                        contact_pos = pos_neighbor - normal * penetration * 0.5
-
+                    penetration = normal.dot(pos_corner - ga_state.pos)
+                    if penetration > 0.0:
+                        contact_pos = pos_corner - 0.5 * penetration * normal
                         if (contact_pos - contact_pos_0).norm() > tolerance:
                             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
                             n_con = n_con + 1
-
-                            if n_con >= self._n_contacts_per_pair:
-                                break
 
     @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
@@ -1189,21 +1171,26 @@ class Collider:
         # relative one. This way, it is a constant that does not depends on the orientation of the geometry, which
         # makes sense since the scale of the geometries is an intrinsic property and not something that is supposed
         # to change dynamically.
-        aabb_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
-        aabb_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
-        tolerance_abs = 0.5 * self._mc_tolerance * ti.min(aabb_size_a.norm(), aabb_size_b.norm())
-        return tolerance_abs
+        aabb_size_b = (self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]).norm()
+        aabb_size = aabb_size_b
+        if self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE:
+            aabb_size_a = (self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]).norm()
+            aabb_size = ti.min(aabb_size_a, aabb_size_b)
+
+        return 0.5 * self._mc_tolerance * aabb_size
 
     @ti.func
     def _func_contact_orthogonals(self, i_ga, i_gb, normal, i_b):
         # The reference geometry is the one that will have the largest impact on the position of
         # the contact point. Basically, the smallest one between the two, which can be approximated
         # by the volume of their respective bounding box.
-        size_ga = self._solver.geoms_init_AABB[i_ga, 7]
-        volume_ga = size_ga[0] * size_ga[1] * size_ga[2]
-        size_gb = self._solver.geoms_init_AABB[i_gb, 7]
-        volume_gb = size_gb[0] * size_gb[1] * size_gb[2]
-        i_g = i_ga if volume_ga < volume_gb else i_gb
+        i_g = i_gb
+        if self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE:
+            size_ga = self._solver.geoms_init_AABB[i_ga, 7]
+            volume_ga = size_ga[0] * size_ga[1] * size_ga[2]
+            size_gb = self._solver.geoms_init_AABB[i_gb, 7]
+            volume_gb = size_gb[0] * size_gb[1] * size_gb[2]
+            i_g = i_ga if volume_ga < volume_gb else i_gb
 
         # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
         i_l = self._solver.geoms_info[i_g].link_idx
@@ -1225,9 +1212,6 @@ class Collider:
     ## only one mpr
     @ti.func
     def _func_mpr(self, i_ga, i_gb, i_b):
-        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
-            i_gb, i_ga = i_ga, i_gb
-
         i_la = self._solver.geoms_info[i_ga].link_idx
         i_lb = self._solver.geoms_info[i_gb].link_idx
 
@@ -1245,58 +1229,67 @@ class Collider:
         tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
         # Check if one geometry is partially enclosed in the other
-        overlap_ratio_a = self._func_geom_overlap_ratio(i_ga, i_gb, i_b)
-        overlap_ratio_b = self._func_geom_overlap_ratio(i_gb, i_ga, i_b)
+        overlap_ratio_a, overlap_ratio_b = 0.0, 0.0
+        if self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE:
+            overlap_ratio_a = self._func_convex_geoms_overlap_ratio(i_ga, i_gb, i_b)
+            overlap_ratio_b = self._func_convex_geoms_overlap_ratio(i_gb, i_ga, i_b)
 
-        if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
-            self._func_plane_contact(i_ga, i_gb, multi_contact, i_b)
-        else:
-            is_col_0 = False
-            penetration_0 = gs.ti_float(0.0)
-            normal_0 = ti.Vector.zero(gs.ti_float, 3)
-            contact_pos_0 = ti.Vector.zero(gs.ti_float, 3)
+        is_col_0 = False
+        penetration_0 = gs.ti_float(0.0)
+        normal_0 = ti.Vector.zero(gs.ti_float, 3)
+        contact_pos_0 = ti.Vector.zero(gs.ti_float, 3)
 
-            is_col = False
-            penetration = gs.ti_float(0.0)
-            normal = ti.Vector.zero(gs.ti_float, 3)
-            contact_pos = ti.Vector.zero(gs.ti_float, 3)
+        is_col = False
+        penetration = gs.ti_float(0.0)
+        normal = ti.Vector.zero(gs.ti_float, 3)
+        contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
-            n_con = gs.ti_int(0)
-            axis_0 = ti.Vector.zero(gs.ti_float, 3)
-            axis_1 = ti.Vector.zero(gs.ti_float, 3)
-            axis = ti.Vector.zero(gs.ti_float, 3)
+        n_con = gs.ti_int(0)
+        axis_0 = ti.Vector.zero(gs.ti_float, 3)
+        axis_1 = ti.Vector.zero(gs.ti_float, 3)
+        qrot = ti.Vector.zero(gs.ti_float, 4)
 
-            ga_state = self._solver.geoms_state[i_ga, i_b]
-            gb_state = self._solver.geoms_state[i_gb, i_b]
+        ga_state = self._solver.geoms_state[i_ga, i_b]
+        gb_state = self._solver.geoms_state[i_gb, i_b]
+        ga_pos, ga_quat = ga_state.pos, ga_state.quat
+        gb_pos, gb_quat = gb_state.pos, gb_state.quat
 
-            ga_pos, ga_quat = ga_state.pos, ga_state.quat
-            gb_pos, gb_quat = gb_state.pos, gb_state.quat
+        for i_detection in range(5):
+            if multi_contact and is_col_0:
+                # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
+                # otherwise it would be more sensitive to ill-conditionning.
+                axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
+                qrot = gu.ti_rotvec_to_quat(self._mc_perturbation * axis)
+                self._func_rotate_frame(i_ga, contact_pos_0, qrot, i_b)
+                self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
-            for i_detection in range(5):
-                if multi_contact and is_col_0:
-                    # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
-                    # otherwise it would be more sensitive to ill-conditionning.
-                    axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
-                    qrot = gu.ti_rotvec_to_quat(self._mc_perturbation * axis)
-                    self._func_rotate_frame(i_ga, contact_pos_0, qrot, i_b)
-                    self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
+            if (multi_contact and is_col_0) or (i_detection == 0):
+                # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
+                # Note that SDF does not take into account to direction of interest. As such, it cannot be used
+                # reliably for anything else than the point of deepest penetration.
+                if (i_detection == 0) and overlap_ratio_a > self._mpr_to_sdf_overlap_ratio:
+                    # FIXME: It is impossible to rely on `_func_contact_convex_convex_sdf` to get the contact
+                    # information because the compilation times skyrockets from 42s for `_func_contact_vertex_sdf`
+                    # to 2min51s on Apple Silicon M4 Max, which is not acceptable.
+                    # is_col, normal, penetration, contact_pos, i_va = self._func_contact_convex_convex_sdf(
+                    #     i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].i_va_ws
+                    # )
+                    # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = i_va
+                    is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_ga, i_gb, i_b)
+                elif (i_detection == 0) and overlap_ratio_b > self._mpr_to_sdf_overlap_ratio:
+                    is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_gb, i_ga, i_b)
+                    normal = -normal
+                else:
+                    if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
+                        ga_info = self._solver.geoms_info[i_ga]
+                        plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
+                        plane_dir = gu.ti_transform_by_quat(plane_dir, self._solver.geoms_state[i_ga, i_b].quat)
+                        normal = -plane_dir.normalized()
 
-                if (multi_contact and is_col_0) or (i_detection == 0):
-                    # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
-                    # Note that SDF does not take into account to direction of interest. As such, it cannot be used
-                    # reliably for anything else than the point of deepest penetration.
-                    if (i_detection == 0) and overlap_ratio_a > self._mpr_to_sdf_overlap_ratio:
-                        # FIXME: It is impossible to rely on `_func_contact_convex_convex_sdf` to get the contact
-                        # information because the compilation times skyrockets from 42s for `_func_contact_vertex_sdf`
-                        # to 2min51s on Apple Silicon M4 Max, which is not acceptable.
-                        # is_col, normal, penetration, contact_pos, i_va = self._func_contact_convex_convex_sdf(
-                        #     i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].i_va_ws
-                        # )
-                        # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = i_va
-                        is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_ga, i_gb, i_b)
-                    elif (i_detection == 0) and overlap_ratio_b > self._mpr_to_sdf_overlap_ratio:
-                        is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_gb, i_ga, i_b)
-                        normal = -normal
+                        v1 = self._mpr.support_driver(normal, i_gb, i_b)
+                        penetration = normal.dot(v1 - self._solver.geoms_state[i_ga, i_b].pos)
+                        contact_pos = v1 - 0.5 * penetration * normal
+                        is_col = penetration > 0
                     else:
                         is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
                             i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].normal
@@ -1328,54 +1321,69 @@ class Collider:
                                 elif is_col_b and (not is_col_a or penetration_b > penetration_a):
                                     normal, penetration, contact_pos = -normal_b, penetration_b, contact_pos_b
 
-                if i_detection == 0:
-                    is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
-                    if is_col_0:
-                        self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
-                        if multi_contact:
-                            # perturb geom_a around two orthogonal axes to find multiple contacts
-                            axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal, i_b)
-                            n_con = 1
+            if i_detection == 0:
+                is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
+                if is_col_0:
+                    self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
+                    if multi_contact:
+                        # perturb geom_a around two orthogonal axes to find multiple contacts
+                        axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal, i_b)
+                        n_con = 1
 
-                        if ti.static(not self._solver._enable_mujoco_compatibility):
-                            self.contact_cache[i_ga, i_gb, i_b].normal = normal
-                    else:
-                        # Clear collision normal cache if not in contact
-                        self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                    if ti.static(not self._solver._enable_mujoco_compatibility):
+                        self.contact_cache[i_ga, i_gb, i_b].normal = normal
+                else:
+                    # Clear collision normal cache if not in contact
+                    self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
-                elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    repeated = False
-                    for i_con in range(n_con):
-                        if not repeated:
-                            idx_prev = self.n_contacts[i_b] - 1 - i_con
-                            prev_contact = self.contact_data[idx_prev, i_b].pos
-                            if (contact_pos - prev_contact).norm() < tolerance:
-                                repeated = True
-
+            elif multi_contact and is_col_0 > 0 and is_col > 0:
+                repeated = False
+                for i_con in range(n_con):
                     if not repeated:
-                        # Apply first-order correction of small rotation perturbation.
-                        # First, unrotate the normal direction, then cancel virtual penetation over-estimation.
-                        # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                        # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let
-                        # compute the mininal rotation that makes the corrected twisted normal as closed as
-                        # possible to the original one, up to the scale of the perturbation, then apply
-                        # first-order Taylor expension of Rodrigues' rotation formula.
-                        twist_rotvec = ti.math.clamp(
-                            normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
+                        idx_prev = self.n_contacts[i_b] - 1 - i_con
+                        prev_contact = self.contact_data[idx_prev, i_b].pos
+                        if (contact_pos - prev_contact).norm() < tolerance:
+                            repeated = True
+
+                if not repeated:
+                    # 1. Project the contact point on both geometries
+                    # 2. Revert the effect of small rotation
+                    # 3. Update contact point
+                    contact_point_a = (
+                        gu.ti_transform_by_quat(
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                            gu.ti_inv_quat(qrot),
                         )
-                        normal += twist_rotvec.cross(normal)
-                        contact_shift = contact_pos - contact_pos_0
-                        depth_lever = ti.abs(axis.cross(contact_shift).dot(normal))
-                        penetration = ti.min(penetration - 2 * self._mc_perturbation * depth_lever, penetration_0)
+                        + contact_pos_0
+                    )
+                    contact_point_b = (
+                        gu.ti_transform_by_quat(
+                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                            qrot,
+                        )
+                        + contact_pos_0
+                    )
+                    contact_point = 0.5 * (contact_point_a + contact_point_b)
 
-                        if penetration > 0.0:
-                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
-                            n_con = n_con + 1
+                    # First-order correction of the normal direction.
+                    # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                    # the mininal rotation that makes the corrected twisted normal as closed as possible to the
+                    # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                    # Rodrigues' rotation formula.
+                    twist_rotvec = ti.math.clamp(normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation)
+                    normal += twist_rotvec.cross(normal)
 
-                    self._solver.geoms_state[i_ga, i_b].pos = ga_pos
-                    self._solver.geoms_state[i_ga, i_b].quat = ga_quat
-                    self._solver.geoms_state[i_gb, i_b].pos = gb_pos
-                    self._solver.geoms_state[i_gb, i_b].quat = gb_quat
+                    # Make sure that the penetration is still positive before adding contact point
+                    penetration = normal.dot(contact_point_b - contact_point_a)
+                    if penetration > 0.0:
+                        self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                        n_con = n_con + 1
+
+                self._solver.geoms_state[i_ga, i_b].pos = ga_pos
+                self._solver.geoms_state[i_ga, i_b].quat = ga_quat
+                self._solver.geoms_state[i_gb, i_b].pos = gb_pos
+                self._solver.geoms_state[i_gb, i_b].quat = gb_quat
 
     @ti.func
     def _func_rotate_frame(self, i_g, contact_pos, qrot, i_b):
