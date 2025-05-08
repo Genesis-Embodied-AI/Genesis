@@ -11,6 +11,7 @@ import pymeshlab
 import genesis as gs
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
+import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
 from genesis.ext import fast_simplification
 from genesis.repr_base import RBC
@@ -345,6 +346,9 @@ class Mesh(RBC):
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+
+            elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
+                meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
