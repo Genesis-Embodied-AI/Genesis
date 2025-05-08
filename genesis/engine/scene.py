@@ -987,8 +987,14 @@ class Scene(RBC):
 
             for i in range(N_new):
                 pos, quat = entity.forward_kinematics(qposs[indices[i]])
-                Ts[i] = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
-
+                trans = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
+                if isinstance(trans, torch.Tensor):
+                    if trans.get_device() == -1:
+                        Ts[i] = trans
+                    else:
+                        Ts[i] = trans.cpu()
+                else:
+                    Ts[i] = trans
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
             )
