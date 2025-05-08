@@ -31,11 +31,16 @@ def _sanitize_sol_params(sol_params, min_resolve_time, force_resolve_time=None):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.T
     if force_resolve_time is not None:
         timeconst = np.full_like(timeconst, force_resolve_time)
-    min_timeconst = np.min(timeconst)
-    if (min_timeconst + 1e-6 < min_resolve_time).any():
+    if (timeconst < gs.EPS).any():
+        # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
+        gs.logger.debug(
+            f"Constraint solver time constant not specified. Using minimum value (`{min_resolve_time:0.6g}`)."
+        )
+    if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_resolve_time)).any():
         gs.logger.warning(
-            f"Constraint solver time constant was increased to avoid numerical instability (from `{min_timeconst:0.6g}` "
-            f"to `{min_resolve_time:0.6g}`). Decrease simulation timestep to avoid altering the original value."
+            "Constraint solver time constant was increased to avoid numerical instability (from "
+            f"`{np.min(timeconst):0.6g}` to `{min_resolve_time:0.6g}`). Decrease simulation timestep to avoid "
+            "altering the original value."
         )
     timeconst = np.maximum(timeconst, min_resolve_time)
     dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
