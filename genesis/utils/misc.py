@@ -477,4 +477,5 @@ def ti_field_to_torch(
         if is_single_col:
             out = out.unsqueeze(0 if is_1D_batch else 1)
 
-    return out
+    # out = out.transpose(1, 0) could make it non-contiguous
+    return out.contiguous() if not out.is_contiguous() else out
