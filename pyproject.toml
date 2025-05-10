@@ -17,6 +17,7 @@ dependencies = [
     "numpy >= 1.26.4",
     "trimesh",
     "scipy >= 1.14",
+    "torch >= 2.7.0, <3.0.0",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
