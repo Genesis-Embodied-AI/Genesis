@@ -33,7 +33,6 @@ class RigidJoint(RBC):
         dofs_limit,
         dofs_invweight,
         dofs_stiffness,
-        dofs_sol_params,
         dofs_damping,
         dofs_armature,
         dofs_kp,
@@ -62,7 +61,6 @@ class RigidJoint(RBC):
         self._dofs_limit = dofs_limit
         self._dofs_invweight = dofs_invweight
         self._dofs_stiffness = dofs_stiffness
-        self._dofs_sol_params = dofs_sol_params
         self._dofs_damping = dofs_damping
         self._dofs_armature = dofs_armature
         self._dofs_kp = dofs_kp
@@ -394,13 +392,6 @@ class RigidJoint(RBC):
         Returns the stiffness of the dofs of the joint.
         """
         return self._dofs_stiffness
-
-    @property
-    def dofs_sol_params(self):
-        """
-        Retruns the solver parameters of the dofs of the joint.
-        """
-        return self._dofs_sol_params
 
     @property
     def dofs_damping(self):

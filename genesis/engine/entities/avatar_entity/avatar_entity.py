@@ -86,7 +86,6 @@ class AvatarEntity(RigidEntity):
         dofs_limit,
         dofs_invweight,
         dofs_stiffness,
-        dofs_sol_params,
         dofs_damping,
         dofs_armature,
         dofs_kp,
@@ -121,8 +120,6 @@ class AvatarEntity(RigidEntity):
             Inverse weight for each DOF.
         dofs_stiffness : array-like
             Stiffness values for each DOF.
-        dofs_sol_params : array-like
-            Solver parameters for each DOF.
         dofs_damping : array-like
             Damping values for each DOF.
         dofs_armature : array-like
@@ -157,7 +154,6 @@ class AvatarEntity(RigidEntity):
             dofs_limit=dofs_limit,
             dofs_invweight=dofs_invweight,
             dofs_stiffness=dofs_stiffness,
-            dofs_sol_params=dofs_sol_params,
             dofs_damping=dofs_damping,
             dofs_armature=dofs_armature,
             dofs_kp=dofs_kp,

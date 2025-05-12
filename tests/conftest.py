@@ -239,14 +239,18 @@ def gs_sim(
         show_FPS=False,
     )
     gs_robot = scene.add_entity(
-        gs.morphs.MJCF(file=xml_path),
+        gs.morphs.MJCF(
+            file=xml_path,
+            convexify=True,
+            decompose_robot_error_threshold=float("inf"),
+        ),
         visualize_contact=True,
     )
     gs_sim = scene.sim
 
     # Force matching Mujoco safety factor for constraint time constant.
     # Note that this time constant affects the penetration depth at rest.
-    gs_sim.rigid_solver._sol_constraint_min_resolve_time = 2.0 * gs_sim._substep_dt
+    gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
 
     scene.build()
 

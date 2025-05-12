@@ -30,7 +30,7 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
     if mj_sim is not None:
-        _, (_, _, mj_qs_idx, mj_dofs_idx, _) = _get_model_mappings(gs_sim, mj_sim)
+        _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
     (gs_robot,) = gs_sim.entities
 
@@ -143,20 +143,25 @@ def _get_model_mappings(
     gs_sim,
     mj_sim,
     joints_name: list[str] | None = None,
-    body_names: list[str] | None = None,
+    bodies_name: list[str] | None = None,
 ):
     if joints_name is None:
         joints_name = [
             joint.name for entity in gs_sim.entities for joint in entity.joints if joint.type != gs.JOINT_TYPE.FIXED
         ]
-    body_names = [
-        body.name for entity in gs_sim.entities for body in entity.links if not (body.is_fixed and body.parent_idx < 0)
-    ]
+    if bodies_name is None:
+        bodies_name = [
+            body.name
+            for entity in gs_sim.entities
+            for body in entity.links
+            if not (body.is_fixed and body.parent_idx < 0)
+        ]
 
     motors_name: list[str] = []
     mj_joints_idx: list[int] = []
     mj_qs_idx: list[int] = []
     mj_dofs_idx: list[int] = []
+    mj_geoms_idx: list[int] = []
     mj_motors_idx: list[int] = []
     for joint_name in joints_name:
         if joint_name:
@@ -191,13 +196,27 @@ def _get_model_mappings(
             (motors_idx,) = np.nonzero(mj_joint.id == mj_sim.model.actuator_trnid[:, 0])
             # FIXME: only supporting 1DoF per actuator
             mj_motors_idx.append(motors_idx[0])
-    mj_bodies_idx = [mj_sim.model.body(body_name).id for body_name in body_names]
+
+    mj_bodies_idx, mj_geoms_idx = [], []
+    for body_name in bodies_name:
+        mj_body = mj_sim.model.body(body_name)
+        mj_bodies_idx.append(mj_body.id)
+        for mj_geom_idx in range(mj_body.geomadr[0], mj_body.geomadr[0] + mj_body.geomnum[0]):
+            mj_geom = mj_sim.model.geom(mj_geom_idx)
+            if mj_geom.contype or mj_geom.conaffinity:
+                mj_geoms_idx.append(mj_geom.id)
+
     (gs_joints_idx, gs_q_idx, gs_dofs_idx) = _gs_search_by_joints_name(gs_sim.scene, joints_name)
     (_, _, gs_motors_idx) = _gs_search_by_joints_name(gs_sim.scene, motors_name)
-    gs_bodies_idx = _gs_search_by_links_name(gs_sim.scene, body_names)
 
-    gs_maps = (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_motors_idx)
-    mj_maps = (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_motors_idx)
+    gs_bodies_idx = _gs_search_by_links_name(gs_sim.scene, bodies_name)
+    gs_geoms_idx: list[int] = []
+    for gs_body_idx in gs_bodies_idx:
+        link = gs_sim.rigid_solver.links[gs_body_idx]
+        gs_geoms_idx += range(link.geom_start, link.geom_end)
+
+    gs_maps = (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx)
+    mj_maps = (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx)
     return gs_maps, mj_maps
 
 
@@ -205,14 +224,14 @@ def check_mujoco_model_consistency(
     gs_sim,
     mj_sim,
     joints_name: list[str] | None = None,
-    body_names: list[str] | None = None,
+    bodies_name: list[str] | None = None,
     *,
     tol: float,
 ):
     # Get mapping between Mujoco and Genesis
-    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, body_names)
-    (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_motors_idx) = gs_maps
-    (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_motors_idx) = mj_maps
+    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
+    (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx) = gs_maps
+    (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx) = mj_maps
 
     # solver
     gs_gravity = gs_sim.rigid_solver.scene.gravity
@@ -301,20 +320,25 @@ def check_mujoco_model_consistency(
     mj_dof_invweight0 = mj_sim.model.dof_invweight0
     assert_allclose(gs_dof_invweight0[gs_dofs_idx], mj_dof_invweight0[mj_dofs_idx], tol=tol)
 
-    gs_joint_solparams = np.concatenate([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
-    gs_joint_solref = gs_joint_solparams[:, :2]
+    # TODO: Genesis does not support frictionloss contraint at dof level for now
+    gs_joint_solparams = np.array([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
     mj_joint_solref = mj_sim.model.jnt_solref
-    assert_allclose(gs_joint_solref[gs_joints_idx], mj_joint_solref[mj_joints_idx], tol=tol)
-    gs_joint_solimp = gs_joint_solparams[:, 2:]
+    assert_allclose(gs_joint_solparams[gs_joints_idx, :2], mj_joint_solref[mj_joints_idx], tol=tol)
     mj_joint_solimp = mj_sim.model.jnt_solimp
-    assert_allclose(gs_joint_solimp[gs_joints_idx], mj_joint_solimp[mj_joints_idx], tol=tol)
-    gs_dof_solparams = np.concatenate([joint.dofs_sol_params for entity in gs_sim.entities for joint in entity.joints])
-    gs_dof_solref = gs_dof_solparams[:, :2]
-    mj_dof_solref = mj_sim.model.dof_solref
-    assert_allclose(gs_dof_solref[gs_dofs_idx], mj_dof_solref[mj_dofs_idx], tol=tol)
-    gs_dof_solimp = gs_dof_solparams[:, 2:]
-    mj_dof_solimp = mj_sim.model.dof_solimp
-    assert_allclose(gs_dof_solimp[gs_dofs_idx], mj_dof_solimp[mj_dofs_idx], tol=tol)
+    assert_allclose(gs_joint_solparams[gs_joints_idx, 2:], mj_joint_solimp[mj_joints_idx], tol=tol)
+    gs_geom_solparams = np.array([geom.sol_params for entity in gs_sim.entities for geom in entity.geoms])
+    mj_geom_solref = mj_sim.model.geom_solref
+    assert_allclose(gs_geom_solparams[gs_geoms_idx, :2], mj_geom_solref[mj_geoms_idx], tol=tol)
+    mj_geom_solimp = mj_sim.model.geom_solimp
+    assert_allclose(gs_geom_solparams[gs_geoms_idx, 2:], mj_geom_solimp[mj_geoms_idx], tol=tol)
+    # FIXME: Masking geometries and equality constraints is not supported for now
+    gs_eq_solparams = np.array(
+        [equality.sol_params for entity in gs_sim.entities for equality in entity.equalities]
+    ).reshape((-1, 7))
+    mj_eq_solref = mj_sim.model.eq_solref
+    assert_allclose(gs_eq_solparams[:, :2], mj_eq_solref, tol=tol)
+    mj_eq_solimp = mj_sim.model.eq_solimp
+    assert_allclose(gs_eq_solparams[:, 2:], mj_eq_solimp, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
@@ -348,15 +372,15 @@ def check_mujoco_data_consistency(
     gs_sim,
     mj_sim,
     joints_name: list[str] | None = None,
-    body_names: list[str] | None = None,
+    bodies_name: list[str] | None = None,
     *,
     qvel_prev: np.ndarray | None = None,
     tol: float,
 ):
     # Get mapping between Mujoco and Genesis
-    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, body_names)
-    (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_motors_idx) = gs_maps
-    (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_motors_idx) = mj_maps
+    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
+    (gs_bodies_idx, _, gs_q_idx, gs_dofs_idx, _, _) = gs_maps
+    (mj_bodies_idx, _, mj_qs_idx, mj_dofs_idx, _, _) = mj_maps
 
     # crb
     gs_crb_inertial = gs_sim.rigid_solver.links_state.crb_inertial.to_numpy()[:, 0].reshape([-1, 9])[
@@ -551,7 +575,7 @@ def check_mujoco_data_consistency(
 
 def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps):
     # Get mapping between Mujoco and Genesis
-    _, (_, _, mj_qs_idx, mj_dofs_idx, _) = _get_model_mappings(gs_sim, mj_sim)
+    _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
     # Make sure that "static" model information are matching
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)

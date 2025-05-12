@@ -27,28 +27,27 @@ IMP_MAX = 0.9999
 TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
 
-def _sanitize_sol_params(sol_params, min_resolve_time, force_resolve_time=None):
-    timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.T
-    if force_resolve_time is not None:
-        timeconst = np.full_like(timeconst, force_resolve_time)
+def _sanitize_sol_params(sol_params, min_timeconst, global_timeconst=None):
+    assert sol_params.shape[-1] == 7
+    timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
+    if global_timeconst is not None:
+        timeconst[:] = global_timeconst
     if (timeconst < gs.EPS).any():
         # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
-        gs.logger.debug(
-            f"Constraint solver time constant not specified. Using minimum value (`{min_resolve_time:0.6g}`)."
-        )
-    if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_resolve_time)).any():
+        gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
+    if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():
         gs.logger.warning(
             "Constraint solver time constant was increased to avoid numerical instability (from "
-            f"`{np.min(timeconst):0.6g}` to `{min_resolve_time:0.6g}`). Decrease simulation timestep to avoid "
+            f"`{timeconst.min():0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep to avoid "
             "altering the original value."
         )
-    timeconst = np.maximum(timeconst, min_resolve_time)
-    dmin = np.clip(dmin, IMP_MIN, IMP_MAX)
-    dmax = np.clip(dmax, IMP_MIN, IMP_MAX)
-    mid = np.clip(mid, IMP_MIN, IMP_MAX)
-    width = np.maximum(0, width)
-    power = np.maximum(1, power)
-    return np.stack([timeconst, dampratio, dmin, dmax, width, mid, power], axis=1)
+    timeconst[:] = timeconst.clip(min_timeconst)
+    dampratio[:] = dampratio.clip(0.0, 1.0)
+    dmin[:] = dmin.clip(IMP_MIN, IMP_MAX)
+    dmax[:] = dmax.clip(IMP_MIN, IMP_MAX)
+    mid[:] = mid.clip(IMP_MIN, IMP_MAX)
+    width[:] = width.clip(0.0)
+    power[:] = power.clip(1)
 
 
 @ti.data_oriented
@@ -82,14 +81,14 @@ class RigidSolver(Solver):
         self._hibernation_thresh_vel = options.hibernation_thresh_vel
         self._hibernation_thresh_acc = options.hibernation_thresh_acc
 
-        self._sol_constraint_min_resolve_time = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
-        self._sol_constraint_resolve_time = options.constraint_resolve_time
+        self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
+        self._sol_global_timeconst = options.constraint_timeconst
 
         if options.contact_resolve_time is not None:
-            self._sol_contact_resolve_time = options.contact_resolve_time
+            self._sol_contact_timeconst = options.contact_resolve_time
             gs.logger.warning(
                 "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please use "
-                "'constraint_resolve_time' instead."
+                "'constraint_timeconst' instead."
             )
 
         self._options = options
@@ -343,7 +342,6 @@ class RigidSolver(Solver):
 
         struct_dof_info = ti.types.struct(
             stiffness=gs.ti_float,
-            sol_params=gs.ti_vec7,
             invweight=gs.ti_float,
             armature=gs.ti_float,
             damping=gs.ti_float,
@@ -392,19 +390,12 @@ class RigidSolver(Solver):
         joints = self.joints
         is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
         if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
-            # Make sure that the constraints parameters are valid
-            dofs_sol_params = np.concatenate([joint.dofs_sol_params for joint in joints], dtype=gs.np_float)
-            dofs_sol_params = _sanitize_sol_params(
-                dofs_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
-            )
-
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                dofs_sol_params=dofs_sol_params,
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
@@ -423,7 +414,6 @@ class RigidSolver(Solver):
         dofs_limit: ti.types.ndarray(),
         dofs_invweight: ti.types.ndarray(),
         dofs_stiffness: ti.types.ndarray(),
-        dofs_sol_params: ti.types.ndarray(),
         dofs_damping: ti.types.ndarray(),
         dofs_armature: ti.types.ndarray(),
         dofs_kp: ti.types.ndarray(),
@@ -441,9 +431,6 @@ class RigidSolver(Solver):
             for j in ti.static(range(2)):
                 self.dofs_info[I].limit[j] = dofs_limit[i, j]
                 self.dofs_info[I].force_range[j] = dofs_force_range[i, j]
-
-            for j in ti.static(range(7)):
-                self.dofs_info[I].sol_params[j] = dofs_sol_params[i, j]
 
             self.dofs_info[I].armature = dofs_armature[i]
             self.dofs_info[I].invweight = dofs_invweight[i]
@@ -585,10 +572,8 @@ class RigidSolver(Solver):
 
         # Make sure that the constraints parameters are valid
         joints = self.joints
-        joints_sol_params = np.concatenate([joint.sol_params for joint in joints], dtype=gs.np_float)
-        joints_sol_params = _sanitize_sol_params(
-            joints_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
-        )
+        joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
+        _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
 
         self._kernel_init_joint_fields(
             joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
@@ -924,9 +909,7 @@ class RigidSolver(Solver):
             # Make sure that the constraints parameters are valid
             geoms = self.geoms
             geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
-            geoms_sol_params = _sanitize_sol_params(
-                geoms_sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
-            )
+            _sanitize_sol_params(geoms_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
 
             # Accurately compute the center of mass of each geometry if possible.
             # Note that the mean vertex position is a bad approximation, which is impeding the ability of MPR to
@@ -1009,7 +992,6 @@ class RigidSolver(Solver):
             for j in ti.static(range(7)):
                 self.geoms_info[i].data[j] = geoms_data[i, j]
                 self.geoms_info[i].sol_params[j] = geoms_sol_params[i, j]
-            self.geoms_info[i].sol_params[0] = ti.max(self.geoms_info[i].sol_params[0], 2 * self._substep_dt)
 
             self.geoms_info[i].vert_start = geoms_vert_start[i]
             self.geoms_info[i].vert_end = geoms_vert_end[i]
@@ -1247,10 +1229,10 @@ class RigidSolver(Solver):
             equalities = self.equalities
 
             equalities_sol_params = np.array([equality.sol_params for equality in equalities], dtype=gs.np_float)
-            equalities_sol_params = _sanitize_sol_params(
+            _sanitize_sol_params(
                 equalities_sol_params,
-                self._sol_constraint_min_resolve_time,
-                self._sol_constraint_resolve_time,
+                self._sol_min_timeconst,
+                self._sol_global_timeconst,
             )
 
             self._kernel_init_equality_fields(
@@ -4024,9 +4006,10 @@ class RigidSolver(Solver):
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             self.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
 
-    def set_global_sol_params(self, sol_params):
+    def set_global_sol_params(self, sol_params, *, unsafe=False):
         """
-        Solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
+        Set constraint solver parameters.
+
         Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
 
         Parameters
@@ -4035,35 +4018,104 @@ class RigidSolver(Solver):
             array of length 7 in which each element corresponds to
             (timeconst, dampratio, dmin, dmax, width, mid, power)
         """
-        if isinstance(sol_params, tuple) or isinstance(sol_params, list):
-            sol_params = np.array(sol_params)
-        assert len(sol_params) == 7
+        # Sanitize input arguments
+        if not unsafe:
+            _sol_params = torch.as_tensor(sol_params, dtype=gs.tc_float, device=gs.device).contiguous()
+            if _sol_params is not sol_params:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+            sol_params = _sol_params
 
-        # Make sure that the constraints parameters are valid
-        # NOTE: _sanitize_sol_params requires additional dim
-        sol_params = _sanitize_sol_params(
-            sol_params[None], self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
-        )
-        self._kernel_set_global_sol_params(sol_params[0])
+        # Make sure that the constraints parameters are within range
+        _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
+
+        self._kernel_set_global_sol_params(sol_params)
 
     @ti.kernel
     def _kernel_set_global_sol_params(self, sol_params: ti.types.ndarray()):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i in range(self.n_geoms):
-            for j in ti.static(range(7)):
-                self.geoms_info[i].sol_params[j] = sol_params[j]
+        for i_g in range(self.n_geoms):
+            for i in ti.static(range(7)):
+                self.geoms_info[i_g].sol_params[i] = sol_params[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i, b in ti.ndrange(self.n_joints, self._B):
-            I = [i, b] if ti.static(self._options.batch_joints_info) else i
-            for j in ti.static(range(7)):
-                self.joints_info[I].sol_params[j] = sol_params[j]
+        for i_j, i_b in ti.ndrange(self.n_joints, self._B):
+            I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
+            for i in ti.static(range(7)):
+                self.joints_info[I_j].sol_params[i] = sol_params[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i, b in ti.ndrange(self.n_dofs, self._B):
-            I = [i, b] if ti.static(self._options.batch_dofs_info) else i
-            for j in ti.static(range(7)):
-                self.dofs_info[I].sol_params[j] = sol_params[j]
+        for i_eq in range(self.n_equalities):
+            for i in ti.static(range(7)):
+                self.equality_info[i_eq].sol_params[i] = sol_params[i]
+
+    def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
+        """
+        Set constraint solver parameters.
+
+        Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
+
+        Parameters
+        ----------
+        sol_params: Tuple[float] | List[float] | np.ndarray | torch.tensor
+            array of length 7 in which each element corresponds to
+            (timeconst, dampratio, dmin, dmax, width, mid, power)
+        """
+        # Make sure that a single constraint type has been selected at once
+        if sum(map(inputs_idx is not None for inputs_idx in (geoms_idx, joints_idx, eqs_idx))) > 1:
+            raise gs.raise_exception("Cannot set more than one constraint type at once.")
+
+        # Select the right input type
+        if eqs_idx is not None:
+            constraint_type = 2
+            idx_name = "eqs_idx"
+            inputs_idx = eqs_idx
+        elif joints_idx is not None:
+            constraint_type = 1
+            idx_name = "joints_idx"
+            inputs_idx = joints_idx
+        else:
+            constraint_type = 0
+            idx_name = "geoms_idx"
+            inputs_idx = geoms_idx
+
+        # Sanitize input arguments
+        sol_params, inputs_idx, envs_idx = self._sanitize_1D_io_variables(
+            mass, inputs_idx, self.n_links, envs_idx, idx_name=idx_name, skip_allocation=True, unsafe=unsafe
+        )
+
+        # Make sure that the constraints parameters are within range
+        _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
+
+        self._kernel_set_sol_params(constraint_type, sol_params, inputs_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_set_sol_params(
+        self,
+        constraint_type: ti.template(),
+        sol_params: ti.types.ndarray(),
+        inputs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        if ti.static(constraint_type == 0):  # geometries
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_g_ in range(inputs_idx.shape[0]):
+                for i in ti.static(range(7)):
+                    self.geoms_info[inputs_idx[i_g_]].sol_params[i] = sol_params[i_g_, i]
+        elif ti.static(constraint_type == 1):  # joints
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+            if ti.static(self._options.batch_joints_info):
+                for i_j_, i_b_ in ti.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
+                    for i in ti.static(range(7)):
+                        self.joints_info[inputs_idx[i_j_], envs_idx[i_b_]].sol_params = sol_params[i_b_, i_j_, i]
+            else:
+                for i_j_ in range(inputs_idx.shape[0]):
+                    for i in ti.static(range(7)):
+                        self.joints_info[inputs_idx[i_j_]].sol_params = sol_params[i_j_, i]
+        else:  # equalities
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_eq_ in range(inputs_idx.shape[0]):
+                for i in ti.static(range(7)):
+                    self.equality_info[inputs_idx[i_eq_]].sol_params[i] = sol_params[i_eq_, i]
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None, *, unsafe=False):
         tensor_list = list(tensor_list)
