@@ -6,9 +6,9 @@ import genesis as gs
 gs.init(seed=0, precision="32", logging_level="debug")
 
 ######################## create a scene ##########################
-dt = 3e-3
 scene = gs.Scene(
     sim_options=gs.options.SimOptions(
+        dt=3e-3,
         substeps=10,
     ),
     viewer_options=gs.options.ViewerOptions(
@@ -17,15 +17,15 @@ scene = gs.Scene(
         camera_fov=40,
     ),
     rigid_options=gs.options.RigidOptions(
-        dt=dt,
         gravity=(0, 0, -9.8),
         enable_collision=True,
         enable_self_collision=False,
         enable_adjacent_collision=False,
-        constraint_resolve_time=0.02,  # avoid the rigid contact solver being too stiff otherwise will cause large impulse (especially we have small dt for rigid solver)
+        # Prevent the rigid contact solver from being too stiff otherwise this would cause large impulse, especially
+        # because the simulation timestep must be very small to ensure numerical stability of rigid body dynamics.
+        constraint_timeconst=0.02,
     ),
     mpm_options=gs.options.MPMOptions(
-        dt=dt,
         lower_bound=(0.0, 0.0, -0.2),
         upper_bound=(1.0, 1.0, 1.0),
         gravity=(0, 0, 0),  # mimic gravity compensation

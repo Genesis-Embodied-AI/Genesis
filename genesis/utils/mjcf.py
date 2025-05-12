@@ -75,22 +75,9 @@ def parse_link(mj, i_l, scale):
         j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
-        j_info["sol_params"] = np.concatenate(
-            (
-                mj.jnt_solref[mj_jnt_offset : (mj_jnt_offset + 1)],
-                mj.jnt_solimp[mj_jnt_offset : (mj_jnt_offset + 1)],
-            ),
-            axis=1,
-        )
-        j_info["dofs_sol_params"] = np.concatenate(
-            (
-                mj.dof_solref[mj_dof_offset : (mj_dof_offset + n_dofs)],
-                mj.dof_solimp[mj_dof_offset : (mj_dof_offset + n_dofs)],
-            ),
-            axis=1,
-        )
+        j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
         if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
-            gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
+            gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
 
         # Parsing joint parameters that are type-specific
         if i_j == -1:

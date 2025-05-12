@@ -269,8 +269,7 @@ def parse_urdf(morph, surface):
 
         # TODO: parse these
         j_info["dofs_invweight"] = gu.default_dofs_invweight(j_info["n_dofs"])
-        j_info["sol_params"] = gu.default_solver_params(1)
-        j_info["dofs_sol_params"] = gu.default_solver_params(j_info["n_dofs"])
+        j_info["sol_params"] = gu.default_solver_params()
         j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
         j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
         j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
@@ -330,7 +329,6 @@ def parse_urdf(morph, surface):
     j_info["dofs_invweight"] = gu.default_dofs_invweight(j_info["n_dofs"])
     j_info["dofs_damping"] = gu.free_dofs_damping(j_info["n_dofs"])
     j_info["dofs_armature"] = gu.free_dofs_armature(j_info["n_dofs"])
-    j_info["dofs_sol_params"] = gu.default_solver_params(j_info["n_dofs"])
 
     j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
     j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
@@ -351,7 +349,7 @@ def parse_urdf(morph, surface):
 
             # TODO: parse friction
             g_info["friction"] = gu.default_friction()
-            g_info["sol_params"] = gu.default_solver_params(n=1)[0]
+            g_info["sol_params"] = gu.default_solver_params()
 
     for j_info in j_infos:
         j_info["pos"] *= morph.scale
@@ -384,7 +382,7 @@ def parse_equality(robot, morph, j_infos):
             e_info["eq_obj2id"] = find_joint_id(joint.mimic.joint)
             e_info["type"] = gs.EQUALITY_TYPE.JOINT
 
-            e_info["sol_params"] = gu.default_solver_params(1)[0]
+            e_info["sol_params"] = gu.default_solver_params()
             e_info["eq_data"] = np.zeros([11])
             e_info["eq_data"][0] = joint.mimic.offset
             e_info["eq_data"][1] = joint.mimic.multiplier

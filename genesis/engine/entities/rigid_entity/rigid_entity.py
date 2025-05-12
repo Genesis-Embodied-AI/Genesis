@@ -168,7 +168,7 @@ class RigidEntity(Entity):
                     mesh=gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
-                    sol_params=gu.default_solver_params(n=1)[0],
+                    sol_params=gu.default_solver_params(),
                 )
             )
 
@@ -239,7 +239,7 @@ class RigidEntity(Entity):
                         conaffinity=1,
                         mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
-                        sol_params=gu.default_solver_params(n=1)[0],
+                        sol_params=gu.default_solver_params(),
                     )
                 )
 
@@ -289,7 +289,7 @@ class RigidEntity(Entity):
                     conaffinity=1,
                     mesh=mesh,
                     type=gs.GEOM_TYPE.TERRAIN,
-                    sol_params=gu.default_solver_params(n=1)[0],
+                    sol_params=gu.default_solver_params(),
                 )
             )
 
@@ -546,18 +546,16 @@ class RigidEntity(Entity):
         for j_info in j_infos:
             n_dofs = j_info["n_dofs"]
 
-            sol_params = np.array(j_info.get("sol_params", gu.default_solver_params(1)), copy=True)
-            dofs_sol_params = np.array(j_info.get("dofs_sol_params", gu.default_solver_params(n_dofs)), copy=True)
-            for _sol_params in (sol_params, dofs_sol_params):
-                if (
-                    len(_sol_params.shape) == 2
-                    and _sol_params.shape[0] == 1
-                    and (_sol_params[0][3] >= 1.0 or _sol_params[0][2] >= _sol_params[0][3])
-                ):
-                    gs.logger.warning(
-                        f"Joint {j_info['name']}'s sol_params {_sol_params[0]} look not right, change to default."
-                    )
-                    _sol_params[:] = gu.default_solver_params(len(_sol_params))
+            sol_params = np.array(j_info.get("sol_params", gu.default_solver_params()), copy=True)
+            if (
+                len(sol_params.shape) == 2
+                and sol_params.shape[0] == 1
+                and (sol_params[0][3] >= 1.0 or sol_params[0][2] >= sol_params[0][3])
+            ):
+                gs.logger.warning(
+                    f"Joint {j_info['name']}'s sol_params {sol_params[0]} look not right, change to default."
+                )
+                sol_params = gu.default_solver_params()
 
             dofs_motion_ang = j_info.get("dofs_motion_ang")
             if dofs_motion_ang is None:
@@ -585,7 +583,6 @@ class RigidEntity(Entity):
                 dofs_limit=j_info.get("dofs_limit", gu.default_dofs_limit(n_dofs)),
                 dofs_invweight=j_info.get("dofs_invweight", gu.default_dofs_invweight(n_dofs)),
                 dofs_stiffness=j_info.get("dofs_stiffness", gu.default_dofs_stiffness(n_dofs)),
-                dofs_sol_params=dofs_sol_params,
                 dofs_damping=j_info.get("dofs_damping", gu.free_dofs_damping(n_dofs)),
                 dofs_armature=j_info.get("dofs_armature", gu.free_dofs_armature(n_dofs)),
                 dofs_kp=j_info.get("dofs_kp", gu.default_dofs_kp(n_dofs)),

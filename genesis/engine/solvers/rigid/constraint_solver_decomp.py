@@ -111,28 +111,23 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
             for i_col in range(self._collider.n_contacts[i_b]):
-                impact = self._collider.contact_data[i_col, i_b]
-                link_a = impact.link_a
-                link_b = impact.link_b
+                contact_data = self._collider.contact_data[i_col, i_b]
+                link_a = contact_data.link_a
+                link_b = contact_data.link_b
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
                 link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
-                f = impact.friction
-                pos = impact.pos
+                f = contact_data.friction
+                pos = contact_data.pos
 
-                d1, d2 = gu.orthogonals(impact.normal)
+                d1, d2 = gu.orthogonals(contact_data.normal)
 
                 invweight = self._solver.links_info[link_a_maybe_batch].invweight[0]
                 if link_b > -1:
                     invweight = invweight + self._solver.links_info[link_b_maybe_batch].invweight[0]
 
                 for i in range(4):
-                    n = -d1 * f - impact.normal
-                    if i == 1:
-                        n = d1 * f - impact.normal
-                    elif i == 2:
-                        n = -d2 * f - impact.normal
-                    elif i == 3:
-                        n = d2 * f - impact.normal
+                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                    n = d * f - contact_data.normal
 
                     n_con = ti.atomic_add(self.n_constraints[i_b], 1)
                     if ti.static(self.sparse_solve):
@@ -144,9 +139,7 @@ class ConstraintSolver:
                             self.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
                     con_n_relevant_dofs = 0
-
                     jac_qvel = gs.ti_float(0.0)
-
                     for i_ab in range(2):
                         sign = gs.ti_float(-1.0)
                         link = link_a
@@ -183,10 +176,12 @@ class ConstraintSolver:
 
                     if ti.static(self.sparse_solve):
                         self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-                    imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel, -impact.penetration)
+                    imp, aref = gu.imp_aref(
+                        contact_data.sol_params, -contact_data.penetration, jac_qvel, -contact_data.penetration
+                    )
 
-                    diag = invweight + impact.friction * impact.friction * invweight
-                    diag *= 2 * impact.friction * impact.friction * (1 - imp) / imp
+                    diag = invweight + contact_data.friction * contact_data.friction * invweight
+                    diag *= 2 * contact_data.friction * contact_data.friction * (1 - imp) / imp
                     diag = ti.max(diag, gs.EPS)
 
                     self.diag[n_con, i_b] = diag
@@ -774,28 +769,23 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
             for i_col in range(self._collider.n_contacts[i_b]):
-                impact = self._collider.contact_data[i_col, i_b]
+                contact_data = self._collider.contact_data[i_col, i_b]
 
-                f = impact.friction
+                f = contact_data.friction
                 force = ti.Vector.zero(gs.ti_float, 3)
-                d1, d2 = gu.orthogonals(impact.normal)
+                d1, d2 = gu.orthogonals(contact_data.normal)
                 for i in range(4):
-                    n = -d1 * f - impact.normal
-                    if i == 1:
-                        n = d1 * f - impact.normal
-                    elif i == 2:
-                        n = -d2 * f - impact.normal
-                    elif i == 3:
-                        n = d2 * f - impact.normal
+                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                    n = d * f - contact_data.normal
                     force += n * self.efc_force[i_col * 4 + i, i_b]
 
                 self._collider.contact_data[i_col, i_b].force = force
 
-                self._solver.links_state[impact.link_a, i_b].contact_force = (
-                    self._solver.links_state[impact.link_a, i_b].contact_force - force
+                self._solver.links_state[contact_data.link_a, i_b].contact_force = (
+                    self._solver.links_state[contact_data.link_a, i_b].contact_force - force
                 )
-                self._solver.links_state[impact.link_b, i_b].contact_force = (
-                    self._solver.links_state[impact.link_b, i_b].contact_force + force
+                self._solver.links_state[contact_data.link_b, i_b].contact_force = (
+                    self._solver.links_state[contact_data.link_b, i_b].contact_force + force
                 )
 
     @ti.kernel
