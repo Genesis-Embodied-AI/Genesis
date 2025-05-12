@@ -4028,15 +4028,23 @@ class RigidSolver(Solver):
         """
         Solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
         Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
+
+        Parameters
+        ----------
+        sol_params: Tuple[float] | List[float] | np.ndarray | torch.tensor
+            array of length 7 in which each element corresponds to
+            (timeconst, dampratio, dmin, dmax, width, mid, power)
         """
+        if isinstance(sol_params, tuple) or isinstance(sol_params, list):
+            sol_params = np.array(sol_params)
         assert len(sol_params) == 7
 
         # Make sure that the constraints parameters are valid
+        # NOTE: _sanitize_sol_params requires additional dim
         sol_params = _sanitize_sol_params(
-            sol_params, self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
+            sol_params[None], self._sol_constraint_min_resolve_time, self._sol_constraint_resolve_time
         )
-
-        self._kernel_set_global_sol_params(sol_params)
+        self._kernel_set_global_sol_params(sol_params[0])
 
     @ti.kernel
     def _kernel_set_global_sol_params(self, sol_params: ti.types.ndarray()):
