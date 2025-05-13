@@ -211,6 +211,7 @@ def chain_capsule_hinge_capsule(asset_tmp_path):
     return _build_chain_capsule_hinge(asset_tmp_path, enable_mesh=False)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -224,6 +225,7 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150, tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.adjacent_collision(True)
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -234,6 +236,7 @@ def test_simple_kinematic_chain(gs_sim, mj_sim, tol):
 
 
 # Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
+@pytest.mark.required
 @pytest.mark.multi_contact(False)
 @pytest.mark.parametrize("xml_path", ["xml/walker.xml"])
 @pytest.mark.parametrize(
@@ -298,6 +301,7 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -310,6 +314,7 @@ def test_one_ball_joint(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=600, tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/rope_ball.xml", "xml/rope_hinge.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -323,6 +328,7 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=(2 * tol))
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -466,6 +472,7 @@ def test_many_boxes_dynamics(box_box_detection, dynamics, show_viewer):
             assert_allclose(qpos[3:], 0, atol=0.03)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -489,6 +496,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
         check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol)
 
 
+@pytest.mark.required
 def test_robot_scaling(show_viewer, tol):
     mass = None
     links_pos = None
@@ -527,6 +535,7 @@ def test_robot_scaling(show_viewer, tol):
         assert_allclose(qf_passive, 0, tol=tol)
 
 
+@pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -550,6 +559,7 @@ def test_info_batching(tol):
     assert_allclose(qposs[0], qposs[1], tol=tol)
 
 
+@pytest.mark.required
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -703,6 +713,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
             assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_pd_control(show_viewer):
     scene = gs.Scene(
@@ -763,6 +774,7 @@ def test_pd_control(show_viewer):
         assert_allclose(qf_applied[0], qf_applied[1], tol=1e-6)
 
 
+@pytest.mark.required
 def test_set_root_pose(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -796,6 +808,7 @@ def test_set_root_pose(show_viewer, tol):
         assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -992,8 +1005,17 @@ def move_cube(use_suction, mode, show_viewer):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
-@pytest.mark.parametrize("mode", [0, 1, 2])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "mode, backend",
+    [
+        pytest.param(0, gs.cpu, marks=pytest.mark.required),
+        pytest.param(1, gs.cpu),
+        pytest.param(2, gs.cpu),
+        pytest.param(0, gs.gpu),
+        pytest.param(1, gs.gpu),
+        pytest.param(2, gs.gpu),
+    ],
+)
 def test_inverse_kinematics(mode, show_viewer):
     move_cube(use_suction=False, mode=mode, show_viewer=show_viewer)
 
@@ -1005,6 +1027,7 @@ def test_suction_cup(mode, show_viewer):
     move_cube(use_suction=True, mode=mode, show_viewer=show_viewer)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_mass_mat(show_viewer, tol):
     # Create and build the scene
@@ -1262,6 +1285,7 @@ def test_collision_edge_cases(gs_sim, mode):
     assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
 
 
+@pytest.mark.required
 @pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_collision_plane_convex(show_viewer, tol):
@@ -1385,6 +1409,7 @@ def test_terrain_generation(show_viewer):
     assert height_balls_max - height_balls_min > 0.5 * (height_field_max - height_field_min)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])  # TODO: Cannot afford GPU test for this one
 def test_urdf_mimic_panda(show_viewer, tol):
     # create and build the scene

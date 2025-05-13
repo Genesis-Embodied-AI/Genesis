@@ -80,7 +80,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --forked ./tests
+          pytest -v --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
         uses: actions/cache/save@v4
