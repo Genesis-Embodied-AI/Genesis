@@ -2406,6 +2406,11 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_damping(dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
+    def get_mass_mat(self, envs_idx=None, decompose=False, *, unsafe=False):
+        dofs_idx = self._get_idx(None, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose, unsafe=unsafe)
+
+    @gs.assert_built
     def zero_all_dofs_velocity(self, envs_idx=None, *, unsafe=False):
         """
         Zero the velocity of all the entity's dofs.

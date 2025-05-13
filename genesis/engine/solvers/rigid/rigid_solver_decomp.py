@@ -4709,6 +4709,30 @@ class RigidSolver(Solver):
         tensor = ti_field_to_torch(self.dofs_info.damping, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
+    def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False, *, unsafe=False):
+        if not unsafe and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
+
+        tensor = ti_field_to_torch(
+            self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, unsafe=unsafe
+        )
+
+        if dofs_idx is not None:
+            if isinstance(dofs_idx, (slice, int)) or (dofs_idx.ndim == 0):
+                tensor = tensor[:, dofs_idx, dofs_idx]
+                if tensor.ndim == 1:
+                    tensor = tensor.reshape((-1, 1, 1))
+            else:
+                tensor = tensor[:, dofs_idx.unsqueeze(1), dofs_idx]
+        if self.n_envs == 0:
+            tensor = tensor.squeeze(0)
+
+        if decompose:
+            mass_mat_D_inv = ti_field_to_torch(mass_mat_D_inv, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
+            return tensor, mass_mat_D_inv
+
+        return tensor
+
     @ti.kernel
     def _kernel_set_drone_rpm(
         self,

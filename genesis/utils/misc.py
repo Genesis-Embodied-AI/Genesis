@@ -250,6 +250,7 @@ MAX_CACHE_SIZE = 1000
 
 @dataclass
 class FieldMetadata:
+    ndim: int
     shape: tuple[int, ...]
     dtype: ti._lib.core.DataType
     mapping_key: Any
@@ -355,7 +356,7 @@ def ti_field_to_torch(
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
         col_mask (optional): Columns to extract from batch dimension field after transpose if requested.
         keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
-        transpose (bool, optional): Whether to transpose the first two batch dimensions.
+        transpose (bool, optional): Whether move to front the first field dimension.
         unsafe (bool, optional): Whether to skip validity check of the masks.
 
     Returns:
@@ -365,7 +366,9 @@ def ti_field_to_torch(
     field_id = id(field)
     field_meta = FIELD_CACHE.get(field_id)
     if field_meta is None:
-        field_meta = FieldMetadata(field.shape, field.dtype, None)
+        field_meta = FieldMetadata(
+            field.ndim if isinstance(field, ti.MatrixField) else 0, field.shape, field.dtype, None
+        )
         if len(FIELD_CACHE) == MAX_CACHE_SIZE:
             FIELD_CACHE.popitem(last=False)
         FIELD_CACHE[field_id] = field_meta
@@ -445,7 +448,7 @@ def ti_field_to_torch(
     # Note that it is worth transposing here rather than outside this function, as it preserve row-major memory
     # alignment in case of advanced masking, which would spare computation later on if expected from the user.
     if transpose and not is_1D_batch:
-        out = out.transpose(1, 0)
+        out = out.movedim(out.ndim - field_meta.ndim - 1, 0)
 
     # Extract slice if necessary.
     # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions,
