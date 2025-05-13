@@ -1005,6 +1005,38 @@ def test_suction_cup(mode, show_viewer):
     move_cube(use_suction=True, mode=mode, show_viewer=show_viewer)
 
 
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_mass_mat(show_viewer, tol):
+    # Create and build the scene
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            substeps=1,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    franka1 = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml", pos=(0, 0, 0)),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    franka2 = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml", pos=(0, 2, 0)),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    mass_mat_1 = franka1.get_mass_mat().cpu()
+    mass_mat_2 = franka2.get_mass_mat().cpu()
+    assert mass_mat_1.shape == (franka1.n_dofs, franka1.n_dofs)
+    assert_allclose(mass_mat_1, mass_mat_2, tol=tol)
+
+
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_nonconvex_collision(show_viewer):
     scene = gs.Scene(
@@ -1500,6 +1532,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv, None),
         (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos, None),
+        (-1, n_envs, gs_robot.get_mass_mat, None, None),
         (-1, n_envs, gs_robot.get_links_net_contact_force, None, None),
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
@@ -1509,8 +1542,7 @@ def test_data_accessor(n_envs, batched, tol):
         datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
         if field is not None:
             true = field.to_torch(device="cpu")
-            if true.ndim > 1 and true.shape[1] == n_envs:
-                true = true.transpose(1, 0)
+            true = true.movedim(true.ndim - getattr(field, "ndim", 0) - 1, 0)
             if isinstance(datas, torch.Tensor):
                 true = true.reshape(datas.shape)
             else:
@@ -1525,7 +1557,7 @@ def test_data_accessor(n_envs, batched, tol):
             else:
                 for val in datas:
                     val[:] = torch.abs(torch.randn(val.shape, dtype=gs.tc_float, device="cpu"))
-                    val[:] /= torch.linalg.norm(vals, dim=-1, keepdims=True)
+                    val /= torch.linalg.norm(vals, dim=-1, keepdims=True)
             setter(datas)
         if arg1_max > 0:
             datas_ = getter(range(arg1_max))
