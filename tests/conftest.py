@@ -34,6 +34,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if is_benchmarks:
         config.option.numprocesses = 0
 
+    # Force disabling forked for non-linux systems
+    if not sys.platform.startswith("linux"):
+        config.option.forked = False
+
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
     if show_viewer:
