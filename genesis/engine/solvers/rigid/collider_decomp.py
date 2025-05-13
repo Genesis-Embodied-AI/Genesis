@@ -970,23 +970,52 @@ class Collider:
                 ):
                     pass
                 elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
-                    is_specialized = False
-                    if (
-                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    ):
-                        if ti.static(self._solver._box_box_detection):
-                            self._func_box_box_contact(i_ga, i_gb, i_b)
-                            is_specialized = True
-                    elif (
-                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    ):
-                        if ti.static(self._solver._enable_multi_contact):
-                            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
-                            is_specialized = True
-                    if not is_specialized:
-                        self._func_mpr(i_ga, i_gb, i_b)
+                    if ti.static(gs.platform == "macOS"):
+                        # FIXME: Specialized codepath of macos to get around a compilation bug that is breaking
+                        # plane-box collision detection in a weird unpredictable way...
+                        # This MacOS-compliant patch cannot be used for all platform because it significantly
+                        # increases compilation time and unsequently RAM memory consumption for some reason...
+                        if (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            if ti.static(self._solver._box_box_detection):
+                                self._func_box_box_contact(i_ga, i_gb, i_b)
+                            else:
+                                self._func_mpr(i_ga, i_gb, i_b)
+                        elif (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            # This condition has not sense but is essential to fix the bug...
+                            if (
+                                self._solver._enable_multi_contact
+                                and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                            ):
+                                self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                            else:
+                                self._func_mpr(i_ga, i_gb, i_b)
+                        else:
+                            self._func_mpr(i_ga, i_gb, i_b)
+
+                    else:
+                        is_specialized = False
+                        if (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            if ti.static(self._solver._box_box_detection):
+                                self._func_box_box_contact(i_ga, i_gb, i_b)
+                                is_specialized = True
+                        elif (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            if ti.static(self._solver._enable_multi_contact):
+                                self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                                is_specialized = True
+                        if not is_specialized:
+                            self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_nonconvex_nonterrain(self):
