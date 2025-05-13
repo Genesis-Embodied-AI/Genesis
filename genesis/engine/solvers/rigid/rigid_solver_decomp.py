@@ -42,7 +42,7 @@ def _sanitize_sol_params(sol_params, min_timeconst, global_timeconst=None):
             "altering the original value."
         )
     timeconst[:] = timeconst.clip(min_timeconst)
-    dampratio[:] = dampratio.clip(0.0, 1.0)
+    dampratio[:] = dampratio.clip(0.0)
     dmin[:] = dmin.clip(IMP_MIN, IMP_MAX)
     dmax[:] = dmax.clip(IMP_MIN, IMP_MAX)
     mid[:] = mid.clip(IMP_MIN, IMP_MAX)
