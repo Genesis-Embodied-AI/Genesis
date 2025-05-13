@@ -1243,9 +1243,6 @@ class Collider:
 
     @ti.func
     def _func_mpr(self, i_ga, i_gb, i_b):
-        i_la = self._solver.geoms_info[i_ga].link_idx
-        i_lb = self._solver.geoms_info[i_gb].link_idx
-
         # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
         # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
         # criteria to get rid of redundant contact points seems to be a better option.
