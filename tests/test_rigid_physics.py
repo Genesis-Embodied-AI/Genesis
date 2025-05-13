@@ -1031,10 +1031,14 @@ def test_mass_mat(show_viewer, tol):
     )
     scene.build()
 
-    mass_mat_1 = franka1.get_mass_mat().cpu()
-    mass_mat_2 = franka2.get_mass_mat().cpu()
+    mass_mat_1 = franka1.get_mass_mat(decompose=False).cpu()
+    mass_mat_2 = franka2.get_mass_mat(decompose=False).cpu()
     assert mass_mat_1.shape == (franka1.n_dofs, franka1.n_dofs)
     assert_allclose(mass_mat_1, mass_mat_2, tol=tol)
+
+    mass_mat_L, mass_mat_D_inv = franka1.get_mass_mat(decompose=True)
+    mass_mat = mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L
+    assert_allclose(mass_mat, mass_mat_1, tol=tol)
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])

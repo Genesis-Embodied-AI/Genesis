@@ -367,7 +367,7 @@ def ti_field_to_torch(
     field_meta = FIELD_CACHE.get(field_id)
     if field_meta is None:
         field_meta = FieldMetadata(
-            field.ndim if isinstance(field, ti.MatrixField) else 0, field.shape, field.dtype, None
+            field.ndim if isinstance(field, ti.lang.MatrixField) else 0, field.shape, field.dtype, None
         )
         if len(FIELD_CACHE) == MAX_CACHE_SIZE:
             FIELD_CACHE.popitem(last=False)
