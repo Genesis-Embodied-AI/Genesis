@@ -119,7 +119,29 @@ class MockRigidSolver:
         self.links_state = type(
             "LinksState", (), {"hibernated": False, "i_quat": np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)}
         )
-        self.verts_info = type("VertsInfo", (), {"init_pos": np.zeros(3, dtype=np.float32)})
+
+        # Fix: Create a proper mock for verts_info with to_numpy() method support
+        class VertsInfoMock:
+            def __init__(self):
+                # Create a mock field class that supports to_numpy()
+                class MockField:
+                    def __init__(self, data):
+                        self.data = data
+
+                    def to_numpy(self):
+                        return self.data
+
+                # Initialize with vertex positions (adjust size to match n_verts)
+                self.init_pos = MockField(np.zeros((7, 3), dtype=np.float32))
+
+            def __getitem__(self, idx):
+                # Support indexing operations
+                result = type("IndexedVertsInfo", (), {})()
+                # For simplicity, just return the first vertex position for any index
+                result.init_pos = self.init_pos.data[0]
+                return result
+
+        self.verts_info = VertsInfoMock()
         self.edges_info = type("EdgesInfo", (), {"v0": 0, "v1": 1, "length": 0.1})
 
     def _initialize_geoms_info(self):
