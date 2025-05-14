@@ -1,8 +1,25 @@
 import taichi as ti
 import numpy as np
 import pytest
-import genesis as gs
-from genesis.engine.solvers.rigid.collider_decomp import Collider
+from unittest.mock import patch, MagicMock
+
+# Create the mock before importing genesis modules
+mock_gs = MagicMock()
+mock_gs.ti_float = ti.f32
+mock_gs.np_float = np.float32
+mock_gs.ti_int = ti.i32
+mock_gs.np_int = np.int32
+mock_gs.ti_vec3 = ti.types.vector(3, ti.f32)
+mock_gs.EPS = 1e-15
+mock_gs.PARA_LEVEL = MagicMock()
+mock_gs.PARA_LEVEL.ALL = 2
+mock_gs.GEOM_TYPE = MagicMock()
+mock_gs.GEOM_TYPE.TERRAIN = 4
+
+# Setup the patch
+with patch.dict("sys.modules", {"genesis": mock_gs}):
+    # Now import the module that depends on genesis
+    from genesis.engine.solvers.rigid.collider_decomp import Collider
 
 
 class MockGeom:
@@ -76,7 +93,7 @@ class MockRigidSolver:
         self._box_box_detection = True  # Add this for checking box-box collision
         self._enable_multi_contact = True  # Add this for multi-contact
         self._enable_mujoco_compatibility = False  # Add this for mujoco compatibility
-        self._para_level = gs.PARA_LEVEL.ALL
+        self._para_level = mock_gs.PARA_LEVEL.ALL
         self._scene = type("Scene", (), {"_envs_idx": np.array([0])})
 
         # Create mock geoms_info fields
@@ -280,13 +297,10 @@ def patch_collider_init(monkeypatch):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def initialize_genesis():
-    """Initialize Genesis once before running any tests"""
-    ti.init(arch=ti.cpu)  # Initialize Taichi first
-    gs.init(backend=gs.cpu, debug=False)
+def initialize_taichi():
+    """Initialize Taichi only once before running any tests"""
+    ti.init(arch=ti.cpu)
     yield
-    # Clean up Genesis after all tests
-    gs.destroy()
 
 
 @pytest.fixture
