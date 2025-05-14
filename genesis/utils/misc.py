@@ -167,6 +167,9 @@ def get_assets_dir():
 
 
 def get_cache_dir():
+    cache_dir = os.environ.get("GS_CACHE_FILE_PATH")
+    if cache_dir is not None:
+        return cache_dir
     return os.path.join(os.path.expanduser("~"), ".cache", "genesis")
 
 

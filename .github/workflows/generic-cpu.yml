@@ -33,6 +33,7 @@ jobs:
           fetch-depth: 1
 
       - name: Restore Taichi Kernel Cache
+        if: always()
         uses: actions/cache@v4
         with:
           path: .cache
@@ -83,6 +84,7 @@ jobs:
           pytest -v --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: .cache
