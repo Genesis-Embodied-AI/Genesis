@@ -180,10 +180,15 @@ def init(
             random_seed=seed,
         )
 
+    # It is necessary to disable Metal backend manually because it is not working at taichi-level due to a bug
+    ti_arch = TI_ARCH[platform][backend]
+    if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
+        ti_arch = TI_ARCH[platform][gs_backend.cpu]
+
     # init taichi
     with patch("builtins.print", fake_print):
         ti.init(
-            arch=TI_ARCH[platform][backend],
+            arch=ti_arch,
             # debug is causing segfault on some machines
             debug=False,
             check_out_of_bound=debug,
@@ -200,8 +205,8 @@ def init(
 
     # Make sure that taichi arch is matching requirement
     ti_runtime = ti.lang.impl.get_runtime()
-    taichi_arch = ti_runtime.prog.config().arch
-    if backend != gs.cpu and taichi_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+    ti_arch = ti_runtime.prog.config().arch
+    if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
         device, device_name, total_mem, backend = get_device(gs.cpu)
 
     _globalize_backend(backend)

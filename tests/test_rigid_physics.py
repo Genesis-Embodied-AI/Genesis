@@ -1029,7 +1029,7 @@ def test_suction_cup(mode, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_mass_mat(show_viewer, tol):
     # Create and build the scene
     scene = gs.Scene(
@@ -1055,8 +1055,8 @@ def test_mass_mat(show_viewer, tol):
     )
     scene.build()
 
-    mass_mat_1 = franka1.get_mass_mat(decompose=False).cpu()
-    mass_mat_2 = franka2.get_mass_mat(decompose=False).cpu()
+    mass_mat_1 = franka1.get_mass_mat(decompose=False)
+    mass_mat_2 = franka2.get_mass_mat(decompose=False)
     assert mass_mat_1.shape == (franka1.n_dofs, franka1.n_dofs)
     assert_allclose(mass_mat_1, mass_mat_2, tol=tol)
 

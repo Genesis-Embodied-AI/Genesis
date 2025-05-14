@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  test-linux-gpu:
+  linux-gpu:
     runs-on: [self-hosted, coreweave]
 
     strategy:

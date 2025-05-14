@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  test-linux-gpu:
+  generic-cpu:
     strategy:
       fail-fast: false
       matrix:
