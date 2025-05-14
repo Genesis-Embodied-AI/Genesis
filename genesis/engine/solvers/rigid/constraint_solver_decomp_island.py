@@ -138,8 +138,6 @@ class ConstraintSolverIsland:
             link_b = contact_data.link_b
             link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
-            f = contact_data.friction
-            pos = contact_data.pos
 
             d1, d2 = gu.orthogonals(contact_data.normal)
 
@@ -149,7 +147,7 @@ class ConstraintSolverIsland:
 
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                n = d * f - contact_data.normal
+                n = d * contact_data.friction - contact_data.normal
 
                 n_con = ti.atomic_add(self.n_constraints[i_b], 1)
                 if ti.static(self.sparse_solve):
@@ -180,8 +178,8 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = pos - self._solver.links_state[link, i_b].root_COM
-                            ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
+                            _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
                             jac = diff @ n
@@ -527,12 +525,11 @@ class ConstraintSolverIsland:
 
             contact_data = self._collider.contact_data[i_col, i_b]
 
-            f = contact_data.friction
             force = ti.Vector.zero(gs.ti_float, 3)
             d1, d2 = gu.orthogonals(contact_data.normal)
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                n = d * f - contact_data.normal
+                n = d * contact_data.friction - contact_data.normal
                 force += n * self.efc_force[i_island_col * 4 + i, i_b]
             self._collider.contact_data[i_col, i_b].force = force
 
