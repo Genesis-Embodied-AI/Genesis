@@ -101,6 +101,7 @@ filterwarnings = [
 ]
 markers = [
     "benchmarks: marks benchmarks (executed independently and sequentially).",
+    "slow: marks tests that are slow and can be skipped with -m 'not slow'",
 ]
 log_cli_level = "WARNING"
 

@@ -309,6 +309,7 @@ def rigid_solver():
     return MockRigidSolver()
 
 
+@pytest.mark.slow
 def test_collider_initialization(rigid_solver):
     """Test that a Collider can be successfully instantiated"""
     # Create the collider
@@ -319,6 +320,7 @@ def test_collider_initialization(rigid_solver):
     assert collider is not None
 
 
+@pytest.mark.slow
 def test_collider_reset(rigid_solver):
     """Test that a Collider reset method works properly"""
     # Create the collider
