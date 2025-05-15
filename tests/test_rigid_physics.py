@@ -1419,7 +1419,10 @@ def test_urdf_mimic_panda(show_viewer, tol):
     )
 
     hand = scene.add_entity(
-        gs.morphs.URDF(file="urdf/panda_bullet/hand.urdf"),
+        gs.morphs.URDF(
+            file="urdf/panda_bullet/hand.urdf",
+            fixed=True,
+        ),
     )
     scene.build()
 

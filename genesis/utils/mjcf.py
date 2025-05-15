@@ -12,13 +12,32 @@ import mujoco
 import genesis as gs
 
 from . import geom as gu
+from . import urdf as uu
 from .misc import get_assets_dir
 
 
-def parse_mjcf(path):
-    path = os.path.join(get_assets_dir(), path)
-    mj = mujoco.MjModel.from_xml_path(path)
-    return mj
+def parse_mjcf(morph, surface):
+    if isinstance(morph.file, str):
+        path = os.path.join(get_assets_dir(), morph.file)
+        mj = mujoco.MjModel.from_xml_path(path)
+    else:
+        mj = morph.file
+
+    # Check if there is any tendon. Report a warning if so.
+    if mj.ntendon:
+        gs.logger.warning("(MJCF) Tendon not supported")
+
+    # Parse all geometries grouped by parent joint (or world)
+    world_g_info, *links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+
+    # Parse all bodies (links and joints)
+    (world_l_info, *l_infos), (world_j_info, *links_j_infos) = parse_links(mj, morph.scale)
+    l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
+
+    # Parsing all equality constraints
+    eqs_info = parse_equalities(mj, morph.scale)
+
+    return l_infos, links_j_infos, links_g_infos, world_l_info, world_j_info, world_g_info, eqs_info
 
 
 def parse_link(mj, i_l, scale):
@@ -527,30 +546,41 @@ def parse_geoms(mj, scale, surface, xml_path):
     return links_g_info
 
 
-def parse_equality(mj, i_e, scale, ordered_links_idx):
-    e_info = dict()
-    mj_equality = mj.equality(i_e)
-    e_info["name"] = mj_equality.name
+def parse_equalities(mj, scale):
+    eqs_info = []
+    for i_e in range(mj.neq):
+        mj_equality = mj.equality(i_e)
 
-    e_info["eq_data"] = mj.eq_data[i_e]
-    e_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
+        eq_info = dict()
+        eq_info["name"] = mj_equality.name
+        eq_info["data"] = mj.eq_data[i_e]
+        eq_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
 
-    if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
-        e_info["type"] = gs.EQUALITY_TYPE.CONNECT
-        e_info["eq_obj1id"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
-        e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
-        e_info["eq_data"][:6] *= scale
-    elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
-        e_info["type"] = gs.EQUALITY_TYPE.WELD
-        e_info["eq_obj1id"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
-        e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
-        e_info["eq_data"][:6] *= scale
-    elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
-        e_info["eq_obj1id"] = mj.eq_obj1id[i_e]
-        e_info["eq_obj2id"] = mj.eq_obj2id[i_e]
-        # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
-        e_info["type"] = gs.EQUALITY_TYPE.JOINT
-    else:
-        raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
+        if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
+            eq_info["type"] = gs.EQUALITY_TYPE.CONNECT
+            eq_info["data"][:6] *= scale
+            name_objadr = mj.name_bodyadr
+        elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+            eq_info["type"] = gs.EQUALITY_TYPE.WELD
+            eq_info["data"][:6] *= scale
+            name_objadr = mj.name_bodyadr
+        elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
+            # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
+            eq_info["type"] = gs.EQUALITY_TYPE.JOINT
+            name_objadr = mj.name_jntadr
+        else:
+            raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
-    return e_info
+        objs_name = []
+        for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):
+            if obj_idx < 0:
+                obj_name = None
+            else:
+                name_start = name_objadr[obj_idx]
+                obj_name, *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+            objs_name.append(obj_name)
+        eq_info["objs_name"] = objs_name
+
+        eqs_info.append(eq_info)
+
+    return eqs_info

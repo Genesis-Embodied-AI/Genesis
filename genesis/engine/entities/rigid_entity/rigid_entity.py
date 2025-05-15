@@ -320,21 +320,8 @@ class RigidEntity(Entity):
         )
 
     def _load_MJCF(self, morph, surface):
-        mj = mju.parse_mjcf(morph.file)
-        n_geoms = mj.ngeom
-        n_links = mj.nbody - 1  # link 0 in mj is world
-
-        # Check if there is any tendon. Report a warning if so.
-        if mj.ntendon:
-            gs.logger.warning("(MJCF) Tendon not supported")
-
-        # Parse all geometries grouped by parent joint (or world)
-        world_g_info, *links_g_infos = mju.parse_geoms(mj, morph.scale, surface, morph.file)
-
-        # Parse all bodies (links and joints)
-        (world_l_info, *l_infos), (world_j_info, *links_j_infos) = mju.parse_links(mj, morph.scale)
-        l_infos, links_j_infos, links_g_infos, ordered_links_idx = uu._order_links(
-            l_infos, links_j_infos, links_g_infos
+        l_infos, links_j_infos, links_g_infos, world_l_info, world_j_info, world_g_info, eqs_info = mju.parse_mjcf(
+            morph, surface
         )
 
         # Define flag to determine whether the link at hand is associated with a robot.
@@ -384,30 +371,22 @@ class RigidEntity(Entity):
 
             self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
 
-        for i_e in range(mj.neq):
-            e_info = mju.parse_equality(mj, i_e, morph.scale, ordered_links_idx)
-            if e_info["type"] in (gs.EQUALITY_TYPE.CONNECT, gs.EQUALITY_TYPE.JOINT, gs.EQUALITY_TYPE.WELD):
-                self._add_equality(
-                    name=e_info["name"],
-                    type=e_info["type"],
-                    eq_obj1id=e_info["eq_obj1id"],
-                    eq_obj2id=e_info["eq_obj2id"],
-                    eq_data=e_info["eq_data"],
-                    sol_params=e_info["sol_params"],
-                )
-            else:
-                gs.logger.warning(f"Equality type {e_info['type']} not supported")
+        for eq_info in eqs_info:
+            self._add_equality(
+                name=eq_info["name"],
+                type=eq_info["type"],
+                objs_name=eq_info["objs_name"],
+                data=eq_info["data"],
+                sol_params=eq_info["sol_params"],
+            )
 
     def _load_URDF(self, morph, surface):
-        l_infos, j_infos, equalities = uu.parse_urdf(morph, surface)
+        l_infos, j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
 
         # Define flag to determine whether the link at hand is associated with a robot
         is_robot = any(j_info["type"] not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos)
 
-        for i_l in range(len(l_infos)):
-            l_info = l_infos[i_l]
-            j_info = j_infos[i_l]
-
+        for l_info, j_info, link_g_infos in zip(l_infos, j_infos, links_g_infos):
             if l_info["parent_idx"] < 0:  # base link
                 l_info["pos"] = np.array(morph.pos)
                 l_info["quat"] = np.array(morph.quat)
@@ -419,18 +398,16 @@ class RigidEntity(Entity):
 
             l_info["is_robot"] = is_robot
 
-            self._add_by_info(l_info, (j_info,), l_info["g_infos"], morph, surface)
+            self._add_by_info(l_info, (j_info,), link_g_infos, morph, surface)
 
-        for e_info in equalities:
-            if e_info["type"] in (gs.EQUALITY_TYPE.CONNECT, gs.EQUALITY_TYPE.JOINT, gs.EQUALITY_TYPE.WELD):
-                self._add_equality(
-                    name=e_info["name"],
-                    type=e_info["type"],
-                    eq_obj1id=e_info["eq_obj1id"],
-                    eq_obj2id=e_info["eq_obj2id"],
-                    eq_data=e_info["eq_data"],
-                    sol_params=e_info["sol_params"],
-                )
+        for eq_info in eqs_info:
+            self._add_equality(
+                name=eq_info["name"],
+                type=eq_info["type"],
+                objs_name=eq_info["objs_name"],
+                data=eq_info["data"],
+                sol_params=eq_info["sol_params"],
+            )
 
     def _build(self):
         for link in self._links:
@@ -666,26 +643,27 @@ class RigidEntity(Entity):
 
         return link, joints
 
-    def _add_equality(self, name, type, eq_obj1id, eq_obj2id, eq_data, sol_params):
-        if type == gs.EQUALITY_TYPE.CONNECT:
-            eq_obj1id += self._link_start
-            eq_obj2id += self._link_start
-        elif type == gs.EQUALITY_TYPE.JOINT:
-            eq_obj1id += self._joint_start
-            eq_obj2id += self._joint_start
-        elif type == gs.EQUALITY_TYPE.WELD:
-            eq_obj1id += self._link_start
-            eq_obj2id += self._link_start
-        else:
-            gs.logger.warning(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
+    def _add_equality(self, name, type, objs_name, data, sol_params):
+        objs_id = []
+        for obj_name in objs_name:
+            if type == gs.EQUALITY_TYPE.CONNECT:
+                obj_id = self.get_link(obj_name).idx
+            elif type == gs.EQUALITY_TYPE.JOINT:
+                obj_id = self.get_joint(obj_name).idx
+            elif type == gs.EQUALITY_TYPE.WELD:
+                obj_id = self.get_link(obj_name).idx
+            else:
+                gs.logger.warning(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
+            objs_id.append(obj_id)
+
         equality = RigidEquality(
             entity=self,
             name=name,
             idx=self.n_equalities + self._equality_start,
             type=type,
-            eq_obj1id=eq_obj1id,
-            eq_obj2id=eq_obj2id,
-            eq_data=eq_data,
+            eq_obj1id=objs_id[0],
+            eq_obj2id=objs_id[1],
+            eq_data=data,
             sol_params=sol_params,
         )
         self._equalities.append(equality)
