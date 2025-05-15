@@ -11,7 +11,7 @@ from . import mesh as mu
 from .misc import get_assets_dir
 
 
-def _order_links(l_infos, j_infos, links_g_info=None):
+def _order_links(l_infos, j_infos, links_g_infos=None):
     # re-order links based on depth in the kinematic tree, so that parent links are always before child links
     n_links = len(l_infos)
     dict_child = {k: [] for k in range(n_links)}
@@ -47,10 +47,10 @@ def _order_links(l_infos, j_infos, links_g_info=None):
     new_l_infos = [l_infos[i] for i in ordered_links_idx]
     new_j_infos = [j_infos[i] for i in ordered_links_idx]
 
-    if links_g_info is not None:
-        links_g_info = [links_g_info[i] for i in ordered_links_idx]
+    if links_g_infos is not None:
+        links_g_infos = [links_g_infos[i] for i in ordered_links_idx]
 
-    return new_l_infos, new_j_infos, links_g_info, ordered_links_idx
+    return new_l_infos, new_j_infos, links_g_infos, ordered_links_idx
 
 
 def parse_urdf(morph, surface):
@@ -73,10 +73,9 @@ def parse_urdf(morph, surface):
     assert n_links == len(robot.joints) + 1
     l_infos = [dict() for _ in range(n_links)]
     j_infos = [dict() for _ in range(n_links)]
+    links_g_infos = [[] for _ in range(n_links)]
 
-    for i in range(n_links):
-        link = robot.links[i]
-        l_info = l_infos[i]
+    for link, l_info, link_g_infos in zip(robot.links, l_infos, links_g_infos):
         l_info["name"] = link.name
 
         # we compute urdf's invweight later
@@ -93,8 +92,6 @@ def parse_urdf(morph, surface):
             l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
             l_info["inertial_i"] = link.inertial.inertia
             l_info["inertial_mass"] = link.inertial.mass
-
-        l_info["g_infos"] = []
 
         for geom in link.collisions + link.visuals:
             geom_is_col = not isinstance(geom, urdfpy.Visual)
@@ -134,7 +131,7 @@ def parse_urdf(morph, surface):
                         g_info["mesh"] = mesh
                     else:
                         g_info["vmesh"] = mesh
-                    l_info["g_infos"].append(g_info)
+                    link_g_infos.append(g_info)
             else:
                 # Each geometry primitive is one RigidGeom in genesis.
                 if isinstance(geom.geometry.geometry, urdfpy.Box):
@@ -179,7 +176,7 @@ def parse_urdf(morph, surface):
                     g_info["mesh"] = mesh
                 else:
                     g_info["vmesh"] = mesh
-                l_info["g_infos"].append(g_info)
+                link_g_infos.append(g_info)
 
     #########################  non-base joints and links #########################
     for joint in robot.joints:
@@ -335,7 +332,7 @@ def parse_urdf(morph, surface):
     j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
 
     # apply scale
-    for l_info in l_infos:
+    for l_info, j_info, link_g_infos in zip(l_infos, j_infos, links_g_infos):
         l_info["pos"] *= morph.scale
         l_info["inertial_pos"] *= morph.scale
 
@@ -344,52 +341,43 @@ def parse_urdf(morph, surface):
         if l_info["inertial_i"] is not None:
             l_info["inertial_i"] *= morph.scale**5
 
-        for g_info in l_info["g_infos"]:
+        j_info["pos"] *= morph.scale
+
+        for g_info in link_g_infos:
             g_info["pos"] *= morph.scale
 
             # TODO: parse friction
             g_info["friction"] = gu.default_friction()
             g_info["sol_params"] = gu.default_solver_params()
 
-    for j_info in j_infos:
-        j_info["pos"] *= morph.scale
+    eqs_info = parse_equalities(robot, morph)
 
-    equalities = parse_equality(robot, morph, j_infos)
-
-    return l_infos, j_infos, equalities
+    return l_infos, j_infos, links_g_infos, eqs_info
 
 
-def parse_equality(robot, morph, j_infos):
-    equalities = []
+def parse_equalities(robot, morph):
+    eqs_info = []
 
     for joint in robot.joints:
         if joint.mimic:
-            print(
+            gs.logger.debug(
                 f"Joint '{joint.name}' mimics '{joint.mimic.joint}' with multiplier {joint.mimic.multiplier} and offset {joint.mimic.offset}"
             )
 
-            e_info = dict()
-            e_info["name"] = f"mimic_{joint.name}_to_{joint.mimic.joint}"
+            eq_info = dict()
+            eq_info["type"] = gs.EQUALITY_TYPE.JOINT
+            eq_info["name"] = f"mimic_{joint.name}_to_{joint.mimic.joint}"
+            eq_info["objs_name"] = (joint.name, joint.mimic.joint)
+            eq_info["sol_params"] = gu.default_solver_params()
 
-            # find the joint id by the name
-            def find_joint_id(name):
-                for i, j_info in enumerate(j_infos):
-                    if j_info["name"] == name:
-                        return i
-                return -1
+            eq_info["data"] = np.zeros([11])
+            eq_info["data"][0] = joint.mimic.offset
+            eq_info["data"][1] = joint.mimic.multiplier
+            eq_info["data"][:6] *= morph.scale
 
-            e_info["eq_obj1id"] = find_joint_id(joint.name)
-            e_info["eq_obj2id"] = find_joint_id(joint.mimic.joint)
-            e_info["type"] = gs.EQUALITY_TYPE.JOINT
+            eqs_info.append(eq_info)
 
-            e_info["sol_params"] = gu.default_solver_params()
-            e_info["eq_data"] = np.zeros([11])
-            e_info["eq_data"][0] = joint.mimic.offset
-            e_info["eq_data"][1] = joint.mimic.multiplier
-            e_info["eq_data"][:6] *= morph.scale
-            equalities.append(e_info)
-
-    return equalities
+    return eqs_info
 
 
 def merge_fixed_links(robot, links_to_keep):
