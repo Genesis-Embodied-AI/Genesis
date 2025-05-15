@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 @ti.func
-def rotaxis(vecin, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float):
+def rotaxis(vecin, i0, i1, i2, f0, f1, f2):
     vecres = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
     vecres[0] = vecin[i0] * f0
     vecres[1] = vecin[i1] * f1
@@ -23,7 +23,7 @@ def rotaxis(vecin, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float):
 
 
 @ti.func
-def rotmatx(matin, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float):
+def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     matres = ti.Matrix.zero(gs.ti_float, 3, 3)
     matres[0, :] = matin[i0, :] * f0
     matres[1, :] = matin[i1, :] * f1
