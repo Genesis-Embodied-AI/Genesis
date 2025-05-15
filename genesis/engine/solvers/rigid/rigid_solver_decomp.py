@@ -2,9 +2,14 @@ from typing import Literal
 
 import numpy as np
 import torch
+import numpy.typing as npt
 import taichi as ti
 
 import genesis as gs
+from genesis.engine.entities.base_entity import Entity
+from genesis.engine.scene import Scene
+from genesis.engine.simulator import Simulator
+from genesis.options.solvers import RigidOptions
 import genesis.utils.geom as gu
 from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
@@ -27,7 +32,9 @@ IMP_MAX = 0.9999
 TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
 
-def _sanitize_sol_params(sol_params, min_timeconst, global_timeconst=None):
+def _sanitize_sol_params(
+    sol_params: npt.NDArray[np.float64], min_timeconst: float, global_timeconst: float | None = None
+):
     assert sol_params.shape[-1] == 7
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
     if global_timeconst is not None:
@@ -56,7 +63,7 @@ class RigidSolver(Solver):
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def __init__(self, scene, sim, options):
+    def __init__(self, scene: Scene, sim: Simulator, options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
 
         # options
@@ -95,23 +102,23 @@ class RigidSolver(Solver):
 
         self._cur_step = -1
 
-    def add_entity(self, idx, material, morph, surface, visualize_contact):
+    def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
         if isinstance(material, gs.materials.Avatar):
-            entity_class = AvatarEntity
+            EntityClass = AvatarEntity
             if visualize_contact:
                 gs.raise_exception("AvatarEntity does not support visualize_contact")
         else:
             if isinstance(morph, gs.morphs.Drone):
-                entity_class = DroneEntity
+                EntityClass = DroneEntity
             else:
-                entity_class = RigidEntity
+                EntityClass = RigidEntity
 
         if morph.is_free:
             verts_state_start = self.n_free_verts
         else:
             verts_state_start = self.n_fixed_verts
 
-        entity = entity_class(
+        entity = EntityClass(
             scene=self._scene,
             solver=self,
             material=material,

@@ -2,6 +2,22 @@ import numpy as np
 import taichi as ti
 
 import genesis as gs
+from genesis.engine.entities.base_entity import Entity
+from genesis.engine.scene import Scene
+from genesis.engine.solvers.base_solver import Solver
+from genesis.options.morphs import Morph
+from genesis.options.solvers import (
+    AvatarOptions,
+    CouplerOptions,
+    FEMOptions,
+    MPMOptions,
+    PBDOptions,
+    RigidOptions,
+    SFOptions,
+    SPHOptions,
+    SimOptions,
+    ToolOptions,
+)
 from genesis.repr_base import RBC
 
 from .coupler import Coupler
@@ -53,17 +69,17 @@ class Simulator(RBC):
 
     def __init__(
         self,
-        scene,
-        options,
-        coupler_options,
-        tool_options,
-        rigid_options,
-        avatar_options,
-        mpm_options,
-        sph_options,
-        fem_options,
-        sf_options,
-        pbd_options,
+        scene: Scene,
+        options: SimOptions,
+        coupler_options: CouplerOptions,
+        tool_options: ToolOptions,
+        rigid_options: RigidOptions,
+        avatar_options: AvatarOptions,
+        mpm_options: MPMOptions,
+        sph_options: SPHOptions,
+        fem_options: FEMOptions,
+        sf_options: SFOptions,
+        pbd_options: PBDOptions,
     ):
         self._scene = scene
 
@@ -99,7 +115,7 @@ class Simulator(RBC):
         self.fem_solver = FEMSolver(self.scene, self, self.fem_options)
         self.sf_solver = SFSolver(self.scene, self, self.sf_options)
 
-        self._solvers = gs.List(
+        self._solvers: list[Solver] = gs.List(
             [
                 self.tool_solver,
                 self.rigid_solver,
@@ -112,7 +128,7 @@ class Simulator(RBC):
             ]
         )
 
-        self._active_solvers = gs.List()
+        self._active_solvers: list[Solver] = gs.List()
 
         # coupler
         self._coupler = Coupler(self, self.coupler_options)
@@ -121,9 +137,9 @@ class Simulator(RBC):
         self._queried_states = QueriedStates()
 
         # entities
-        self._entities = gs.List()
+        self._entities: list[Entity] = gs.List()
 
-    def _add_entity(self, morph, material, surface, visualize_contact=False):
+    def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
 

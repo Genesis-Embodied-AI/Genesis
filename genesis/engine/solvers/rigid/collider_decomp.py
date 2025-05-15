@@ -1,8 +1,10 @@
 import time
 import numpy as np
+import numpy.typing as npt
 import taichi as ti
 
 import genesis as gs
+from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 
@@ -10,7 +12,7 @@ from .mpr_decomp import MPR
 
 
 @ti.func
-def rotaxis(vecin, i0, i1, i2, f0, f1, f2):
+def rotaxis(vecin: ti.Vector, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float) -> ti.Vector:
     vecres = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
     vecres[0] = vecin[i0] * f0
     vecres[1] = vecin[i1] * f1
@@ -19,7 +21,7 @@ def rotaxis(vecin, i0, i1, i2, f0, f1, f2):
 
 
 @ti.func
-def rotmatx(matin, i0, i1, i2, f0, f1, f2):
+def rotmatx(matin: ti.Matrix, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float) -> ti.Matrix:
     matres = ti.Matrix.zero(gs.ti_float, 3, 3)
     matres[0, :] = matin[i0, :] * f0
     matres[1, :] = matin[i1, :] * f1
@@ -29,7 +31,7 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
 
 @ti.data_oriented
 class Collider:
-    def __init__(self, rigid_solver):
+    def __init__(self, rigid_solver: RigidSolver):
         self._solver = rigid_solver
         self._init_verts_connectivity()
         self._init_collision_fields()
@@ -40,7 +42,7 @@ class Collider:
         self._mc_tolerance = 1e-2
         self._mpr_to_sdf_overlap_ratio = 0.5
 
-    def _init_verts_connectivity(self):
+    def _init_verts_connectivity(self) -> None:
         vert_neighbors = []
         vert_neighbor_start = []
         vert_n_neighbors = []
@@ -65,7 +67,7 @@ class Collider:
             self.vert_neighbor_start.from_numpy(vert_neighbor_start)
             self.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
-    def _init_collision_fields(self):
+    def _init_collision_fields(self) -> None:
         # compute collision pairs
         # convert to numpy array for faster retrieval
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
@@ -197,7 +199,7 @@ class Collider:
 
         self.reset()
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: npt.NDArray[np.int] | None = None) -> None:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(envs_idx)
@@ -258,7 +260,7 @@ class Collider:
             else:
                 self.n_contacts[i_b] = 0
 
-    def detection(self):
+    def detection(self) -> None:
         from genesis.utils.tools import create_timer
 
         timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)

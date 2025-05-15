@@ -9,6 +9,7 @@ import trimesh
 import pymeshlab
 
 import genesis as gs
+from genesis.options.surfaces import Surface
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
@@ -45,8 +46,8 @@ class Mesh(RBC):
     def __init__(
         self,
         mesh,
-        surface=None,
-        uvs=None,
+        surface: Surface | None = None,
+        uvs: np.NDArray | None = None,
         convexify=False,
         decimate=False,
         decimate_face_num=500,
