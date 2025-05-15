@@ -1,0 +1,59 @@
+name: Linux x86 - Nvidia GPU
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  linux-gpu:
+    runs-on: [self-hosted, coreweave]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    env:
+      GENESIS_IMAGE_VER: "1_0"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run unit tests and benchmarks
+        run: |
+          artifacts_id="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          echo "artifacts_id=${artifacts_id}" >> $GITHUB_ENV
+
+          srun \
+            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+            --container-mounts=\
+          /mnt/data/artifacts:/mnt/data/artifacts,\
+          "${{ github.workspace }}":/root/workspace,\
+          "${HOME}/.cache":/root/.cache \
+            --container-workdir=/root/workspace \
+            --export=\
+          NVIDIA_DRIVER_CAPABILITIES=all \
+            --no-container-mount-home \
+            --partition=hpc-low \
+            --nodes=1 --gpus=1 \
+            --exclusive \
+            bash -c "
+              pip install -e '.[dev,render]' && \
+              pytest -v --forked ./tests && \
+              pytest -v -m 'benchmarks' --backend gpu ./tests && \
+              cp 'speed_test.txt' '/mnt/data/artifacts/speed_test_${artifacts_id}.txt'
+            "
+
+      - name: Display benchmark stats
+        run: |
+          cat "/mnt/data/artifacts/speed_test_${artifacts_id}.txt"
+
+      - name: Upload benchmark stats as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-test-results
+          path: "/mnt/data/artifacts/speed_test_${{ env.artifacts_id }}.txt"
