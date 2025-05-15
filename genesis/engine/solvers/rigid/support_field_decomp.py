@@ -1,16 +1,19 @@
+from typing import TYPE_CHECKING
 from math import pi
 
 import numpy as np
 import taichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 import genesis.utils.geom as gu
+
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
 class SupportField:
-    def __init__(self, rigid_solver: RigidSolver) -> None:
+    def __init__(self, rigid_solver: "RigidSolver") -> None:
         self.solver = rigid_solver
         self.support_res = 180
         if self.solver._enable_collision:

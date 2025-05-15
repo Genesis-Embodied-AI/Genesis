@@ -1,18 +1,20 @@
-import time
+from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 import taichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 
 from .mpr_decomp import MPR
 
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+
 
 @ti.func
-def rotaxis(vecin: ti.Vector, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float) -> ti.Vector:
+def rotaxis(vecin, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float):
     vecres = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
     vecres[0] = vecin[i0] * f0
     vecres[1] = vecin[i1] * f1
@@ -21,7 +23,7 @@ def rotaxis(vecin: ti.Vector, i0: int, i1: int, i2: int, f0: float, f1: float, f
 
 
 @ti.func
-def rotmatx(matin: ti.Matrix, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float) -> ti.Matrix:
+def rotmatx(matin, i0: int, i1: int, i2: int, f0: float, f1: float, f2: float):
     matres = ti.Matrix.zero(gs.ti_float, 3, 3)
     matres[0, :] = matin[i0, :] * f0
     matres[1, :] = matin[i1, :] * f1
@@ -31,7 +33,7 @@ def rotmatx(matin: ti.Matrix, i0: int, i1: int, i2: int, f0: float, f1: float, f
 
 @ti.data_oriented
 class Collider:
-    def __init__(self, rigid_solver: RigidSolver):
+    def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
         self._init_verts_connectivity()
         self._init_collision_fields()
@@ -199,7 +201,7 @@ class Collider:
 
         self.reset()
 
-    def reset(self, envs_idx: npt.NDArray[np.int] | None = None) -> None:
+    def reset(self, envs_idx: npt.NDArray[np.int32] | None = None) -> None:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(envs_idx)

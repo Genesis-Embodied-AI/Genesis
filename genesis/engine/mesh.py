@@ -3,6 +3,7 @@ import pickle as pkl
 from contextlib import redirect_stdout
 
 import numpy as np
+import numpy.typing as npt
 import pyvista as pv
 import tetgen
 import trimesh
@@ -47,7 +48,7 @@ class Mesh(RBC):
         self,
         mesh,
         surface: Surface | None = None,
-        uvs: np.NDArray | None = None,
+        uvs: npt.NDArray | None = None,
         convexify=False,
         decimate=False,
         decimate_face_num=500,

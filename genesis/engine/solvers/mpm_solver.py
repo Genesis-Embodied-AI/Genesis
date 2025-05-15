@@ -1,10 +1,9 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 import torch
 
 import genesis as gs
-from genesis.engine.scene import Scene
-from genesis.engine.simulator import Simulator
 from genesis.options.solvers import MPMOptions
 import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
@@ -13,6 +12,11 @@ from genesis.engine.states.solvers import MPMSolverState
 
 from .base_solver import Solver
 
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.engine.solvers.base_solver import Solver
+    from genesis.engine.simulator import Simulator
+
 
 @ti.data_oriented
 class MPMSolver(Solver):
@@ -20,7 +24,7 @@ class MPMSolver(Solver):
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def __init__(self, scene: Scene, sim: Simulator, options: MPMOptions):
+    def __init__(self, scene: "Scene", sim: "Simulator", options: "MPMOptions"):
         super().__init__(scene, sim, options)
 
         # options

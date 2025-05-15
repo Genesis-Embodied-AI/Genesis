@@ -8,8 +8,6 @@ import torch
 
 import genesis as gs
 from genesis.engine.materials.base import Material
-from genesis.engine.scene import Scene
-from genesis.engine.solvers.base_solver import Solver
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.utils import geom as gu
@@ -34,8 +32,8 @@ class RigidEntity(Entity):
 
     def __init__(
         self,
-        scene: Scene,
-        solver: Solver,
+        scene: "Scene",
+        solver: "Solver",
         material: Material,
         morph: Morph,
         surface: Surface,

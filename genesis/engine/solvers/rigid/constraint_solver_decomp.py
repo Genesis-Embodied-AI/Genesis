@@ -1,15 +1,18 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 import numpy.typing as npt
 
 import genesis as gs
-from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 import genesis.utils.geom as gu
+
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
 class ConstraintSolver:
-    def __init__(self, rigid_solver: RigidSolver):
+    def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
         self._collider = rigid_solver.collider
         self._B = rigid_solver._B
@@ -95,7 +98,7 @@ class ConstraintSolver:
 
         self.reset()
 
-    def clear(self, envs_idx: npt.NDArray[np.int] | None = None):
+    def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_clear(envs_idx)

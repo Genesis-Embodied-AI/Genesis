@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -7,8 +7,6 @@ import taichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
-from genesis.engine.scene import Scene
-from genesis.engine.simulator import Simulator
 from genesis.options.solvers import RigidOptions
 import genesis.utils.geom as gu
 from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
@@ -21,6 +19,10 @@ from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
 from .sdf_decomp import SDF
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.engine.simulator import Simulator
 
 
 # minimum constraint impedance
@@ -63,7 +65,7 @@ class RigidSolver(Solver):
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def __init__(self, scene: Scene, sim: Simulator, options: RigidOptions) -> None:
+    def __init__(self, scene: "Scene", sim: "Simulator", options: "RigidOptions") -> None:
         super().__init__(scene, sim, options)
 
         # options

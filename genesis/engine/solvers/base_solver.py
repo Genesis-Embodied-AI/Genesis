@@ -1,15 +1,19 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
-from genesis.engine.scene import Scene
-from genesis.engine.simulator import Simulator
 from genesis.repr_base import RBC
 
 
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.engine.simulator import Simulator
+
+
 class Solver(RBC):
-    def __init__(self, scene: Scene, sim: Simulator, options):
+    def __init__(self, scene: "Scene", sim: "Simulator", options):
         self._uid = gs.UID()
         self._sim = sim
         self._scene = scene

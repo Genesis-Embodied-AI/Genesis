@@ -1,10 +1,13 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 
 import genesis as gs
-from genesis.engine.simulator import Simulator
 from genesis.options.solvers import CouplerOptions
 from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.simulator import Simulator
 
 
 @ti.data_oriented
@@ -19,8 +22,8 @@ class Coupler(RBC):
 
     def __init__(
         self,
-        simulator: Simulator,
-        options: CouplerOptions,
+        simulator: "Simulator",
+        options: "CouplerOptions",
     ) -> None:
         self.sim = simulator
         self.options = options

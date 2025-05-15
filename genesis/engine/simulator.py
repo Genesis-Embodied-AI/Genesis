@@ -1,10 +1,9 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
-from genesis.engine.scene import Scene
-from genesis.engine.solvers.base_solver import Solver
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
@@ -34,6 +33,9 @@ from .solvers import (
 )
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
 
 
 @ti.data_oriented
@@ -69,7 +71,7 @@ class Simulator(RBC):
 
     def __init__(
         self,
-        scene: Scene,
+        scene: "Scene",
         options: SimOptions,
         coupler_options: CouplerOptions,
         tool_options: ToolOptions,
