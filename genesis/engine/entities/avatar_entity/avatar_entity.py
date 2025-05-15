@@ -1,3 +1,6 @@
+import numpy as np
+import numpy.typing as npt
+
 import taichi as ti
 
 from ..rigid_entity import RigidEntity
@@ -17,7 +20,7 @@ class AvatarEntity(RigidEntity):
         inertial_i,
         inertial_mass: float,
         parent_idx: int,
-        invweight: float,
+        invweight: npt.NDArray[np.float64],
     ) -> AvatarLink:
         """
         Add a new link (AvatarLink) to the entity.
@@ -40,7 +43,7 @@ class AvatarEntity(RigidEntity):
             Mass of the link.
         parent_idx : int
             Index of the parent link in the kinematic tree.
-        invweight : float
+        invweight : np array of 2 float elements
             Inverse weight for optimization or simulation purposes.
 
         Returns
