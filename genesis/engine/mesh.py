@@ -3,12 +3,14 @@ import pickle as pkl
 from contextlib import redirect_stdout
 
 import numpy as np
+import numpy.typing as npt
 import pyvista as pv
 import tetgen
 import trimesh
 import pymeshlab
 
 import genesis as gs
+from genesis.options.surfaces import Surface
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
@@ -45,8 +47,8 @@ class Mesh(RBC):
     def __init__(
         self,
         mesh,
-        surface=None,
-        uvs=None,
+        surface: Surface | None = None,
+        uvs: npt.NDArray | None = None,
         convexify=False,
         decimate=False,
         decimate_face_num=500,
