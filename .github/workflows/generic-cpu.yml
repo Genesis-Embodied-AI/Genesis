@@ -34,7 +34,7 @@ jobs:
 
       - name: Restore Taichi Kernel Cache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .cache
           key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}
