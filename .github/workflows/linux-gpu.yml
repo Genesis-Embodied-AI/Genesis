@@ -28,6 +28,8 @@ jobs:
           artifacts_id="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "artifacts_id=${artifacts_id}" >> $GITHUB_ENV
 
+          mkdir -p "${HOME}/.cache"
+
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
