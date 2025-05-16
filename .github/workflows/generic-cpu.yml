@@ -46,7 +46,19 @@ jobs:
         with:
           python-version: ${{ matrix.PYTHON_VERSION }}
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Windows)
+        if: startsWith(matrix.OS, 'windows-')
+        shell: bash
+        run: |
+          # FIXME: Updating to 25.1.0 breaks rendering regardless PYOPENGL_PLATFORM is set to osmesa or egl.
+          curl -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/24.3.4/mesa3d-24.3.4-release-msvc.7z
+          7z x mesa.7z -omesa
+          mv -v mesa/x64/* /C/Windows/System32/
+          ls -alt /C/Windows/System32/opengl32.dll
+
+          echo "PYOPENGL_PLATFORM=osmesa" >> $GITHUB_ENV
+
+      - name: Install system dependencies (Linux)
         if: startsWith(matrix.OS, 'ubuntu-')
         run: |
           sudo apt-get update
