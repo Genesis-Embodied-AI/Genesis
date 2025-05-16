@@ -93,7 +93,7 @@ def parse_urdf(morph, surface):
             l_info["inertial_i"] = link.inertial.inertia
             l_info["inertial_mass"] = link.inertial.mass
 
-        for geom in link.collisions + link.visuals:
+        for geom in (*link.collisions, *link.visuals):
             geom_is_col = not isinstance(geom, urdfpy.Visual)
             if isinstance(geom.geometry.geometry, urdfpy.Mesh):
                 # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
@@ -290,7 +290,7 @@ def parse_urdf(morph, surface):
                     j_info["dofs_force_range"] / np.abs(j_info["dofs_force_range"]) * joint.limit.effort
                 )
 
-    l_infos, j_infos, _, _ = _order_links(l_infos, j_infos)
+    l_infos, j_infos, links_g_infos, _ = _order_links(l_infos, j_infos, links_g_infos)
     ######################### first joint and base link #########################
     j_info = j_infos[0]
     l_info = l_infos[0]
