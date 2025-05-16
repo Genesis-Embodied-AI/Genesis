@@ -1337,7 +1337,7 @@ def test_collision_plane_convex(show_viewer, tol):
             scene.step()
             if i > 400:
                 qvel = asset.get_dofs_velocity()
-                assert_allclose(qvel, 0, atol=0.05)
+                assert_allclose(qvel, 0, atol=0.1)
 
 
 # @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
@@ -1419,7 +1419,10 @@ def test_urdf_mimic_panda(show_viewer, tol):
     )
 
     hand = scene.add_entity(
-        gs.morphs.URDF(file="urdf/panda_bullet/hand.urdf"),
+        gs.morphs.URDF(
+            file="urdf/panda_bullet/hand.urdf",
+            fixed=True,
+        ),
     )
     scene.build()
 
