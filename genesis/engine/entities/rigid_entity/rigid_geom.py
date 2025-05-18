@@ -235,17 +235,11 @@ class RigidGeom(RBC):
         self.vert_neighbor_start = gsd_dict["vert_neighbor_start"]
 
     def _compute_sd(self, query_points):
-        try:
-            sd, _, _ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
-        except:
-            sd, _, _, _ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
+        sd, *_ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
         return sd
 
     def _compute_closest_verts(self, query_points):
-        try:
-            _, closest_faces, _ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
-        except:
-            _, closest_faces, _, _ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
+        _, closest_faces, *_ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
         verts_ids = self._init_faces[closest_faces]
         verts_ids = verts_ids[
             np.arange(len(query_points)).astype(int),
