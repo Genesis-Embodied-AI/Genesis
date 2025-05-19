@@ -1294,6 +1294,7 @@ class Collider:
                         else:
                             # Try using MPR before anything else
                             is_mpr_updated = False
+                            is_mpr_guess_direction_available = True
                             normal_ws = self.contact_cache[i_ga, i_gb, i_b].normal
                             for i_mpr in range(2):
                                 if i_mpr == 1:
@@ -1325,17 +1326,27 @@ class Collider:
                                     # Because of this, it is necessary to run it twice and take the contact information
                                     # associated with the point of deepest penetration.
                                     for i_sdf in range(2):
-                                        is_col_tmp, normal_tmp, penetration_tmp, contact_pos_tmp = self._func_contact_vertex_sdf(
-                                            i_ga if i_sdf == 0 else i_gb, i_gb if i_sdf == 0 else i_ga, i_b
+                                        is_col_tmp, normal_tmp, penetration_tmp, contact_pos_tmp = (
+                                            self._func_contact_vertex_sdf(
+                                                i_ga if i_sdf == 0 else i_gb, i_gb if i_sdf == 0 else i_ga, i_b
+                                            )
                                         )
                                         if i_sdf == 0:
                                             if is_col_tmp:
-                                                normal, penetration, contact_pos = normal_tmp, penetration_tmp, contact_pos_tmp
+                                                normal, penetration, contact_pos = (
+                                                    normal_tmp,
+                                                    penetration_tmp,
+                                                    contact_pos_tmp,
+                                                )
                                             else:
                                                 is_col = False
                                         else:
                                             if is_col_tmp and (not is_col or penetration_tmp >= penetration):
-                                                normal, penetration, contact_pos = normal_tmp, penetration_tmp, contact_pos_tmp
+                                                normal, penetration, contact_pos = (
+                                                    normal_tmp,
+                                                    penetration_tmp,
+                                                    contact_pos_tmp,
+                                                )
                                     is_col = True
 
                 if i_detection == 0:
