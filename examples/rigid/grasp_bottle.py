@@ -78,6 +78,8 @@ def main():
     for waypoint in path:
         franka.control_dofs_position(waypoint)
         scene.step()
+    for i in range(30):
+        scene.step()
 
     # reach
     qpos = franka.inverse_kinematics(
