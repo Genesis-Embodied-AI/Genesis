@@ -775,8 +775,6 @@ class Drone(FileMorph):
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
         **NB**: Drone doesn't support collision checking for now.
-    fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False.
     prioritize_urdf_material : bool, optional
         Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material. Defaults to False.
     model : str, optional
@@ -792,7 +790,6 @@ class Drone(FileMorph):
     """
 
     model: str = "CF2X"
-    fixed: bool = False
     prioritize_urdf_material: bool = False
     COM_link_name: str = "center_of_mass_link"
     propellers_link_names: Optional[Sequence[str]] = None

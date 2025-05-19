@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from itertools import chain
 from typing import Literal, Sequence
@@ -8,6 +9,7 @@ import mujoco
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.mesh import get_assets_dir
 
 
 @dataclass
@@ -150,12 +152,17 @@ def _get_model_mappings(
             joint.name for entity in gs_sim.entities for joint in entity.joints if joint.type != gs.JOINT_TYPE.FIXED
         ]
     if bodies_name is None:
-        bodies_name = [
-            body.name
-            for entity in gs_sim.entities
-            for body in entity.links
-            if not (body.is_fixed and body.parent_idx < 0)
-        ]
+        bodies_name = []
+        for entity in gs_sim.entities:
+            for body in entity.links:
+                if body.is_fixed and body.parent_idx < 0:
+                    if gs_sim.rigid_solver.links_state[body.idx, 0].mass_sum < gs.EPS:
+                        continue
+                    try:
+                        mj_sim.model.body(body.name)
+                    except KeyError:
+                        continue
+                bodies_name.append(body.name)
 
     motors_name: list[str] = []
     mj_joints_idx: list[int] = []
@@ -218,6 +225,103 @@ def _get_model_mappings(
     gs_maps = (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx)
     mj_maps = (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx)
     return gs_maps, mj_maps
+
+
+def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
+    if gs_solver == gs.constraint_solver.CG:
+        mj_solver = mujoco.mjtSolver.mjSOL_CG
+    elif gs_solver == gs.constraint_solver.Newton:
+        mj_solver = mujoco.mjtSolver.mjSOL_NEWTON
+    else:
+        raise ValueError(f"Solver '{gs_solver}' not supported")
+    if gs_integrator == gs.integrator.Euler:
+        mj_integrator = mujoco.mjtIntegrator.mjINT_EULER
+    elif gs_integrator == gs.integrator.implicitfast:
+        mj_integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+    else:
+        raise ValueError(f"Integrator '{gs_integrator}' not supported")
+
+    xml_path = os.path.join(get_assets_dir(), xml_path)
+    model = mujoco.MjModel.from_xml_path(xml_path)
+
+    model.opt.solver = mj_solver
+    model.opt.integrator = mj_integrator
+    model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    if multi_contact:
+        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    else:
+        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+    if adjacent_collision:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    else:
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
+    data = mujoco.MjData(model)
+
+    return MjSim(model, data)
+
+
+def build_genesis_sim(
+    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            res=(960, 640),
+            max_FPS=60,
+        ),
+        sim_options=gs.options.SimOptions(
+            dt=mj_sim.model.opt.timestep,
+            substeps=1,
+            gravity=mj_sim.model.opt.gravity.tolist(),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=gs_integrator,
+            constraint_solver=gs_solver,
+            enable_mujoco_compatibility=mujoco_compatibility,
+            box_box_detection=True,
+            enable_self_collision=True,
+            enable_adjacent_collision=adjacent_collision,
+            enable_multi_contact=multi_contact,
+            iterations=mj_sim.model.opt.iterations,
+            tolerance=mj_sim.model.opt.tolerance,
+            ls_iterations=mj_sim.model.opt.ls_iterations,
+            ls_tolerance=mj_sim.model.opt.ls_tolerance,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    morph_kwargs = dict(
+        file=xml_path,
+        convexify=True,
+        decompose_robot_error_threshold=float("inf"),
+    )
+    if xml_path.endswith(".xml"):
+        morph = gs.morphs.MJCF(**morph_kwargs)
+    else:
+        morph = gs.morphs.URDF(
+            fixed=True,
+            **morph_kwargs,
+        )
+    gs_robot = scene.add_entity(
+        morph,
+        visualize_contact=True,
+    )
+
+    # Force matching Mujoco safety factor for constraint time constant.
+    # Note that this time constant affects the penetration depth at rest.
+    gs_sim = scene.sim
+    gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
+
+    scene.build()
+
+    return gs_sim
 
 
 def check_mujoco_model_consistency(
@@ -434,6 +538,8 @@ def check_mujoco_data_consistency(
         mj_penetration = -mj_sim.data.contact.dist
         assert_allclose(gs_penetration[gs_sidx], mj_penetration[mj_sidx], tol=tol)
 
+        # FIXME: It is not always possible to reshape Mujoco jacobian because joint bound constraints are computed in
+        # "sparse" dof space, unlike contact constraints.
         error = None
         gs_jac = gs_sim.rigid_solver.constraint_solver.jac.to_numpy()[:gs_n_constraints, :, 0]
         mj_jac = mj_sim.data.efc_J.reshape([mj_n_constraints, -1])
@@ -446,7 +552,16 @@ def check_mujoco_data_consistency(
             (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
         ):
             try:
-                assert_allclose(gs_jac[gs_sidx][:, gs_dofs_idx], mj_jac[mj_sidx][:, mj_dofs_idx], tol=tol)
+                gs_jac_nz_mask = (np.abs(gs_jac[gs_sidx]) > 0.0).all(axis=0)
+                gs_jac_nz = gs_jac[gs_sidx][:, np.array(gs_dofs_idx)[gs_jac_nz_mask[gs_dofs_idx]]]
+                mj_jac_nz_mask = np.zeros_like(gs_jac_nz_mask, dtype=np.bool_)
+                mj_jac_nz_mask[mj_dofs_idx] = gs_jac_nz_mask[gs_dofs_idx]
+                if mj_jac.shape[-1] == len(mj_dofs_idx):
+                    mj_jac_nz = mj_jac[mj_sidx][:, np.array(mj_dofs_idx)[mj_jac_nz_mask[mj_dofs_idx]]]
+                else:
+                    mj_jac_nz = mj_jac[mj_sidx]
+
+                assert_allclose(gs_jac_nz, mj_jac_nz, tol=tol)
                 assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], tol=tol)
                 assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], tol=tol)
                 break
@@ -518,9 +633,9 @@ def check_mujoco_data_consistency(
     mujoco.mj_fwdVelocity(mj_sim.model, mj_sim.data)
     gs_sim.rigid_solver._kernel_forward_kinematics_links_geoms(np.array([0]))
 
-    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[0, 0]
-    mj_com = mj_sim.data.subtree_com[0]
-    assert_allclose(gs_com, mj_com, tol=tol)
+    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
+    mj_com = mj_sim.data.subtree_com
+    assert_allclose(gs_com[gs_bodies_idx][0], mj_com[mj_bodies_idx][0], tol=tol)
 
     gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[:, 0]
     mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[0]

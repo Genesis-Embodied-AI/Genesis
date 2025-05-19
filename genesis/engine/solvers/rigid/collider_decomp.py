@@ -83,10 +83,10 @@ class Collider:
             links_parent_idx = links_parent_idx[:, 0]
             links_is_fixed = links_is_fixed[:, 0]
         n_possible_pairs = 0
-        for i in range(self._solver.n_geoms):
-            for j in range(i + 1, self._solver.n_geoms):
-                i_la = geoms_link_idx[i]
-                i_lb = geoms_link_idx[j]
+        for i_ga in range(self._solver.n_geoms):
+            for i_gb in range(i_ga + 1, self._solver.n_geoms):
+                i_la = geoms_link_idx[i_ga]
+                i_lb = geoms_link_idx[i_gb]
 
                 # geoms in the same link
                 if i_la == i_lb:
@@ -103,7 +103,9 @@ class Collider:
                     continue
 
                 # contype and conaffinity
-                if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
+                if not (
+                    (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
+                ):
                     continue
 
                 # pair of fixed links wrt the world
@@ -700,6 +702,7 @@ class Collider:
         i_lb = self._solver.geoms_info[i_gb].link_idx
         I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
         I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+
         is_valid = True
 
         # geoms in the same link

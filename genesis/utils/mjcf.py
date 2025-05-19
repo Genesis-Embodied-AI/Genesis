@@ -1,5 +1,7 @@
 import os
+import xml.etree.ElementTree as ET
 from contextlib import redirect_stderr
+from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
 
@@ -14,31 +16,86 @@ import genesis as gs
 
 from . import geom as gu
 from . import urdf as uu
-from .misc import get_assets_dir
+from .misc import get_assets_dir, redirect_libc_stderr
 
 
-def parse_mjcf(morph, surface):
-    if isinstance(morph.file, str):
+def parse_xml(morph, surface):
+    if isinstance(morph.file, (str, Path)):
+        # Make sure that morph is pointing to a valid XML content (either file path or string)
         path = os.path.join(get_assets_dir(), morph.file)
-        mj = mujoco.MjModel.from_xml_path(path)
-    else:
+        is_valid_path = False
+        try:
+            if os.path.exists(path):
+                xml = ET.parse(path)
+                is_valid_path = True
+            else:
+                xml = ET.fromstring(morph.file)
+        except ET.ParseError:
+            gs.raise_exception_from(f"'{morph.file}' is not a valid XML file path or string.")
+
+        # Must pre-process URDF to overwrite default Mujoco compile flags
+        root = xml.getroot()
+        is_urdf_file = root.tag == "robot"
+        if is_urdf_file:
+            # Best guess for the search path
+            asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
+
+            # Always merge fixed links unless explicitly asked not to do so
+            merge_fixed_links = not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links
+
+            if not any(child.tag == "mujoco" for child in root):
+                # Set default compiler options if none is specified in URDF file
+                mjcf = ET.SubElement(root, "mujoco")
+                compiler = ET.SubElement(
+                    mjcf,
+                    "compiler",
+                    fusestatic="true" if merge_fixed_links else "false",
+                    strippath="false",
+                    assetdir=asset_path,
+                    inertiafromgeom="auto",
+                    balanceinertia="true",
+                    discardvisual="false" if morph.visualization else "true",
+                    autolimits="true",
+                    # boundmass=gs.EPS,
+                    # boundinertia=gs.EPS,
+                )
+            for elem in root.findall(".//mesh"):
+                mesh_path = elem.get("filename")
+                if mesh_path.startswith("package://"):
+                    mesh_path = mesh_path[10:]
+                elem.set("filename", os.path.abspath(os.path.join(asset_path, mesh_path)))
+
+        with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+            if is_urdf_file:
+                # Parse updated URDF file as a string
+                data = ET.tostring(root, encoding="utf8")
+                mj = mujoco.MjModel.from_xml_string(data)
+            else:
+                # Parsing MJCF files from XML string is not reliable because it would use the current directory instead
+                # of the parent directory of the XML file as base directory when using relative paths for assets.
+                mj = mujoco.MjModel.from_xml_path(path)
+    elif isinstance(morph.file, mujoco.MjModel):
         mj = morph.file
+    else:
+        raise gs.raise_exception(f"'{morph.file}' is not a valid MJCF file.")
 
     # Check if there is any tendon. Report a warning if so.
     if mj.ntendon:
         gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    world_g_info, *links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
 
     # Parse all bodies (links and joints)
-    (world_l_info, *l_infos), (world_j_info, *links_j_infos) = parse_links(mj, morph.scale)
+    l_infos, links_j_infos = parse_links(mj, morph.scale)
+
+    # Re-order kinematic tree info
     l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
 
     # Parsing all equality constraints
     eqs_info = parse_equalities(mj, morph.scale)
 
-    return l_infos, links_j_infos, links_g_infos, world_l_info, world_j_info, world_g_info, eqs_info
+    return l_infos, links_j_infos, links_g_infos, eqs_info
 
 
 def parse_link(mj, i_l, scale):
@@ -54,7 +111,10 @@ def parse_link(mj, i_l, scale):
     l_info["inertial_quat"] = mj.body_iquat[i_l]
     l_info["inertial_i"] = np.diag(mj.body_inertia[i_l])
     l_info["inertial_mass"] = float(mj.body_mass[i_l])
-    l_info["parent_idx"] = int(mj.body_parentid[i_l] - 1)
+    if mj.body_parentid[i_l] == i_l:
+        l_info["parent_idx"] = -1
+    else:
+        l_info["parent_idx"] = int(mj.body_parentid[i_l])
     l_info["invweight"] = mj.body_invweight0[i_l]
 
     jnt_adr = mj.body_jntadr[i_l]
@@ -87,7 +147,6 @@ def parse_link(mj, i_l, scale):
         j_info["type"], j_info["n_qs"], j_info["n_dofs"] = gs_type, n_qs, n_dofs
 
         # Parsing joint parameters that are type-agnostic
-        mj_jnt_offset = i_j if i_j != -1 else 0
         mj_dof_offset = mj.jnt_dofadr[i_j] if i_j != -1 else 0
         mj_qpos_offset = mj.jnt_qposadr[i_j] if i_j != -1 else 0
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
@@ -95,7 +154,11 @@ def parse_link(mj, i_l, scale):
         j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
-        j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
+        if mj.njnt > 0:
+            mj_jnt_offset = i_j if i_j != -1 else 0
+            j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
+        else:
+            j_info["sol_params"] = gu.default_solver_params()  # Placeholder. It will not be used anyway.
         if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
             gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
 
@@ -153,7 +216,7 @@ def parse_link(mj, i_l, scale):
         # Parsing actuator parameters
         j_info["dofs_kp"] = np.zeros((n_dofs,), dtype=gs.np_float)
         j_info["dofs_kv"] = np.zeros((n_dofs,), dtype=gs.np_float)
-        j_info["dofs_force_range"] = np.zeros((n_dofs, 2), dtype=gs.np_float)
+        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         i_a = -1
         try:
@@ -220,7 +283,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_force_range"] = np.minimum(
                     j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                 )
-        elif gs_type == gs.JOINT_TYPE.FREE:
+        elif gs_type != gs.JOINT_TYPE.FREE:
             gs.logger.debug(f"(MJCF) No actuator found for joint `{j_info['name']}`")
 
         j_infos.append(j_info)
@@ -233,9 +296,6 @@ def parse_link(mj, i_l, scale):
     l_info["invweight"] /= scale**3
     for j_info in j_infos:
         j_info["pos"] *= scale
-
-    # Exclude joints with 0 dofs in MJCF models to align with mujoco
-    j_infos = [j_info for j_info in j_infos if j_info["n_dofs"] > 0]
 
     return l_info, j_infos
 
