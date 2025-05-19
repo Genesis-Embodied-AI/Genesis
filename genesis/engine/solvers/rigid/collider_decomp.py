@@ -1292,21 +1292,22 @@ class Collider:
                             contact_pos = v1 - 0.5 * penetration * normal
                             is_col = penetration > 0
                         else:
-                            is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].normal
-                            )
-
                             # Try without warm-start if no contact was detected using it.
                             # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
                             # contact while they actually are. This helps to improve contact persistence without increasing
                             # much the overall computational cost since the fallback should not be triggered very often.
-                            is_mpr_guess_direction_available = (
-                                ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
-                            ).any()
-                            if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
-                                is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                    i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
-                                )
+                            is_mpr_guess_direction_available = True
+                            for i_mpr in range(2):
+                                if i_mpr == 0 or (
+                                    (i_detection == 0) and not is_col and is_mpr_guess_direction_available
+                                ):
+                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
+                                        i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
+                                    )
+                                if i_mpr == 0:
+                                    is_mpr_guess_direction_available = (
+                                        ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
+                                    ).any()
 
                             # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
                             # initial penetration is already quite large, because the contact information provided by MPR
@@ -1320,12 +1321,41 @@ class Collider:
                                     # Note that SDF may detect different collision points depending on geometry ordering.
                                     # Because of this, it is necessary to run it twice and take the contact information
                                     # associated with the point of deepest penetration.
-                                    is_col_a, normal_a, penetration_a, contact_pos_a = self._func_contact_vertex_sdf(
-                                        i_ga, i_gb, i_b
+                                    is_col_a, normal_a, penetration_a, contact_pos_a = (
+                                        False,
+                                        ti.Vector.zero(gs.ti_float, 3),
+                                        gs.ti_float(0.0),
+                                        ti.Vector.zero(gs.ti_float, 3),
                                     )
-                                    is_col_b, normal_b, penetration_b, contact_pos_b = self._func_contact_vertex_sdf(
-                                        i_gb, i_ga, i_b
+                                    is_col_b, normal_b, penetration_b, contact_pos_b = (
+                                        False,
+                                        ti.Vector.zero(gs.ti_float, 3),
+                                        gs.ti_float(0.0),
+                                        ti.Vector.zero(gs.ti_float, 3),
                                     )
+
+                                    for i_sdf in range(2):
+                                        is_col_tmp, normal_tmp, penetration_tmp, contact_pos_tmp = (
+                                            self._func_contact_vertex_sdf(
+                                                i_ga if i_sdf == 0 else i_gb, i_gb if i_sdf == 0 else i_ga, i_b
+                                            )
+                                        )
+
+                                        if i_sdf == 0:
+                                            is_col_a, normal_a, penetration_a, contact_pos_a = (
+                                                is_col_tmp,
+                                                normal_tmp,
+                                                penetration_tmp,
+                                                contact_pos_tmp,
+                                            )
+                                        else:
+                                            is_col_b, normal_b, penetration_b, contact_pos_b = (
+                                                is_col_tmp,
+                                                normal_tmp,
+                                                penetration_tmp,
+                                                contact_pos_tmp,
+                                            )
+
                                     if is_col_a and (not is_col_b or penetration_a >= penetration_b):
                                         normal, penetration, contact_pos = normal_a, penetration_a, contact_pos_a
                                     elif is_col_b and (not is_col_a or penetration_b > penetration_a):
