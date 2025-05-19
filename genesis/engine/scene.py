@@ -27,6 +27,7 @@ from genesis.options import (
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
+from genesis.utils.misc import redirect_libc_stderr
 from genesis.vis import Visualizer
 
 
@@ -592,7 +593,8 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            self._sim.build()
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                self._sim.build()
 
             # reset state
             self._reset()
