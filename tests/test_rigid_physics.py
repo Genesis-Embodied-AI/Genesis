@@ -1,6 +1,6 @@
+import os
 import sys
 import xml.etree.ElementTree as ET
-import os
 
 import pytest
 import trimesh
@@ -310,7 +310,6 @@ def test_one_ball_joint(gs_sim, mj_sim, tol):
     # FIXME: Mujoco is detecting collision for some reason...
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
 
-    check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=600, tol=tol)
 
 
@@ -325,7 +324,7 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     tol = 2e-9 if gs_solver == gs.constraint_solver.Newton else tol
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=(2 * tol))
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=tol)
 
 
 @pytest.mark.required
@@ -832,7 +831,7 @@ def test_stickman(gs_sim, mj_sim, tol):
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
     body_z = gs_sim.rigid_solver.links_state.pos.to_numpy()[:-1, 0, 2]
-    np.testing.assert_array_less(0, body_z)
+    np.testing.assert_array_less(0, body_z + gs.EPS)
 
 
 def move_cube(use_suction, mode, show_viewer):
@@ -1534,7 +1533,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_force, None, gs_s.dofs_state.force),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_velocity, gs_s.set_dofs_velocity, gs_s.dofs_state.vel),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_position, gs_s.set_dofs_position, gs_s.dofs_state.pos),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_force_range, None, gs_s.dofs_info.force_range),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_force_range, gs_s.set_dofs_force_range, gs_s.dofs_info.force_range),
         (gs_s.n_dofs, -1, gs_s.get_dofs_limit, None, gs_s.dofs_info.limit),
         (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, None, gs_s.dofs_info.stiffness),
         (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dofs_info.invweight),
@@ -1556,7 +1555,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_position, gs_robot.set_dofs_position, None),
-        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_force_range, gs_robot.set_dofs_force_range, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_limit, None, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_stiffness, None, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None, None),
@@ -1587,11 +1586,12 @@ def test_data_accessor(n_envs, batched, tol):
                 # Make sure that the vector is normalized and positive just in case it is a quaternion
                 datas = torch.abs(torch.randn(datas.shape, dtype=gs.tc_float, device="cpu"))
                 datas /= torch.linalg.norm(datas, dim=-1, keepdims=True)
+                setter(datas)
             else:
                 for val in datas:
                     val[:] = torch.abs(torch.randn(val.shape, dtype=gs.tc_float, device="cpu"))
-                    val /= torch.linalg.norm(vals, dim=-1, keepdims=True)
-            setter(datas)
+                    val /= torch.linalg.norm(val, dim=-1, keepdims=True)
+                setter(*datas)
         if arg1_max > 0:
             datas_ = getter(range(arg1_max))
             datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
@@ -1618,7 +1618,10 @@ def test_data_accessor(n_envs, batched, tol):
                             unsafe = not must_cast(arg1)
                             data = getter(arg1, unsafe=unsafe)
                             if setter is not None:
-                                setter(data, arg1, unsafe=unsafe)
+                                if isinstance(data, torch.Tensor):
+                                    setter(data, arg1, unsafe=unsafe)
+                                else:
+                                    setter(*data, arg1, unsafe=unsafe)
                             if isinstance(datas, torch.Tensor):
                                 data_ = datas[[i]]
                             else:

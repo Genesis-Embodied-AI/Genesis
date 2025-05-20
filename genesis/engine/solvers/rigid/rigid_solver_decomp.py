@@ -2007,9 +2007,10 @@ class RigidSolver(Solver):
 
                 i_r = self.links_info[I_l].root_idx
                 if i_l == i_r:
-                    self.links_state[i_l, i_b].root_COM = (
-                        self.links_state[i_l, i_b].root_COM / self.links_state[i_l, i_b].mass_sum
-                    )
+                    if self.links_state[i_l, i_b].mass_sum > 0.0:
+                        self.links_state[i_l, i_b].root_COM = (
+                            self.links_state[i_l, i_b].root_COM / self.links_state[i_l, i_b].mass_sum
+                        )
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_l in range(self.n_links):

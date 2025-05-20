@@ -1,12 +1,14 @@
+import ctypes
 import datetime
 import functools
-import os
-import types
+import logging
 import platform
 import random
-import logging
+import types
 import shutil
 import subprocess
+import sys
+import os
 from dataclasses import dataclass
 from collections import OrderedDict
 from typing import Any
@@ -40,6 +42,33 @@ def raise_exception(msg="Something went wrong."):
 
 def raise_exception_from(msg="Something went wrong.", cause=None):
     raise gs.GenesisException(msg) from cause
+
+
+class redirect_libc_stderr:
+    def __init__(self, fd):
+        self.fd = fd
+        self.stderr_fileno = None
+        self.original_stderr_fileno = None
+
+    def __enter__(self):
+        # TODO: Add Linux and Windows support
+        if sys.platform == "darwin":
+            libc = ctypes.CDLL(None)
+            self.stderr_fileno = sys.stderr.fileno()
+            self.original_stderr_fileno = os.dup(self.stderr_fileno)
+            sys.stderr.flush()
+            libc.fflush(None)
+            libc.dup2(self.fd.fileno(), self.stderr_fileno)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.stderr_fileno is not None:
+            libc = ctypes.CDLL(None)
+            sys.stderr.flush()
+            libc.fflush(None)
+            libc.dup2(self.original_stderr_fileno, self.stderr_fileno)
+            os.close(self.original_stderr_fileno)
+        self.stderr_fileno = None
+        self.original_stderr_fileno = None
 
 
 def assert_initialized(cls):

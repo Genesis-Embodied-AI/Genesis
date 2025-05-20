@@ -1,4 +1,5 @@
 import os
+from itertools import chain
 
 import trimesh
 import numpy as np
@@ -21,10 +22,10 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
         lp = l_infos[lc]["parent_idx"]
         if lp != -1:
             dict_child[lp].append(lc)
+
     ordered_links_idx = []
     n_level = 0
     stack_topology = [lc for lc in range(n_links) if l_infos[lc]["parent_idx"] == -1]
-
     while len(stack_topology) > 0:
         next_stack = []
         ordered_links_idx.append([])
@@ -33,12 +34,11 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
             next_stack += dict_child[link]
         n_level += 1
         stack_topology = next_stack
+    ordered_links_idx = tuple(chain.from_iterable(ordered_links_idx))
 
     if not ordered_links_idx:
         # avoid case with worldbody without any body (geom directly assigned to worldbody)
-        return [], [], []
-
-    ordered_links_idx = np.concatenate(ordered_links_idx).tolist()
+        return [], [], [], []
 
     for l_info in l_infos:
         if l_info["parent_idx"] >= 0:  # non-base link
@@ -60,8 +60,8 @@ def parse_urdf(morph, surface):
     else:
         robot = morph.file
 
-    # merge links connected by fixed joints
-    if hasattr(morph, "merge_fixed_links") and morph.merge_fixed_links:
+    # Merge links connected by fixed joints
+    if isinstance(morph, gs.morphs.URDF) and morph.merge_fixed_links:
         robot = merge_fixed_links(robot, morph.links_to_keep)
 
     link_name_to_idx = dict()
@@ -72,11 +72,18 @@ def parse_urdf(morph, surface):
     n_links = len(robot.links)
     assert n_links == len(robot.joints) + 1
     l_infos = [dict() for _ in range(n_links)]
-    j_infos = [dict() for _ in range(n_links)]
+    links_j_infos = [[] for _ in range(n_links)]
     links_g_infos = [[] for _ in range(n_links)]
 
     for link, l_info, link_g_infos in zip(robot.links, l_infos, links_g_infos):
         l_info["name"] = link.name
+
+        # No parent by default. It will be overwritten latter on if appropriate.
+        l_info["parent_idx"] = -1
+
+        # Neutral pose by default. It will be overwritten latter on if necessary.
+        l_info["pos"] = gu.zero_pos()
+        l_info["quat"] = gu.identity_quat()
 
         # we compute urdf's invweight later
         l_info["invweight"] = np.full((2,), fill_value=-1.0)
@@ -94,11 +101,15 @@ def parse_urdf(morph, surface):
             l_info["inertial_mass"] = link.inertial.mass
 
         for geom in (*link.collisions, *link.visuals):
+            link_g_infos_ = []
             geom_is_col = not isinstance(geom, urdfpy.Visual)
             if isinstance(geom.geometry.geometry, urdfpy.Mesh):
+                geom_type = gs.GEOM_TYPE.MESH
+                geom_data = None
+
                 # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
                 for tmesh in geom.geometry.meshes:
-                    scale = morph.scale
+                    scale = float(morph.scale)
                     if geom.geometry.geometry.scale is not None:
                         scale *= geom.geometry.geometry.scale
 
@@ -117,35 +128,20 @@ def parse_urdf(morph, surface):
                         if geom.material is not None and geom.material.color is not None:
                             mesh.set_color(geom.material.color)
 
-                    geom_type = gs.GEOM_TYPE.MESH
-
-                    g_info = {
-                        "type": geom_type,
-                        "data": None,
-                        "pos": geom.origin[:3, 3].copy(),
-                        "quat": gu.R_to_quat(geom.origin[:3, :3]),
-                        "contype": geom_is_col,
-                        "conaffinity": geom_is_col,
-                    }
-                    if geom_is_col:
-                        g_info["mesh"] = mesh
-                    else:
-                        g_info["vmesh"] = mesh
-                    link_g_infos.append(g_info)
+                    g_info = {"mesh" if geom_is_col else "vmesh": mesh}
+                    link_g_infos_.append(g_info)
             else:
                 # Each geometry primitive is one RigidGeom in genesis.
                 if isinstance(geom.geometry.geometry, urdfpy.Box):
                     tmesh = trimesh.creation.box(extents=geom.geometry.geometry.size)
                     geom_type = gs.GEOM_TYPE.BOX
                     geom_data = np.array(geom.geometry.geometry.size)
-
                 elif isinstance(geom.geometry.geometry, urdfpy.Cylinder):
                     tmesh = trimesh.creation.cylinder(
                         radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
                     )
                     geom_type = gs.GEOM_TYPE.CYLINDER
                     geom_data = None
-
                 elif isinstance(geom.geometry.geometry, urdfpy.Sphere):
                     if geom_is_col:
                         tmesh = trimesh.creation.icosphere(radius=geom.geometry.geometry.radius, subdivisions=2)
@@ -164,25 +160,26 @@ def parse_urdf(morph, surface):
                     if geom.material is not None and geom.material.color is not None:
                         mesh.set_color(geom.material.color)
 
-                g_info = {
-                    "type": geom_type,
-                    "data": geom_data,
-                    "pos": geom.origin[:3, 3],
-                    "quat": gu.R_to_quat(geom.origin[:3, :3]),
-                    "contype": geom_is_col,
-                    "conaffinity": geom_is_col,
-                }
-                if geom_is_col:
-                    g_info["mesh"] = mesh
-                else:
-                    g_info["vmesh"] = mesh
-                link_g_infos.append(g_info)
+                g_info = {"mesh" if geom_is_col else "vmesh": mesh}
+                link_g_infos_.append(g_info)
+
+            for g_info in link_g_infos_:
+                g_info["type"] = geom_type
+                g_info["data"] = geom_data
+                g_info["pos"] = geom.origin[:3, 3].copy()
+                g_info["quat"] = gu.R_to_quat(geom.origin[:3, :3])
+                g_info["contype"] = 1 if geom_is_col else 0
+                g_info["conaffinity"] = 1 if geom_is_col else 0
+                g_info["friction"] = gu.default_friction()
+                g_info["sol_params"] = gu.default_solver_params()
+            link_g_infos += link_g_infos_
 
     #########################  non-base joints and links #########################
     for joint in robot.joints:
         idx = link_name_to_idx[joint.child]
         l_info = l_infos[idx]
-        j_info = j_infos[idx]
+        j_info = dict()
+        links_j_infos[idx].append(j_info)
 
         j_info["name"] = joint.name
         j_info["pos"] = gu.zero_pos()
@@ -271,7 +268,7 @@ def parse_urdf(morph, surface):
         j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
         j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
 
-        if joint.joint_type in ["floating", "fixed"]:
+        if joint.joint_type in ("floating", "fixed"):
             j_info["dofs_damping"] = gu.free_dofs_damping(j_info["n_dofs"])
             j_info["dofs_armature"] = gu.free_dofs_armature(j_info["n_dofs"])
         else:
@@ -290,49 +287,8 @@ def parse_urdf(morph, surface):
                     j_info["dofs_force_range"] / np.abs(j_info["dofs_force_range"]) * joint.limit.effort
                 )
 
-    l_infos, j_infos, links_g_infos, _ = _order_links(l_infos, j_infos, links_g_infos)
-    ######################### first joint and base link #########################
-    j_info = j_infos[0]
-    l_info = l_infos[0]
-
-    j_info["pos"] = gu.zero_pos()
-    j_info["quat"] = gu.identity_quat()
-    j_info["name"] = f'joint_{l_info["name"]}'
-
-    l_info["pos"] = gu.zero_pos()
-    l_info["quat"] = gu.identity_quat()
-
-    if not morph.fixed:
-        j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
-        j_info["dofs_motion_vel"] = np.eye(6, 3)
-        j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
-        j_info["dofs_stiffness"] = np.zeros(6)
-
-        j_info["type"] = gs.JOINT_TYPE.FREE
-        j_info["n_qs"] = 7
-        j_info["n_dofs"] = 6
-        j_info["init_qpos"] = np.concatenate([gu.zero_pos(), gu.identity_quat()])
-    else:
-        j_info["dofs_motion_ang"] = np.zeros((0, 3))
-        j_info["dofs_motion_vel"] = np.zeros((0, 3))
-        j_info["dofs_limit"] = np.zeros((0, 2))
-        j_info["dofs_stiffness"] = np.zeros((0))
-
-        j_info["type"] = gs.JOINT_TYPE.FIXED
-        j_info["n_qs"] = 0
-        j_info["n_dofs"] = 0
-        j_info["init_qpos"] = np.zeros(0)
-
-    j_info["dofs_invweight"] = gu.default_dofs_invweight(j_info["n_dofs"])
-    j_info["dofs_damping"] = gu.free_dofs_damping(j_info["n_dofs"])
-    j_info["dofs_armature"] = gu.free_dofs_armature(j_info["n_dofs"])
-
-    j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-    j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
-    j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
-
-    # apply scale
-    for l_info, j_info, link_g_infos in zip(l_infos, j_infos, links_g_infos):
+    # Apply scaling factor
+    for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
         l_info["pos"] *= morph.scale
         l_info["inertial_pos"] *= morph.scale
 
@@ -341,18 +297,18 @@ def parse_urdf(morph, surface):
         if l_info["inertial_i"] is not None:
             l_info["inertial_i"] *= morph.scale**5
 
-        j_info["pos"] *= morph.scale
+        for j_info in link_j_infos:
+            j_info["pos"] *= morph.scale
 
         for g_info in link_g_infos:
             g_info["pos"] *= morph.scale
 
-            # TODO: parse friction
-            g_info["friction"] = gu.default_friction()
-            g_info["sol_params"] = gu.default_solver_params()
+    # Re-order kinematic tree info
+    l_infos, links_j_infos, links_g_infos, _ = _order_links(l_infos, links_j_infos, links_g_infos)
 
     eqs_info = parse_equalities(robot, morph)
 
-    return l_infos, j_infos, links_g_infos, eqs_info
+    return l_infos, links_j_infos, links_g_infos, eqs_info
 
 
 def parse_equalities(robot, morph):

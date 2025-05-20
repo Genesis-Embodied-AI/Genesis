@@ -1,13 +1,13 @@
+import os
+
 import numpy as np
 import torch
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
-from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
-import genesis.utils.geom as gu
 from genesis.engine.entities import Emitter
 from genesis.engine.simulator import Simulator
 from genesis.options import (
@@ -24,9 +24,12 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
+from genesis.options.morphs import Morph
+from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
+from genesis.utils.misc import redirect_libc_stderr
 from genesis.vis import Visualizer
 
 
@@ -592,7 +595,8 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            self._sim.build()
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                self._sim.build()
 
             # reset state
             self._reset()

@@ -12,6 +12,7 @@ import genesis.utils.geom as gu
 from genesis.ext import pyrender
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
+from genesis.utils.misc import redirect_libc_stderr
 
 
 class ViewerLock:
@@ -71,23 +72,24 @@ class Viewer(RBC):
 
             try:
                 gs.logger.debug(f"Trying to create OpenGL Context for PYOPENGL_PLATFORM='{platform}'...")
-                self._pyrender_viewer = pyrender.Viewer(
-                    context=self.context,
-                    viewport_size=self._res,
-                    run_in_thread=self._run_in_thread,
-                    auto_start=False,
-                    view_center=self._camera_init_lookat,
-                    shadow=self.context.shadow,
-                    plane_reflection=self.context.plane_reflection,
-                    env_separate_rigid=self.context.env_separate_rigid,
-                    viewer_flags={
-                        "window_title": f"Genesis {gs.__version__}",
-                        "refresh_rate": self._refresh_rate,
-                    },
-                )
-                if not self._run_in_thread:
-                    self._pyrender_viewer.start(auto_refresh=False)
-                self._pyrender_viewer.wait_until_initialized()
+                with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                    self._pyrender_viewer = pyrender.Viewer(
+                        context=self.context,
+                        viewport_size=self._res,
+                        run_in_thread=self._run_in_thread,
+                        auto_start=False,
+                        view_center=self._camera_init_lookat,
+                        shadow=self.context.shadow,
+                        plane_reflection=self.context.plane_reflection,
+                        env_separate_rigid=self.context.env_separate_rigid,
+                        viewer_flags={
+                            "window_title": f"Genesis {gs.__version__}",
+                            "refresh_rate": self._refresh_rate,
+                        },
+                    )
+                    if not self._run_in_thread:
+                        self._pyrender_viewer.start(auto_refresh=False)
+                    self._pyrender_viewer.wait_until_initialized()
                 break
             except OpenGL.error.Error:
                 # Invalid OpenGL context. Trying another platform if any...
