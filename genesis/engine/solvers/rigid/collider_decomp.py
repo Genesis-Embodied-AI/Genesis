@@ -1341,9 +1341,9 @@ class Collider:
                                             else:
                                                 is_col = False
                                         else:
-                                            if is_col_tmp and (not is_col or penetration_tmp >= penetration):
+                                            if is_col_tmp and (not is_col or penetration_tmp > penetration):
                                                 normal, penetration, contact_pos = (
-                                                    normal_tmp,
+                                                    -normal_tmp,
                                                     penetration_tmp,
                                                     contact_pos_tmp,
                                                 )
