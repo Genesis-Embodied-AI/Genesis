@@ -385,10 +385,10 @@ class RigidEntity(Entity):
                 del l_infos[0], links_j_infos[0], links_g_infos[0]
                 for l_info in l_infos:
                     l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
+                    if "root_idx" in l_info:
+                        l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
 
-        # Define a flag that determines whether the link at hand is associated with a robot, and make sure that the
-        # parent index of free joints is "world" (-1) itself rather than the previous link. This is important because
-        # otherwise the corresponding links will be classified as part of the same entity.
+        # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
         for i, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
             if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
@@ -398,7 +398,6 @@ class RigidEntity(Entity):
                     l_info["is_robot"] = np.array(False, dtype=np.bool_)
             elif all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
                 l_info["is_robot"] = np.array(False, dtype=np.bool_)
-                l_info["parent_idx"] = -1
             else:
                 l_info["is_robot"] = np.array(True, dtype=np.bool_)
                 if l_info["parent_idx"] >= 0:
@@ -525,6 +524,9 @@ class RigidEntity(Entity):
         parent_idx = l_info["parent_idx"]
         if parent_idx >= 0:
             parent_idx += self._link_start
+        root_idx = l_info.get("root_idx")
+        if root_idx is not None and root_idx >= 0:
+            root_idx += self._link_start
 
         link = RigidLink(
             entity=self,
@@ -548,6 +550,7 @@ class RigidEntity(Entity):
             inertial_i=l_info.get("inertial_i"),
             inertial_mass=l_info.get("inertial_mass"),
             parent_idx=parent_idx,
+            root_idx=root_idx,
             invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
         )

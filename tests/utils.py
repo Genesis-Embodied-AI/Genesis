@@ -380,6 +380,13 @@ def check_mujoco_model_consistency(
     else:
         assert False
 
+    gs_root_idx = sorted(
+        gs_sim.rigid_solver.links[i].name
+        for i in set(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
+    )
+    mj_root_idx = sorted(mj_sim.model.body(i).name for i in set(mj_sim.model.body_rootid[mj_bodies_idx]))
+    assert gs_root_idx == mj_root_idx
+
     # body
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
         gs_invweight_i = gs_sim.rigid_solver.links_info.invweight.to_numpy()[gs_i]

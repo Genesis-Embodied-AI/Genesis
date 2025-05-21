@@ -122,6 +122,7 @@ def parse_link(mj, i_l, scale):
         l_info["parent_idx"] = -1
     else:
         l_info["parent_idx"] = int(mj.body_parentid[i_l])
+    l_info["root_idx"] = int(mj.body_rootid[i_l])
     l_info["invweight"] = mj.body_invweight0[i_l]
 
     jnt_adr = mj.body_jntadr[i_l]
