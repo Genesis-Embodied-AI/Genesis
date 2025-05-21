@@ -602,12 +602,12 @@ class Mesh(URDFType):
         fn = get_filename(path, self.filename, makedirs=True)
 
         # Export the meshes as a single file
-        meshes = self.meshes
-        if len(meshes) == 1:
-            meshes = meshes[0]
-        elif os.path.splitext(fn)[1] == ".glb":
-            meshes = trimesh.scene.Scene(geometry=meshes)
-        trimesh.exchange.export.export_mesh(meshes, fn)
+        # meshes = self.meshes
+        # if len(meshes) == 1:
+        #     meshes = meshes[0]
+        # elif os.path.splitext(fn)[1] == ".glb":
+        #     meshes = trimesh.scene.Scene(geometry=meshes)
+        # trimesh.exchange.export.export_mesh(meshes, fn)
 
         # Unparse the node
         node = self._unparse(path)
@@ -3544,9 +3544,9 @@ class URDF(URDFType):
             The parsed URDF.
         """
         if isinstance(file_obj, str):
-            path, _ = os.path.split(file_obj)
+            path = os.path.dirname(file_obj)
         else:
-            path, _ = os.path.split(os.path.realpath(file_obj.name))
+            path = os.path.dirname(os.path.realpath(file_obj.name))
 
         node = self._to_xml(None, path)
         tree = ET.ElementTree(node)
@@ -3641,15 +3641,13 @@ class URDF(URDFType):
         """
         if isinstance(file_obj, str):
             if os.path.isfile(file_obj):
-                with open(file_obj, "r") as f:
-                    file_str = f.read()
-                tree = ET.parse(io.StringIO(file_str))
-                path, _ = os.path.split(file_obj)
+                tree = ET.parse(file_obj)
+                path = os.path.dirname(file_obj)
             else:
                 raise ValueError("{} is not a file".format(file_obj))
         else:
             tree = ET.parse(file_obj)
-            path, _ = os.path.split(file_obj.name)
+            path = os.path.dirname(file_obj.name)
 
         node = tree.getroot()
         return URDF._from_xml(node, node, path)

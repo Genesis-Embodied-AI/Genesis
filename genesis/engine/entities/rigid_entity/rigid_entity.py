@@ -330,15 +330,21 @@ class RigidEntity(Entity):
         else:
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-            links_name = [l_info["name"] for l_info in l_infos]
 
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties
             morph_ = copy(morph)
             morph_.visualization = False
             try:
+                # Mujoco's unified MJCF+URDF parser for URDF files
                 l_infos_, links_j_infos_, links_g_infos_, _ = mju.parse_xml(morph_, surface)
-                assert len(l_infos_) == len(l_infos)
-                # FIXME: Hopefully kinematic tree ordering is stable between Mujoco and Genesis
+
+                # Take into account 'world' body if it was added automatically
+                if len(links_g_infos_) == len(links_g_infos) + 1:
+                    assert not links_g_infos_[0]
+                    links_g_infos.insert(0, [])
+                assert len(links_g_infos_) == len(links_g_infos)
+
+                # Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!)
                 l_infos = l_infos_
                 links_j_infos = links_j_infos_
                 for link_g_infos, link_g_infos_ in zip(links_g_infos, links_g_infos_):
@@ -351,7 +357,7 @@ class RigidEntity(Entity):
                                 else:
                                     link_g_infos.append(g_info)
             except (ValueError, AssertionError):
-                pass
+                gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
 
         # Add free floating joint at root if necessary
         if (

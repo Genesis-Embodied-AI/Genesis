@@ -239,7 +239,7 @@ def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent
         raise ValueError(f"Integrator '{gs_integrator}' not supported")
 
     xml_path = os.path.join(get_assets_dir(), xml_path)
-    model = mju.build_model(xml_path, merge_fixed_links=True, discard_visual=True)
+    model = mju.build_model(xml_path, discard_visual=True, merge_fixed_links=True, links_to_keep=())
 
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
@@ -305,6 +305,7 @@ def build_genesis_sim(
         morph = gs.morphs.URDF(
             fixed=True,
             merge_fixed_links=True,
+            links_to_keep=(),
             **morph_kwargs,
         )
     gs_robot = scene.add_entity(
@@ -380,12 +381,12 @@ def check_mujoco_model_consistency(
     else:
         assert False
 
-    gs_root_idx = sorted(
+    gs_roots_name = sorted(
         gs_sim.rigid_solver.links[i].name
         for i in set(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
     )
-    mj_root_idx = sorted(mj_sim.model.body(i).name for i in set(mj_sim.model.body_rootid[mj_bodies_idx]))
-    assert gs_root_idx == mj_root_idx
+    mj_roots_name = sorted(mj_sim.model.body(i).name for i in set(mj_sim.model.body_rootid[mj_bodies_idx]))
+    assert gs_roots_name == mj_roots_name
 
     # body
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):

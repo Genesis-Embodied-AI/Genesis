@@ -787,6 +787,10 @@ class Drone(FileMorph):
         The names of the links that represent the propellers. Defaults to ['prop0_link', 'prop1_link', 'prop2_link', 'prop3_link'].
     propellers_spin : sequence of int, optional
         The spin direction of the propellers. 1: CCW, -1: CW. Defaults to [-1, 1, -1, 1].
+    merge_fixed_links : bool, optional
+        Whether to merge links connected via a fixed joint. Defaults to True.
+    links_to_keep : list of str, optional
+        A list of link names that should not be skipped during link merging. Defaults to [].
     """
 
     model: str = "CF2X"
@@ -795,6 +799,8 @@ class Drone(FileMorph):
     propellers_link_names: Optional[Sequence[str]] = None
     propellers_link_name: Sequence[str] = ("prop0_link", "prop1_link", "prop2_link", "prop3_link")
     propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
+    merge_fixed_links: bool = True
+    links_to_keep: List[str] = []
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -805,6 +811,11 @@ class Drone(FileMorph):
                 "'propellers_link_name' instead."
             )
             self.propellers_link_name = self.propellers_link_names
+
+        # Make sure that Propellers and COM links are preserved
+        for link_name in (*self.propellers_link_name, self.COM_link_name):
+            if not link_name in self.links_to_keep:
+                self.links_to_keep.append(link_name)
 
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
