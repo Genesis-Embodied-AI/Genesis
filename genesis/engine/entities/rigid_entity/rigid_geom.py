@@ -418,7 +418,7 @@ class RigidGeom(RBC):
 
     def set_friction(self, friction):
         """
-        Set the friction coefficient of the geom.
+        Set the friction coefficient of this geometry.
         """
         if friction < 0:
             gs.raise_exception("`friction` must be non-negative.")
@@ -509,6 +509,24 @@ class RigidGeom(RBC):
         )
         return AABB
 
+    def set_sol_params(self, sol_params):
+        """
+        Set the solver parameters of this geometry.
+        """
+        if self.is_built:
+            self._solver.set_sol_params(sol_params[None], geoms_idx=self._idx, envs_idx=None, unsafe=False)
+        else:
+            self._sol_params = sol_params
+
+    @property
+    def sol_params(self):
+        """
+        Get the solver parameters of this geometry.
+        """
+        if self.is_built:
+            return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None, unsafe=True)[0]
+        return self._sol_params
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -540,13 +558,6 @@ class RigidGeom(RBC):
         Get the friction coefficient of the geom.
         """
         return self._friction
-
-    @property
-    def sol_params(self):
-        """
-        Get the solver parameters of the geom.
-        """
-        return self._sol_params
 
     @property
     def data(self):

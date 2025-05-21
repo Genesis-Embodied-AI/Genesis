@@ -10,6 +10,7 @@ import mujoco
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.mesh import get_assets_dir
+from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
 
 
 @dataclass
@@ -425,24 +426,27 @@ def check_mujoco_model_consistency(
     assert_allclose(gs_dof_invweight0[gs_dofs_idx], mj_dof_invweight0[mj_dofs_idx], tol=tol)
 
     # TODO: Genesis does not support frictionloss contraint at dof level for now
-    gs_joint_solparams = np.array([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
-    mj_joint_solref = mj_sim.model.jnt_solref
-    assert_allclose(gs_joint_solparams[gs_joints_idx, :2], mj_joint_solref[mj_joints_idx], tol=tol)
-    mj_joint_solimp = mj_sim.model.jnt_solimp
-    assert_allclose(gs_joint_solparams[gs_joints_idx, 2:], mj_joint_solimp[mj_joints_idx], tol=tol)
-    gs_geom_solparams = np.array([geom.sol_params for entity in gs_sim.entities for geom in entity.geoms])
-    mj_geom_solref = mj_sim.model.geom_solref
-    assert_allclose(gs_geom_solparams[gs_geoms_idx, :2], mj_geom_solref[mj_geoms_idx], tol=tol)
-    mj_geom_solimp = mj_sim.model.geom_solimp
-    assert_allclose(gs_geom_solparams[gs_geoms_idx, 2:], mj_geom_solimp[mj_geoms_idx], tol=tol)
+    gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
+    mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
+    gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
+    mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
     # FIXME: Masking geometries and equality constraints is not supported for now
     gs_eq_solparams = np.array(
-        [equality.sol_params for entity in gs_sim.entities for equality in entity.equalities]
+        [equality.sol_params.cpu() for entity in gs_sim.entities for equality in entity.equalities]
     ).reshape((-1, 7))
-    mj_eq_solref = mj_sim.model.eq_solref
-    assert_allclose(gs_eq_solparams[:, :2], mj_eq_solref, tol=tol)
-    mj_eq_solimp = mj_sim.model.eq_solimp
-    assert_allclose(gs_eq_solparams[:, 2:], mj_eq_solimp, tol=tol)
+    mj_eq_solparams = np.concatenate((mj_sim.model.eq_solref, mj_sim.model.eq_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_eq_solparams, mj_eq_solparams, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(

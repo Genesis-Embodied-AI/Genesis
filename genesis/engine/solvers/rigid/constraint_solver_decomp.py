@@ -193,7 +193,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_connect(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
@@ -281,7 +281,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_joint(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
 
         sol_params = eq_info.sol_params
 
@@ -345,18 +345,18 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
             for i_e in range(self.ti_n_equalities[i_b]):
-                if self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
+                if self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
                     self._func_equality_connect(i_b, i_e)
-                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
+                elif self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
                     self._func_equality_weld(i_b, i_e)
-                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
+                elif self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
                     self._func_equality_joint(i_b, i_e)
 
     @ti.func
     def _func_equality_weld(self, i_b, i_e):
         # TODO: sparse mode
         # Get equality info for this constraint
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
