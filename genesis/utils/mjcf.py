@@ -19,19 +19,19 @@ from . import urdf as uu
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
-def parse_xml(morph, surface):
-    if isinstance(morph.file, (str, Path)):
-        # Make sure that morph is pointing to a valid XML content (either file path or string)
-        path = os.path.join(get_assets_dir(), morph.file)
+def build_model(xml, merge_fixed_links, discard_visual):
+    if isinstance(xml, (str, Path)):
+        # Make sure that it is pointing to a valid XML content (either file path or string)
+        path = os.path.join(get_assets_dir(), xml)
         is_valid_path = False
         try:
             if os.path.exists(path):
                 xml = ET.parse(path)
                 is_valid_path = True
             else:
-                xml = ET.fromstring(morph.file)
+                xml = ET.fromstring(xml)
         except ET.ParseError:
-            gs.raise_exception_from(f"'{morph.file}' is not a valid XML file path or string.")
+            gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
         root = xml.getroot()
@@ -39,9 +39,6 @@ def parse_xml(morph, surface):
         if is_urdf_file:
             # Best guess for the search path
             asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
-
-            # Always merge fixed links unless explicitly asked not to do so
-            merge_fixed_links = not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links
 
             if not any(child.tag == "mujoco" for child in root):
                 # Set default compiler options if none is specified in URDF file
@@ -54,7 +51,7 @@ def parse_xml(morph, surface):
                     assetdir=asset_path,
                     inertiafromgeom="auto",
                     balanceinertia="true",
-                    discardvisual="false" if morph.visualization else "true",
+                    discardvisual="true" if discard_visual else "false",
                     autolimits="true",
                     # boundmass=gs.EPS,
                     # boundinertia=gs.EPS,
@@ -74,10 +71,20 @@ def parse_xml(morph, surface):
                 # Parsing MJCF files from XML string is not reliable because it would use the current directory instead
                 # of the parent directory of the XML file as base directory when using relative paths for assets.
                 mj = mujoco.MjModel.from_xml_path(path)
-    elif isinstance(morph.file, mujoco.MjModel):
-        mj = morph.file
+    elif isinstance(xml, mujoco.MjModel):
+        mj = xml
     else:
-        raise gs.raise_exception(f"'{morph.file}' is not a valid MJCF file.")
+        raise gs.raise_exception(f"'{xml}' is not a valid MJCF file.")
+
+    return mj
+
+
+def parse_xml(morph, surface):
+    # Always merge fixed links unless explicitly asked not to do so
+    merge_fixed_links = not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links
+
+    # Build model from XML (either URDF or MJCF)
+    mj = build_model(morph.file, merge_fixed_links, not morph.visualization)
 
     # Check if there is any tendon. Report a warning if so.
     if mj.ntendon:
