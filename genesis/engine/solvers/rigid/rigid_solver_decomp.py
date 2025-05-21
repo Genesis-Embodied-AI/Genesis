@@ -1231,7 +1231,7 @@ class RigidSolver(Solver):
             eq_type=gs.ti_int,
             sol_params=gs.ti_vec7,
         )
-        self.equality_info = struct_equality_info.field(
+        self.equalities_info = struct_equality_info.field(
             shape=self._batch_shape(self.n_equalities_candidate), needs_grad=False, layout=ti.Layout.SOA
         )
         if self.n_equalities > 0:
@@ -1268,13 +1268,13 @@ class RigidSolver(Solver):
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_equalities, self._B):
-            self.equality_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
-            self.equality_info[i, b].eq_obj2id = equalities_eq_obj2id[i]
-            self.equality_info[i, b].eq_type = equalities_eq_type[i]
+            self.equalities_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
+            self.equalities_info[i, b].eq_obj2id = equalities_eq_obj2id[i]
+            self.equalities_info[i, b].eq_type = equalities_eq_type[i]
             for j in ti.static(range(11)):
-                self.equality_info[i, b].eq_data[j] = equalities_eq_data[i, j]
+                self.equalities_info[i, b].eq_data[j] = equalities_eq_data[i, j]
             for j in ti.static(range(7)):
-                self.equality_info[i, b].sol_params[j] = equalities_sol_params[i, j]
+                self.equalities_info[i, b].sol_params[j] = equalities_sol_params[i, j]
 
     def _init_envs_offset(self):
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
@@ -3919,8 +3919,8 @@ class RigidSolver(Solver):
             self.n_links,
             envs_idx,
             batched=self._options.batch_links_info,
-            skip_allocation=True,
             idx_name="links_idx",
+            skip_allocation=True,
             unsafe=unsafe,
         )
         if self.n_envs == 0 and self._options.batch_links_info:
@@ -3950,8 +3950,8 @@ class RigidSolver(Solver):
             2,
             envs_idx,
             batched=self._options.batch_links_info,
-            skip_allocation=True,
             idx_name="links_idx",
+            skip_allocation=True,
             unsafe=unsafe,
         )
         if self.n_envs == 0 and self._options.batch_links_info:
@@ -4056,7 +4056,7 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_eq in range(self.n_equalities):
             for i in ti.static(range(7)):
-                self.equality_info[i_eq].sol_params[i] = sol_params[i]
+                self.equalities_info[i_eq].sol_params[i] = sol_params[i]
 
     def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
         """
@@ -4071,7 +4071,7 @@ class RigidSolver(Solver):
             (timeconst, dampratio, dmin, dmax, width, mid, power)
         """
         # Make sure that a single constraint type has been selected at once
-        if sum(map(inputs_idx is not None for inputs_idx in (geoms_idx, joints_idx, eqs_idx))) > 1:
+        if sum(inputs_idx is not None for inputs_idx in (geoms_idx, joints_idx, eqs_idx)) > 1:
             raise gs.raise_exception("Cannot set more than one constraint type at once.")
 
         # Select the right input type
@@ -4079,23 +4079,40 @@ class RigidSolver(Solver):
             constraint_type = 2
             idx_name = "eqs_idx"
             inputs_idx = eqs_idx
+            inputs_length = self.n_equalities
+            batched = True
         elif joints_idx is not None:
             constraint_type = 1
             idx_name = "joints_idx"
             inputs_idx = joints_idx
+            inputs_length = self.n_joints
+            batched = self._options.batch_joints_info
         else:
             constraint_type = 0
             idx_name = "geoms_idx"
             inputs_idx = geoms_idx
+            inputs_length = self.n_geoms
+            batched = False
 
         # Sanitize input arguments
-        sol_params, inputs_idx, envs_idx = self._sanitize_1D_io_variables(
-            mass, inputs_idx, self.n_links, envs_idx, idx_name=idx_name, skip_allocation=True, unsafe=unsafe
+        sol_params_, inputs_idx, envs_idx = self._sanitize_2D_io_variables(
+            sol_params,
+            inputs_idx,
+            inputs_length,
+            7,
+            envs_idx,
+            batched=batched,
+            idx_name=idx_name,
+            skip_allocation=True,
+            unsafe=unsafe,
         )
 
         # Make sure that the constraints parameters are within range
+        sol_params = sol_params_.clone() if sol_params_ is sol_params else sol_params_
         _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
 
+        if batched and self.n_envs == 0:
+            sol_params = sol_params.unsqueeze(0)
         self._kernel_set_sol_params(constraint_type, sol_params, inputs_idx, envs_idx)
 
     @ti.kernel
@@ -4116,16 +4133,16 @@ class RigidSolver(Solver):
             if ti.static(self._options.batch_joints_info):
                 for i_j_, i_b_ in ti.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
                     for i in ti.static(range(7)):
-                        self.joints_info[inputs_idx[i_j_], envs_idx[i_b_]].sol_params = sol_params[i_b_, i_j_, i]
+                        self.joints_info[inputs_idx[i_j_], envs_idx[i_b_]].sol_params[i] = sol_params[i_b_, i_j_, i]
             else:
                 for i_j_ in range(inputs_idx.shape[0]):
                     for i in ti.static(range(7)):
-                        self.joints_info[inputs_idx[i_j_]].sol_params = sol_params[i_j_, i]
+                        self.joints_info[inputs_idx[i_j_]].sol_params[i] = sol_params[i_j_, i]
         else:  # equalities
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_eq_ in range(inputs_idx.shape[0]):
+            for i_eq_, i_b_ in ti.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
                 for i in ti.static(range(7)):
-                    self.equality_info[inputs_idx[i_eq_]].sol_params[i] = sol_params[i_eq_, i]
+                    self.equalities_info[inputs_idx[i_eq_], envs_idx[i_b_]].sol_params[i] = sol_params[i_b_, i_eq_, i]
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None, *, unsafe=False):
         tensor_list = list(tensor_list)
@@ -4479,6 +4496,26 @@ class RigidSolver(Solver):
         for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].ctrl_mode = gs.CTRL_MODE.POSITION
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].ctrl_pos = position[i_b_, i_d_]
+
+    def get_sol_params(self, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
+        """
+        Get constraint solver parameters.
+        """
+        if eqs_idx is not None:
+            if not unsafe:
+                assert envs_idx is None
+            tensor = ti_field_to_torch(self.equalities_info.sol_params, None, eqs_idx, transpose=True, unsafe=unsafe)
+            if self.n_envs == 0:
+                tensor = tensor.squeeze(0)
+        elif joints_idx is not None:
+            tensor = ti_field_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
+            if self.n_envs == 0 and self._options.batch_joints_info:
+                tensor = tensor.squeeze(0)
+        else:
+            if not unsafe:
+                assert envs_idx is None
+            tensor = ti_field_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, unsafe=unsafe)
+        return tensor
 
     def get_links_pos(self, links_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_field_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
@@ -4861,23 +4898,23 @@ class RigidSolver(Solver):
                 shared_pos, self.links_state[l2, i_b].pos, self.links_state[l2, i_b].quat
             )
 
-            self.equality_info[i_e, i_b].eq_type = gs.ti_int(gs.EQUALITY_TYPE.WELD)
-            self.equality_info[i_e, i_b].eq_obj1id = l1
-            self.equality_info[i_e, i_b].eq_obj2id = l2
+            self.equalities_info[i_e, i_b].eq_type = gs.ti_int(gs.EQUALITY_TYPE.WELD)
+            self.equalities_info[i_e, i_b].eq_obj1id = l1
+            self.equalities_info[i_e, i_b].eq_obj2id = l2
 
             for i_3 in range(3):
-                self.equality_info[i_e, i_b].eq_data[i_3 + 3] = pos1[i_3]
-                self.equality_info[i_e, i_b].eq_data[i_3] = pos2[i_3]
+                self.equalities_info[i_e, i_b].eq_data[i_3 + 3] = pos1[i_3]
+                self.equalities_info[i_e, i_b].eq_data[i_3] = pos2[i_3]
 
             relpose = gu.ti_quat_mul(gu.ti_inv_quat(self.links_state[l1, i_b].quat), self.links_state[l2, i_b].quat)
 
-            self.equality_info[i_e, i_b].eq_data[6] = relpose[0]
-            self.equality_info[i_e, i_b].eq_data[7] = relpose[1]
-            self.equality_info[i_e, i_b].eq_data[8] = relpose[2]
-            self.equality_info[i_e, i_b].eq_data[9] = relpose[3]
+            self.equalities_info[i_e, i_b].eq_data[6] = relpose[0]
+            self.equalities_info[i_e, i_b].eq_data[7] = relpose[1]
+            self.equalities_info[i_e, i_b].eq_data[8] = relpose[2]
+            self.equalities_info[i_e, i_b].eq_data[9] = relpose[3]
 
-            self.equality_info[i_e, i_b].eq_data[10] = 1.0
-            self.equality_info[i_e, i_b].sol_params = ti.Vector(
+            self.equalities_info[i_e, i_b].eq_data[10] = 1.0
+            self.equalities_info[i_e, i_b].sol_params = ti.Vector(
                 [2 * self._substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
             )
 
@@ -4904,12 +4941,12 @@ class RigidSolver(Solver):
             i_b = envs_idx[i_b_]
             for i_e in range(self.n_equalities, self.constraint_solver.ti_n_equalities[i_b]):
                 if (
-                    self.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD
-                    and self.equality_info[i_e, i_b].eq_obj1id == link1_idx[i_b]
-                    and self.equality_info[i_e, i_b].eq_obj2id == link2_idx[i_b]
+                    self.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD
+                    and self.equalities_info[i_e, i_b].eq_obj1id == link1_idx[i_b]
+                    and self.equalities_info[i_e, i_b].eq_obj2id == link2_idx[i_b]
                 ):
                     if i_e < self.constraint_solver.ti_n_equalities[i_b] - 1:
-                        self.equality_info[i_e, i_b] = self.equality_info[
+                        self.equalities_info[i_e, i_b] = self.equalities_info[
                             self.constraint_solver.ti_n_equalities[i_b] - 1, i_b
                         ]
                     self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] - 1

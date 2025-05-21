@@ -809,6 +809,35 @@ def test_set_root_pose(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_set_sol_params(tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            substeps=1,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            pos=(0.0, 0.4, 0.1),
+            euler=(0, 0, 90),
+        ),
+    )
+    scene.build()
+
+    for obj in (*robot.joints, *robot.geoms, *robot.equalities):
+        sol_params = obj.sol_params + 1.0
+        obj.set_sol_params(sol_params)
+        with pytest.raises(AssertionError):
+            assert_allclose(obj.sol_params, sol_params, tol=tol)
+        sol_params = np.zeros((7,))
+        obj.set_sol_params(sol_params)
+        assert_allclose(obj.sol_params, [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
