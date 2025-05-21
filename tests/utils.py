@@ -9,6 +9,7 @@ import mujoco
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
 
@@ -153,17 +154,12 @@ def _get_model_mappings(
             joint.name for entity in gs_sim.entities for joint in entity.joints if joint.type != gs.JOINT_TYPE.FIXED
         ]
     if bodies_name is None:
-        bodies_name = []
-        for entity in gs_sim.entities:
-            for body in entity.links:
-                if body.is_fixed and body.parent_idx < 0:
-                    if gs_sim.rigid_solver.links_state[body.idx, 0].mass_sum < gs.EPS:
-                        continue
-                    try:
-                        mj_sim.model.body(body.name)
-                    except KeyError:
-                        continue
-                bodies_name.append(body.name)
+        bodies_name = [
+            body.name
+            for entity in gs_sim.entities
+            for body in entity.links
+            if not (body.is_fixed and body.parent_idx < 0)
+        ]
 
     motors_name: list[str] = []
     mj_joints_idx: list[int] = []
@@ -243,7 +239,7 @@ def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent
         raise ValueError(f"Integrator '{gs_integrator}' not supported")
 
     xml_path = os.path.join(get_assets_dir(), xml_path)
-    model = mujoco.MjModel.from_xml_path(xml_path)
+    model = mju.build_model(xml_path, discard_visual=True, merge_fixed_links=True, links_to_keep=())
 
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
@@ -308,6 +304,8 @@ def build_genesis_sim(
     else:
         morph = gs.morphs.URDF(
             fixed=True,
+            merge_fixed_links=True,
+            links_to_keep=(),
             **morph_kwargs,
         )
     gs_robot = scene.add_entity(
@@ -382,6 +380,13 @@ def check_mujoco_model_consistency(
         assert True
     else:
         assert False
+
+    gs_roots_name = sorted(
+        gs_sim.rigid_solver.links[i].name
+        for i in set(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
+    )
+    mj_roots_name = sorted(mj_sim.model.body(i).name for i in set(mj_sim.model.body_rootid[mj_bodies_idx]))
+    assert gs_roots_name == mj_roots_name
 
     # body
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
@@ -638,11 +643,13 @@ def check_mujoco_data_consistency(
     gs_sim.rigid_solver._kernel_forward_kinematics_links_geoms(np.array([0]))
 
     gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
+    gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
     mj_com = mj_sim.data.subtree_com
-    assert_allclose(gs_com[gs_bodies_idx][0], mj_com[mj_bodies_idx][0], tol=tol)
+    mj_root_idx = np.unique(mj_sim.model.body_rootid[mj_bodies_idx])
+    assert_allclose(gs_com[gs_root_idx], mj_com[mj_root_idx], tol=tol)
 
     gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[:, 0]
-    mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[0]
+    mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[mj_sim.model.body_rootid]
     assert_allclose(gs_xipos[gs_bodies_idx], mj_xipos[mj_bodies_idx], tol=tol)
 
     gs_xpos = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]

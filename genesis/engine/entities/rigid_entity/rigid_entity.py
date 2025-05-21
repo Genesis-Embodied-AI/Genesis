@@ -330,27 +330,23 @@ class RigidEntity(Entity):
         else:
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-            links_name = [l_info["name"] for l_info in l_infos]
 
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties
             morph_ = copy(morph)
             morph_.visualization = False
             try:
+                # Mujoco's unified MJCF+URDF parser for URDF files
                 l_infos_, links_j_infos_, links_g_infos_, _ = mju.parse_xml(morph_, surface)
-                assert len(l_infos_) == len(l_infos)
-                for l_info_, link_j_infos_ in zip(l_infos_, links_j_infos_):
-                    # Skip non-matching links.
-                    # This would be the case when for fixed-based robot whose root joint has been fused with the world.
-                    # In this case, inertial information are better perserved by the "legacy" URDF parser.
-                    try:
-                        idx = links_name.index(l_info_["name"])
-                        np.testing.assert_allclose(
-                            l_info_["inertial_mass"], l_infos[idx]["inertial_mass"], atol=gs.EPS, rtol=gs.EPS
-                        )
-                    except (IndexError, AssertionError):
-                        continue
-                    l_infos[idx] = l_info_
-                    links_j_infos[idx] = link_j_infos_
+
+                # Take into account 'world' body if it was added automatically
+                if len(links_g_infos_) == len(links_g_infos) + 1:
+                    assert not links_g_infos_[0]
+                    links_g_infos.insert(0, [])
+                assert len(links_g_infos_) == len(links_g_infos)
+
+                # Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!)
+                l_infos = l_infos_
+                links_j_infos = links_j_infos_
                 for link_g_infos, link_g_infos_ in zip(links_g_infos, links_g_infos_):
                     for i, link_g_infos_ in enumerate((link_g_infos, link_g_infos_)):
                         for idx, g_info in tuple(enumerate(link_g_infos_))[::-1]:
@@ -361,7 +357,7 @@ class RigidEntity(Entity):
                                 else:
                                     link_g_infos.append(g_info)
             except (ValueError, AssertionError):
-                pass
+                gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
 
         # Add free floating joint at root if necessary
         if (
@@ -390,12 +386,13 @@ class RigidEntity(Entity):
             links_j_infos[0].append(j_info)
 
         # Remove the world link if fixed and has no geometry attached
-        has_world = sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
-        if has_world and not links_g_infos[0]:
-            del l_infos[0], links_j_infos[0], links_g_infos[0]
-            for l_info in l_infos:
-                l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
-            has_world = False
+        if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
+            if sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0 and not links_g_infos[0]:
+                del l_infos[0], links_j_infos[0], links_g_infos[0]
+                for l_info in l_infos:
+                    l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
+                    if "root_idx" in l_info:
+                        l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
@@ -411,27 +408,6 @@ class RigidEntity(Entity):
                 l_info["is_robot"] = np.array(True, dtype=np.bool_)
                 if l_info["parent_idx"] >= 0:
                     l_infos[l_info["parent_idx"]]["is_robot"][()] = True
-
-        # Attach link directly to the world in accordance with Mujoco
-        # FIXME: Relying on strictly positive subtree mass to determine whether to update parent seems fragile...
-        if has_world:
-            links_is_fixed = []
-            links_subtree_mass = [0.0 for _ in l_infos]
-            for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
-                links_subtree_mass[idx] += l_info["inertial_mass"]
-                is_fixed = sum(j_info["n_dofs"] for j_info in link_j_infos) == 0
-                while l_info["parent_idx"] > -1:
-                    link_j_infos = links_j_infos[l_info["parent_idx"]]
-                    l_info = l_infos[l_info["parent_idx"]]
-                    links_subtree_mass[idx] += l_info["inertial_mass"]
-                    if sum(j_info["n_dofs"] for j_info in link_j_infos) > 0:
-                        is_fixed = False
-                links_is_fixed.append(is_fixed)
-            for l_info in l_infos:
-                parent_idx = l_info["parent_idx"]
-                if parent_idx >= 0:
-                    if links_is_fixed[parent_idx] and links_subtree_mass[parent_idx] == 0.0:
-                        l_info["parent_idx"] = -1
 
         # Add (link, joints, geoms) tuples sequentially
         for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
@@ -554,6 +530,9 @@ class RigidEntity(Entity):
         parent_idx = l_info["parent_idx"]
         if parent_idx >= 0:
             parent_idx += self._link_start
+        root_idx = l_info.get("root_idx")
+        if root_idx is not None and root_idx >= 0:
+            root_idx += self._link_start
 
         link = RigidLink(
             entity=self,
@@ -577,6 +556,7 @@ class RigidEntity(Entity):
             inertial_i=l_info.get("inertial_i"),
             inertial_mass=l_info.get("inertial_mass"),
             parent_idx=parent_idx,
+            root_idx=root_idx,
             invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
         )

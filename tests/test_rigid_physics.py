@@ -13,6 +13,8 @@ import genesis as gs
 
 from .utils import (
     assert_allclose,
+    build_mujoco_sim,
+    build_genesis_sim,
     init_simulators,
     check_mujoco_model_consistency,
     check_mujoco_data_consistency,
@@ -325,6 +327,32 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     tol = 2e-9 if gs_solver == gs.constraint_solver.Newton else tol
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.multi_contact(False)
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_urdf_rope(
+    gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, dof_damping, show_viewer
+):
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="linear_deformable.urdf",
+        max_workers=1,
+    )
+    xml_path = os.path.join(asset_path, "linear_deformable.urdf")
+
+    mj_sim = build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping)
+    gs_sim = build_genesis_sim(
+        xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+    )
+
+    # FIXME: Tolerance must be very large due to small masses and compounding of errors over long kinematic chains
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
 
 
 @pytest.mark.required

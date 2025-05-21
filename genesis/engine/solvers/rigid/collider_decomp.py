@@ -93,14 +93,15 @@ class Collider:
                     continue
 
                 # self collision
-                if not self._solver._enable_self_collision and links_root_idx[i_la] == links_root_idx[i_lb]:
-                    continue
+                if links_root_idx[i_la] == links_root_idx[i_lb]:
+                    if not self._solver._enable_self_collision:
+                        continue
 
-                # adjacent links
-                if not self._solver._enable_adjacent_collision and (
-                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
-                ):
-                    continue
+                    # adjacent links
+                    if not self._solver._enable_adjacent_collision and (
+                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                    ):
+                        continue
 
                 # contype and conaffinity
                 if not (
@@ -709,18 +710,16 @@ class Collider:
         if i_la == i_lb:
             is_valid = False
 
-        # self collision
-        if (
-            ti.static(not self._solver._enable_self_collision)
-            and self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx
-        ):
-            is_valid = False
+        if self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx:
+            # self collision
+            if ti.static(not self._solver._enable_self_collision):
+                is_valid = False
 
-        # adjacent links
-        if ti.static(not self._solver._enable_adjacent_collision) and (
-            self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
-        ):
-            is_valid = False
+            # adjacent links
+            if ti.static(not self._solver._enable_adjacent_collision) and (
+                self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
+            ):
+                is_valid = False
 
         # contype and conaffinity
         if not (

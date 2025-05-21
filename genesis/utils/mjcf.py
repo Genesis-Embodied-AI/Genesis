@@ -13,25 +13,26 @@ from PIL import Image
 import z3
 import mujoco
 import genesis as gs
+from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import urdf as uu
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
-def parse_xml(morph, surface):
-    if isinstance(morph.file, (str, Path)):
-        # Make sure that morph is pointing to a valid XML content (either file path or string)
-        path = os.path.join(get_assets_dir(), morph.file)
+def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
+    if isinstance(xml, (str, Path)):
+        # Make sure that it is pointing to a valid XML content (either file path or string)
+        path = os.path.join(get_assets_dir(), xml)
         is_valid_path = False
         try:
             if os.path.exists(path):
                 xml = ET.parse(path)
                 is_valid_path = True
             else:
-                xml = ET.fromstring(morph.file)
+                xml = ET.fromstring(xml)
         except ET.ParseError:
-            gs.raise_exception_from(f"'{morph.file}' is not a valid XML file path or string.")
+            gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
         root = xml.getroot()
@@ -39,26 +40,31 @@ def parse_xml(morph, surface):
         if is_urdf_file:
             # Best guess for the search path
             asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
+            robot = urdfpy.URDF._from_xml(root, root, asset_path)
 
-            # Always merge fixed links unless explicitly asked not to do so
-            merge_fixed_links = not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links
+            # Merge fixed links if requested
+            if merge_fixed_links:
+                robot = uu.merge_fixed_links(robot, links_to_keep)
+                root = robot._to_xml(None, asset_path)
 
+            # Set default compiler options if none is specified in URDF file if none
             if not any(child.tag == "mujoco" for child in root):
-                # Set default compiler options if none is specified in URDF file
                 mjcf = ET.SubElement(root, "mujoco")
                 compiler = ET.SubElement(
                     mjcf,
                     "compiler",
-                    fusestatic="true" if merge_fixed_links else "false",
+                    fusestatic="false",
                     strippath="false",
                     assetdir=asset_path,
                     inertiafromgeom="auto",
                     balanceinertia="true",
-                    discardvisual="false" if morph.visualization else "true",
+                    discardvisual="true" if discard_visual else "false",
                     autolimits="true",
                     # boundmass=gs.EPS,
                     # boundinertia=gs.EPS,
                 )
+
+            # Resolve relative mesh paths
             for elem in root.findall(".//mesh"):
                 mesh_path = elem.get("filename")
                 if mesh_path.startswith("package://"):
@@ -74,10 +80,23 @@ def parse_xml(morph, surface):
                 # Parsing MJCF files from XML string is not reliable because it would use the current directory instead
                 # of the parent directory of the XML file as base directory when using relative paths for assets.
                 mj = mujoco.MjModel.from_xml_path(path)
-    elif isinstance(morph.file, mujoco.MjModel):
-        mj = morph.file
+    elif isinstance(xml, mujoco.MjModel):
+        mj = xml
     else:
-        raise gs.raise_exception(f"'{morph.file}' is not a valid MJCF file.")
+        raise gs.raise_exception(f"'{xml}' is not a valid MJCF file.")
+
+    return mj
+
+
+def parse_xml(morph, surface):
+    # Always merge fixed links unless explicitly asked not to do so
+    merge_fixed_links, links_to_keep = None, None
+    if isinstance(morph, gs.morphs.URDF):
+        merge_fixed_links = morph.merge_fixed_links
+        links_to_keep = morph.links_to_keep
+
+    # Build model from XML (either URDF or MJCF)
+    mj = build_model(morph.file, not morph.visualization, merge_fixed_links, links_to_keep)
 
     # Check if there is any tendon. Report a warning if so.
     if mj.ntendon:
@@ -115,6 +134,7 @@ def parse_link(mj, i_l, scale):
         l_info["parent_idx"] = -1
     else:
         l_info["parent_idx"] = int(mj.body_parentid[i_l])
+    l_info["root_idx"] = int(mj.body_rootid[i_l])
     l_info["invweight"] = mj.body_invweight0[i_l]
 
     jnt_adr = mj.body_jntadr[i_l]
