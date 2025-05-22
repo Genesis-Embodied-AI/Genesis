@@ -75,10 +75,12 @@ class Collider:
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
         geoms_contype = self._solver.geoms_info.contype.to_numpy()
         geoms_conaffinity = self._solver.geoms_info.conaffinity.to_numpy()
+        links_entity_idx = self._solver.links_info.entity_idx.to_numpy()
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
         if self._solver._options.batch_links_info:
+            links_entity_idx = links_entity_idx[:, 0]
             links_root_idx = links_root_idx[:, 0]
             links_parent_idx = links_parent_idx[:, 0]
             links_is_fixed = links_is_fixed[:, 0]
@@ -104,7 +106,7 @@ class Collider:
                         continue
 
                 # contype and conaffinity
-                if not (
+                if links_entity_idx[i_la] == links_entity_idx[i_lb] and not (
                     (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
                 ):
                     continue
@@ -722,7 +724,7 @@ class Collider:
                 is_valid = False
 
         # contype and conaffinity
-        if not (
+        if self._solver.links_info[I_la].entity_idx == self._solver.links_info[I_lb].entity_idx and not (
             (self._solver.geoms_info[i_ga].contype & self._solver.geoms_info[i_gb].conaffinity)
             or (self._solver.geoms_info[i_gb].contype & self._solver.geoms_info[i_ga].conaffinity)
         ):

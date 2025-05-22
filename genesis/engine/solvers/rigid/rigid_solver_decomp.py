@@ -282,7 +282,7 @@ class RigidSolver(Solver):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.links_info):
             for j in range(2):
-                if self.links_info[I].invweight[j] < 0:
+                if self.links_info[I].invweight[j] <= gs.EPS:
                     self.links_info[I].invweight[j] = invweight[I[0], j]
 
     @ti.kernel
@@ -1743,7 +1743,7 @@ class RigidSolver(Solver):
         from genesis.utils.tools import create_timer
 
         timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
-        if self._enable_collision or self._enable_joint_limit:
+        if self._enable_collision or self._enable_joint_limit or self.n_equalities > 0:
             self.constraint_solver.clear()
         timer.stamp("constraint_solver.clear")
 
