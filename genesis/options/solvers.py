@@ -176,8 +176,8 @@ class RigidOptions(Options):
         Please note that this option will be deprecated in a future version. Use 'constraint_timeconst' instead.
     constraint_timeconst : float, optional
         Time to resolve a constraint. The smaller the value, the more stiff the constraint. This parameter is called
-        'timeconst' in Mujoco (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters).
-        Defaults to 0.02.
+        'timeconst' in Mujoco (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). None to
+        disable. Defaults to None.
     use_contact_island : bool, optional
         Whether to use contact island to speed up contact resolving. Defaults to False.
     use_hibernation : bool, optional
