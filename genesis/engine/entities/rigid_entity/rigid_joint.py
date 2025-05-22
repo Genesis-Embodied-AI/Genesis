@@ -154,7 +154,7 @@ class RigidJoint(RBC):
         Retruns the solver parameters of the joint.
         """
         if self.is_built:
-            return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None, unsafe=True)[0]
+            return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None, unsafe=True)[..., 0, :]
         return self._sol_params
 
     # ------------------------------------------------------------------------------------

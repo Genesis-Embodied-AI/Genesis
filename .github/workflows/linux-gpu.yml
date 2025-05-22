@@ -15,6 +15,7 @@ jobs:
         python-version: ["3.12"]
 
     env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GENESIS_IMAGE_VER: "1_0"
       TIMEOUT_MINUTES: 180
 

@@ -837,11 +837,15 @@ def test_set_root_pose(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_set_sol_params(tol):
+@pytest.mark.parametrize("n_envs, batched", [(0, False), (3, True)])
+def test_set_sol_params(n_envs, batched, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
             substeps=1,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            batch_joints_info=batched,
         ),
         show_viewer=False,
         show_FPS=False,
@@ -853,16 +857,22 @@ def test_set_sol_params(tol):
             euler=(0, 0, 90),
         ),
     )
-    scene.build()
+    scene.build(n_envs=2)
+    assert scene.sim._substep_dt == 0.01
 
-    for obj in (*robot.joints, *robot.geoms, *robot.equalities):
-        sol_params = obj.sol_params + 1.0
-        obj.set_sol_params(sol_params)
-        with pytest.raises(AssertionError):
+    for objs, batched in ((robot.joints, batched), (robot.geoms, False), (robot.equalities, True)):
+        for obj in objs:
+            sol_params = obj.sol_params + 1.0
+            obj.set_sol_params(sol_params)
+            with pytest.raises(AssertionError):
+                assert_allclose(obj.sol_params, sol_params, tol=tol)
+            sol_params = np.zeros(((scene.n_envs,) if scene.n_envs > 0 and batched else ()) + (7,))
+            obj.set_sol_params(sol_params)
+            sol_params = np.tile(
+                [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0],
+                ((scene.n_envs,) if scene.n_envs > 0 and batched else ()) + (1,),
+            )
             assert_allclose(obj.sol_params, sol_params, tol=tol)
-        sol_params = np.zeros((7,))
-        obj.set_sol_params(sol_params)
-        assert_allclose(obj.sol_params, [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
 
 
 @pytest.mark.required
