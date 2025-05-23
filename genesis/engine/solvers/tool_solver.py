@@ -6,9 +6,7 @@ from genesis.engine.states.solvers import ToolSolverState
 from genesis.utils.misc import *
 
 from .base_solver import Solver
-
-if TYPE_CHECKING:
-    from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
+from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
 
 
 @ti.data_oriented
