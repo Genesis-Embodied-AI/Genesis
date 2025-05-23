@@ -1096,6 +1096,39 @@ def test_suction_cup(mode, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_all_fixed(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, 1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            max_FPS=60,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.0),
+            fixed=True,
+        ),
+    )
+    scene.build()
+    scene.step()
+
+    assert_allclose(cube.get_pos(), 0, tol=gs.EPS)
+    assert_allclose(cube.get_quat(), (1.0, 0.0, 0.0, 0.0), tol=gs.EPS)
+    assert_allclose(cube.get_vel(), 0, tol=gs.EPS)
+    assert_allclose(cube.get_ang(), 0, tol=gs.EPS)
+    assert_allclose(scene.rigid_solver.get_links_acc(), 0, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_mass_mat(show_viewer, tol):
     # Create and build the scene
     scene = gs.Scene(
