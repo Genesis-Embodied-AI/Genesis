@@ -366,13 +366,13 @@ class FileMorph(Morph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. If not given, it defaults to `convexify`. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the mesh. Default to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -402,9 +402,9 @@ class FileMorph(Morph):
 
     file: Any = ""
     scale: Union[float, tuple] = 1.0
-    decimate: Optional[bool] = None
+    decimate: bool = True
     decimate_face_num: int = 500
-    decimate_aggressiveness: int = 2
+    decimate_aggressiveness: int = 5
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
     decompose_object_error_threshold: float = 0.15
@@ -485,7 +485,7 @@ class Mesh(FileMorph, TetGenMixin):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -584,7 +584,7 @@ class MJCF(FileMorph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -670,7 +670,7 @@ class URDF(FileMorph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -751,7 +751,7 @@ class Drone(FileMorph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
