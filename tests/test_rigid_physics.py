@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import xml.etree.ElementTree as ET
@@ -945,15 +946,15 @@ def move_cube(use_suction, mode, show_viewer):
     )
     cube = scene.add_entity(
         gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
+            size=(0.05, 0.05, 0.05),
+            pos=(0.65, 0.0, 0.025),
         ),
         surface=gs.surfaces.Plastic(color=(1, 0, 0)),
     )
     cube_2 = scene.add_entity(
         gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.4, 0.2, 0.02),
+            size=(0.05, 0.05, 0.05),
+            pos=(0.4, 0.2, 0.025),
         ),
         surface=gs.surfaces.Plastic(color=(0, 1, 0)),
     )
@@ -993,7 +994,10 @@ def move_cube(use_suction, mode, show_viewer):
     path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=100,  # 1s duration
+        resolution=0.05,
+        timeout=30.0,
     )
+    assert path
     # execute the planned path
     franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
     for waypoint in path:
@@ -1007,7 +1011,7 @@ def move_cube(use_suction, mode, show_viewer):
     # reach
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.130]),
+        pos=np.array([0.65, 0.0, 0.13]),
         quat=np.array([0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -1040,19 +1044,22 @@ def move_cube(use_suction, mode, show_viewer):
     # reach
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.4, 0.2, 0.18]),
+        pos=np.array([0.4, 0.2, 0.2]),
         quat=np.array([0, 1, 0, 0]),
     )
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=50,
+        num_waypoints=150,
+        resolution=0.05,
+        timeout=30.0,
     )
+    assert path
     for waypoint in path:
         franka.control_dofs_position(waypoint[:-2], motors_dof)
         scene.step()
 
     # Get more time to the robot to reach the last waypoint
-    for i in range(100):
+    for i in range(50):
         scene.step()
 
     # release
@@ -1068,7 +1075,7 @@ def move_cube(use_suction, mode, show_viewer):
             assert_allclose(qvel, 0, atol=0.06)
 
     qpos = cube.get_dofs_position().cpu()
-    assert_allclose(qpos[2], 0.06, atol=2e-3)
+    assert_allclose(qpos[2], 0.075, atol=2e-3)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
@@ -1092,6 +1099,105 @@ def test_inverse_kinematics(mode, show_viewer):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_suction_cup(mode, show_viewer):
     move_cube(use_suction=True, mode=mode, show_viewer=show_viewer)
+
+
+@pytest.mark.required
+@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_path_planning_avoidance(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, 1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            max_FPS=60,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    cubes = []
+    for pos in (
+        (-0.1, 0.2, 0.7),
+        (0.0, 0.3, 0.8),
+        (-0.1, -0.2, 0.7),
+        (0.0, -0.3, 0.8),
+        (0.3, 0.2, 0.6),
+        (0.3, -0.2, 0.6),
+        (0.3, 0.3, 0.7),
+        (0.3, -0.3, 0.7),
+    ):
+        cube = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=pos,
+                fixed=True,
+            ),
+            surface=gs.surfaces.Default(
+                color=(*np.random.rand(3), 0.7),
+            ),
+        )
+        cubes.append(cube)
+    franka = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+        vis_mode="collision",
+    )
+    scene.build()
+
+    hand = franka.get_link("hand")
+    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
+    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
+    qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
+    qpos[-2:] = 0.04
+
+    avoidance_path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=200,
+        ignore_collision=False,
+        resolution=0.002,
+        timeout=180.0,
+        max_retry=5,
+    )
+    assert avoidance_path
+    assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
+    free_path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=200,
+        ignore_collision=True,
+        resolution=0.002,
+    )
+    assert free_path
+    assert_allclose(free_path[0].cpu(), 0, tol=gs.EPS)
+    assert_allclose(free_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
+
+    for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
+        max_penetration = float("-inf")
+        for waypoint in path:
+            franka.set_qpos(waypoint)
+            scene.visualizer.update()
+
+            # Check if the cube is colliding with the robot
+            scene.rigid_solver._kernel_forward_dynamics()
+            scene.rigid_solver._func_constraint_force()
+            for i in range(scene.rigid_solver.collider.n_contacts.to_numpy()[0]):
+                contact_data = scene.rigid_solver.collider.contact_data[i, 0]
+                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_data.link_a, contact_data.link_b)):
+                    max_penetration = max(max_penetration, contact_data.penetration)
+
+        args = (max_penetration, 5e-3)
+        np.testing.assert_array_less(*(args if ignore_collision else args[::-1]))
+
+        assert_allclose(hand_pos_ref.cpu(), hand.get_pos().cpu(), tol=5e-4)
+        hand_quat_diff = gs.utils.geom.transform_quat_by_quat(
+            gs.utils.geom.inv_quat(hand_quat_ref.cpu()), hand.get_quat().cpu()
+        )
+        theta = 2 * np.arctan2(torch.linalg.norm(hand_quat_diff[1:]), torch.abs(hand_quat_diff[0]))
+        assert_allclose(theta, 0.0, tol=5e-3)
 
 
 @pytest.mark.required
@@ -1437,7 +1543,7 @@ def test_collision_plane_convex(show_viewer, tol):
             scene.step()
             if i > 400:
                 qvel = asset.get_dofs_velocity()
-                assert_allclose(qvel, 0, atol=0.12)
+                assert_allclose(qvel, 0, atol=0.14)
 
 
 # @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")

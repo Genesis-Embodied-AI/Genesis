@@ -16,6 +16,7 @@ jobs:
 
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_HUB_DOWNLOAD_TIMEOUT: 60
       GENESIS_IMAGE_VER: "1_0"
       TIMEOUT_MINUTES: 180
 
