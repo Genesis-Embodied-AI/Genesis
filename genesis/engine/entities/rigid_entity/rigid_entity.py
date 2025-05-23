@@ -385,6 +385,10 @@ class RigidEntity(Entity):
             j_info["dofs_force_range"] = gu.default_dofs_force_range(6)
             links_j_infos[0].append(j_info)
 
+            # Note that 'invweight' was previously initialized to zero based the root joint was fixed at that time.
+            # It is necessary to re-initialize it to some strictly negative value to trigger recomputation in solver.
+            l_infos[0]["invweight"] = np.full((2,), fill_value=-1.0)
+
         # Remove the world link if fixed and has no geometry attached
         if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
             if sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0 and not links_g_infos[0]:

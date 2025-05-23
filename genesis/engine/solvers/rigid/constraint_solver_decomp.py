@@ -657,7 +657,7 @@ class ConstraintSolver:
         else:
             for i_c in range(self.n_constraints[i_b]):
                 for i_d1 in range(self._solver.n_dofs):
-                    if ti.abs(self.jac[i_c, i_d1, i_b]) > 1e-8:
+                    if ti.abs(self.jac[i_c, i_d1, i_b]) > gs.EPS:
                         for i_d2 in range(i_d1 + 1):
                             self.nt_H[i_d1, i_d2, i_b] = (
                                 self.nt_H[i_d1, i_d2, i_b]
@@ -688,13 +688,12 @@ class ConstraintSolver:
             for j_d in range(i_d):
                 tmp = tmp - (self.nt_H[i_d, j_d, i_b] * self.nt_H[i_d, j_d, i_b])
 
-            mindiag = 1e-8
-            if tmp < mindiag:
-                tmp = mindiag
+            if tmp < gs.EPS:
+                tmp = gs.EPS
                 rank = rank - 1
             self.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
 
-            tmp = 1 / self.nt_H[i_d, i_d, i_b]
+            tmp = 1.0 / self.nt_H[i_d, i_d, i_b]
 
             for j_d in range(i_d + 1, self._solver.n_dofs):
                 dot = gs.ti_float(0.0)
@@ -711,6 +710,7 @@ class ConstraintSolver:
         for i_d in range(self._solver.n_dofs):
             for j_d in range(i_d):
                 self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - (self.nt_H[i_d, j_d, i_b] * self.Mgrad[j_d, i_b])
+
             self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
 
         for i_d_ in range(self._solver.n_dofs):

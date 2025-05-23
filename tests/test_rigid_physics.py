@@ -888,9 +888,9 @@ def test_stickman(gs_sim, mj_sim, tol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(5000):
+    for i in range(5100):
         gs_sim.scene.step()
-        if i > 4900:
+        if i > 5000:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
             assert_allclose(qvel, 0, atol=0.4)
@@ -1504,6 +1504,73 @@ def test_urdf_mimic_panda(show_viewer, tol):
 
     gs_qpos = rigid.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_drone_advanced(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.005,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            max_FPS=60,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="drone_sus/*",
+        max_workers=1,
+    )
+    drones = []
+    for offset, merge_fixed_links in ((-0.3, False), (0.3, True)):
+        drone = scene.add_entity(
+            morph=gs.morphs.Drone(
+                file=f"{asset_path}/drone_sus/drone_sus.urdf",
+                merge_fixed_links=merge_fixed_links,
+                pos=(0.0, offset, 1.5),
+            ),
+            vis_mode="collision",
+            visualize_contact=True,
+        )
+        drones.append(drone)
+    scene.build()
+
+    for drone in drones:
+        chain_dofs = range(6, drone.n_dofs)
+        drone.set_dofs_armature(drone.get_dofs_armature(chain_dofs) + 1e-3, chain_dofs)
+
+    for i in range(500):
+        for drone in drones:
+            drone.set_propellels_rpm(torch.full((4,), 50000.0))
+        scene.step()
+        scene.sim.rigid_solver._kernel_forward_dynamics()
+        scene.sim.rigid_solver._func_constraint_force()
+        if scene.rigid_solver.collider.n_contacts.to_numpy()[0] > 2:
+            # FIXME: It starts to return assymetrical contact forces as soon as a third contact point in the middle
+            # of the segment pops up. This discrepancy is very large on Linux and causes the simulation to diverge,
+            # which is not the case on Windows OS or Mac OS.
+            break
+    assert 250 < i < 500
+
+    pos_1 = drones[0].get_pos()
+    pos_2 = drones[1].get_pos()
+    assert abs(pos_1[0] - pos_2[0]) < gs.EPS
+    assert abs(pos_1[1] + pos_2[1]) < gs.EPS
+    assert abs(pos_1[2] - pos_2[2]) < gs.EPS
+    quat_1 = drones[0].get_quat()
+    quat_2 = drones[1].get_quat()
+    assert abs(quat_1[1] + quat_2[1]) < gs.EPS
+    assert abs(quat_1[2] - quat_2[2]) < gs.EPS
+    assert abs(quat_1[2] - quat_2[2]) < gs.EPS
 
 
 @pytest.mark.parametrize(
