@@ -1596,7 +1596,7 @@ class RigidEntity(Entity):
             if ignore_collision:
                 return True
             qpos = torch.tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-            self.set_qpos(qpos, zero_velocity=False)
+            self.set_qpos(qpos)
             collision_pairs = set(map(tuple, self.detect_collision()))
             return not (collision_pairs - mask_collision_pairs)
 
