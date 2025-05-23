@@ -397,8 +397,8 @@ class RigidSolver(Solver):
         )
 
         joints = self.joints
-        is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
-        if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
+        has_dofs = sum(joint.n_dofs for joint in joints) > 0
+        if has_dofs:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
@@ -487,18 +487,6 @@ class RigidSolver(Solver):
             inertial_mass=gs.ti_float,
             entity_idx=gs.ti_int,  # entity.idx_in_solver
         )
-
-        struct_joint_info = ti.types.struct(
-            type=gs.ti_int,
-            sol_params=gs.ti_vec7,
-            q_start=gs.ti_int,
-            dof_start=gs.ti_int,
-            q_end=gs.ti_int,
-            dof_end=gs.ti_int,
-            n_dofs=gs.ti_int,
-            pos=gs.ti_vec3,
-        )
-
         struct_link_state = ti.types.struct(
             cinr_inertial=gs.ti_mat3,
             cinr_pos=gs.ti_vec3,
@@ -567,32 +555,43 @@ class RigidSolver(Solver):
             links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
         )
 
-        joints_info_shape = self._batch_shape(self.n_joints) if self._options.batch_joints_info else self.n_joints
-        self.joints_info = struct_joint_info.field(shape=joints_info_shape, needs_grad=False, layout=ti.Layout.SOA)
-
+        struct_joint_info = ti.types.struct(
+            type=gs.ti_int,
+            sol_params=gs.ti_vec7,
+            q_start=gs.ti_int,
+            dof_start=gs.ti_int,
+            q_end=gs.ti_int,
+            dof_end=gs.ti_int,
+            n_dofs=gs.ti_int,
+            pos=gs.ti_vec3,
+        )
         struct_joint_state = ti.types.struct(
             xanchor=gs.ti_vec3,
             xaxis=gs.ti_vec3,
         )
 
+        # Field size cannot be zero,
+        joints_info_shape = self._batch_shape(self.n_joints_) if self._options.batch_joints_info else self.n_joints_
+        self.joints_info = struct_joint_info.field(shape=joints_info_shape, needs_grad=False, layout=ti.Layout.SOA)
         self.joints_state = struct_joint_state.field(
-            shape=self._batch_shape(self.n_joints), needs_grad=False, layout=ti.Layout.SOA
+            shape=self._batch_shape(self.n_joints_), needs_grad=False, layout=ti.Layout.SOA
         )
 
-        # Make sure that the constraints parameters are valid
         joints = self.joints
-        joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
-        _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
+        if joints:
+            # Make sure that the constraints parameters are valid
+            joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
+            _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
 
-        self._kernel_init_joint_fields(
-            joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
-            joints_sol_params=joints_sol_params,
-            joints_q_start=np.array([joint.q_start for joint in joints], dtype=gs.np_int),
-            joints_dof_start=np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
-            joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
-            joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
-            joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
-        )
+            self._kernel_init_joint_fields(
+                joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
+                joints_sol_params=joints_sol_params,
+                joints_q_start=np.array([joint.q_start for joint in joints], dtype=gs.np_int),
+                joints_dof_start=np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
+                joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
+                joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
+                joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
+            )
 
         self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
