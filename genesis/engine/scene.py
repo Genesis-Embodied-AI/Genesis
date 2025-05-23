@@ -357,10 +357,6 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
 
-            # Decimate if convexify by default
-            if morph.decimate is None:
-                morph.decimate = morph.convexify
-
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity

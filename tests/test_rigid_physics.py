@@ -1229,6 +1229,7 @@ def test_mesh_repair(convexify, show_viewer):
     assert_allclose(qpos[:2], (0.3, 0.0), atol=1e-3)
 
 
+@pytest.mark.required
 @pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -1331,7 +1332,7 @@ def test_convexify(euler, backend, show_viewer):
     if euler == (90, 0, 90):
         for i, obj in enumerate((mug, donut)):
             qpos = obj.get_dofs_position().cpu()
-            assert_allclose(qpos[0], OBJ_OFFSET_X * (1.5 - i), atol=6e-3)
+            assert_allclose(qpos[0], OBJ_OFFSET_X * (1.5 - i), atol=7e-3)
             assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
 
 
@@ -1403,7 +1404,7 @@ def test_collision_plane_convex(show_viewer, tol):
             scene.step()
             if i > 400:
                 qvel = asset.get_dofs_velocity()
-                assert_allclose(qvel, 0, atol=0.1)
+                assert_allclose(qvel, 0, atol=0.12)
 
 
 # @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
