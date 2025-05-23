@@ -190,7 +190,7 @@ def compute_sdf_data(mesh, res):
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
-    voxels = igl.signed_distance(query_points, mesh.vertices, mesh.faces)[0]
+    voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
     voxels = voxels.reshape([res, res, res])
 
     T_mesh_to_sdf = np.eye(4)
@@ -305,6 +305,8 @@ def postprocess_collision_geoms(
         if tmesh.is_winding_consistent and not tmesh.is_watertight:
             tmesh_repaired = tmesh.copy()
             tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
+            if abs(tmesh_repaired.volume) < gs.EPS:
+                continue
             if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
                 gs.logger.info(
                     "Collision mesh is not watertight and has ill-defined volume. It will be repaired by removing "
@@ -325,7 +327,7 @@ def postprocess_collision_geoms(
             if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
             cmesh = trimesh.convex.convex_hull(tmesh)
-            if cmesh.volume < gs.EPS:
+            if abs(cmesh.volume) < gs.EPS:
                 continue
 
             # Fix mesh temporarily to make volume computation more reliable

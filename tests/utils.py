@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from itertools import chain
 from typing import Literal, Sequence
@@ -8,6 +9,9 @@ import mujoco
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils import mjcf as mju
+from genesis.utils.mesh import get_assets_dir
+from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
 
 
 @dataclass
@@ -30,7 +34,7 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
     if mj_sim is not None:
-        _, (_, _, mj_qs_idx, mj_dofs_idx, _) = _get_model_mappings(gs_sim, mj_sim)
+        _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
     (gs_robot,) = gs_sim.entities
 
@@ -143,20 +147,25 @@ def _get_model_mappings(
     gs_sim,
     mj_sim,
     joints_name: list[str] | None = None,
-    body_names: list[str] | None = None,
+    bodies_name: list[str] | None = None,
 ):
     if joints_name is None:
         joints_name = [
             joint.name for entity in gs_sim.entities for joint in entity.joints if joint.type != gs.JOINT_TYPE.FIXED
         ]
-    body_names = [
-        body.name for entity in gs_sim.entities for body in entity.links if not (body.is_fixed and body.parent_idx < 0)
-    ]
+    if bodies_name is None:
+        bodies_name = [
+            body.name
+            for entity in gs_sim.entities
+            for body in entity.links
+            if not (body.is_fixed and body.parent_idx < 0)
+        ]
 
     motors_name: list[str] = []
     mj_joints_idx: list[int] = []
     mj_qs_idx: list[int] = []
     mj_dofs_idx: list[int] = []
+    mj_geoms_idx: list[int] = []
     mj_motors_idx: list[int] = []
     for joint_name in joints_name:
         if joint_name:
@@ -191,28 +200,141 @@ def _get_model_mappings(
             (motors_idx,) = np.nonzero(mj_joint.id == mj_sim.model.actuator_trnid[:, 0])
             # FIXME: only supporting 1DoF per actuator
             mj_motors_idx.append(motors_idx[0])
-    mj_bodies_idx = [mj_sim.model.body(body_name).id for body_name in body_names]
+
+    mj_bodies_idx, mj_geoms_idx = [], []
+    for body_name in bodies_name:
+        mj_body = mj_sim.model.body(body_name)
+        mj_bodies_idx.append(mj_body.id)
+        for mj_geom_idx in range(mj_body.geomadr[0], mj_body.geomadr[0] + mj_body.geomnum[0]):
+            mj_geom = mj_sim.model.geom(mj_geom_idx)
+            if mj_geom.contype or mj_geom.conaffinity:
+                mj_geoms_idx.append(mj_geom.id)
+
     (gs_joints_idx, gs_q_idx, gs_dofs_idx) = _gs_search_by_joints_name(gs_sim.scene, joints_name)
     (_, _, gs_motors_idx) = _gs_search_by_joints_name(gs_sim.scene, motors_name)
-    gs_bodies_idx = _gs_search_by_links_name(gs_sim.scene, body_names)
 
-    gs_maps = (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_motors_idx)
-    mj_maps = (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_motors_idx)
+    gs_bodies_idx = _gs_search_by_links_name(gs_sim.scene, bodies_name)
+    gs_geoms_idx: list[int] = []
+    for gs_body_idx in gs_bodies_idx:
+        link = gs_sim.rigid_solver.links[gs_body_idx]
+        gs_geoms_idx += range(link.geom_start, link.geom_end)
+
+    gs_maps = (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx)
+    mj_maps = (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx)
     return gs_maps, mj_maps
+
+
+def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
+    if gs_solver == gs.constraint_solver.CG:
+        mj_solver = mujoco.mjtSolver.mjSOL_CG
+    elif gs_solver == gs.constraint_solver.Newton:
+        mj_solver = mujoco.mjtSolver.mjSOL_NEWTON
+    else:
+        raise ValueError(f"Solver '{gs_solver}' not supported")
+    if gs_integrator == gs.integrator.Euler:
+        mj_integrator = mujoco.mjtIntegrator.mjINT_EULER
+    elif gs_integrator == gs.integrator.implicitfast:
+        mj_integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+    else:
+        raise ValueError(f"Integrator '{gs_integrator}' not supported")
+
+    xml_path = os.path.join(get_assets_dir(), xml_path)
+    model = mju.build_model(xml_path, discard_visual=True, merge_fixed_links=True, links_to_keep=())
+
+    model.opt.solver = mj_solver
+    model.opt.integrator = mj_integrator
+    model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    if multi_contact:
+        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    else:
+        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+    if adjacent_collision:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    else:
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
+    data = mujoco.MjData(model)
+
+    return MjSim(model, data)
+
+
+def build_genesis_sim(
+    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            res=(960, 640),
+            max_FPS=60,
+        ),
+        sim_options=gs.options.SimOptions(
+            dt=mj_sim.model.opt.timestep,
+            substeps=1,
+            gravity=mj_sim.model.opt.gravity.tolist(),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=gs_integrator,
+            constraint_solver=gs_solver,
+            enable_mujoco_compatibility=mujoco_compatibility,
+            box_box_detection=True,
+            enable_self_collision=True,
+            enable_adjacent_collision=adjacent_collision,
+            enable_multi_contact=multi_contact,
+            iterations=mj_sim.model.opt.iterations,
+            tolerance=mj_sim.model.opt.tolerance,
+            ls_iterations=mj_sim.model.opt.ls_iterations,
+            ls_tolerance=mj_sim.model.opt.ls_tolerance,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    morph_kwargs = dict(
+        file=xml_path,
+        convexify=True,
+        decompose_robot_error_threshold=float("inf"),
+    )
+    if xml_path.endswith(".xml"):
+        morph = gs.morphs.MJCF(**morph_kwargs)
+    else:
+        morph = gs.morphs.URDF(
+            fixed=True,
+            merge_fixed_links=True,
+            links_to_keep=(),
+            **morph_kwargs,
+        )
+    gs_robot = scene.add_entity(
+        morph,
+        visualize_contact=True,
+    )
+
+    # Force matching Mujoco safety factor for constraint time constant.
+    # Note that this time constant affects the penetration depth at rest.
+    gs_sim = scene.sim
+    gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
+
+    scene.build()
+
+    return gs_sim
 
 
 def check_mujoco_model_consistency(
     gs_sim,
     mj_sim,
     joints_name: list[str] | None = None,
-    body_names: list[str] | None = None,
+    bodies_name: list[str] | None = None,
     *,
     tol: float,
 ):
     # Get mapping between Mujoco and Genesis
-    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, body_names)
-    (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_motors_idx) = gs_maps
-    (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_motors_idx) = mj_maps
+    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
+    (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx) = gs_maps
+    (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx) = mj_maps
 
     # solver
     gs_gravity = gs_sim.rigid_solver.scene.gravity
@@ -259,6 +381,13 @@ def check_mujoco_model_consistency(
     else:
         assert False
 
+    gs_roots_name = sorted(
+        gs_sim.rigid_solver.links[i].name
+        for i in set(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
+    )
+    mj_roots_name = sorted(mj_sim.model.body(i).name for i in set(mj_sim.model.body_rootid[mj_bodies_idx]))
+    assert gs_roots_name == mj_roots_name
+
     # body
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
         gs_invweight_i = gs_sim.rigid_solver.links_info.invweight.to_numpy()[gs_i]
@@ -301,20 +430,28 @@ def check_mujoco_model_consistency(
     mj_dof_invweight0 = mj_sim.model.dof_invweight0
     assert_allclose(gs_dof_invweight0[gs_dofs_idx], mj_dof_invweight0[mj_dofs_idx], tol=tol)
 
-    gs_joint_solparams = np.concatenate([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
-    gs_joint_solref = gs_joint_solparams[:, :2]
-    mj_joint_solref = mj_sim.model.jnt_solref
-    assert_allclose(gs_joint_solref[gs_joints_idx], mj_joint_solref[mj_joints_idx], tol=tol)
-    gs_joint_solimp = gs_joint_solparams[:, 2:]
-    mj_joint_solimp = mj_sim.model.jnt_solimp
-    assert_allclose(gs_joint_solimp[gs_joints_idx], mj_joint_solimp[mj_joints_idx], tol=tol)
-    gs_dof_solparams = np.concatenate([joint.dofs_sol_params for entity in gs_sim.entities for joint in entity.joints])
-    gs_dof_solref = gs_dof_solparams[:, :2]
-    mj_dof_solref = mj_sim.model.dof_solref
-    assert_allclose(gs_dof_solref[gs_dofs_idx], mj_dof_solref[mj_dofs_idx], tol=tol)
-    gs_dof_solimp = gs_dof_solparams[:, 2:]
-    mj_dof_solimp = mj_sim.model.dof_solimp
-    assert_allclose(gs_dof_solimp[gs_dofs_idx], mj_dof_solimp[mj_dofs_idx], tol=tol)
+    # TODO: Genesis does not support frictionloss contraint at dof level for now
+    gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
+    mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
+    gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
+    mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
+    # FIXME: Masking geometries and equality constraints is not supported for now
+    gs_eq_solparams = np.array(
+        [equality.sol_params.cpu() for entity in gs_sim.entities for equality in entity.equalities]
+    ).reshape((-1, 7))
+    mj_eq_solparams = np.concatenate((mj_sim.model.eq_solref, mj_sim.model.eq_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_eq_solparams, mj_eq_solparams, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
@@ -348,15 +485,15 @@ def check_mujoco_data_consistency(
     gs_sim,
     mj_sim,
     joints_name: list[str] | None = None,
-    body_names: list[str] | None = None,
+    bodies_name: list[str] | None = None,
     *,
     qvel_prev: np.ndarray | None = None,
     tol: float,
 ):
     # Get mapping between Mujoco and Genesis
-    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, body_names)
-    (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_motors_idx) = gs_maps
-    (mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_motors_idx) = mj_maps
+    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
+    (gs_bodies_idx, _, gs_q_idx, gs_dofs_idx, _, _) = gs_maps
+    (mj_bodies_idx, _, mj_qs_idx, mj_dofs_idx, _, _) = mj_maps
 
     # crb
     gs_crb_inertial = gs_sim.rigid_solver.links_state.crb_inertial.to_numpy()[:, 0].reshape([-1, 9])[
@@ -410,6 +547,8 @@ def check_mujoco_data_consistency(
         mj_penetration = -mj_sim.data.contact.dist
         assert_allclose(gs_penetration[gs_sidx], mj_penetration[mj_sidx], tol=tol)
 
+        # FIXME: It is not always possible to reshape Mujoco jacobian because joint bound constraints are computed in
+        # "sparse" dof space, unlike contact constraints.
         error = None
         gs_jac = gs_sim.rigid_solver.constraint_solver.jac.to_numpy()[:gs_n_constraints, :, 0]
         mj_jac = mj_sim.data.efc_J.reshape([mj_n_constraints, -1])
@@ -422,7 +561,16 @@ def check_mujoco_data_consistency(
             (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
         ):
             try:
-                assert_allclose(gs_jac[gs_sidx][:, gs_dofs_idx], mj_jac[mj_sidx][:, mj_dofs_idx], tol=tol)
+                gs_jac_nz_mask = (np.abs(gs_jac[gs_sidx]) > 0.0).all(axis=0)
+                gs_jac_nz = gs_jac[gs_sidx][:, np.array(gs_dofs_idx)[gs_jac_nz_mask[gs_dofs_idx]]]
+                mj_jac_nz_mask = np.zeros_like(gs_jac_nz_mask, dtype=np.bool_)
+                mj_jac_nz_mask[mj_dofs_idx] = gs_jac_nz_mask[gs_dofs_idx]
+                if mj_jac.shape[-1] == len(mj_dofs_idx):
+                    mj_jac_nz = mj_jac[mj_sidx][:, np.array(mj_dofs_idx)[mj_jac_nz_mask[mj_dofs_idx]]]
+                else:
+                    mj_jac_nz = mj_jac[mj_sidx]
+
+                assert_allclose(gs_jac_nz, mj_jac_nz, tol=tol)
                 assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], tol=tol)
                 assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], tol=tol)
                 break
@@ -494,12 +642,14 @@ def check_mujoco_data_consistency(
     mujoco.mj_fwdVelocity(mj_sim.model, mj_sim.data)
     gs_sim.rigid_solver._kernel_forward_kinematics_links_geoms(np.array([0]))
 
-    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[0, 0]
-    mj_com = mj_sim.data.subtree_com[0]
-    assert_allclose(gs_com, mj_com, tol=tol)
+    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
+    gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
+    mj_com = mj_sim.data.subtree_com
+    mj_root_idx = np.unique(mj_sim.model.body_rootid[mj_bodies_idx])
+    assert_allclose(gs_com[gs_root_idx], mj_com[mj_root_idx], tol=tol)
 
     gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[:, 0]
-    mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[0]
+    mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[mj_sim.model.body_rootid]
     assert_allclose(gs_xipos[gs_bodies_idx], mj_xipos[mj_bodies_idx], tol=tol)
 
     gs_xpos = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
@@ -551,7 +701,7 @@ def check_mujoco_data_consistency(
 
 def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps):
     # Get mapping between Mujoco and Genesis
-    _, (_, _, mj_qs_idx, mj_dofs_idx, _) = _get_model_mappings(gs_sim, mj_sim)
+    _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
     # Make sure that "static" model information are matching
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)

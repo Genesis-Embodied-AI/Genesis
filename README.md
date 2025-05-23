@@ -85,7 +85,7 @@ pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
 ```
 Note that the package must still be updated manually to sync with main branch.
 
-Users seeking to edit the source code of Genesis are encourage to install Genesis in developper mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
+Users seeking to edit the source code of Genesis are encourage to install Genesis in editable mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis

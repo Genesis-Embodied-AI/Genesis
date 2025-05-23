@@ -1143,14 +1143,13 @@ def default_dofs_stiffness(n=6):
     return np.zeros(n)
 
 
-def default_solver_params(n=6):
+def default_solver_params():
     """
-    Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power). Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
-    Note that timeconst here will not be used in the current workflow. Instead, it will be computed using 2 * substep_dt.
-    """
+    Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
 
-    solver_params = np.array([0.0, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00])
-    return np.repeat(solver_params[None], n, axis=0)
+    Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
+    """
+    return np.array([0.0, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00])
 
 
 def default_friction():

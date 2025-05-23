@@ -1,3 +1,6 @@
+import numpy as np
+import numpy.typing as npt
+
 import taichi as ti
 
 from ..rigid_entity import RigidEntity
@@ -9,16 +12,16 @@ from .avatar_link import AvatarLink
 class AvatarEntity(RigidEntity):
     def add_link(
         self,
-        name,
+        name: str,
         pos,
         quat,
         inertial_pos,
         inertial_quat,
         inertial_i,
-        inertial_mass,
-        parent_idx,
-        invweight,
-    ):
+        inertial_mass: float,
+        parent_idx: int,
+        invweight: npt.NDArray[np.float64],
+    ) -> AvatarLink:
         """
         Add a new link (AvatarLink) to the entity.
 
@@ -40,7 +43,7 @@ class AvatarEntity(RigidEntity):
             Mass of the link.
         parent_idx : int
             Index of the parent link in the kinematic tree.
-        invweight : float
+        invweight : np array of 2 float elements
             Inverse weight for optimization or simulation purposes.
 
         Returns
@@ -75,10 +78,10 @@ class AvatarEntity(RigidEntity):
 
     def add_joint(
         self,
-        name,
-        n_qs,
-        n_dofs,
-        type,
+        name: str,
+        n_qs: int,
+        n_dofs: int,
+        type: str,
         pos,
         quat,
         dofs_motion_ang,
@@ -86,14 +89,13 @@ class AvatarEntity(RigidEntity):
         dofs_limit,
         dofs_invweight,
         dofs_stiffness,
-        dofs_sol_params,
         dofs_damping,
         dofs_armature,
         dofs_kp,
         dofs_kv,
         dofs_force_range,
         init_q,
-    ):
+    ) -> AvatarJoint:
         """
         Add a new joint (AvatarJoint) to the entity.
 
@@ -121,8 +123,6 @@ class AvatarEntity(RigidEntity):
             Inverse weight for each DOF.
         dofs_stiffness : array-like
             Stiffness values for each DOF.
-        dofs_sol_params : array-like
-            Solver parameters for each DOF.
         dofs_damping : array-like
             Damping values for each DOF.
         dofs_armature : array-like
@@ -157,7 +157,6 @@ class AvatarEntity(RigidEntity):
             dofs_limit=dofs_limit,
             dofs_invweight=dofs_invweight,
             dofs_stiffness=dofs_stiffness,
-            dofs_sol_params=dofs_sol_params,
             dofs_damping=dofs_damping,
             dofs_armature=dofs_armature,
             dofs_kp=dofs_kp,
@@ -168,6 +167,6 @@ class AvatarEntity(RigidEntity):
         self._joints.append(joint)
         return joint
 
-    def init_jac_and_IK(self):
+    def init_jac_and_IK(self) -> None:
         # TODO: Avatar should also support IK
         pass

@@ -1,13 +1,18 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
+import numpy.typing as npt
 
 import genesis as gs
 import genesis.utils.geom as gu
 
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+
 
 @ti.data_oriented
 class ConstraintSolver:
-    def __init__(self, rigid_solver):
+    def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
         self._collider = rigid_solver.collider
         self._B = rigid_solver._B
@@ -93,7 +98,7 @@ class ConstraintSolver:
 
         self.reset()
 
-    def clear(self, envs_idx=None):
+    def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_clear(envs_idx)
@@ -111,28 +116,21 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
             for i_col in range(self._collider.n_contacts[i_b]):
-                impact = self._collider.contact_data[i_col, i_b]
-                link_a = impact.link_a
-                link_b = impact.link_b
+                contact_data = self._collider.contact_data[i_col, i_b]
+                link_a = contact_data.link_a
+                link_b = contact_data.link_b
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
                 link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
-                f = impact.friction
-                pos = impact.pos
 
-                d1, d2 = gu.orthogonals(impact.normal)
+                d1, d2 = gu.orthogonals(contact_data.normal)
 
                 invweight = self._solver.links_info[link_a_maybe_batch].invweight[0]
                 if link_b > -1:
                     invweight = invweight + self._solver.links_info[link_b_maybe_batch].invweight[0]
 
                 for i in range(4):
-                    n = -d1 * f - impact.normal
-                    if i == 1:
-                        n = d1 * f - impact.normal
-                    elif i == 2:
-                        n = -d2 * f - impact.normal
-                    elif i == 3:
-                        n = d2 * f - impact.normal
+                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                    n = d * contact_data.friction - contact_data.normal
 
                     n_con = ti.atomic_add(self.n_constraints[i_b], 1)
                     if ti.static(self.sparse_solve):
@@ -144,9 +142,7 @@ class ConstraintSolver:
                             self.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
                     con_n_relevant_dofs = 0
-
                     jac_qvel = gs.ti_float(0.0)
-
                     for i_ab in range(2):
                         sign = gs.ti_float(-1.0)
                         link = link_a
@@ -167,8 +163,8 @@ class ConstraintSolver:
                                 cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                                 t_quat = gu.ti_identity_quat()
-                                t_pos = pos - self._solver.links_state[link, i_b].root_COM
-                                ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                                t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
+                                _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                                 diff = sign * vel
                                 jac = diff @ n
@@ -183,10 +179,12 @@ class ConstraintSolver:
 
                     if ti.static(self.sparse_solve):
                         self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-                    imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel, -impact.penetration)
+                    imp, aref = gu.imp_aref(
+                        contact_data.sol_params, -contact_data.penetration, jac_qvel, -contact_data.penetration
+                    )
 
-                    diag = invweight + impact.friction * impact.friction * invweight
-                    diag *= 2 * impact.friction * impact.friction * (1 - imp) / imp
+                    diag = invweight + contact_data.friction * contact_data.friction * invweight
+                    diag *= 2 * contact_data.friction * contact_data.friction * (1 - imp) / imp
                     diag = ti.max(diag, gs.EPS)
 
                     self.diag[n_con, i_b] = diag
@@ -195,7 +193,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_connect(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
@@ -283,7 +281,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_joint(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
 
         sol_params = eq_info.sol_params
 
@@ -347,18 +345,18 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
             for i_e in range(self.ti_n_equalities[i_b]):
-                if self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
+                if self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
                     self._func_equality_connect(i_b, i_e)
-                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
+                elif self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
                     self._func_equality_weld(i_b, i_e)
-                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
+                elif self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
                     self._func_equality_joint(i_b, i_e)
 
     @ti.func
     def _func_equality_weld(self, i_b, i_e):
         # TODO: sparse mode
         # Get equality info for this constraint
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
@@ -659,7 +657,7 @@ class ConstraintSolver:
         else:
             for i_c in range(self.n_constraints[i_b]):
                 for i_d1 in range(self._solver.n_dofs):
-                    if ti.abs(self.jac[i_c, i_d1, i_b]) > 1e-8:
+                    if ti.abs(self.jac[i_c, i_d1, i_b]) > gs.EPS:
                         for i_d2 in range(i_d1 + 1):
                             self.nt_H[i_d1, i_d2, i_b] = (
                                 self.nt_H[i_d1, i_d2, i_b]
@@ -690,13 +688,12 @@ class ConstraintSolver:
             for j_d in range(i_d):
                 tmp = tmp - (self.nt_H[i_d, j_d, i_b] * self.nt_H[i_d, j_d, i_b])
 
-            mindiag = 1e-8
-            if tmp < mindiag:
-                tmp = mindiag
+            if tmp < gs.EPS:
+                tmp = gs.EPS
                 rank = rank - 1
             self.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
 
-            tmp = 1 / self.nt_H[i_d, i_d, i_b]
+            tmp = 1.0 / self.nt_H[i_d, i_d, i_b]
 
             for j_d in range(i_d + 1, self._solver.n_dofs):
                 dot = gs.ti_float(0.0)
@@ -713,6 +710,7 @@ class ConstraintSolver:
         for i_d in range(self._solver.n_dofs):
             for j_d in range(i_d):
                 self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - (self.nt_H[i_d, j_d, i_b] * self.Mgrad[j_d, i_b])
+
             self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
 
         for i_d_ in range(self._solver.n_dofs):
@@ -774,28 +772,22 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
             for i_col in range(self._collider.n_contacts[i_b]):
-                impact = self._collider.contact_data[i_col, i_b]
+                contact_data = self._collider.contact_data[i_col, i_b]
 
-                f = impact.friction
                 force = ti.Vector.zero(gs.ti_float, 3)
-                d1, d2 = gu.orthogonals(impact.normal)
+                d1, d2 = gu.orthogonals(contact_data.normal)
                 for i in range(4):
-                    n = -d1 * f - impact.normal
-                    if i == 1:
-                        n = d1 * f - impact.normal
-                    elif i == 2:
-                        n = -d2 * f - impact.normal
-                    elif i == 3:
-                        n = d2 * f - impact.normal
+                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                    n = d * contact_data.friction - contact_data.normal
                     force += n * self.efc_force[i_col * 4 + i, i_b]
 
                 self._collider.contact_data[i_col, i_b].force = force
 
-                self._solver.links_state[impact.link_a, i_b].contact_force = (
-                    self._solver.links_state[impact.link_a, i_b].contact_force - force
+                self._solver.links_state[contact_data.link_a, i_b].contact_force = (
+                    self._solver.links_state[contact_data.link_a, i_b].contact_force - force
                 )
-                self._solver.links_state[impact.link_b, i_b].contact_force = (
-                    self._solver.links_state[impact.link_b, i_b].contact_force + force
+                self._solver.links_state[contact_data.link_b, i_b].contact_force = (
+                    self._solver.links_state[contact_data.link_b, i_b].contact_force + force
                 )
 
     @ti.kernel

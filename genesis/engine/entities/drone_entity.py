@@ -12,8 +12,8 @@ from .rigid_entity import RigidEntity
 
 @ti.data_oriented
 class DroneEntity(RigidEntity):
-    def _load_URDF(self, morph, surface):
-        super()._load_URDF(morph, surface)
+    def _load_scene(self, morph, surface):
+        super()._load_scene(morph, surface)
 
         # additional drone specific attributes
         properties = ET.parse(os.path.join(mu.get_assets_dir(), morph.file)).getroot()[0].attrib

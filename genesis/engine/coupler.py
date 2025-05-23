@@ -1,8 +1,13 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 
 import genesis as gs
+from genesis.options.solvers import CouplerOptions
 from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.simulator import Simulator
 
 
 @ti.data_oriented
@@ -17,9 +22,9 @@ class Coupler(RBC):
 
     def __init__(
         self,
-        simulator,
-        options,
-    ):
+        simulator: "Simulator",
+        options: "CouplerOptions",
+    ) -> None:
         self.sim = simulator
         self.options = options
 
@@ -32,7 +37,7 @@ class Coupler(RBC):
         self.fem_solver = self.sim.fem_solver
         self.sf_solver = self.sim.sf_solver
 
-    def build(self):
+    def build(self) -> None:
         self._rigid_mpm = self.rigid_solver.is_active() and self.mpm_solver.is_active() and self.options.rigid_mpm
         self._rigid_sph = self.rigid_solver.is_active() and self.sph_solver.is_active() and self.options.rigid_sph
         self._rigid_pbd = self.rigid_solver.is_active() and self.pbd_solver.is_active() and self.options.rigid_pbd
@@ -80,7 +85,7 @@ class Coupler(RBC):
 
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             self.mpm_rigid_normal.fill(0)
 
@@ -202,7 +207,7 @@ class Coupler(RBC):
 
                 # external force fields
                 for i_ff in ti.static(range(len(self.mpm_solver._ffs))):
-                    vel_mpm += self.mpm_solver._ffs[i_ff].get_acc(pos, vel_mpm, t) * self.mpm_solver.substep_dt
+                    vel_mpm += self.mpm_solver._ffs[i_ff].get_acc(pos, vel_mpm, t, -1) * self.mpm_solver.substep_dt
 
                 #################### MPM <-> Tool ####################
                 if ti.static(self.tool_solver.is_active()):

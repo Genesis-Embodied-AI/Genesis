@@ -2,7 +2,6 @@
 import os
 import sys
 import site
-import ctypes
 import atexit
 import logging as _logging
 import traceback
@@ -32,7 +31,7 @@ from .constants import GS_ARCH, TI_ARCH
 from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
-from .utils import set_random_seed, get_platform, get_device
+from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device
 
 _initialized = False
 backend = None
@@ -180,10 +179,15 @@ def init(
             random_seed=seed,
         )
 
+    # It is necessary to disable Metal backend manually because it is not working at taichi-level due to a bug
+    ti_arch = TI_ARCH[platform][backend]
+    if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
+        ti_arch = TI_ARCH[platform][gs_backend.cpu]
+
     # init taichi
     with patch("builtins.print", fake_print):
         ti.init(
-            arch=TI_ARCH[platform][backend],
+            arch=ti_arch,
             # debug is causing segfault on some machines
             debug=False,
             check_out_of_bound=debug,
@@ -200,8 +204,8 @@ def init(
 
     # Make sure that taichi arch is matching requirement
     ti_runtime = ti.lang.impl.get_runtime()
-    taichi_arch = ti_runtime.prog.config().arch
-    if backend != gs.cpu and taichi_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+    ti_arch = ti_runtime.prog.config().arch
+    if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
         device, device_name, total_mem, backend = get_device(gs.cpu)
 
     _globalize_backend(backend)
@@ -310,7 +314,7 @@ def _custom_excepthook(exctype, value, tb):
 
     # Logger the exception right before exit if possible
     try:
-        gs.logger.error(f"{exctype.__name__}: {value}")
+        logger.error(f"{exctype.__name__}: {value}")
     except AttributeError:
         # Logger may not be configured at this point
         pass
@@ -321,23 +325,15 @@ sys.excepthook = _custom_excepthook
 
 ########################## shortcut imports for users ##########################
 
-if sys.platform == "darwin":
-    libc = ctypes.CDLL(None)
-    devnull = open(os.devnull, "w")
-    stderr_fileno = sys.stderr.fileno()
-    original_stderr_fileno = os.dup(stderr_fileno)
-    sys.stderr.flush()
-    libc.fflush(None)
-    libc.dup2(devnull.fileno(), stderr_fileno)
-
 from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
 
-try:
-    sys.path.append(os.path.join(_get_src_dir(), "ext/LuisaRender/build/bin"))
-    import LuisaRenderPy as _LuisaRenderPy
-except ImportError:
-    pass
+with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+    try:
+        sys.path.append(os.path.join(_get_src_dir(), "ext/LuisaRender/build/bin"))
+        import LuisaRenderPy as _LuisaRenderPy
+    except ImportError:
+        pass
 
 from .constants import (
     IntEnum,
@@ -365,18 +361,11 @@ from .options import textures
 from .datatypes import List
 from .grad.creation_ops import *
 
-from .engine import states, materials, force_fields
-from .engine.scene import Scene
-from .engine.mesh import Mesh
-from .engine.entities.emitter import Emitter
-
-
-if sys.platform == "darwin":
-    sys.stderr.flush()
-    libc.fflush(None)
-    libc.dup2(original_stderr_fileno, stderr_fileno)
-    os.close(original_stderr_fileno)
-    devnull.close()
+with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+    from .engine import states, materials, force_fields
+    from .engine.scene import Scene
+    from .engine.mesh import Mesh
+    from .engine.entities.emitter import Emitter
 
 for name, member in gs_backend.__members__.items():
     globals()[name] = member
