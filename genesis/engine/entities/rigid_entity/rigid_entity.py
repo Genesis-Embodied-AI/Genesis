@@ -1,3 +1,4 @@
+import math
 from copy import copy
 from itertools import chain
 from typing import Literal
@@ -1476,7 +1477,9 @@ class RigidEntity(Entity):
         self,
         qpos_goal,
         qpos_start=None,
+        resolution=0.01,
         timeout=5.0,
+        max_retry=1,
         smooth_path=True,
         num_waypoints=100,
         ignore_collision=False,
@@ -1492,8 +1495,13 @@ class RigidEntity(Entity):
             The goal state.
         qpos_start : None | array_like, optional
             The start state. If None, the current state of the rigid entity will be used. Defaults to None.
+        resolution : float, optiona
+            Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
+            for validity along a path segment. Default to 1%.
         timeout : float, optional
             The maximum time (in seconds) allowed for the motion planning algorithm to find a solution. Defaults to 5.0.
+        max_retry : float, optional
+            Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
         num_waypoints : int, optional
@@ -1501,7 +1509,7 @@ class RigidEntity(Entity):
         ignore_collision : bool, optional
             Whether to ignore collision checking during motion planning. Defaults to False.
         ignore_joint_limit : bool, optional
-            Whether to ignore joint limits during motion planning. Defaults to False.
+            This option has been deprecated and is not longer doing anything.
         planner : str, optional
             The name of the motion planning algorithm to use. Supported planners: 'PRM', 'RRT', 'RRTConnect', 'RRTstar', 'EST', 'FMT', 'BITstar', 'ABITstar'. Defaults to 'RRTConnect'.
 
@@ -1522,6 +1530,9 @@ class RigidEntity(Entity):
             else:
                 raise
 
+        assert timeout > 0.0 and math.isfinite(timeout)
+        assert max_retry > 0
+
         if self._solver.n_envs > 0:
             gs.raise_exception("Motion planning is not supported for batched envs (yet).")
 
@@ -1538,11 +1549,8 @@ class RigidEntity(Entity):
 
         ######### process joint limit ##########
         if ignore_joint_limit:
-            q_limit_lower = np.full_like(self.q_limit[0], -1e6)
-            q_limit_upper = np.full_like(self.q_limit[1], 1e6)
-        else:
-            q_limit_lower = self.q_limit[0]
-            q_limit_upper = self.q_limit[1]
+            gs.logger.warning("This option is deprecated and is no longer doing anything.")
+        q_limit_lower, q_limit_upper = self.q_limit[0], self.q_limit[1]
 
         if (qpos_start < q_limit_lower).any() or (qpos_start > q_limit_upper).any():
             gs.logger.warning(
@@ -1569,12 +1577,12 @@ class RigidEntity(Entity):
         space.setBounds(bounds)
         ss = og.SimpleSetup(space)
 
-        geoms_idx = list(range(self._geom_start, self._geom_start + len(self._geoms)))
+        geoms_idx = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
         mask_collision_pairs = set(
             (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geoms_idx or i_gb in geoms_idx
         )
         if not ignore_collision and mask_collision_pairs:
-            gs.logger.info("Ingoring collision pairs already active for starting pos.")
+            gs.logger.info("Ignoring collision pairs already active for starting pos.")
 
         def is_ompl_state_valid(state):
             if ignore_collision:
@@ -1586,13 +1594,24 @@ class RigidEntity(Entity):
 
         ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
 
+        si = ss.getSpaceInformation()
+        si.setStateValidityCheckingResolution(resolution)
+
+        def allocOBValidStateSampler(si):
+            vss = ob.UniformValidStateSampler(si)
+            vss.setNrAttempts(100)
+            return vss
+
+        si.setValidStateSamplerAllocator(ob.ValidStateSamplerAllocator(allocOBValidStateSampler))
+
         try:
             planner_cls = getattr(og, planner)
             if not issubclass(planner_cls, ob.Planner):
                 raise ValueError
-            ss.setPlanner(planner_cls(ss.getSpaceInformation()))
+            planner = planner_cls(si)
         except (AttributeError, ValueError) as e:
             gs.raise_exception_from(f"'{planner}' is not a valid planner. See OMPL documentation for details.", e)
+        ss.setPlanner(planner)
 
         state_start = ob.State(space)
         state_goal = ob.State(space)
@@ -1602,29 +1621,69 @@ class RigidEntity(Entity):
         ss.setStartAndGoalStates(state_start, state_goal)
 
         ######### solve ##########
-        solved = ss.solve(timeout)
         waypoints = []
-        if solved:
-            gs.logger.info("Path solution found successfully.")
-            path = ss.getSolutionPath()
-            if smooth_path:
-                ps = og.PathSimplifier(ss.getSpaceInformation())
-                # simplify the path
-                try:
-                    ps.partialShortcutPath(path)
-                    ps.ropeShortcutPath(path)
-                except:
-                    ps.shortcutPath(path)
-                ps.smoothBSpline(path)
+        for i in range(max_retry):
+            # Try solve the motion planning problem
+            if ss.getPlanner():
+                ss.getPlanner().clear()
+            status = ss.solve(timeout)
+            status_type = status.getStatus()
 
-            if num_waypoints is not None:
-                path.interpolate(num_waypoints)
-            waypoints = [
-                torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-                for state in path.getStates()
-            ]
-        else:
-            gs.logger.warning("Path planning failed. Returning empty path.")
+            # Check if there was some unrecoverable failure
+            if status_type in (
+                ob.PlannerStatus.StatusType.UNKNOWN,
+                ob.PlannerStatus.StatusType.CRASH,
+                ob.PlannerStatus.StatusType.ABORT,
+            ):
+                gs.raise_exception("Unknown error.")
+            if status_type in (
+                ob.PlannerStatus.StatusType.INVALID_START,
+                ob.PlannerStatus.StatusType.INVALID_GOAL,
+                ob.PlannerStatus.StatusType.UNRECOGNIZED_GOAL_TYPE,
+                ob.PlannerStatus.StatusType.INFEASIBLE,
+            ):
+                gs.logger.warning("Path planning infeasible. Returning empty path.")
+                break
+
+            # Extract solution if any
+            if status:
+                # ss.simplifySolution()
+                path = ss.getSolutionPath()
+
+                # Simplify path
+                if smooth_path:
+                    ps = og.PathSimplifier(si)
+                    try:
+                        # ps.simplifyMax(path)
+                        ps.partialShortcutPath(path)
+                        ps.ropeShortcutPath(path)
+                    except:
+                        ps.shortcutPath(path)
+                    ps.smoothBSpline(path)
+
+                # Interpolate path
+                if num_waypoints is not None:
+                    path.interpolate(num_waypoints)
+
+                # Extract waypoints
+                waypoints = [
+                    torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
+                    for state in path.getStates()
+                ]
+
+            # Return once an exact solution was found or maximum number of iterations was reached
+            if status_type in (ob.PlannerStatus.StatusType.TIMEOUT, ob.PlannerStatus.StatusType.APPROXIMATE_SOLUTION):
+                if i + 1 < max_retry:
+                    gs.logger.warning("Path planning did not converge. Trying again...")
+                    continue
+                else:
+                    if waypoints:
+                        gs.logger.warning("Path planning did not converge. Returning approximation path.")
+                    else:
+                        gs.logger.warning("Path planning did not converge. Returning empty path.")
+                    break
+            gs.logger.info("Path solution found successfully.")
+            break
 
         ########## restore original state #########
         self.set_qpos(qpos_start, zero_velocity=False)
@@ -2149,7 +2208,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, unsafe=unsafe)
+        self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=False, unsafe=unsafe)
 
     @gs.assert_built
     def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True, unsafe=False):
