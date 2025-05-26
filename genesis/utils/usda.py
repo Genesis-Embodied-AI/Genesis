@@ -5,6 +5,7 @@ from pxr import Usd, UsdGeom, UsdShade
 import trimesh
 import numpy as np
 from PIL import Image
+import io
 
 cs_encode = {
     "raw": "linear",
@@ -34,7 +35,14 @@ def get_input_attribute_value(shader, input_name, input_type=None):
     return None, None
 
 
-def parse_preview_surface(shader, output_name):
+def get_texture_image(image_path, zipfiles):
+    if zipfiles is None:
+        return np.array(Image.open(image_path.resolvedPath))
+    else:
+        return np.array(Image.open(io.BytesIO(zipfiles.GetFile(image_path.path))))
+
+
+def parse_preview_surface(shader, output_name, zipfiles):
     shader_id = shader.GetShaderId()
     if shader_id == "UsdPreviewSurface":
         uvname = None
@@ -107,8 +115,9 @@ def parse_preview_surface(shader, output_name):
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
         if texture is not None:
-            texture_path = texture.resolvedPath
-            texture_image = np.array(Image.open(texture_path))
+            texture_image = get_texture_image(texture, zipfiles)
+            # texture_path = texture.resolvedPath
+            # np.array(Image.open(texture_path))
             if output_name == "r":
                 texture_image = texture_image[:, :, 0]
             elif output_name == "g":
@@ -136,7 +145,7 @@ def parse_preview_surface(shader, output_name):
         return primvar_name
 
 
-def parse_gltf_surface(shader, source_type, output_name):
+def parse_gltf_surface(shader, source_type, output_name, zipfiles):
     shader_subid = shader.GetSourceAssetSubIdentifier(source_type)
     if shader_subid == "gltf_material":
         # Parse color
@@ -199,8 +208,9 @@ def parse_gltf_surface(shader, source_type, output_name):
 
         texture = get_input_attribute_value(shader, "texture", "value")[0]
         if texture is not None:
-            texture_path = texture.resolvedPath
-            texture_image = np.array(Image.open(texture_path))
+            # texture_path = texture.resolvedPath
+            # texture_image = np.array(Image.open(texture_path))
+            texture_image = get_texture_image(texture, zipfiles)
         else:
             texture_image = None
         return texture_image
@@ -209,7 +219,7 @@ def parse_gltf_surface(shader, source_type, output_name):
         raise Exception(f"Fail to parse gltf Shader {shader_subid}.")
 
 
-def parse_omni_surface(shader, source_type, output_name):
+def parse_omni_surface(shader, source_type, output_name, zipfiles):
 
     def parse_component(component_name, component_encode, adjust=None):
         component_usetex = get_input_attribute_value(shader, f"Is{component_name}Tex", "value")[0] == 1
@@ -217,7 +227,8 @@ def parse_omni_surface(shader, source_type, output_name):
             component_tex_name = f"{component_name}_Tex"
             component_tex = get_input_attribute_value(shader, component_tex_name, "value")[0]
             if component_tex is not None:
-                component_image = np.array(Image.open(component_tex.resolvedPath))
+                component_image = get_texture_image(component_tex, zipfiles)
+                # np.array(Image.open(component_tex.resolvedPath))
                 if adjust is not None:
                     component_image = (adjust(component_image / 255.0) * 255.0).astype(np.uint8)
             component_cs = shader.GetInput(component_tex_name).GetAttr().GetColorSpace()
@@ -257,7 +268,7 @@ def parse_omni_surface(shader, source_type, output_name):
     }, "st"
 
 
-def parse_usd_material(material):
+def parse_usd_material(material, zipfiles):
     surface_outputs = material.GetSurfaceOutputs()
     for surface_output in surface_outputs:
         if not surface_output.HasConnectedSource():
@@ -268,7 +279,7 @@ def parse_usd_material(material):
 
         if surface_shader_implement == "id":
             if surface_shader.GetShaderId() == "UsdPreviewSurface":
-                return parse_preview_surface(surface_shader, surface_output_name)
+                return parse_preview_surface(surface_shader, surface_output_name, zipfiles)
             gs.logger.warning(
                 f"Fail to parse Shader {surface_shader.GetPath()} with ID {surface_shader.GetShaderId()}."
             )
@@ -279,8 +290,8 @@ def parse_usd_material(material):
             for source_type in source_types:
                 source_asset = surface_shader.GetSourceAsset(source_type).resolvedPath
                 if "gltf/pbr" in source_asset:
-                    return parse_gltf_surface(surface_shader, source_type, surface_output_name)
-                return parse_omni_surface(surface_shader, source_type, surface_output_name)
+                    return parse_gltf_surface(surface_shader, source_type, surface_output_name, zipfiles)
+                return parse_omni_surface(surface_shader, source_type, surface_output_name, zipfiles)
                 # try:
                 #     return parse_omni_surface(surface_shader, source_type, surface_output_name)
                 # except Exception as e:
@@ -291,6 +302,7 @@ def parse_usd_material(material):
 
 
 def parse_mesh_usd(path, group_by_material, scale, surface):
+    zipfiles = Usd.ZipFile.Open(path) if path.endswith(".usdz") else None
     stage = Usd.Stage.Open(path)
     xform_cache = UsdGeom.XformCache()
 
@@ -335,7 +347,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 material_id = material_spec.layer.identifier + material_spec.path.pathString
 
                 if material_id not in materials:
-                    material_dict, uv_names[material_id] = parse_usd_material(material)
+                    material_dict, uv_names[material_id] = parse_usd_material(material, zipfiles)
                     material_surface = surface.copy()
 
                     if material_dict is not None:
