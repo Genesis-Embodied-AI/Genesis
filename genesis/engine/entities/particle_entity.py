@@ -24,6 +24,24 @@ class ParticleEntity(Entity):
     scene : Scene
         The scene object that this entity belongs to.
     solver : Solver
+    def __init__(
+        self,
+        scene,
+        solver,
+        material,
+        morph,
+        surface,
+        particle_size,
+        idx,
+        particle_start,
+        vvert_start=None,
+        vface_start=None,
+        need_skinning=True,
+    ):
+
+        super().__init__(idx, scene, morph, solver, material, surface)
+
+        self._particle_size = particle_size
         The physics solver responsible for simulating the entity's particles.
     material : Material
         The material definition, including sampling strategy and physical properties.
@@ -82,7 +100,7 @@ class ParticleEntity(Entity):
             self._vmesh = gs.Mesh.from_morph_surface(self.morph, self.surface)
             if isinstance(self._vmesh, list):
                 if len(self._vmesh) > 1:
-                    gs.raise_exception("Mesh file with multiple sub-meshes are not supported.")
+                    gs.raise_exception("Mesh file with mul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tiple sub-meshes are not supported.")
                 else:
                     self._vmesh = self._vmesh[0]
             self._surface = self._vmesh.surface
@@ -179,7 +197,7 @@ class ParticleEntity(Entity):
         _, support_idxs = kdtree.query(self._vverts, k=self.solver._n_vvert_supports)
         support_idxs = np.clip(support_idxs, 0, len(self._particles) - 1)
         all_ps = self._particles[support_idxs]
-        Ps = np.stack([all_ps[:, i, :] for i in range(self.solver._n_vvert_supports - 1)], axis=2) - np.expand_dims(
+        Ps = np.stack([all_ps[:, i, :] for i in range(self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.solver._n_vvert_supports - 1)], axis=2) - np.expand_dims(
             all_ps[:, -1, :], axis=2
         )
 
@@ -248,7 +266,7 @@ class ParticleEntity(Entity):
             self._vverts = np.array([])
             self._vfaces = np.array([])
 
-        elif isinstance(self._morph, gs.options.morphs.MeshSet):
+        elif isinstance(self._morph, gs.options.morphs.Mes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hSet):
             for i in range(len(self._morph.files)):
                 pos_i = np.array(self._morph.poss[i])
                 quat_i = np.array(gu.euler_to_quat(self._morph.eulers[i]))
