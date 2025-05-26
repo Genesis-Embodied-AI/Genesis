@@ -345,7 +345,7 @@ class Camera(RBC):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
+                y, x = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
                 x = x.flatten()
                 y = y.flatten()
 
@@ -379,7 +379,9 @@ class Camera(RBC):
             T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
             cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
-            pc, mask = backproject_depth_to_pointcloud(intrinsic_K, depth_arr, cam_pose, world_frame, self.near, self.far)
+            pc, mask = backproject_depth_to_pointcloud(
+                intrinsic_K, depth_arr, cam_pose, world_frame, self.near, self.far
+            )
 
             return pc, mask
 
