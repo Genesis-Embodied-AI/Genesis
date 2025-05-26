@@ -2,8 +2,7 @@ import numpy as np
 import taichi as ti
 
 import genesis as gs
-
-# import genesis.engine.bodies.rigid_utils as ru
+from genesis.styles import colors, formats
 
 
 @ti.func
@@ -644,7 +643,6 @@ class BVHTree:
 
     @ti.kernel
     def cd_aggregate(self):
-
         for i in range(self.contact_aggregate.shape[0]):
             for j in range(self.contact_aggregate.shape[1]):
                 self.contact_aggregate[i, j].ctype = -1
@@ -660,7 +658,10 @@ class BVHTree:
                 penetration = self.narrow_candidate[i].penetration
 
                 if ga == gb:
-                    print("warning ga == gb", ga, gb, ctype)
+                    print(
+                        f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] ga ({ga}) == gb ({gb}) ({ctype})."
+                        f"{formats.RESET}"
+                    )
                 if ga >= gb:
                     ga, gb = gb, ga
                     n = n * -1
@@ -724,21 +725,22 @@ class BVHTree:
         for ic1 in range(n_con):
             self.constraint_b[ic1] = 0.0
 
+        # FIXME: This does not work anymore as the inverse mass matrix is no longer computed explicitly.
+        # One should rather use `self._solver._func_solve_mass`, after refactoring it to support input matrix
+        # instead of only vector, which should be fairly straightforward.
         for ic1 in range(n_con):
             for ic2 in range(n_con):
                 for jd1 in range(n_dof):
                     for jd2 in range(n_dof):
-                        self.constraint_A[ic1, ic2] += (
-                            self.con_jac[ic1, jd1] * self.solver.mass_mat_inv[jd1, jd2] * self.con_jac[ic2, jd2]
+                        self.constraint_A[ic1, ic2] += self.con_jac[ic1, jd1] * (
+                            self.solver.mass_mat_inv[jd1, jd2] * self.con_jac[ic2, jd2]
                         )
 
         for ic1 in range(n_con):
             for jd1 in range(n_dof):
                 for jd2 in range(n_dof):
-                    self.constraint_b[ic1] += (
-                        self.con_jac[ic1, jd1]
-                        * self.solver.mass_mat_inv[jd1, jd2]
-                        * self.solver.dof_state.qf_smooth[jd2]
+                    self.constraint_b[ic1] += self.con_jac[ic1, jd1] * (
+                        self.solver.mass_mat_inv[jd1, jd2] * self.solver.dof_state.qf_smooth[jd2]
                     )
 
         for ic1 in range(n_con):

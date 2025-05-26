@@ -89,14 +89,13 @@ def main():
     scene.build(n_envs=2)
 
     ########################## forward + backward twice ##########################
-    w_list = []
     horizon = 150
     v_list = [gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True) for _ in range(horizon)]
     for _ in range(2):
         scene.reset()
         init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)
 
-        # forward passW
+        # forward pass
         print("forward")
         timer = gs.tools.Timer()
         stick.set_position(init_pos)
@@ -108,13 +107,16 @@ def main():
 
         for i in range(horizon):
             v_i = v_list[i]
+
+            # uncomment this to set an angular velocity
             # w_i = gs.tensor([2.0, 0.0, 0.0], requires_grad=True)
             # stick.set_velocity(vel=v_i, ang=w_i)
+
             stick.set_velocity(vel=v_i)
             v_list.append(v_i)
-            # w_list.append(w_i)
 
             scene.step()
+            # uncomment this to render images
             # img0 = cam_0.render()
             # img1 = cam_1.render()
 
@@ -140,12 +142,6 @@ def main():
         for v_i in v_list:
             print(v_i.grad)
             v_i.zero_grad()
-        # for w_i in w_list:
-        #     # print(w_i.grad)
-        #     w_i.zero_grad()
-        # print(init_pos.grad)
-        # print(v_obj1_init.grad)
-        # print(pos_obj1_init.grad)
         init_pos.zero_grad()
         print(loss.item())
 

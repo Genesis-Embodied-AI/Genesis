@@ -28,10 +28,6 @@ from .misc import (
     get_tet_cache_dir,
 )
 
-_identity4 = np.eye(4, dtype=np.float32)
-_identity4.flags.writeable = False
-_identity3 = np.eye(3, dtype=np.float32)
-_identity3.flags.writeable = False
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
 
 
@@ -254,7 +250,7 @@ def compute_sdf_data(mesh, res):
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
-    voxels = igl.signed_distance(query_points, mesh.vertices, mesh.faces)[0]
+    voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
     voxels = voxels.reshape([res, res, res])
 
     T_mesh_to_sdf = np.eye(4)
@@ -369,15 +365,16 @@ def postprocess_collision_geoms(
         if tmesh.is_winding_consistent and not tmesh.is_watertight:
             tmesh_repaired = tmesh.copy()
             tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
+            if abs(tmesh_repaired.volume) < gs.EPS:
+                continue
             if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
                 gs.logger.info(
                     "Collision mesh is not watertight and has ill-defined volume. It will be repaired by removing "
                     "duplicate faces."
                 )
                 tmesh.update_faces(tmesh.unique_faces())
-                # BUG in trimesh: .volume will set .triangles, but update_faces() will not update .triangles,
-                # which will influence the calculation of .face_normal
-                tmesh._cache.clear(exclude=["vertex_normals"])
+                tmesh._cache.clear()
+                tmesh.visual._cache.clear()
 
     # Check if all the geometries can be convexify without decomposition
     must_decompose = False
@@ -385,14 +382,23 @@ def postprocess_collision_geoms(
         for g_info in g_infos:
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
+
+            # Skip geometries that do not corresponds to mesh or have no enclosed volume
             if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
             cmesh = trimesh.convex.convex_hull(tmesh)
-            if cmesh.volume < gs.EPS:
+            if abs(cmesh.volume) < gs.EPS:
                 continue
+
+            # Fix mesh temporarily to make volume computation more reliable
+            if not tmesh.is_winding_consistent:
+                tmesh = tmesh.copy()
+                tmesh.process(validate=True)
+
+            # Compute volume approximation error between true geometry and its convex hull conservatively
             if not tmesh.is_winding_consistent:
                 volume_err = float("inf")
-                must_decompose = True
+                must_decompose = not math.isinf(decompose_error_threshold)
             elif tmesh.volume > gs.EPS:
                 volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
                 if volume_err > decompose_error_threshold:
@@ -402,7 +408,6 @@ def postprocess_collision_geoms(
     # * They are all meshes
     # * They belong to the same collision group (same contype and conaffinity)
     # * Their physical properties are the same (friction coef and contact solver parameters)
-    is_merged = False
     if must_decompose and len(g_infos) > 1:
         is_merged = all(g_info["type"] == gs.GEOM_TYPE.MESH for g_info in g_infos)
         for name in ("contype", "conaffinity", "friction", "sol_params"):
@@ -427,15 +432,17 @@ def postprocess_collision_geoms(
             mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata={"merged": True})
             g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
 
-    # Try again to convexify then apply convex decomposition if not possible
-    if is_merged:
-        (g_info,) = g_infos
-        mesh = g_info["mesh"]
-        tmesh = mesh.trimesh
-        cmesh = trimesh.convex.convex_hull(tmesh)
-        if tmesh.is_winding_consistent:
-            volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
-            must_decompose = volume_err > decompose_error_threshold
+        # Try again to convexify then apply convex decomposition if not possible
+        if is_merged:
+            return postprocess_collision_geoms(
+                g_infos,
+                decimate,
+                decimate_face_num,
+                decimate_aggressiveness,
+                convexify,
+                decompose_error_threshold,
+                coacd_options,
+            )
 
     if must_decompose:
         if math.isinf(volume_err):
@@ -542,17 +549,16 @@ def create_texture(image, factor, encoding):
 
 def apply_transform(transform, positions, normals=None):
     transformed_positions = (np.column_stack([positions, np.ones(len(positions))]) @ transform)[:, :3]
+
+    transformed_normals = normals
     if normals is not None:
-        trans_R = transform[:3, :3]
-        if np.ptp(trans_R - _identity3) > 1e-7:  # has rotation
-            transformed_normals = normals @ trans_R
-            scale = np.linalg.norm(trans_R, axis=1, keepdims=True)
-            if np.abs(scale - 1.0).max() > 1e-7:  # has scale
+        rot_mat = transform[:3, :3]
+        if np.abs(3.0 - np.trace(rot_mat)) > gs.EPS**2:  # has rotation or scaling
+            transformed_normals = normals @ rot_mat
+            scale = np.linalg.norm(rot_mat, axis=1, keepdims=True)
+            if np.any(np.abs(scale - 1.0) > gs.EPS):  # has scale
                 transformed_normals /= np.linalg.norm(transformed_normals, axis=1, keepdims=True)
-        else:
-            transformed_normals = normals  # in place?
-    else:
-        transformed_normals = None
+
     return transformed_positions, transformed_normals
 
 

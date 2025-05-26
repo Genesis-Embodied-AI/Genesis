@@ -435,11 +435,10 @@ class RasterizerContext:
 
     def update_mpm(self, buffer_updates):
         if self.sim.mpm_solver.is_active():
-            particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[
-                :, self.rendered_envs_idx[0]
-            ]
-            vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0], :]
+            idx = self.rendered_envs_idx[0]
+            particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, idx]
+            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[idx]
+            vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, idx, :]
 
             for mpm_entity in self.sim.mpm_solver.entities:
                 if mpm_entity.surface.vis_mode == "recon":
@@ -588,12 +587,11 @@ class RasterizerContext:
 
     def update_pbd(self, buffer_updates):
         if self.sim.pbd_solver.is_active():
-            particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
-            particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[
-                :, self.rendered_envs_idx[0]
-            ]
-            vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
+            idx = self.rendered_envs_idx[0]
+            particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, idx]
+            particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, idx]
+            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
+            vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, idx]
 
             for pbd_entity in self.sim.pbd_solver.entities:
                 if pbd_entity.surface.vis_mode == "recon":
@@ -742,7 +740,9 @@ class RasterizerContext:
         return node
 
     def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0)):
-        self.draw_debug_arrow(pos, tensor_to_array(force) * self.contact_force_scale, radius, persistent=False)
+        self.draw_debug_arrow(
+            pos, tensor_to_array(force) * self.contact_force_scale, radius, color=color, persistent=False
+        )
 
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)

@@ -6,6 +6,14 @@ from genesis.repr_base import RBC
 
 @ti.data_oriented
 class Material(RBC):
+    """
+    The base class of materials.
+
+    Note
+    ----
+    This class should *not* be instantiated directly.
+    """
+
     def __init__(self):
         self._uid = gs.UID()
 

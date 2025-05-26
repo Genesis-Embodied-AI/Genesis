@@ -7,6 +7,29 @@ from ..base import Material
 
 @ti.data_oriented
 class Base(Material):
+    """
+    The base class of MPM materials.
+
+    Note
+    ----
+    This class should *not* be instantiated directly.
+
+    Parameters
+    ----------
+    E: float, optional
+        Young's modulus. Default is 1e6.
+    nu: float, optional
+        Poisson ratio. Default is 0.2.
+    rho: float, optional
+        Density (kg/m^3). Default is 1000.
+    lam: float, optional
+        The first Lame's parameter. Default is None, computed by E and nu.
+    mu: float, optional
+        The second Lame's parameter. Default is None, computed by E and nu.
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+    """
+
     def __init__(
         self,
         E=1e6,  # Young's modulus
@@ -70,33 +93,35 @@ class Base(Material):
         return False
 
     @property
-    def uid(self):
-        return self._uid
-
-    @property
     def idx(self):
         return self._idx
 
     @property
     def E(self):
+        """Young's modulus."""
         return self._E
 
     @property
     def nu(self):
+        """Poisson ratio."""
         return self._nu
 
     @property
     def mu(self):
+        """The first Lame parameter."""
         return self._mu
 
     @property
     def lam(self):
+        """The second Lame parameter."""
         return self._lam
 
     @property
     def rho(self):
+        """The rest density."""
         return self._rho
 
     @property
     def sampler(self):
+        """Particle sampler ('pbs', 'regular', 'random')"""
         return self._sampler

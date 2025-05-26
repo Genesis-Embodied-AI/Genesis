@@ -292,7 +292,6 @@ def orthogonals(a):
 
 @ti.func
 def imp_aref(params, neg_penetration, vel, pos):
-    # The first term in parms is the timeconst parsed from mjcf. However, we don't use it here but use the one passed in, which is 2*substep_dt.
     timeconst, dampratio, dmin, dmax, width, mid, power = params
 
     imp_x = ti.abs(neg_penetration) / width
@@ -1144,14 +1143,13 @@ def default_dofs_stiffness(n=6):
     return np.zeros(n)
 
 
-def default_solver_params(n=6, substep_dt=0.01):
+def default_solver_params():
     """
-    Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power). Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
-    Note that timeconst here will not be used in the current workflow. Instead, it will be computed using 2 * substep_dt.
-    """
+    Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
 
-    solver_params = np.array([2 * substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00])
-    return np.repeat(solver_params[None], n, axis=0)
+    Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
+    """
+    return np.array([0.0, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00])
 
 
 def default_friction():
@@ -1204,26 +1202,26 @@ class SpatialHasher:
         self.slot_start.fill(0)
         self.cur_cnt.fill(0)
 
-        for i, b in ti.ndrange(n, self._B):
-            if active[i, b]:
-                slot_idx = self.pos_to_slot(pos[i, b])
-                ti.atomic_add(self.slot_size[slot_idx, b], 1)
+        for i_n, i_b in ti.ndrange(n, self._B):
+            if active[i_n, i_b]:
+                slot_idx = self.pos_to_slot(pos[i_n, i_b])
+                ti.atomic_add(self.slot_size[slot_idx, i_b], 1)
 
-        for i in range(self.n_slots):
-            for b in range(self._B):
-                self.slot_start[i, b] = ti.atomic_add(self.cur_cnt[b], self.slot_size[i, b])
+        for i_n in range(self.n_slots):
+            for i_b in range(self._B):
+                self.slot_start[i_n, i_b] = ti.atomic_add(self.cur_cnt[i_b], self.slot_size[i_n, i_b])
 
-        for i, b in ti.ndrange(n, self._B):
-            if active[i, b]:
-                slot_idx = self.pos_to_slot(pos[i, b])
-                reordered_idx[i, b] = ti.atomic_add(self.slot_start[slot_idx, b], 1)
+        for i_n, i_b in ti.ndrange(n, self._B):
+            if active[i_n, i_b]:
+                slot_idx = self.pos_to_slot(pos[i_n, i_b])
+                reordered_idx[i_n, i_b] = ti.atomic_add(self.slot_start[slot_idx, i_b], 1)
 
         # recover slot_start
-        for i, b in ti.ndrange(self.n_slots, self._B):
-            self.slot_start[i, b] -= self.slot_size[i, b]
+        for i_s, i_b in ti.ndrange(self.n_slots, self._B):
+            self.slot_start[i_s, i_b] -= self.slot_size[i_s, i_b]
 
     @ti.func
-    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), b):
+    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), i_b):
         """
         Iterates over all neighbors of a given position and performs a task on each neighbor.
         Elements are considered neighbors if they are within task_range.
@@ -1238,12 +1236,14 @@ class SpatialHasher:
         Returns:
             None
         """
-        base = self.pos_to_grid(pos[i, b])
+        base = self.pos_to_grid(pos[i, i_b])
         for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
             slot_idx = self.grid_to_slot(base + offset)
-            for j in range(self.slot_start[slot_idx, b], self.slot_size[slot_idx, b] + self.slot_start[slot_idx, b]):
-                if i != j and (pos[i, b] - pos[j, b]).norm() < task_range:
-                    task(i, j, ret, b)
+            for j in range(
+                self.slot_start[slot_idx, i_b], self.slot_size[slot_idx, i_b] + self.slot_start[slot_idx, i_b]
+            ):
+                if i != j and (pos[i, i_b] - pos[j, i_b]).norm() < task_range:
+                    task(i, j, ret, i_b)
 
     @ti.func
     def pos_to_grid(self, pos):

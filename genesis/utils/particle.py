@@ -67,7 +67,8 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
             box_center = (mesh.bounds[1] + mesh.bounds[0]) / 2
             positions = _box_to_particles(p_size=p_size, pos=box_center, size=box_size, sampler=sampler)
             # reject out-of-boundary particles
-            positions = positions[igl.signed_distance(positions, mesh.vertices, mesh.faces)[0] < 0]
+            sd, *_ = igl.signed_distance(positions, mesh.vertices, mesh.faces)
+            positions = positions[sd < 0]
 
             os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)
             with open(ptc_file_path, "wb") as file:

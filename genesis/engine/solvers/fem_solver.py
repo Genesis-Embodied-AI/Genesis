@@ -39,7 +39,7 @@ class FEMSolver(Solver):
 
         if shape is None:
             return (B,)
-        elif type(shape) in [list, tuple]:
+        elif isinstance(shape, (list, tuple)):
             return (B,) + shape if first_dim else shape + (B,)
         else:
             return (B, shape) if first_dim else (shape, B)

@@ -749,12 +749,11 @@ class Raytracer:
 
         # PBD entities
         if self.sim.pbd_solver.is_active():
-            particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
-            particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[
-                :, self.rendered_envs_idx[0]
-            ]
-            vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
+            idx = self.rendered_envs_idx[0]
+            particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, idx]
+            particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, idx]
+            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
+            vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, idx]
 
             for pbd_entity in self.sim.pbd_solver.entities:
                 if pbd_entity.surface.vis_mode == "visual":

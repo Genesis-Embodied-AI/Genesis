@@ -13,7 +13,7 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     "psutil",
     "taichi >= 1.7.2",
-    "pydantic == 2.7.1",
+    "pydantic >= 2.7.1",
     "numpy >= 1.26.4",
     "trimesh",
     "scipy >= 1.14",
@@ -52,6 +52,9 @@ dependencies = [
     "coacd",
     # Ray casting used in mesh to height field conversion
     "rtree",
+    # Constraint Satisfaction Solver.
+    # Used to compute contype and conaffinity bitmasks from complete list of excluded collision pairs.
+    "z3-solver",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Motion Planning library
@@ -100,6 +103,7 @@ filterwarnings = [
 ]
 markers = [
     "benchmarks: marks benchmarks (executed independently and sequentially).",
+    "required: marks minimal test set that must pass systematically on any environment before merging.",
 ]
 log_cli_level = "WARNING"
 

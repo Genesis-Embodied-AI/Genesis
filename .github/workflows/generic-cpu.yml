@@ -1,0 +1,107 @@
+name: Generic - CPU only
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  generic-cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        # See official Github documentation for details: https://shorturl.at/NJgsj
+        OS: ['ubuntu-22.04', 'ubuntu-24.04', 'macos-15', 'windows-2025']
+        PYTHON_VERSION: ["3.10", "3.11", "3.12"]
+
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_HUB_DOWNLOAD_TIMEOUT: 60
+      GS_CACHE_FILE_PATH: ".cache/genesis"
+      TI_OFFLINE_CACHE: "1"
+      TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
+      TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
+      TI_ENABLE_CUDA: "0"
+      TI_ENABLE_METAL: "0"
+      TI_ENABLE_OPENGL: "0"
+      TI_ENABLE_VULKAN: "0"
+
+    runs-on: ${{ matrix.OS }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Restore Taichi Kernel Cache
+        if: always()
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}
+          restore-keys: |
+            ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.PYTHON_VERSION }}
+
+      - name: Install system dependencies (Windows)
+        if: startsWith(matrix.OS, 'windows-')
+        shell: bash
+        run: |
+          # FIXME: Updating to 25.1.0 breaks rendering regardless PYOPENGL_PLATFORM is set to osmesa or egl.
+          curl -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/24.3.4/mesa3d-24.3.4-release-msvc.7z
+          7z x mesa.7z -omesa
+          mv -v mesa/x64/* /C/Windows/System32/
+          ls -alt /C/Windows/System32/opengl32.dll
+
+          echo "PYOPENGL_PLATFORM=osmesa" >> $GITHUB_ENV
+
+      - name: Install system dependencies (Linux)
+        if: startsWith(matrix.OS, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt install -y \
+              libgl1 \
+              libegl1 \
+              libglvnd-dev \
+              libglew-dev \
+              libegl-dev \
+              libx11-6  \
+              libxrender1 \
+              libglib2.0-0 \
+              libosmesa6-dev \
+              libglx-mesa0 \
+              libglu1-mesa \
+              libegl1-mesa-dev \
+              libgles2-mesa-dev
+      - name: Install python dependencies
+        run: |
+          pip install --upgrade pip setuptools pkg-info wheel
+          pip install torch
+
+      - name: Black Format Check
+        if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
+        run: |
+          pip install black
+          black --line-length 120 --check .
+
+      - name: Install Genesis
+        run: |
+          pip install -e '.[dev,render]'
+
+      - name: Run unit tests
+        run: |
+          pytest -v --forked -m required ./tests
+
+      - name: Save Updated Taichi Kernel Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          # Note that it is necessary to create a new archive systematically for now:
+          # See: https://github.com/actions/cache/issues/1594
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}

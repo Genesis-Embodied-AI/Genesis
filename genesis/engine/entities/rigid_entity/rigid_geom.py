@@ -235,17 +235,11 @@ class RigidGeom(RBC):
         self.vert_neighbor_start = gsd_dict["vert_neighbor_start"]
 
     def _compute_sd(self, query_points):
-        try:
-            sd, _, _ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
-        except:
-            sd, _, _, _ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
+        sd, *_ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
         return sd
 
     def _compute_closest_verts(self, query_points):
-        try:
-            _, closest_faces, _ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
-        except:
-            _, closest_faces, _, _ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
+        _, closest_faces, *_ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
         verts_ids = self._init_faces[closest_faces]
         verts_ids = verts_ids[
             np.arange(len(query_points)).astype(int),
@@ -424,7 +418,7 @@ class RigidGeom(RBC):
 
     def set_friction(self, friction):
         """
-        Set the friction coefficient of the geom.
+        Set the friction coefficient of this geometry.
         """
         if friction < 0:
             gs.raise_exception("`friction` must be non-negative.")
@@ -450,8 +444,8 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_pos(self, tensor: ti.types.ndarray()):
-        for i, b in ti.ndrange(3, self._solver._B):
-            tensor[b, i] = self._solver.geoms_state[self._idx, b].pos[i]
+        for i, i_b in ti.ndrange(3, self._solver._B):
+            tensor[i_b, i] = self._solver.geoms_state[self._idx, i_b].pos[i]
 
     @gs.assert_built
     def get_quat(self):
@@ -466,8 +460,8 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_quat(self, tensor: ti.types.ndarray()):
-        for i, b in ti.ndrange(4, self._solver._B):
-            tensor[b, i] = self._solver.geoms_state[self._idx, b].quat[i]
+        for i, i_b in ti.ndrange(4, self._solver._B):
+            tensor[i_b, i] = self._solver.geoms_state[self._idx, i_b].quat[i]
 
     @gs.assert_built
     def get_verts(self):
@@ -488,20 +482,20 @@ class RigidGeom(RBC):
 
     @ti.kernel
     def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
-        for b in range(self._solver._B):
-            self._solver._func_update_verts_for_geom(self._idx, b)
+        for i_b in range(self._solver._B):
+            self._solver._func_update_verts_for_geom(self._idx, i_b)
 
-        for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+        for i_v, j, i_b in ti.ndrange(self.n_verts, 3, self._solver._B):
+            idx_vert = i_v + self._verts_state_start
+            tensor[i_b, i_v, j] = self._solver.free_verts_state[idx_vert, i_b].pos[j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
         self._solver._func_update_verts_for_geom(self._idx, 0)
 
-        for i, j in ti.ndrange(self.n_verts, 3):
-            idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+        for i_v, j in ti.ndrange(self.n_verts, 3):
+            idx_vert = i_v + self._verts_state_start
+            tensor[i_v, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
 
     @gs.assert_built
     def get_AABB(self):
@@ -514,6 +508,24 @@ class RigidGeom(RBC):
             axis=-2,
         )
         return AABB
+
+    def set_sol_params(self, sol_params):
+        """
+        Set the solver parameters of this geometry.
+        """
+        if self.is_built:
+            self._solver.set_sol_params(sol_params[None], geoms_idx=self._idx, envs_idx=None, unsafe=False)
+        else:
+            self._sol_params = sol_params
+
+    @property
+    def sol_params(self):
+        """
+        Get the solver parameters of this geometry.
+        """
+        if self.is_built:
+            return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None, unsafe=True)[0]
+        return self._sol_params
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -546,13 +558,6 @@ class RigidGeom(RBC):
         Get the friction coefficient of the geom.
         """
         return self._friction
-
-    @property
-    def sol_params(self):
-        """
-        Get the solver parameters of the geom.
-        """
-        return self._sol_params
 
     @property
     def data(self):

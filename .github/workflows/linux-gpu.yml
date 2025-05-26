@@ -1,0 +1,69 @@
+name: Linux x86 - Nvidia GPU
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  linux-gpu:
+    runs-on: [self-hosted, coreweave]
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_HUB_DOWNLOAD_TIMEOUT: 60
+      GENESIS_IMAGE_VER: "1_0"
+      TIMEOUT_MINUTES: 180
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run unit tests and benchmarks
+        run: |
+          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+
+          mkdir -p "${HOME}/.cache"
+
+          srun \
+            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+            --container-mounts=\
+          /mnt/data/artifacts:/mnt/data/artifacts,\
+          "${{ github.workspace }}":/root/workspace,\
+          "${HOME}/.cache":/root/.cache \
+            --no-container-mount-home --container-workdir=/root/workspace \
+            --export=\
+          NVIDIA_DRIVER_CAPABILITIES=all \
+            --partition=hpc-low --exclusive --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
+            --job-name=${SLURM_JOB_NAME} \
+            bash -c "
+              pip install -e '.[dev,render]' && \
+              pytest -v --forked ./tests && \
+              pytest -v -m 'benchmarks' --backend gpu ./tests && \
+              cp 'speed_test.txt' '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
+            "
+
+      - name: Kill srun job systematically
+        if: always()
+        run: |
+          if [ -n "${SLURM_JOB_NAME}" ] ; then
+            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+          fi
+
+      - name: Display benchmark stats
+        run: |
+          cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+
+      - name: Upload benchmark stats as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-test-results
+          path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"

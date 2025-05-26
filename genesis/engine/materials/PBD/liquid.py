@@ -5,6 +5,23 @@ from .base import Base
 
 @ti.data_oriented
 class Liquid(Base):
+    """
+    The liquid material class for PBD.
+
+    Parameters
+    ----------
+    rho: float, optional
+        The rest density of the fluid in kg/m³. Default is 1000.0.
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+    density_relaxation: float, optional
+        Relaxation factor for solving the density constraint. Controls the strength of positional correction to enforce incompressibility.
+        Higher values lead to faster convergence but can cause instability. Default is 0.2.
+    viscosity_relaxation: float, optional
+        Relaxation factor used in the viscosity solver. Influences the smoothing of relative velocities between neighboring particles.
+        Higher values lead to more viscous (syrupy) fluid behavior. Default is 0.01.
+    """
+
     def __init__(
         self,
         rho=1000.0,
@@ -21,16 +38,20 @@ class Liquid(Base):
 
     @property
     def rho(self):
+        """The rest density of the fluid (kg/m³)."""
         return self._rho
 
     @property
     def sampler(self):
+        """Particle sampler ('pbs', 'regular', 'random')."""
         return self._sampler
 
     @property
     def density_relaxation(self):
+        """Relaxation coefficient for density constraint solving."""
         return self._density_relaxation
 
     @property
     def viscosity_relaxation(self):
+        """Relaxation coefficient for viscosity-based smoothing."""
         return self._viscosity_relaxation

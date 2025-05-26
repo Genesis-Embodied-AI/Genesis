@@ -7,6 +7,38 @@ from .base import Material
 
 @ti.data_oriented
 class Rigid(Material):
+    """
+    The Rigid class represents a material used in rigid body simulation.
+
+    Note
+    ----
+    This class is intended for use with the rigid solver and provides parameters
+    relevant to physical interactions such as friction, density, and signed distance fields (SDFs).
+
+    Parameters
+    ----------
+        rho : float, optional
+            The density of the material used to compute mass. Default is 200.0.
+        friction : float, optional
+            Friction coefficient within the rigid solver. If None, a default of 1.0 may be used or parsed from file.
+        needs_coup : bool, optional
+            Whether the material participates in coupling with other solvers. Default is True.
+        coup_friction : float, optional
+            Friction used during coupling. Must be non-negative. Default is 0.1.
+        coup_softness : float, optional
+            Softness of coupling interaction. Must be non-negative. Default is 0.002.
+        coup_restitution : float, optional
+            Restitution coefficient in collision coupling. Should be between 0 and 1. Default is 0.0.
+        sdf_cell_size : float, optional
+            Cell size in SDF grid in meters. Defines grid resolution. Default is 0.005.
+        sdf_min_res : int, optional
+            Minimum resolution of the SDF grid. Must be at least 16. Default is 32.
+        sdf_max_res : int, optional
+            Maximum resolution of the SDF grid. Must be >= sdf_min_res. Default is 128.
+        gravity_compensation : float, optional
+            Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
+    """
+
     def __init__(
         self,
         rho=200.0,
@@ -20,28 +52,6 @@ class Rigid(Material):
         sdf_max_res=128,
         gravity_compensation=0,
     ):
-        """
-        Initialize a Rigid material object.
-
-        Args:
-            friction (float): The friction coefficient for the material within the rigid solver. If None, entities will either attempt to parse friction from input file (e.g. MJCF) or use default value of 1.0. Defaults to None.
-
-            rho (float): The default density of the material used to compute mass for each link. Defaults to 1000.0. Note that the mass will be overridden if the entity comes from a urdf/mjcf and with mass specified.
-
-            needs_coup (bool): Whether the material needs coupling with other solvers. Defaults to True.
-
-            coup_friction (float): The friction coefficient for the material during coupling. Defaults to 0.1.
-
-            coup_softness (float): The coupling softness of the material. Defaults to 0.01. When coup_softness is 0, the coupling influence at any point outside the object is 0. (i.e. it's a step function). When coup_softness is > 0, the step function becomes a smooth function. The bigger the value, the smoother the function, i.e. the coupling influence extends further away from the object. For any contact that's distance=d from the object surface, \texttt{influence} = e^(-d/softness).
-
-            coup_restitution (float): The restitution coefficient for other materials colliding with rigid. Defaults to 0.0.
-
-            sdf_cell_size (float): The physical size (in meter) of each cell in the generated SDF grid. This can be interpreted as the size of the detailed features that the SDF grid can capture. This value detemines the final resolution of the SDF grid. Defaults to 0.01 (1cm). For example, for an object with size 1m x 0.5m x 0.5m, the SDF grid will have a physical size of 1.2m x 0.6m x 0.6m (as there's a safety padding of 20%), and the resolution of the grid will be 121 x 61 x 61. (Note that there's additional 1 because the sdf size is measured from the center of the lower cell to the center of the upper cell.)
-
-            sdf_min_res and sdf_max_res (int): The minimum and maximum resolution of the generated SDF grid. Defaults to 32 & 128. The actual resolution of the SDF grid will be clamped between these two values.
-
-            gravity_compensation (float): Apply a force to compensate gravity. A value of 1 will make a zero-gravity behavior. Default to 0.
-        """
         super().__init__()
 
         if friction is not None:
@@ -79,40 +89,50 @@ class Rigid(Material):
 
     @property
     def gravity_compensation(self):
+        """Gravity compensation factor. 1.0 cancels gravity."""
         return self._gravity_compensation
 
     @property
     def friction(self):
+        """Friction coefficient used within the rigid solver."""
         return self._friction
 
     @property
     def needs_coup(self):
+        """Whether this material requires solver coupling."""
         return self._needs_coup
 
     @property
     def coup_friction(self):
+        """Friction coefficient used in coupling interactions."""
         return self._coup_friction
 
     @property
     def coup_softness(self):
+        """Softness parameter controlling the influence range of coupling."""
         return self._coup_softness
 
     @property
     def coup_restitution(self):
+        """Restitution coefficient used during contact in coupling."""
         return self._coup_restitution
 
     @property
     def sdf_cell_size(self):
+        """Size of each SDF grid cell in meters."""
         return self._sdf_cell_size
 
     @property
     def sdf_min_res(self):
+        """Minimum allowed resolution for the SDF grid."""
         return self._sdf_min_res
 
     @property
     def sdf_max_res(self):
+        """Maximum allowed resolution for the SDF grid."""
         return self._sdf_max_res
 
     @property
     def rho(self):
+        """Density of the rigid material."""
         return self._rho

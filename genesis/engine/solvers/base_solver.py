@@ -1,17 +1,24 @@
+from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
 
 import genesis as gs
+from genesis.engine.entities.base_entity import Entity
 from genesis.repr_base import RBC
 
 
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.engine.simulator import Simulator
+
+
 class Solver(RBC):
-    def __init__(self, scene, sim, options):
+    def __init__(self, scene: "Scene", sim: "Simulator", options):
         self._uid = gs.UID()
         self._sim = sim
         self._scene = scene
-        self._dt = options.dt
-        self._substep_dt = options.dt / sim.substeps
+        self._dt: float = options.dt
+        self._substep_dt: float = options.dt / sim.substeps
 
         if hasattr(options, "gravity"):
             self._gravity = ti.field(dtype=gs.ti_vec3, shape=())
@@ -19,7 +26,7 @@ class Solver(RBC):
         else:
             self._gravity = None
 
-        self._entities = gs.List()
+        self._entities: list[Entity] = gs.List()
 
         # force fields
         self._ffs = list()

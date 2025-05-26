@@ -125,15 +125,44 @@ class Camera(RBC):
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
 
     def attach(self, rigid_link, offset_T):
+        """
+        Attach the camera to a rigid link in the scene.
+
+        Once attached, the camera's position and orientation can be updated relative to the attached link using `move_to_attach()`. This is useful for mounting the camera to dynamic entities like robots or articulated objects.
+
+        Parameters
+        ----------
+        rigid_link : genesis.RigidLink
+            The rigid link to which the camera should be attached.
+        offset_T : np.ndarray, shape (4, 4)
+            The transformation matrix specifying the camera's pose relative to the rigid link.
+        """
         self._attached_link = rigid_link
         self._attached_offset_T = offset_T
 
     def detach(self):
+        """
+        Detach the camera from the currently attached rigid link.
+
+        After detachment, the camera will stop following the motion of the rigid link and maintain its current world pose. Calling this method has no effect if the camera is not currently attached.
+        """
         self._attached_link = None
         self._attached_offset_T = None
 
     @gs.assert_built
     def move_to_attach(self):
+        """
+        Move the camera to follow the currently attached rigid link.
+
+        This method updates the camera's pose using the transform of the attached rigid link combined with the specified offset. It should only be called after `attach()` has been used. This method is not compatible with simulations running multiple environments in parallel.
+
+        Raises
+        ------
+        Exception
+            If the camera has not been mounted using `attach()`.
+        Exception
+            If the simulation is running in parallel (`n_envs > 0`), which is currently unsupported for mounted cameras.
+        """
         if self._attached_link is None:
             gs.raise_exception(f"The camera hasn't been mounted!")
         if self._visualizer._scene.n_envs > 0:

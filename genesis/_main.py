@@ -98,9 +98,9 @@ def get_motors_info(robot):
 
 
 def clean():
+    print("Cleaned up all genesis and taichi cache files...")
     gs.utils.misc.clean_cache_files()
     _ti_core.clean_offline_cache_files(os.path.abspath(impl.default_cfg().offline_cache_file_path))
-    print("Cleaned up all genesis and taichi cache files.")
 
 
 def _start_gui(motors_name, motors_position_limit, motors_position, stop_event):

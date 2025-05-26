@@ -6,6 +6,7 @@ from .avatar_geom import AvatarGeom, AvatarVisGeom
 
 @ti.data_oriented
 class AvatarLink(RigidLink):
+    """AvatarLink resembles RigidLink in rigid_solver, but using AvatarGeom and AvatarVisGeom."""
 
     def _add_geom(
         self, mesh, init_pos, init_quat, type, friction, sol_params, center_init=None, needs_coup=False, data=None

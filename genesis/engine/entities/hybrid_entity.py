@@ -26,6 +26,29 @@ from .mpm_entity import MPMEntity
 
 @ti.data_oriented
 class HybridEntity(Entity):
+    """
+    A hybrid simulation entity composed of both rigid and soft components.
+
+    This class encapsulates logic for initializing, coupling, and simulating
+    a physically hybrid object that has rigid bodies (e.g., from URDF or meshes)
+    and soft materials (e.g., MPM). The coupling allows for bi-directional force
+    and motion interaction between the rigid and soft parts during simulation.
+
+    Parameters
+    ----------
+    idx : int
+        The index of the entity within the scene.
+    scene : genesis.Scene
+        The simulation scene where the entity is added.
+    material : genesis.materials.Hybrid
+        The hybrid material that includes both rigid and soft sub-materials,
+        and defines coupling behavior.
+    morph : genesis.morphs.Morph
+        The shape/morphology of the entity. Must be either a `URDF` or `Mesh`.
+    surface : genesis.surfaces.Surface
+        The surface properties applied to the soft part of the entity.
+    """
+
     def __init__(
         self,
         idx,
@@ -185,30 +208,137 @@ class HybridEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def get_dofs_position(self, *args, **kwargs):
+        """
+        Get the current generalized coordinates (positions) of the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_position method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor containing the position values of the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_position(*args, **kwargs)
 
     def get_dofs_velocity(self, *args, **kwargs):
+        """
+        Get the current generalized velocities of the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_velocity method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor containing the velocity values of the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_velocity(*args, **kwargs)
 
     def get_dofs_force(self, *args, **kwargs):
+        """
+        Get the current generalized forces applied on the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_force method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor representing forces acting on the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_force(*args, **kwargs)
 
     def get_dofs_control_force(self, *args, **kwargs):
+        """
+        Get the control forces currently applied to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's get_dofs_control_force method.
+
+        Returns
+        -------
+        gs.Tensor
+            A tensor containing the control force values for the rigid body's degrees of freedom.
+        """
         return self._part_rigid.get_dofs_control_force(*args, **kwargs)
 
     def set_dofs_velocity(self, *args, **kwargs):
+        """
+        Set the generalized velocities for the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's set_dofs_velocity method.
+        """
         self._part_rigid.set_dofs_velocity(*args, **kwargs)
 
     def set_dofs_force(self, *args, **kwargs):
+        """
+        Set the generalized forces for the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's set_dofs_force method.
+        """
         self._part_rigid.set_dofs_force(*args, **kwargs)
 
     def control_dofs_position(self, *args, **kwargs):
+        """
+        Apply position control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_position method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for position adjustment of the rigid body's DOFs.
+        """
         return self._part_rigid.control_dofs_position(*args, **kwargs)
 
     def control_dofs_velocity(self, *args, **kwargs):
+        """
+        Apply velocity control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_velocity method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for velocity adjustment of the rigid body's DOFs.
+        """
         self._part_rigid.control_dofs_velocity(*args, **kwargs)
 
     def control_dofs_force(self, *args, **kwargs):
+        """
+        Apply force control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_force method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for force adjustment of the rigid body's DOFs.
+        """
         self._part_rigid.control_dofs_force(*args, **kwargs)
 
     # ------------------------------------------------------------------------------------
@@ -216,6 +346,9 @@ class HybridEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def build(self):
+        """
+        Finalize the hybrid entity setup during simulation build.
+        """
         # can only be called here (at sim build)
         if not self.material.use_default_coupling and self._muscle_group_cache is not None:
             self._part_soft.set_muscle(
@@ -224,6 +357,14 @@ class HybridEntity(Entity):
             )
 
     def update_soft_part(self, f):
+        """
+        Update the state of the soft part of the hybrid entity based on the current simulation frame.
+
+        Parameters
+        ----------
+        f : int
+            The current simulation frame index.
+        """
         if isinstance(self._part_soft, MPMEntity):
             self._kernel_update_soft_part_mpm(f=f)
         else:
@@ -231,10 +372,9 @@ class HybridEntity(Entity):
 
     @ti.kernel
     def _kernel_update_soft_part_mpm(self, f: ti.i32):
-        for i in range(self._part_soft.n_particles):
-            if self._solver_soft.particles_ng[f, i].active:
-                i_global = i + self._part_soft.particle_start
-                i_b = 0  # batch index always the first
+        for i_p_, i_b in ti.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
+            if self._solver_soft.particles_ng[f, i_p_, i_b].active:
+                i_global = i_p_ + self._part_soft.particle_start
                 f_ = f
                 if ti.static(not self._update_soft_part_at_pre_coupling):
                     f_ = f + 1  # NOTE: this is after g2p and thus we use f + 1
@@ -251,7 +391,7 @@ class HybridEntity(Entity):
                 geom_info = self._solver_rigid.geoms_info[geom_idx]
 
                 # compute new pos in minimal coordinate using rigid-bodied dynamics
-                x_init_pos = self._part_soft_init_positions[i]
+                x_init_pos = self._part_soft_init_positions[i_p_]
                 x_init_local = gu.ti_inv_transform_by_trans_quat(
                     x_init_pos, trans_local_to_global, quat_local_to_global
                 )
@@ -276,11 +416,11 @@ class HybridEntity(Entity):
                 dt_scale = (
                     self._solver_soft.substep_dt / self._solver_rigid.dt
                 )  # NOTE: move soft part incrementally at soft solver's substeps
-                x_pos = self._solver_soft.particles[f_, i_global].pos
+                x_pos = self._solver_soft.particles[f_, i_global, i_b].pos
                 xd_vel = (new_x_pos - x_pos) / dt
                 xd_vel *= dt_scale  # assume linear scaling between the timestep difference of soft/rigid solver
 
-                vel_d = xd_vel - self._solver_soft.particles[f_, i_global].vel
+                vel_d = xd_vel - self._solver_soft.particles[f_, i_global, i_b].vel
                 vel_d *= ti.exp(-self._solver_soft.dt * self.material.damping)
 
                 # soft-to-rigid coupling
@@ -295,7 +435,7 @@ class HybridEntity(Entity):
                 self._solver_rigid.links_state[link_idx, i_b].cfrc_ext_ang += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
-                self._solver_soft.particles[f_, i_global].vel += vel_d * self.material.soft_dv_coef
+                self._solver_soft.particles[f_, i_global, i_b].vel += vel_d * self.material.soft_dv_coef
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -303,26 +443,32 @@ class HybridEntity(Entity):
 
     @property
     def n_dofs(self) -> int:
+        """The number of degrees of freedom of the hybrid entity (inherited from the rigid part)."""
         return self._part_rigid.n_dofs
 
     @property
     def fixed(self) -> bool:
+        """Check whether the hybrid entity is fixed in space (inherited from the rigid morph)."""
         return self._part_rigid.morph.fixed
 
     @property
     def part_rigid(self):
+        """The rigid part of the hybrid entity."""
         return self._part_rigid
 
     @property
     def part_soft(self):
+        """The soft part of the hybrid entity."""
         return self._part_soft
 
     @property
     def solver_rigid(self):
+        """The solver associated with the rigid part of the hybrid entity."""
         return self._solver_rigid
 
     @property
     def solver_soft(self):
+        """The solver associated with the soft part of the hybrid entity."""
         return self._solver_soft
 
 

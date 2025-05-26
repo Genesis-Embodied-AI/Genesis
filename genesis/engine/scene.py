@@ -1,8 +1,13 @@
+import os
+
 import numpy as np
 import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.entities.base_entity import Entity
+from genesis.engine.force_fields import ForceField
+from genesis.engine.materials.base import Material
 from genesis.engine.entities import Emitter
 from genesis.engine.simulator import Simulator
 from genesis.options import (
@@ -19,9 +24,12 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
+from genesis.options.morphs import Morph
+from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
+from genesis.utils.misc import redirect_libc_stderr
 from genesis.vis import Visualizer
 
 
@@ -163,19 +171,19 @@ class Scene(RBC):
 
     def _validate_options(
         self,
-        sim_options,
-        coupler_options,
-        tool_options,
-        rigid_options,
-        avatar_options,
-        mpm_options,
-        sph_options,
-        fem_options,
-        sf_options,
-        pbd_options,
-        vis_options,
-        viewer_options,
-        renderer,
+        sim_options: SimOptions,
+        coupler_options: CouplerOptions,
+        tool_options: ToolOptions,
+        rigid_options: RigidOptions,
+        avatar_options: AvatarOptions,
+        mpm_options: MPMOptions,
+        sph_options: SPHOptions,
+        fem_options: FEMOptions,
+        sf_options: SFOptions,
+        pbd_options: PBDOptions,
+        vis_options: VisOptions,
+        viewer_options: ViewerOptions,
+        renderer: Renderer,
     ):
         if not isinstance(sim_options, SimOptions):
             gs.raise_exception("`sim_options` should be an instance of `SimOptions`.")
@@ -219,11 +227,11 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_entity(
         self,
-        morph,
-        material=None,
-        surface=None,
-        visualize_contact=False,
-        vis_mode=None,
+        morph: Morph,
+        material: Material | None = None,
+        surface: Surface | None = None,
+        visualize_contact: bool = False,
+        vis_mode: str | None = None,
     ):
         """
         Add an entity to the scene.
@@ -349,10 +357,6 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
 
-            # Decimate if convexify by default
-            if morph.decimate is None:
-                morph.decimate = morph.convexify
-
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
@@ -360,8 +364,8 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def link_entities(
         self,
-        parent_entity,
-        child_entity,
+        parent_entity: Entity,
+        child_entity: Entity,
         parent_link_name="",
         child_link_name="",
     ):
@@ -403,7 +407,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_light(
         self,
-        morph,
+        morph: Morph,
         color=(1.0, 1.0, 1.0, 1.0),
         intensity=20.0,
         revert_dir=False,
@@ -494,9 +498,9 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_emitter(
         self,
-        material,
+        material: Material,
         max_particles=20000,
-        surface=None,
+        surface: Surface | None = None,
     ):
         """
         Add a fluid emitter to the scene.
@@ -540,7 +544,7 @@ class Scene(RBC):
         return emitter
 
     @gs.assert_unbuilt
-    def add_force_field(self, force_field: gs.force_fields.ForceField):
+    def add_force_field(self, force_field: ForceField):
         """
         Add a force field to the scene.
 
@@ -563,7 +567,7 @@ class Scene(RBC):
         self,
         n_envs=0,
         env_spacing=(0.0, 0.0),
-        n_envs_per_row=None,
+        n_envs_per_row: int | None = None,
         center_envs_at_origin=True,
         compile_kernels=True,
     ):
@@ -587,7 +591,8 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            self._sim.build()
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                self._sim.build()
 
             # reset state
             self._reset()
@@ -610,10 +615,10 @@ class Scene(RBC):
 
     def _parallelize(
         self,
-        n_envs,
-        env_spacing,
-        n_envs_per_row,
-        center_envs_at_origin,
+        n_envs: int,
+        env_spacing: tuple[float, float],
+        n_envs_per_row: int,
+        center_envs_at_origin: bool,
     ):
         self.n_envs = n_envs
         self.env_spacing = env_spacing
@@ -659,7 +664,7 @@ class Scene(RBC):
             self._para_level = gs.PARA_LEVEL.ALL
 
     @gs.assert_built
-    def reset(self, state=None, envs_idx=None):
+    def reset(self, state: dict | None = None, envs_idx=None):
         """
         Resets the scene to its initial state.
 

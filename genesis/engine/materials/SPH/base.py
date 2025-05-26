@@ -5,6 +5,19 @@ from ..base import Material
 
 @ti.data_oriented
 class Base(Material):
+    """
+    The base class of SPH materials.
+
+    Note
+    ----
+    This class should *not* be instantiated directly.
+
+    Parameters
+    ----------
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+    """
+
     def __init__(
         self,
         sampler="pbs",  # particle sampler
@@ -19,4 +32,5 @@ class Base(Material):
 
     @property
     def sampler(self):
+        """Particle sampler ('pbs', 'regular', 'random')."""
         return self._sampler

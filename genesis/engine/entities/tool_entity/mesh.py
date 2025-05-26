@@ -79,9 +79,9 @@ class Mesh:
         self.vertex_normals = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
 
     @ti.func
-    def sdf(self, f, pos_world, b):
+    def sdf(self, f, pos_world, i_b):
         # sdf value from world coordinate
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, b], self.entity.quat[f, b])
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, i_b], self.entity.quat[f, i_b])
         pos_voxels = gu.ti_transform_by_T(pos_mesh, self.T_mesh_to_sdf[None])
 
         return self.sdf_(pos_voxels)
@@ -104,16 +104,16 @@ class Mesh:
         return signed_dist
 
     @ti.func
-    def normal(self, f, pos_world, b):
+    def normal(self, f, pos_world, i_b):
         # compute normal with finite difference
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, b], self.entity.quat[f, b])
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, i_b], self.entity.quat[f, i_b])
         pos_voxels = gu.ti_transform_by_T(pos_mesh, self.T_mesh_to_sdf[None])
         normal_vec_voxels = self.normal_(pos_voxels)
 
         R_voxels_to_mesh = self.T_mesh_to_sdf[None][:3, :3].inverse()
         normal_vec_mesh = R_voxels_to_mesh @ normal_vec_voxels
 
-        normal_vec_world = gu.ti_transform_by_quat(normal_vec_mesh, self.entity.quat[f, b])
+        normal_vec_world = gu.ti_transform_by_quat(normal_vec_mesh, self.entity.quat[f, i_b])
         normal_vec_world = gu.ti_normalize(normal_vec_world)
 
         return normal_vec_world
@@ -136,24 +136,26 @@ class Mesh:
         return normal_vec
 
     @ti.func
-    def vel_collider(self, f, pos_world, b):
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, b], self.entity.quat[f, b])
-        pos_world_new = gu.ti_transform_by_trans_quat(pos_mesh, self.entity.pos[f + 1, b], self.entity.quat[f + 1, b])
+    def vel_collider(self, f, pos_world, i_b):
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, self.entity.pos[f, i_b], self.entity.quat[f, i_b])
+        pos_world_new = gu.ti_transform_by_trans_quat(
+            pos_mesh, self.entity.pos[f + 1, i_b], self.entity.quat[f + 1, i_b]
+        )
         vel_collider = (pos_world_new - pos_world) / self.entity.solver.substep_dt
         return vel_collider
 
     @ti.func
-    def collide(self, f, pos_world, vel_mat, b):
+    def collide(self, f, pos_world, vel_mat, i_b):
         if ti.static(self.collision):
-            signed_dist = self.sdf(f, pos_world, b)
+            signed_dist = self.sdf(f, pos_world, i_b)
             # bigger coup_softness implies that the coupling influence extends further away from the object.
             influence = ti.min(ti.exp(-signed_dist / max(gs.EPS, self.material.coup_softness)), 1)
             if signed_dist <= 0 or influence > 0.1:
-                vel_collider = self.vel_collider(f, pos_world, b)
+                vel_collider = self.vel_collider(f, pos_world, i_b)
 
                 # v w.r.t collider
                 rel_v = vel_mat - vel_collider
-                normal_vec = self.normal(f, pos_world, b)
+                normal_vec = self.normal(f, pos_world, i_b)
                 normal_component = rel_v.dot(normal_vec)
 
                 if normal_component < 0:

@@ -1,4 +1,8 @@
 import os
+import xml.etree.ElementTree as ET
+from contextlib import redirect_stderr
+from pathlib import Path
+from itertools import chain
 from bisect import bisect_right
 
 import numpy as np
@@ -6,17 +10,111 @@ import trimesh
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
+import z3
 import mujoco
 import genesis as gs
+from genesis.ext import urdfpy
 
 from . import geom as gu
-from .misc import get_assets_dir
+from . import urdf as uu
+from .misc import get_assets_dir, redirect_libc_stderr
 
 
-def parse_mjcf(path):
-    path = os.path.join(get_assets_dir(), path)
-    mj = mujoco.MjModel.from_xml_path(path)
+def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
+    if isinstance(xml, (str, Path)):
+        # Make sure that it is pointing to a valid XML content (either file path or string)
+        path = os.path.join(get_assets_dir(), xml)
+        is_valid_path = False
+        try:
+            if os.path.exists(path):
+                xml = ET.parse(path)
+                is_valid_path = True
+            else:
+                xml = ET.fromstring(xml)
+        except ET.ParseError:
+            gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
+
+        # Must pre-process URDF to overwrite default Mujoco compile flags
+        root = xml.getroot()
+        is_urdf_file = root.tag == "robot"
+        if is_urdf_file:
+            # Best guess for the search path
+            asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
+            robot = urdfpy.URDF._from_xml(root, root, asset_path)
+
+            # Merge fixed links if requested
+            if merge_fixed_links:
+                robot = uu.merge_fixed_links(robot, links_to_keep)
+                root = robot._to_xml(None, asset_path)
+
+            # Set default compiler options if none is specified in URDF file if none
+            if not any(child.tag == "mujoco" for child in root):
+                mjcf = ET.SubElement(root, "mujoco")
+                compiler = ET.SubElement(
+                    mjcf,
+                    "compiler",
+                    fusestatic="false",
+                    strippath="false",
+                    assetdir=asset_path,
+                    inertiafromgeom="auto",
+                    balanceinertia="true",
+                    discardvisual="true" if discard_visual else "false",
+                    autolimits="true",
+                    # boundmass=gs.EPS,
+                    # boundinertia=gs.EPS,
+                )
+
+            # Resolve relative mesh paths
+            for elem in root.findall(".//mesh"):
+                mesh_path = elem.get("filename")
+                if mesh_path.startswith("package://"):
+                    mesh_path = mesh_path[10:]
+                elem.set("filename", os.path.abspath(os.path.join(asset_path, mesh_path)))
+
+        with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+            if is_urdf_file:
+                # Parse updated URDF file as a string
+                data = ET.tostring(root, encoding="utf8")
+                mj = mujoco.MjModel.from_xml_string(data)
+            else:
+                # Parsing MJCF files from XML string is not reliable because it would use the current directory instead
+                # of the parent directory of the XML file as base directory when using relative paths for assets.
+                mj = mujoco.MjModel.from_xml_path(path)
+    elif isinstance(xml, mujoco.MjModel):
+        mj = xml
+    else:
+        raise gs.raise_exception(f"'{xml}' is not a valid MJCF file.")
+
     return mj
+
+
+def parse_xml(morph, surface):
+    # Always merge fixed links unless explicitly asked not to do so
+    merge_fixed_links, links_to_keep = None, None
+    if isinstance(morph, gs.morphs.URDF):
+        merge_fixed_links = morph.merge_fixed_links
+        links_to_keep = morph.links_to_keep
+
+    # Build model from XML (either URDF or MJCF)
+    mj = build_model(morph.file, not morph.visualization, merge_fixed_links, links_to_keep)
+
+    # Check if there is any tendon. Report a warning if so.
+    if mj.ntendon:
+        gs.logger.warning("(MJCF) Tendon not supported")
+
+    # Parse all geometries grouped by parent joint (or world)
+    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+
+    # Parse all bodies (links and joints)
+    l_infos, links_j_infos = parse_links(mj, morph.scale)
+
+    # Re-order kinematic tree info
+    l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
+
+    # Parsing all equality constraints
+    eqs_info = parse_equalities(mj, morph.scale)
+
+    return l_infos, links_j_infos, links_g_infos, eqs_info
 
 
 def parse_link(mj, i_l, scale):
@@ -24,8 +122,7 @@ def parse_link(mj, i_l, scale):
     l_info = dict()
 
     name_start = mj.name_bodyadr[i_l]
-    name_end = mj.name_bodyadr[i_l + 1] if i_l + 1 < mj.nbody else len(mj.names)
-    l_info["name"], _ = mj.names[name_start:].decode("utf-8").split("\x00", 1)
+    l_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
 
     l_info["pos"] = mj.body_pos[i_l]
     l_info["quat"] = mj.body_quat[i_l]
@@ -33,8 +130,12 @@ def parse_link(mj, i_l, scale):
     l_info["inertial_quat"] = mj.body_iquat[i_l]
     l_info["inertial_i"] = np.diag(mj.body_inertia[i_l])
     l_info["inertial_mass"] = float(mj.body_mass[i_l])
-    l_info["parent_idx"] = int(mj.body_parentid[i_l] - 1)
-    l_info["invweight"] = float(mj.body_invweight0[i_l, 0])
+    if mj.body_parentid[i_l] == i_l:
+        l_info["parent_idx"] = -1
+    else:
+        l_info["parent_idx"] = int(mj.body_parentid[i_l])
+    l_info["root_idx"] = int(mj.body_rootid[i_l])
+    l_info["invweight"] = mj.body_invweight0[i_l]
 
     jnt_adr = mj.body_jntadr[i_l]
     jnt_num = mj.body_jntnum[i_l]
@@ -66,7 +167,6 @@ def parse_link(mj, i_l, scale):
         j_info["type"], j_info["n_qs"], j_info["n_dofs"] = gs_type, n_qs, n_dofs
 
         # Parsing joint parameters that are type-agnostic
-        mj_jnt_offset = i_j if i_j != -1 else 0
         mj_dof_offset = mj.jnt_dofadr[i_j] if i_j != -1 else 0
         mj_qpos_offset = mj.jnt_qposadr[i_j] if i_j != -1 else 0
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
@@ -74,22 +174,13 @@ def parse_link(mj, i_l, scale):
         j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
-        j_info["sol_params"] = np.concatenate(
-            (
-                mj.jnt_solref[mj_jnt_offset : (mj_jnt_offset + 1)],
-                mj.jnt_solimp[mj_jnt_offset : (mj_jnt_offset + 1)],
-            ),
-            axis=1,
-        )
-        j_info["dofs_sol_params"] = np.concatenate(
-            (
-                mj.dof_solref[mj_dof_offset : (mj_dof_offset + n_dofs)],
-                mj.dof_solimp[mj_dof_offset : (mj_dof_offset + n_dofs)],
-            ),
-            axis=1,
-        )
+        if mj.njnt > 0:
+            mj_jnt_offset = i_j if i_j != -1 else 0
+            j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
+        else:
+            j_info["sol_params"] = gu.default_solver_params()  # Placeholder. It will not be used anyway.
         if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
-            gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
+            gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
 
         # Parsing joint parameters that are type-specific
         if i_j == -1:
@@ -102,7 +193,7 @@ def parse_link(mj, i_l, scale):
             j_info["pos"] = np.array([0.0, 0.0, 0.0])
         else:
             name_start = mj.name_jntadr[i_j]
-            j_info["name"], _ = mj.names[name_start:].decode("utf-8").split("\x00", 1)
+            j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
             j_info["pos"] = mj.jnt_pos[i_j]
 
             mj_stiffness = mj.jnt_stiffness[i_j]
@@ -145,7 +236,7 @@ def parse_link(mj, i_l, scale):
         # Parsing actuator parameters
         j_info["dofs_kp"] = np.zeros((n_dofs,), dtype=gs.np_float)
         j_info["dofs_kv"] = np.zeros((n_dofs,), dtype=gs.np_float)
-        j_info["dofs_force_range"] = np.zeros((n_dofs, 2), dtype=gs.np_float)
+        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         i_a = -1
         try:
@@ -212,7 +303,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_force_range"] = np.minimum(
                     j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                 )
-        else:
+        elif gs_type != gs.JOINT_TYPE.FREE:
             gs.logger.debug(f"(MJCF) No actuator found for joint `{j_info['name']}`")
 
         j_infos.append(j_info)
@@ -225,8 +316,6 @@ def parse_link(mj, i_l, scale):
     l_info["invweight"] /= scale**3
     for j_info in j_infos:
         j_info["pos"] *= scale
-    # exclude joints with 0 dofs in MJCF models to align with mujoco
-    j_infos = [j_info for j_info in j_infos if j_info["n_dofs"] > 0]
 
     return l_info, j_infos
 
@@ -381,7 +470,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         geom_data = None
 
         mesh_path_start = mj.mesh_pathadr[mj_mesh.id]
-        metadata["mesh_path"], _ = mj.paths[mesh_path_start:].decode("utf-8").split("\x00", 1)
+        metadata["mesh_path"], *_ = filter(None, mj.paths[mesh_path_start:].decode("utf-8").split("\x00"))
     else:
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
@@ -437,6 +526,77 @@ def parse_geoms(mj, scale, surface, xml_path):
         link_idx = mj.geom_bodyid[i_g]
         links_g_info[link_idx].append(g_info)
 
+    # Update contype and conaffinity to take into account any additional list of explicitly excluded collision pairs
+    if mj.nexclude:
+        # Extract the list of collision geometries
+        cg_infos = []
+        for g_info in chain.from_iterable(links_g_info):
+            if g_info["contype"] or g_info["conaffinity"]:
+                cg_infos.append(g_info)
+
+        # Compute the original of all the excluded collision pairs
+        invalid_set = set()
+        for i, g_info_1 in enumerate(cg_infos):
+            for j, g_info_2 in enumerate(cg_infos):
+                if i >= j:
+                    continue
+                if g_info_1["contype"] & g_info_2["conaffinity"]:
+                    continue
+                if g_info_2["contype"] & g_info_1["conaffinity"]:
+                    continue
+                invalid_set.add(frozenset((i, j)))
+
+        # Append all the explicitly excluded collision pairs
+        for exclude_signature in mj.exclude_signature:
+            body_1 = (exclude_signature >> 16) & 0xFFFF
+            body_2 = exclude_signature & 0xFFFF
+
+            geoms_1, geoms_2 = [], []
+            for body_idx, geoms_idx in ((body_1, geoms_1), (body_2, geoms_2)):
+                for g_info in links_g_info[body_idx]:
+                    for geom_idx, cg_info in enumerate(cg_infos):
+                        if g_info is cg_info:
+                            geoms_idx.append(geom_idx)
+                            break
+
+            for geom_1 in geoms_1:
+                for geom_2 in geoms_2:
+                    invalid_set.add(frozenset((geom_1, geom_2)))
+
+        # Compute updated contype and conaffinity from the complete list of invalid collision pairs
+        is_success = False
+        N = len(cg_infos)
+        for K in range(1, 32):
+            s = z3.Solver()
+            contype_bits = [[z3.Bool(f"contype_{i}_{b}") for b in range(K)] for i in range(N)]
+            conaffinity_bits = [[z3.Bool(f"conaffinity_{i}_{b}") for b in range(K)] for i in range(N)]
+            for i in range(N):
+                for j in range(i + 1, N):
+                    cond1 = z3.Or([z3.And(contype_bits[i][b], conaffinity_bits[j][b]) for b in range(K)])
+                    cond2 = z3.Or([z3.And(contype_bits[j][b], conaffinity_bits[i][b]) for b in range(K)])
+                    pair = frozenset((i, j))
+                    if pair in invalid_set:
+                        s.add(z3.Not(cond1), z3.Not(cond2))
+                    else:
+                        s.add(z3.Or(cond1, cond2))
+            if s.check() == z3.sat:
+                is_success = True
+                model = s.model()
+                for g_info, contype_bits_i, conaffinity_bits_i in zip(cg_infos, contype_bits, conaffinity_bits):
+                    g_info["contype"], g_info["conaffinity"] = (
+                        sum((1 << b) if z3.is_true(model[e]) else 0 for b, e in enumerate(bits))
+                        for bits in (contype_bits_i, conaffinity_bits_i)
+                    )
+                break
+
+        if not is_success:
+            gs.logger.warning(
+                "Compatible collision geometries cannot be described using bitmasks 'contype' and 'conaffinity'. "
+                "Using default values..."
+            )
+            for g_info in cg_infos:
+                g_info["contype"], g_info["conaffinity"] = 1, 1
+
     # Inform the user that collision geometries are not displayed by default
     if is_any_col and surface.vis_mode != "collision":
         gs.logger.info(
@@ -467,30 +627,41 @@ def parse_geoms(mj, scale, surface, xml_path):
     return links_g_info
 
 
-def parse_equality(mj, i_e, scale, ordered_links_idx):
-    e_info = dict()
-    mj_equality = mj.equality(i_e)
-    e_info["name"] = mj_equality.name
+def parse_equalities(mj, scale):
+    eqs_info = []
+    for i_e in range(mj.neq):
+        mj_equality = mj.equality(i_e)
 
-    e_info["eq_data"] = mj.eq_data[i_e]
-    e_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
+        eq_info = dict()
+        eq_info["name"] = mj_equality.name
+        eq_info["data"] = mj.eq_data[i_e]
+        eq_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
 
-    if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
-        e_info["type"] = gs.EQUALITY_TYPE.CONNECT
-        e_info["eq_obj1id"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
-        e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
-        e_info["eq_data"][:6] *= scale
-    elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
-        e_info["type"] = gs.EQUALITY_TYPE.WELD
-        e_info["eq_obj1id"] = -1 if mj.eq_obj1id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj1id[i_e] - 1)
-        e_info["eq_obj2id"] = -1 if mj.eq_obj2id[i_e] == 0 else ordered_links_idx.index(mj.eq_obj2id[i_e] - 1)
-        e_info["eq_data"][:6] *= scale
-    elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
-        e_info["eq_obj1id"] = mj.eq_obj1id[i_e]
-        e_info["eq_obj2id"] = mj.eq_obj2id[i_e]
-        # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
-        e_info["type"] = gs.EQUALITY_TYPE.JOINT
-    else:
-        raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
+        if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
+            eq_info["type"] = gs.EQUALITY_TYPE.CONNECT
+            eq_info["data"][:6] *= scale
+            name_objadr = mj.name_bodyadr
+        elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+            eq_info["type"] = gs.EQUALITY_TYPE.WELD
+            eq_info["data"][:6] *= scale
+            name_objadr = mj.name_bodyadr
+        elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
+            # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
+            eq_info["type"] = gs.EQUALITY_TYPE.JOINT
+            name_objadr = mj.name_jntadr
+        else:
+            raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
-    return e_info
+        objs_name = []
+        for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):
+            if obj_idx < 0:
+                obj_name = None
+            else:
+                name_start = name_objadr[obj_idx]
+                obj_name, *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+            objs_name.append(obj_name)
+        eq_info["objs_name"] = objs_name
+
+        eqs_info.append(eq_info)
+
+    return eqs_info

@@ -133,34 +133,23 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            impact = self._collider.contact_data[i_col, i_b]
-            link_a = impact.link_a
-            link_b = impact.link_b
+            contact_data = self._collider.contact_data[i_col, i_b]
+            link_a = contact_data.link_a
+            link_b = contact_data.link_b
             link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
-            f = impact.friction
-            pos = impact.pos
 
-            d1, d2 = gu.orthogonals(impact.normal)
+            d1, d2 = gu.orthogonals(contact_data.normal)
 
-            t = self._solver.links_info[link_a_maybe_batch].invweight + self._solver.links_info[
+            invweight = self._solver.links_info[link_a_maybe_batch].invweight[0] + self._solver.links_info[
                 link_b_maybe_batch
-            ].invweight * (link_b > -1)
+            ].invweight[0] * (link_b > -1)
 
             for i in range(4):
-                n = -d1 * f - impact.normal
-                if i == 1:
-                    n = d1 * f - impact.normal
-                elif i == 2:
-                    n = -d2 * f - impact.normal
-                elif i == 3:
-                    n = d2 * f - impact.normal
+                d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                n = d * contact_data.friction - contact_data.normal
 
-                n_con = self.n_constraints[i_b]
-                self.n_constraints[i_b] = self.n_constraints[i_b] + 1
-
-                con_n_relevant_dofs = 0
-
+                n_con = ti.atomic_add(self.n_constraints[i_b], 1)
                 if ti.static(self.sparse_solve):
                     for i_d_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
                         i_d = self.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -169,8 +158,8 @@ class ConstraintSolverIsland:
                     for i_d in range(self._solver.n_dofs):
                         self.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
+                con_n_relevant_dofs = 0
                 jac_qvel = gs.ti_float(0.0)
-
                 for i_ab in range(2):
                     sign = gs.ti_float(-1.0)
                     link = link_a
@@ -189,8 +178,8 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = pos - self._solver.links_state[link, i_b].root_COM
-                            ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
+                            _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
                             jac = diff @ n
@@ -205,10 +194,12 @@ class ConstraintSolverIsland:
                 if ti.static(self.sparse_solve):
                     self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
 
-                imp, aref = gu.imp_aref(impact.sol_params, -impact.penetration, jac_qvel, -impact.penetration)
+                imp, aref = gu.imp_aref(
+                    contact_data.sol_params, -contact_data.penetration, jac_qvel, -contact_data.penetration
+                )
 
-                diag = t + impact.friction * impact.friction * t
-                diag *= 2 * impact.friction * impact.friction * (1 - imp) / ti.max(imp, gs.EPS)
+                diag = invweight + contact_data.friction * contact_data.friction * invweight
+                diag *= 2 * contact_data.friction * contact_data.friction * (1 - imp) / ti.max(imp, gs.EPS)
 
                 self.diag[n_con, i_b] = diag
                 self.aref[n_con, i_b] = aref
@@ -240,29 +231,26 @@ class ConstraintSolverIsland:
                         i_q = j_info.q_start
                         i_d = j_info.dof_start
                         I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
-                        pos_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
-                        pos_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
-                        pos = min(min(pos_min, pos_max), 0)
+                        pos_delta_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
+                        pos_delta_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
+                        pos_delta = min(pos_delta_min, pos_delta_max)
 
-                        side = ((pos_min < pos_max) * 2 - 1) * (pos < 0)
+                        if pos_delta < 0:
+                            jac = (pos_delta_min < pos_delta_max) * 2 - 1
+                            jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
+                            imp, aref = gu.imp_aref(j_info.sol_params, pos_delta, jac_qvel, pos_delta)
+                            diag = ti.max(self._solver.dofs_info[I_d].invweight * (1 - imp) / imp, gs.EPS)
 
-                        jac = side
-                        jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
-                        imp, aref = gu.imp_aref(self._solver.dofs_info[I_d].sol_params, pos, jac_qvel, pos)
-                        diag = self._solver.dofs_info[I_d].invweight * (pos < 0) * (1 - imp) / (imp + gs.EPS)
-                        aref = aref * (pos < 0)
-                        if pos < 0:
                             n_con = self.n_constraints[i_b]
                             self.n_constraints[i_b] = n_con + 1
                             self.diag[n_con, i_b] = diag
                             self.aref[n_con, i_b] = aref
+                            self.efc_D[n_con, i_b] = 1 / diag
 
-                            # TODO?
                             if ti.static(self.sparse_solve):
                                 for i_d2_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
                                     i_d2 = self.jac_relevant_dofs[n_con, i_d2_, i_b]
                                     self.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
-                                pass
                             else:
                                 for i_d2 in range(self._solver.n_dofs):
                                     self.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
@@ -271,8 +259,6 @@ class ConstraintSolverIsland:
                             if ti.static(self.sparse_solve):
                                 self.jac_n_relevant_dofs[n_con, i_b] = 1
                                 self.jac_relevant_dofs[n_con, 0, i_b] = i_d
-
-                            self.efc_D[n_con, i_b] = 1 / ti.max(gs.EPS, diag)
 
     @ti.func
     def _func_nt_hessian_incremental(self, island, i_b):
@@ -454,7 +440,6 @@ class ConstraintSolverIsland:
 
     @ti.func
     def _func_nt_chol_solve(self, island, i_b):
-
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
@@ -538,27 +523,21 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            impact = self._collider.contact_data[i_col, i_b]
+            contact_data = self._collider.contact_data[i_col, i_b]
 
-            f = impact.friction
             force = ti.Vector.zero(gs.ti_float, 3)
-            d1, d2 = gu.orthogonals(impact.normal)
+            d1, d2 = gu.orthogonals(contact_data.normal)
             for i in range(4):
-                n = -d1 * f - impact.normal
-                if i == 1:
-                    n = d1 * f - impact.normal
-                elif i == 2:
-                    n = -d2 * f - impact.normal
-                elif i == 3:
-                    n = d2 * f - impact.normal
+                d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                n = d * contact_data.friction - contact_data.normal
                 force += n * self.efc_force[i_island_col * 4 + i, i_b]
             self._collider.contact_data[i_col, i_b].force = force
 
-            self._solver.links_state[impact.link_a, i_b].contact_force = (
-                self._solver.links_state[impact.link_a, i_b].contact_force - force
+            self._solver.links_state[contact_data.link_a, i_b].contact_force = (
+                self._solver.links_state[contact_data.link_a, i_b].contact_force - force
             )
-            self._solver.links_state[impact.link_b, i_b].contact_force = (
-                self._solver.links_state[impact.link_b, i_b].contact_force + force
+            self._solver.links_state[contact_data.link_b, i_b].contact_force = (
+                self._solver.links_state[contact_data.link_b, i_b].contact_force + force
             )
 
     @ti.func
@@ -1006,7 +985,6 @@ class ConstraintSolverIsland:
 
     @ti.func
     def _func_update_gradient(self, island, i_b):
-
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
@@ -1017,16 +995,15 @@ class ConstraintSolverIsland:
                 )
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
+            for i_e in range(self._solver.n_entities):
+                self._solver._mass_mat_mask[i_e, i_b] = 0
             for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
                 i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                 i_e = self.contact_island.entity_id[i_e_, i_b]
-                e_info = self.entities_info[i_e]
-
-                for i_d1 in range(e_info.dof_start, e_info.dof_end):
-                    Mgrad = gs.ti_float(0.0)
-                    for i_d2 in range(e_info.dof_start, e_info.dof_end):
-                        Mgrad += self._solver.mass_mat_inv[i_d1, i_d2, i_b] * self.grad[i_d2, i_b]
-                    self.Mgrad[i_d1, i_b] = Mgrad
+                self._solver._mass_mat_mask[i_e_, i_b] = 1
+            self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
+            for i_e in range(self._solver.n_entities):
+                self._solver._mass_mat_mask[i_e, i_b] = 1
 
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(island, i_b)

@@ -8,8 +8,29 @@ from .base import Base
 @ti.data_oriented
 class Elastic(Base):
     """
+    The elastic material class for MPM.
+
+    Note
+    ----
     Reference for the default values of `E` and `nu`: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L201
     Elastic objects is softened by multiplying the default E by 0.3.
+
+    Parameters
+    ----------
+    E: float, optional
+        Young's modulus. Default is 1e6.
+    nu: float, optional
+        Poisson ratio. Default is 0.2.
+    rho: float, optional
+        Density (kg/m^3). Default is 1000.
+    lam: float, optional
+        The first Lame's parameter. Default is None, computed by E and nu.
+    mu: float, optional
+        The second Lame's parameter. Default is None, computed by E and nu.
+    sampler: str, optional
+        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+    model: str, optional
+        Stress model ('corotation', 'neohooken'). Default is 'corotation'.
     """
 
     def __init__(
@@ -58,4 +79,5 @@ class Elastic(Base):
 
     @property
     def model(self):
+        """Stress model ('corotation', 'neohooken')"""
         return self._model
