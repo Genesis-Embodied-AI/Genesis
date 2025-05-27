@@ -84,7 +84,7 @@ class RigidJoint(RBC):
         """
         raise DeprecationError(
             "This method has been removed. Please consider operating at link-level to get the cartesian position in "
-            "word frame."
+            "word frame. Alternatively, 'get_anchor_pos' returns the anchor position of the joint in the world frame."
         )
 
     def get_quat(self):
@@ -93,7 +93,7 @@ class RigidJoint(RBC):
         """
         raise DeprecationError(
             "This method has been removed. Please consider operating at link-level to get the cartesian orientation in "
-            "word frame."
+            "word frame. Alternatively, 'get_anchor_axis' returns the anchor axis of the joint in the world frame."
         )
 
     @gs.assert_built
@@ -138,6 +138,24 @@ class RigidJoint(RBC):
             xaxis = self._solver.joints_state[self._idx, i_b].xaxis
             for i in ti.static(range(3)):
                 tensor[i_b, i] = xaxis[i]
+
+    def set_sol_params(self, sol_params):
+        """
+        Set the solver parameters of this joint.
+        """
+        if self.is_built:
+            self._solver.set_sol_params(sol_params[..., None, :], joints_idx=self._idx, envs_idx=None, unsafe=False)
+        else:
+            self._sol_params = sol_params
+
+    @property
+    def sol_params(self):
+        """
+        Retruns the solver parameters of the joint.
+        """
+        if self.is_built:
+            return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None, unsafe=True)[..., 0, :]
+        return self._sol_params
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -233,13 +251,6 @@ class RigidJoint(RBC):
         Returns the initial quaternion of the joint in the world frame.
         """
         return self._quat
-
-    @property
-    def sol_params(self):
-        """
-        Retruns the solver parameters of the joint.
-        """
-        return self._sol_params
 
     @property
     def q_start(self):

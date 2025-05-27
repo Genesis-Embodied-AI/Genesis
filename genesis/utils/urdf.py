@@ -61,7 +61,7 @@ def parse_urdf(morph, surface):
         robot = morph.file
 
     # Merge links connected by fixed joints
-    if isinstance(morph, gs.morphs.URDF) and morph.merge_fixed_links:
+    if morph.merge_fixed_links:
         robot = merge_fixed_links(robot, morph.links_to_keep)
 
     link_name_to_idx = dict()

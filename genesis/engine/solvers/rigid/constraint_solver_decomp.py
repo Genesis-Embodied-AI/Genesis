@@ -193,7 +193,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_connect(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
@@ -281,7 +281,7 @@ class ConstraintSolver:
 
     @ti.func
     def _func_equality_joint(self, i_b, i_e):
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
 
         sol_params = eq_info.sol_params
 
@@ -345,18 +345,18 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(self._B):
             for i_e in range(self.ti_n_equalities[i_b]):
-                if self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
+                if self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
                     self._func_equality_connect(i_b, i_e)
-                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
+                elif self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
                     self._func_equality_weld(i_b, i_e)
-                elif self._solver.equality_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
+                elif self._solver.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
                     self._func_equality_joint(i_b, i_e)
 
     @ti.func
     def _func_equality_weld(self, i_b, i_e):
         # TODO: sparse mode
         # Get equality info for this constraint
-        eq_info = self._solver.equality_info[i_e, i_b]
+        eq_info = self._solver.equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
         link2_idx = eq_info.eq_obj2id
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(self._solver._options.batch_links_info) else link1_idx
@@ -657,7 +657,7 @@ class ConstraintSolver:
         else:
             for i_c in range(self.n_constraints[i_b]):
                 for i_d1 in range(self._solver.n_dofs):
-                    if ti.abs(self.jac[i_c, i_d1, i_b]) > 1e-8:
+                    if ti.abs(self.jac[i_c, i_d1, i_b]) > gs.EPS:
                         for i_d2 in range(i_d1 + 1):
                             self.nt_H[i_d1, i_d2, i_b] = (
                                 self.nt_H[i_d1, i_d2, i_b]
@@ -688,13 +688,12 @@ class ConstraintSolver:
             for j_d in range(i_d):
                 tmp = tmp - (self.nt_H[i_d, j_d, i_b] * self.nt_H[i_d, j_d, i_b])
 
-            mindiag = 1e-8
-            if tmp < mindiag:
-                tmp = mindiag
+            if tmp < gs.EPS:
+                tmp = gs.EPS
                 rank = rank - 1
             self.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
 
-            tmp = 1 / self.nt_H[i_d, i_d, i_b]
+            tmp = 1.0 / self.nt_H[i_d, i_d, i_b]
 
             for j_d in range(i_d + 1, self._solver.n_dofs):
                 dot = gs.ti_float(0.0)
@@ -711,6 +710,7 @@ class ConstraintSolver:
         for i_d in range(self._solver.n_dofs):
             for j_d in range(i_d):
                 self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - (self.nt_H[i_d, j_d, i_b] * self.Mgrad[j_d, i_b])
+
             self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
 
         for i_d_ in range(self._solver.n_dofs):

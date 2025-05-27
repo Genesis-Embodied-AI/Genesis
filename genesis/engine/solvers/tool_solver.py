@@ -8,6 +8,8 @@ from genesis.utils.misc import *
 from .base_solver import Solver
 from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
 
+from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
+
 
 @ti.data_oriented
 class ToolSolver(Solver):

@@ -39,7 +39,7 @@ class Mesh(RBC):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters
-        the original geometry if necessary. does what needs to be done at all costs.
+        the original geometry if necessary. 8 does what needs to be done at all costs. Default to 0.
     metadata : dict
         The metadata of the mesh.
     """
@@ -91,6 +91,7 @@ class Mesh(RBC):
         Decimate the mesh.
         """
         if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > decimate_face_num:
+            self._mesh.process(validate=True)
             self._mesh = trimesh.Trimesh(
                 *fast_simplification.simplify(
                     self._mesh.vertices,

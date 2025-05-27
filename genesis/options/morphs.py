@@ -366,13 +366,13 @@ class FileMorph(Morph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. If not given, it defaults to `convexify`. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the mesh. Default to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -402,9 +402,9 @@ class FileMorph(Morph):
 
     file: Any = ""
     scale: Union[float, tuple] = 1.0
-    decimate: Optional[bool] = None
+    decimate: bool = True
     decimate_face_num: int = 500
-    decimate_aggressiveness: int = 2
+    decimate_aggressiveness: int = 5
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
     decompose_object_error_threshold: float = 0.15
@@ -485,7 +485,7 @@ class Mesh(FileMorph, TetGenMixin):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -584,7 +584,7 @@ class MJCF(FileMorph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -670,7 +670,7 @@ class URDF(FileMorph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -751,7 +751,7 @@ class Drone(FileMorph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
@@ -787,6 +787,10 @@ class Drone(FileMorph):
         The names of the links that represent the propellers. Defaults to ['prop0_link', 'prop1_link', 'prop2_link', 'prop3_link'].
     propellers_spin : sequence of int, optional
         The spin direction of the propellers. 1: CCW, -1: CW. Defaults to [-1, 1, -1, 1].
+    merge_fixed_links : bool, optional
+        Whether to merge links connected via a fixed joint. Defaults to True.
+    links_to_keep : list of str, optional
+        A list of link names that should not be skipped during link merging. Defaults to [].
     """
 
     model: str = "CF2X"
@@ -795,6 +799,8 @@ class Drone(FileMorph):
     propellers_link_names: Optional[Sequence[str]] = None
     propellers_link_name: Sequence[str] = ("prop0_link", "prop1_link", "prop2_link", "prop3_link")
     propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
+    merge_fixed_links: bool = True
+    links_to_keep: List[str] = []
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -805,6 +811,11 @@ class Drone(FileMorph):
                 "'propellers_link_name' instead."
             )
             self.propellers_link_name = self.propellers_link_names
+
+        # Make sure that Propellers and COM links are preserved
+        for link_name in (*self.propellers_link_name, self.COM_link_name):
+            if not link_name in self.links_to_keep:
+                self.links_to_keep.append(link_name)
 
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
