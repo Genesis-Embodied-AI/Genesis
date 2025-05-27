@@ -316,7 +316,7 @@ def postprocess_collision_geoms(
                 tmesh._cache.clear()
                 tmesh.visual._cache.clear()
 
-    # Check if all the geometries can be convexify without decomposition
+    # Check if all the geometries can be convexified without decomposition
     must_decompose = False
     if convexify:
         for g_info in g_infos:
