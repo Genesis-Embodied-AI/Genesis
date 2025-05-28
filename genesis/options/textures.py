@@ -37,7 +37,7 @@ class ColorTexture(Texture):
     Parameters
     ----------
     color : list of float
-        A list of color values, supporting any number of channels within the range [0.0, 1.0]. Default is (1.0, 1.0, 1.0).
+        A list of color values, stored as tuple, supporting any number of channels within the range [0.0, 1.0]. Default is (1.0, 1.0, 1.0).
     """
 
     color: Union[float, List[float]] = (1.0, 1.0, 1.0)
@@ -47,7 +47,7 @@ class ColorTexture(Texture):
         if isinstance(self.color, float):
             self.color = (self.color,)
         else:
-            self.color = tuple(self.color)
+            self.color = tuple(self.color)  # Use tuple to store image color since it is more efficient
 
     def check_dim(self, dim):
         if len(self.color) > dim:
@@ -72,7 +72,7 @@ class ImageTexture(Texture):
     image_array : np.ndarray, optional
         Image array.
     image_color : float or list of float, optional
-        The factor that will be multiplied with the base color. Default is None.
+        The factor that will be multiplied with the base color, stored as tuple. Default is None.
     encoding : str, optional
         The encoding way of the image. Possible values are ['srgb', 'linear']. Default is 'srgb'.
 

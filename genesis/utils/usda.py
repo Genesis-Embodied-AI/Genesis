@@ -15,13 +15,6 @@ cs_encode = {
 }
 
 
-# def make_tuple(value):
-#     if value is None:
-#         return None
-#     else:
-#         return (value,)
-
-
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
 
@@ -29,8 +22,6 @@ def get_input_attribute_value(shader, input_name, input_type=None):
         if shader_input.GetPrim().IsValid() and shader_input.HasConnectedSource():
             shader_input_connect, shader_input_name = shader_input.GetConnectedSource()[:2]
             return UsdShade.Shader(shader_input_connect.GetPrim()), shader_input_name
-            # shader_input_attr = shader_input.GetValueProducingAttribute()[0]
-            # if shader_input_attr.IsValid():
 
     if input_type != "attribute":
         return shader_input.Get(), None
@@ -120,8 +111,6 @@ def parse_preview_surface(shader, output_name, zipfiles):
         texture = get_input_attribute_value(shader, "file", "value")[0]
         if texture is not None:
             texture_image = get_texture_image(texture, zipfiles)
-            # texture_path = texture.resolvedPath
-            # np.array(Image.open(texture_path))
             if output_name == "r":
                 texture_image = texture_image[:, :, 0]
             elif output_name == "g":
@@ -214,8 +203,6 @@ def parse_gltf_surface(shader, source_type, output_name, zipfiles):
 
         texture = get_input_attribute_value(shader, "texture", "value")[0]
         if texture is not None:
-            # texture_path = texture.resolvedPath
-            # texture_image = np.array(Image.open(texture_path))
             texture_image = get_texture_image(texture, zipfiles)
         else:
             texture_image = None
@@ -234,7 +221,6 @@ def parse_omni_surface(shader, source_type, output_name, zipfiles):
             component_tex = get_input_attribute_value(shader, component_tex_name, "value")[0]
             if component_tex is not None:
                 component_image = get_texture_image(component_tex, zipfiles)
-                # np.array(Image.open(component_tex.resolvedPath))
                 if adjust is not None:
                     component_image = (adjust(component_image / 255.0) * 255.0).astype(np.uint8)
             component_cs = shader.GetInput(component_tex_name).GetAttr().GetColorSpace()

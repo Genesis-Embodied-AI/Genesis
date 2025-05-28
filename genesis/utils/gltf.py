@@ -148,11 +148,11 @@ def parse_glb_material(glb, material_index, surface):
 
         metallic_factor = None
         if pbr_texture.metallicFactor is not None:
-            metallic_factor = (pbr_texture.metallicFactor,)
+            metallic_factor = pbr_texture.metallicFactor
 
         roughness_factor = None
         if pbr_texture.roughnessFactor is not None:
-            roughness_factor = (pbr_texture.roughnessFactor,)
+            roughness_factor = pbr_texture.roughnessFactor
 
         metallic_texture = mu.create_texture(metallic_image, metallic_factor, "linear")
         roughness_texture = mu.create_texture(roughness_image, roughness_factor, "linear")
@@ -228,7 +228,7 @@ def parse_glb_material(glb, material_index, surface):
 
         elif extension_name == "KHR_materials_clearcoat":
             clearcoat_weight = extension_material.get("clearcoatFactor", 0.0)
-            clearcoat_roughness_factor = (extension_material["clearcoatRoughnessFactor"],)
+            clearcoat_roughness_factor = extension_material["clearcoatRoughnessFactor"]
 
         elif extension_name == "KHR_materials_volume":
             attenuation_distance = extension_material["attenuationDistance"]

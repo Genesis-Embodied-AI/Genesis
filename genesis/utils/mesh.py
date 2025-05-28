@@ -94,66 +94,6 @@ class MeshInfoGroup:
         return [mesh_info.export_mesh(scale) for mesh_info in self.infos.values()]
 
 
-class MeshInfo:
-    def __init__(self, surface):
-        self.surface = surface
-        self.verts = list()
-        self.faces = list()
-        self.normals = list()
-        self.uvs = list()
-        self.n_points = 0
-        self.n_members = 0
-        self.uvs_exist = False
-
-    def append(self, verts, faces, normals, uvs):
-        faces += self.n_points
-        self.verts.append(verts)
-        self.faces.append(faces)
-        self.normals.append(normals)
-        self.uvs.append(uvs)
-        self.n_points += verts.shape[0]
-        self.n_members += 1
-        if uvs is not None:
-            self.uvs_exist = True
-
-    def export_mesh(self, scale, path):
-        if self.uvs_exist:
-            for i in range(self.n_members):
-                if self.uvs[i] is None:
-                    self.uvs[i] = np.zeros((self.verts[i].shape[0], 2), dtype=np.float32)
-            uvs = np.concatenate(self.uvs, axis=0)
-        else:
-            uvs = None
-
-        verts = np.concatenate(self.verts, axis=0)
-        faces = np.concatenate(self.faces, axis=0)
-        normals = np.concatenate(self.normals, axis=0)
-
-        mesh = gs.Mesh.from_attrs(
-            verts=verts,
-            faces=faces,
-            normals=normals,
-            surface=self.surface,
-            uvs=uvs,
-            scale=scale,
-        )
-        mesh.metadata["mesh_path"] = path
-        return mesh
-
-
-class MeshInfoGroup:
-    def __init__(self):
-        self.infos = dict()
-
-    def append(self, name, verts, faces, normals, uvs, surface):
-        if name not in self.infos:
-            self.infos[name] = MeshInfo(surface)
-        self.infos[name].append(verts, faces, normals, uvs)
-
-    def export_meshes(self, scale, path):
-        return [self.infos[name].export_mesh(scale, path) for name in self.infos]
-
-
 def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
 
