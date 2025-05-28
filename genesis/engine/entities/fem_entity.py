@@ -307,6 +307,10 @@ class FEMEntity(Entity):
         verts_COM = verts.mean(0)
         init_positions = (verts - verts_COM) @ R.T + verts_COM
 
+        if gs.backend == gs.metal:
+            init_positions = init_positions.astype(np.float32)
+            verts_COM = verts_COM.astype(np.float32)
+
         if not init_positions.shape[0] > 0:
             gs.raise_exception(f"Entity has zero vertices.")
 
