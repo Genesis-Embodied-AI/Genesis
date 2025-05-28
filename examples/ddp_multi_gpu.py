@@ -4,7 +4,7 @@ Multi-node / multi-GPU Genesis ✕ PyTorch DDP demo
 =================================================
 
 Single machine, 2 GPUs:
-    torchrun --standalone --nnodes=1 --nproc_per_node=2 ddp_multi_gpu.py
+    torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/ddp_multi_gpu.py
 """
 
 import os, argparse, random, numpy as np
