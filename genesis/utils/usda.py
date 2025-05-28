@@ -15,20 +15,22 @@ cs_encode = {
 }
 
 
-def make_tuple(value):
-    if value is None:
-        return None
-    else:
-        return (value,)
+# def make_tuple(value):
+#     if value is None:
+#         return None
+#     else:
+#         return (value,)
 
 
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
 
     if input_type != "value":
-        shader_input_attr = shader_input.GetValueProducingAttribute()[0]
-        if shader_input_attr.IsValid():
-            return UsdShade.Shader(shader_input_attr.GetPrim()), shader_input_attr.GetBaseName()
+        if shader_input.GetPrim().IsValid() and shader_input.HasConnectedSource():
+            shader_input_connect, shader_input_name = shader_input.GetConnectedSource()[:2]
+            return UsdShade.Shader(shader_input_connect.GetPrim()), shader_input_name
+            # shader_input_attr = shader_input.GetValueProducingAttribute()[0]
+            # if shader_input_attr.IsValid():
 
     if input_type != "attribute":
         return shader_input.Get(), None
@@ -52,9 +54,10 @@ def parse_preview_surface(shader, output_name, zipfiles):
             if component_output is None:  # constant value
                 component_factor = component
                 component_image = None
+                component_uvname = None
             else:  # texture shader
                 component_image, component_overencode, component_uvname = parse_preview_surface(
-                    component, component_output
+                    component, component_output, zipfiles
                 )
                 if component_overencode is not None:
                     component_encode = component_overencode
@@ -72,8 +75,9 @@ def parse_preview_surface(shader, output_name, zipfiles):
         opacity_texture, opacity_uvname = parse_component("opacity", "linear")
         if opacity_uvname is not None and uvname is None:
             uvname = opacity_uvname
-        alpha_cutoff = get_input_attribute_value(shader, "opacityThreshold", "value")[0]
-        opacity_texture.apply_cutoff(alpha_cutoff)
+        if opacity_texture is not None:
+            alpha_cutoff = get_input_attribute_value(shader, "opacityThreshold", "value")[0]
+            opacity_texture.apply_cutoff(alpha_cutoff)
 
         # parse emissive
         emissive_texture, emissive_uvname = parse_component("emissiveColor", "srgb")
@@ -133,10 +137,10 @@ def parse_preview_surface(shader, output_name, zipfiles):
         else:
             texture_image = None
 
-        texture_encode = get_input_attribute_value(shader, "sourceColorSpace", "value")[0]
+        texture_encode = get_input_attribute_value(shader, "sourceColorSpace", "value")[0] or "sRGB"
         texture_encode = cs_encode[texture_encode]
         texture_uvs_shader, texture_uvs_output = get_input_attribute_value(shader, "st", "attribute")
-        texture_uvs_name = parse_preview_surface(texture_uvs_shader, texture_uvs_output)
+        texture_uvs_name = parse_preview_surface(texture_uvs_shader, texture_uvs_output, zipfiles)
 
         return texture_image, texture_encode, texture_uvs_name
 
@@ -154,13 +158,13 @@ def parse_gltf_surface(shader, source_type, output_name, zipfiles):
             shader, "base_color_texture", "attribute"
         )
         if color_texture_shader is not None:
-            color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output)
+            color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output, zipfiles)
         else:
             color_image = None
         color_texture = mu.create_texture(color_image, color_factor, "srgb")
 
         # parse opacity
-        opacity_factor = make_tuple(get_input_attribute_value(shader, "base_alpha", "value")[0])
+        opacity_factor = get_input_attribute_value(shader, "base_alpha", "value")[0]
         opacity_texture = mu.create_texture(None, opacity_factor, "linear")
         alpha_cutoff = get_input_attribute_value(shader, "alpha_cutoff", "value")[0]
         alpha_mode = get_input_attribute_value(shader, "alpha_mode", "value")[0]
@@ -168,13 +172,13 @@ def parse_gltf_surface(shader, source_type, output_name, zipfiles):
         opacity_texture.apply_cutoff(alpha_cutoff)
 
         # parse roughness and metaillic
-        metallic_factor = make_tuple(get_input_attribute_value(shader, "metallic_factor", "value")[0])
-        roughness_factor = make_tuple(get_input_attribute_value(shader, "roughness_factor", "value")[0])
+        metallic_factor = get_input_attribute_value(shader, "metallic_factor", "value")[0]
+        roughness_factor = get_input_attribute_value(shader, "roughness_factor", "value")[0]
         combined_texture_shader, combined_texture_output = get_input_attribute_value(
             shader, "metallic_roughness_texture", "attribute"
         )
         if combined_texture_shader is not None:
-            combined_image = parse_gltf_surface(combined_texture_shader, source_type, combined_texture_output)
+            combined_image = parse_gltf_surface(combined_texture_shader, source_type, combined_texture_output, zipfiles)
             roughness_image = combined_image[:, :, 1]
             metallic_image = combined_image[:, :, 2]
         else:
@@ -184,13 +188,15 @@ def parse_gltf_surface(shader, source_type, output_name, zipfiles):
 
         # parse emissive
         emissive_strength = get_input_attribute_value(shader, "emissive_strength", "value")[0]
-        emissive_texture = mu.create_texture(None, make_tuple(emissive_strength), "srgb") if emissive_strength else None
+        emissive_texture = mu.create_texture(None, emissive_strength, "srgb") if emissive_strength else None
 
         occlusion_texture_shader, occlusion_texture_output = get_input_attribute_value(
             shader, "occlusion_texture", "attribute"
         )
         if occlusion_texture_shader is not None:
-            occlusion_image = parse_gltf_surface(occlusion_texture_shader, source_type, occlusion_texture_output)
+            occlusion_image = parse_gltf_surface(
+                occlusion_texture_shader, source_type, occlusion_texture_output, zipfiles
+            )
 
         return {
             "color_texture": color_texture,

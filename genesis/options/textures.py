@@ -1,5 +1,5 @@
 import os
-from typing import Any, Optional
+from typing import Optional, List, Union
 
 import Imath
 import numpy as np
@@ -32,15 +32,22 @@ class Texture(Options):
 
 class ColorTexture(Texture):
     """
-    A texture with a single color.
+    A texture that consists of a single color.
 
     Parameters
     ----------
-    color : tuple, shape (3,)
-        RGB color value.
+    color : list of float
+        A list of color values, supporting any number of channels within the range [0.0, 1.0]. Default is (1.0, 1.0, 1.0).
     """
 
-    color: tuple = (1.0, 1.0, 1.0)
+    color: Union[float, List[float]] = (1.0, 1.0, 1.0)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if isinstance(self.color, float):
+            self.color = (self.color,)
+        else:
+            self.color = tuple(self.color)
 
     def check_dim(self, dim):
         if len(self.color) > dim:
@@ -64,19 +71,22 @@ class ImageTexture(Texture):
         Path to the image file.
     image_array : np.ndarray, optional
         Image array.
-    image_color : tuple, optional
-        The base color which will be multiplied with the image color. Default is (1.0, 1.0, 1.0, 1.0).
-    encoding : str
-        The encoding way of the image. Possible values are ['srgb', 'linear'].
+    image_color : float or list of float, optional
+        The factor that will be multiplied with the base color. Default is None.
+    encoding : str, optional
+        The encoding way of the image. Possible values are ['srgb', 'linear']. Default is 'srgb'.
 
         - 'srgb': Encoding of some RGB images.
         - 'linear': All generic images, such as opacity, roughness and normal, should be encoded with 'linear'.
     """
 
     image_path: Optional[str] = None
-    image_array: Optional[Any] = None
-    image_color: Optional[tuple] = (1.0, 1.0, 1.0, 1.0)
+    image_array: Optional[np.ndarray] = None
+    image_color: Optional[Union[float, List[float]]] = None
     encoding: str = "srgb"
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -133,9 +143,12 @@ class ImageTexture(Texture):
             self._channel = self.image_array.shape[2] if self.image_array.ndim == 3 else 1
 
         if self.image_color is None:
-            self.image_color = tuple([1.0 for _ in range(self._channel)])
+            self.image_color = (1.0,) * self._channel
         else:
-            self.image_color = self.image_color[: self._channel]
+            if isinstance(self.image_color, float):
+                self.image_color = (self.image_color,) * self._channel
+            else:
+                self.image_color = tuple(self.image_color[: self._channel])
 
         self.encoding = self.encoding.lower()
         if self.encoding not in ["srgb", "linear"]:
@@ -158,7 +171,7 @@ class ImageTexture(Texture):
         max_color = np.max(self.image_array, axis=(0, 1))
         min_color = np.min(self.image_array, axis=(0, 1))
         if np.all(min_color == max_color):
-            return ColorTexture(color=tuple(max_color.reshape(-1) / 255.0 * self.image_color))
+            return ColorTexture(color=max_color.reshape(-1) / 255.0 * self.image_color)
         else:
             return self
 
@@ -171,4 +184,4 @@ class ImageTexture(Texture):
     def apply_cutoff(self, cutoff):
         if cutoff is None or self.image_array is None:  # Cutoff does not apply on image file.
             return
-        self.image_array = np.where(self.image_array >= 255 * cutoff, 255, 0).astype(np.uint8)
+        self.image_array = np.where(self.image_array >= 255.0 * cutoff, 255, 0).astype(np.uint8)
