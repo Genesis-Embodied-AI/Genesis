@@ -178,9 +178,9 @@ Genesis is a large scale effort that integrates state-of-the-art technologies of
 If you use Genesis in your research, please consider citing:
 
 ```bibtex
-@software{Genesis,
+@misc{Genesis,
   author = {Genesis Authors},
-  title = {Genesis: A Universal and Generative Physics Engine for Robotics and Beyond},
+  title = {Genesis: A Generative and Universal Physics Engine for Robotics and Beyond},
   month = {December},
   year = {2024},
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
