@@ -397,8 +397,8 @@ class RigidSolver(Solver):
         )
 
         joints = self.joints
-        is_nonempty = np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float).shape[0] > 0
-        if is_nonempty:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
+        has_dofs = sum(joint.n_dofs for joint in joints) > 0
+        if has_dofs:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
@@ -487,18 +487,6 @@ class RigidSolver(Solver):
             inertial_mass=gs.ti_float,
             entity_idx=gs.ti_int,  # entity.idx_in_solver
         )
-
-        struct_joint_info = ti.types.struct(
-            type=gs.ti_int,
-            sol_params=gs.ti_vec7,
-            q_start=gs.ti_int,
-            dof_start=gs.ti_int,
-            q_end=gs.ti_int,
-            dof_end=gs.ti_int,
-            n_dofs=gs.ti_int,
-            pos=gs.ti_vec3,
-        )
-
         struct_link_state = ti.types.struct(
             cinr_inertial=gs.ti_mat3,
             cinr_pos=gs.ti_vec3,
@@ -567,32 +555,43 @@ class RigidSolver(Solver):
             links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
         )
 
-        joints_info_shape = self._batch_shape(self.n_joints) if self._options.batch_joints_info else self.n_joints
-        self.joints_info = struct_joint_info.field(shape=joints_info_shape, needs_grad=False, layout=ti.Layout.SOA)
-
+        struct_joint_info = ti.types.struct(
+            type=gs.ti_int,
+            sol_params=gs.ti_vec7,
+            q_start=gs.ti_int,
+            dof_start=gs.ti_int,
+            q_end=gs.ti_int,
+            dof_end=gs.ti_int,
+            n_dofs=gs.ti_int,
+            pos=gs.ti_vec3,
+        )
         struct_joint_state = ti.types.struct(
             xanchor=gs.ti_vec3,
             xaxis=gs.ti_vec3,
         )
 
+        # Field size cannot be zero,
+        joints_info_shape = self._batch_shape(self.n_joints_) if self._options.batch_joints_info else self.n_joints_
+        self.joints_info = struct_joint_info.field(shape=joints_info_shape, needs_grad=False, layout=ti.Layout.SOA)
         self.joints_state = struct_joint_state.field(
-            shape=self._batch_shape(self.n_joints), needs_grad=False, layout=ti.Layout.SOA
+            shape=self._batch_shape(self.n_joints_), needs_grad=False, layout=ti.Layout.SOA
         )
 
-        # Make sure that the constraints parameters are valid
         joints = self.joints
-        joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
-        _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
+        if joints:
+            # Make sure that the constraints parameters are valid
+            joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
+            _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
 
-        self._kernel_init_joint_fields(
-            joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
-            joints_sol_params=joints_sol_params,
-            joints_q_start=np.array([joint.q_start for joint in joints], dtype=gs.np_int),
-            joints_dof_start=np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
-            joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
-            joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
-            joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
-        )
+            self._kernel_init_joint_fields(
+                joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
+                joints_sol_params=joints_sol_params,
+                joints_q_start=np.array([joint.q_start for joint in joints], dtype=gs.np_int),
+                joints_dof_start=np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
+                joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
+                joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
+                joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
+            )
 
         self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
@@ -3803,10 +3802,10 @@ class RigidSolver(Solver):
     def _get_qs_idx(self, qs_idx_local=None):
         return self._get_qs_idx_local(qs_idx_local) + self._q_start
 
-    def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         if links_idx is None:
             links_idx = self._base_links_idx
         pos, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -3838,10 +3837,10 @@ class RigidSolver(Solver):
                 for i in ti.static(range(3)):
                     self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
 
-    def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
-    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         if links_idx is None:
             links_idx = self._base_links_idx
         quat, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -3852,7 +3851,7 @@ class RigidSolver(Solver):
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
         self._kernel_set_links_quat(quat, links_idx, envs_idx)
-        if skip_forward:
+        if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
@@ -3990,7 +3989,7 @@ class RigidSolver(Solver):
         for i_g_, i_b_ in ti.ndrange(geoms_idx.shape[0], envs_idx.shape[0]):
             self.geoms_state[geoms_idx[i_g_], envs_idx[i_b_]].friction_ratio = friction_ratio[i_b_, i_g_]
 
-    def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         qpos, qs_idx, envs_idx = self._sanitize_1D_io_variables(
             qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", skip_allocation=True, unsafe=unsafe
         )
@@ -4002,7 +4001,7 @@ class RigidSolver(Solver):
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
             self.constraint_solver.clear(envs_idx)
-        if skip_forward:
+        if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
@@ -4325,7 +4324,7 @@ class RigidSolver(Solver):
                 self.dofs_info[dofs_idx[i_d_]].limit[0] = lower[i_d_]
                 self.dofs_info[dofs_idx[i_d_]].limit[1] = upper[i_d_]
 
-    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
@@ -4361,7 +4360,7 @@ class RigidSolver(Solver):
         for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
             self.dofs_state[dofs_idx[i_d_], envs_idx[i_b_]].vel = 0.0
 
-    def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False, skip_forward=False):
+    def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             position, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
@@ -4373,7 +4372,7 @@ class RigidSolver(Solver):
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
             self.constraint_solver.clear(envs_idx)
-        if skip_forward:
+        if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
