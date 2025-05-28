@@ -642,8 +642,8 @@ class RasterizerContext:
     def on_fem(self):
         if self.sim.fem_solver.is_active():
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy(dtype="float")[:, self.rendered_envs_idx[0], :]
-            triangles_all = triangles_all.to_numpy(dtype="int").reshape([-1, 3])
+            vertices_all = vertices_all.to_numpy(dtype=gs.np_float)[:, self.rendered_envs_idx[0]]
+            triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
@@ -669,8 +669,8 @@ class RasterizerContext:
     def update_fem(self, buffer_updates):
         if self.sim.fem_solver.is_active():
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy(dtype="float")[:, self.rendered_envs_idx[0], :]
-            triangles_all = triangles_all.to_numpy(dtype="int").reshape([-1, 3])
+            vertices_all = vertices_all.to_numpy(dtype=gs.np_float)[:, self.rendered_envs_idx[0]]
+            triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
