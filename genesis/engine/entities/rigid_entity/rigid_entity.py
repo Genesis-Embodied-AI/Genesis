@@ -345,18 +345,34 @@ class RigidEntity(Entity):
                     links_g_infos.insert(0, [])
                 assert len(links_g_infos_) == len(links_g_infos)
 
+                del links_g_infos_[0]
+                del links_j_infos_[0]
+                del l_infos_[0]
+                for l in l_infos_:
+                    l["parent_idx"] -= 1
+                    l["root_idx"] -= 1
+
+                # make timeconst 0 so it can be adjusted based on substep_dt
+                for link_j_info in links_j_infos_:
+                    for j_info in link_j_info:
+                        j_info["sol_params"][0] = 0.0
+
+                for link_g_info in links_g_infos_:
+                    for g_info in link_g_info:
+                        g_info["sol_params"][0] = 0.0
+
                 # Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!)
                 l_infos = l_infos_
                 links_j_infos = links_j_infos_
                 for link_g_infos, link_g_infos_ in zip(links_g_infos, links_g_infos_):
-                    for i, link_g_infos_ in enumerate((link_g_infos, link_g_infos_)):
-                        for idx, g_info in tuple(enumerate(link_g_infos_))[::-1]:
+                    for i, link_g_info_ in enumerate((link_g_infos, link_g_infos_)):
+                        for idx, g_info in tuple(enumerate(link_g_info_))[::-1]:
                             is_col = g_info["contype"] or g_info["conaffinity"]
                             if morph.collision and is_col:
                                 if i == 0:
-                                    del link_g_infos[idx]
+                                    del link_g_info_[idx]
                                 else:
-                                    link_g_infos.append(g_info)
+                                    link_g_info_.append(g_info)
             except (ValueError, AssertionError):
                 gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
 
