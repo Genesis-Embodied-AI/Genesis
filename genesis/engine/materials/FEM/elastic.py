@@ -5,6 +5,15 @@ import genesis as gs
 from .base import Base
 
 
+@ti.func
+def partialJpartialF(F):
+    pJpF0 = F[:, 1].cross(F[:, 2])
+    pJpF1 = F[:, 2].cross(F[:, 0])
+    pJpF2 = F[:, 0].cross(F[:, 1])
+    pJpF = ti.Matrix.cols([pJpF0, pJpF1, pJpF2])
+    return pJpF
+
+
 @ti.data_oriented
 class Elastic(Base):
     """
@@ -21,7 +30,7 @@ class Elastic(Base):
     model: str, optional
         Constitutive model to use for stress computation. Options are:
         - 'linear': Linear elasticity model
-        - 'stable_neohooken': A numerically stable Neo-Hookean model
+        - 'stable_neohookean': A numerically stable Neo-Hookean model
         Default is 'linear'.
     """
 
@@ -36,8 +45,10 @@ class Elastic(Base):
 
         if model == "linear":
             self.update_stress = self.update_stress_linear
-        elif model == "stable_neohooken":
-            self.update_stress = self.update_stress_stable_neohooken
+            self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_linear
+        elif model == "stable_neohookean":
+            self.update_stress = self.update_stress_stable_neohookean
+            self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_stable_neohookean
         else:
             gs.raise_exception(f"Unrecognized constitutive model: {model}")
 
@@ -51,8 +62,8 @@ class Elastic(Base):
         return stress
 
     @ti.func
-    def update_stress_stable_neohooken(self, mu, lam, J, F, actu, m_dir):
-        IC = (F.transpose() @ F).trace()
+    def update_stress_stable_neohookean(self, mu, lam, J, F, actu, m_dir):
+        IC = F.norm_sqr()
         dJdF0 = F[:, 1].cross(F[:, 2])
         dJdF1 = F[:, 2].cross(F[:, 0])
         dJdF2 = F[:, 0].cross(F[:, 1])
@@ -62,7 +73,47 @@ class Elastic(Base):
 
         return stress
 
+    # https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
+    @ti.func
+    def compute_energy_gradient_hessian_linear(self, mu, lam, J, F, actu, m_dir):
+        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
+        eps = 0.5 * (F + F.transpose()) - I
+        trEps = eps.trace()
+        energy = mu * eps.norm_sqr() + 0.5 * lam * trEps * trEps
+
+        gradient = 2.0 * mu * eps + lam * trEps * I
+
+        H = mu * ti.Matrix.identity(dt=gs.ti_float, n=9)
+        H[0, 0] += mu + lam
+        H[4, 4] += mu + lam
+        H[8, 8] += mu + lam
+
+        H[1, 3] = H[3, 1] = mu
+        H[2, 6] = H[6, 2] = mu
+        H[5, 7] = H[7, 5] = mu
+
+        H[0, 4] = H[0, 8] = H[4, 8] = lam
+        H[4, 0] = H[8, 0] = H[8, 4] = lam
+        return energy, gradient, H
+
+    # https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
+    @ti.func
+    def compute_energy_gradient_hessian_stable_neohookean(self, mu, lam, J, F, actu, m_dir):
+        _mu = mu
+        _lambda = lam + mu
+        _alpha = 1.0 + _mu / _lambda
+
+        Ic = (F.transpose() @ F).trace()
+        Jminus1 = J - _alpha
+        energy = 0.5 * (_mu * (Ic - 3.0) + _lambda * Jminus1 * Jminus1)
+
+        pJpF = partialJpartialF(F)
+        gradient = _mu * F + _lambda * Jminus1 * pJpF
+
+        raise NotImplementedError("Hessian computation is not implemented for stable_neohookean model.")
+        return energy, gradient
+
     @property
     def model(self):
-        """The name of the constitutive model ('linear' or 'stable_neohooken')."""
+        """The name of the constitutive model ('linear' or 'stable_neohookean')."""
         return self._model

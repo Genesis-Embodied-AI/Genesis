@@ -182,7 +182,7 @@ def test_deformable_parallel(show_viewer):
             E=E,
             nu=nu,
             rho=rho,
-            model="stable_neohooken",
+            model="stable_neohookean",
         ),
     )
 
