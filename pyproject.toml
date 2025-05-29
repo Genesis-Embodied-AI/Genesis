@@ -117,7 +117,9 @@ dev = [
     "pytest-xdist",
     "pytest-forked",
     "pytest-random-order",
+    "pytest-print",
     "huggingface_hub",
+    "wandb",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. See https://github.com/kivy/kivy/issues/8230 which tracks this issue. Once fixed we can use a later version

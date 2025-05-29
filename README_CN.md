@@ -82,6 +82,7 @@ xhost +local:root # 允许容器访问显示器
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
+-v /dev/dri:/dev/dri \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
 -v $PWD:/workspace \
 genesis
@@ -151,9 +152,9 @@ Genesis 是一个大规模的努力，将各种现有和正在进行的研究工
 如果您在研究中使用了 Genesis，我们将非常感谢您引用它。我们仍在撰写技术报告，在其公开之前，您可以考虑引用：
 
 ```bibtex
-@software{Genesis,
+@misc{Genesis,
   author = {Genesis Authors},
-  title = {Genesis: A Universal and Generative Physics Engine for Robotics and Beyond},
+  title = {Genesis: A Generative and Universal Physics Engine for Robotics and Beyond},
   month = {December},
   year = {2024},
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
