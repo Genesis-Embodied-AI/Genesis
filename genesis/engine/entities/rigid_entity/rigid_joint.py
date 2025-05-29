@@ -313,7 +313,7 @@ class RigidJoint(RBC):
         single one, or none, respectively.
         """
         gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'dof_idx_local' instead."
+            "This property is deprecated and will be removed in future release. Please use 'dofs_idx_local' instead."
         )
         if self.n_dofs == 1:
             return self.dof_start - self._entity.dof_start

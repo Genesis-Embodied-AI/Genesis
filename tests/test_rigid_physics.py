@@ -1450,14 +1450,12 @@ def test_convexify(euler, backend, show_viewer):
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
     # cam.start_recording()
-    num_steps = 1300 if euler == (90, 0, 90) else 1100
-    atol = 0.65 if euler == (90, 0, 90) and backend == gs.gpu else 1.5
-    for i in range(num_steps):
+    for i in range(1700):
         scene.step()
         # cam.render()
-        if i > num_steps - 100:
+        if i > 1600:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=atol)
+            assert_allclose(qvel, 0, atol=0.65)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
