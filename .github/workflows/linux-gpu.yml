@@ -54,9 +54,9 @@ jobs:
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN='${HF_TOKEN}'"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
-            SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY='${WANDB_API_KEY}'"
+            SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
 
           srun \
