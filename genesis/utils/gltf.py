@@ -303,10 +303,10 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
     materials = {}
 
     for i, (mesh_index, mesh_transform) in enumerate(mesh_list):
-        mesh = glb.meshes[mesh_index]
-        mesh_name = mesh.name
+        mesh_glb = glb.meshes[mesh_index]
+        mesh_name = mesh_glb.name
 
-        for primitive in mesh.primitives:
+        for primitive in mesh_glb.primitives:
             if primitive.material is not None:
                 material, uv_used, material_name = materials.get(primitive.material, (None, 0, ""))
                 if material is None:
@@ -323,13 +323,13 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 KHR_index = primitive.extensions["KHR_draco_mesh_compression"]["bufferView"]
                 mesh_buffer_view = glb.bufferViews[KHR_index]
                 mesh_data = get_glb_bufferview_data(glb, mesh_buffer_view)
-                mesh = DracoPy.decode(
+                mesh_glb = DracoPy.decode(
                     mesh_data[mesh_buffer_view.byteOffset : mesh_buffer_view.byteOffset + mesh_buffer_view.byteLength]
                 )
-                points = mesh.points
-                triangles = mesh.faces
-                normals = mesh.normals if len(mesh.normals) > 0 else None
-                uvs = mesh.tex_coord if len(mesh.tex_coord) > 0 else None
+                points = mesh_glb.points
+                triangles = mesh_glb.faces
+                normals = mesh_glb.normals if len(mesh_glb.normals) > 0 else None
+                uvs = mesh_glb.tex_coord if len(mesh_glb.tex_coord) > 0 else None
 
             else:
                 # "primitive.attributes" records accessor indices in "glb.accessors", like:
@@ -389,7 +389,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                 mesh_info.set_property(
                     surface=material, metadata={"path": path, "name": material_name if group_by_material else mesh_name}
                 )
-
             mesh_info.append(points, triangles, normals, uvs)
 
     return mesh_infos.export_meshes(scale=scale)

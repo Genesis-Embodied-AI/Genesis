@@ -262,8 +262,10 @@ def parse_omni_surface(shader, source_type, output_name, zipfiles):
     }, "st"
 
 
-def parse_usd_material(material, zipfiles):
+def parse_usd_material(material, surface, zipfiles):
     surface_outputs = material.GetSurfaceOutputs()
+    material_dict, uv_name = None, None
+    material_surface = None
     for surface_output in surface_outputs:
         if not surface_output.HasConnectedSource():
             continue
@@ -272,11 +274,11 @@ def parse_usd_material(material, zipfiles):
         surface_shader_implement = surface_shader.GetImplementationSource()
 
         if surface_shader_implement == "id":
-            if surface_shader.GetShaderId() == "UsdPreviewSurface":
-                return parse_preview_surface(surface_shader, surface_output_name, zipfiles)
-            gs.logger.warning(
-                f"Fail to parse Shader {surface_shader.GetPath()} with ID {surface_shader.GetShaderId()}."
-            )
+            shader_id = surface_shader.GetShaderId()
+            if shader_id == "UsdPreviewSurface":
+                material_dict, uv_name = parse_preview_surface(surface_shader, surface_output_name, zipfiles)
+                break
+            gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} with ID {shader_id}.")
             continue
 
         elif surface_shader_implement == "sourceAsset":
@@ -284,15 +286,32 @@ def parse_usd_material(material, zipfiles):
             for source_type in source_types:
                 source_asset = surface_shader.GetSourceAsset(source_type).resolvedPath
                 if "gltf/pbr" in source_asset:
-                    return parse_gltf_surface(surface_shader, source_type, surface_output_name, zipfiles)
-                return parse_omni_surface(surface_shader, source_type, surface_output_name, zipfiles)
-                # try:
-                #     return parse_omni_surface(surface_shader, source_type, surface_output_name)
-                # except Exception as e:
-                #     gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}.")
-                #     continue
+                    material_dict, uv_name = parse_gltf_surface(
+                        surface_shader, source_type, surface_output_name, zipfiles
+                    )
+                    break
+                try:
+                    material_dict, uv_name = parse_omni_surface(
+                        surface_shader, source_type, surface_output_name, zipfiles
+                    )
+                except Exception as e:
+                    gs.logger.warning(
+                        f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}."
+                    )
+                    continue
 
-    return None, None
+    if material_dict is not None:
+        material_surface = surface.copy()
+        material_surface.update_texture(
+            color_texture=material_dict.get("color_texture"),
+            opacity_texture=material_dict.get("opacity_texture"),
+            roughness_texture=material_dict.get("roughness_texture"),
+            metallic_texture=material_dict.get("metallic_texture"),
+            normal_texture=material_dict.get("normal_texture"),
+            emissive_texture=material_dict.get("emissive_texture"),
+            ior=material_dict.get("ior"),
+        )
+    return material_surface, uv_name
 
 
 def parse_mesh_usd(path, group_by_material, scale, surface):
@@ -304,7 +323,6 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
 
     mesh_infos = mu.MeshInfoGroup()
     materials = dict()
-    uv_names = dict()
 
     for prim in stage.Traverse():
         if prim.HasRelationship("material:binding"):
@@ -315,52 +333,41 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
             if yup:
                 matrix[:3, :3] @= yup_rotation
-            usd_mesh = UsdGeom.Mesh(prim)
-            mesh_path = prim.GetPath().pathString
+            mesh_usd = UsdGeom.Mesh(prim)
+            mesh_spec = prim.GetPrimStack()[-1]
+            mesh_id = mesh_spec.layer.identifier + mesh_spec.path.pathString
 
-            if not usd_mesh.GetPointsAttr().HasValue():
+            if not mesh_usd.GetPointsAttr().HasValue():
                 continue
-            points = np.array(usd_mesh.GetPointsAttr().Get(), dtype=np.float32)
-            faces = np.array(usd_mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
-            faces_vertex_counts = np.array(usd_mesh.GetFaceVertexCountsAttr().Get())
+            points = np.array(mesh_usd.GetPointsAttr().Get(), dtype=np.float32)
+            faces = np.array(mesh_usd.GetFaceVertexIndicesAttr().Get(), dtype=np.int32)
+            faces_vertex_counts = np.array(mesh_usd.GetFaceVertexCountsAttr().Get())
             points_faces_varying = False
 
             # parse normals
             normals = None
-            normal_attr = usd_mesh.GetNormalsAttr()
+            normal_attr = mesh_usd.GetNormalsAttr()
             if normal_attr.HasValue():
                 normals = np.array(normal_attr.Get(), dtype=np.float32)
                 if normals.shape[0] != points.shape[0]:
                     if normals.shape[0] == faces.shape[0]:  # face varying
                         points_faces_varying = True
                     else:
-                        gs.raise_exception(f"Size of normals mismatch for mesh {mesh_path} in usd file {path}.")
+                        gs.raise_exception(f"Size of normals mismatch for mesh {mesh_id} in usd file {path}.")
 
             # parse materials
             prim_bindings = UsdShade.MaterialBindingAPI(prim)
-            material = prim_bindings.ComputeBoundMaterial()[0]
-            group_idx = ""
-            if material.GetPrim().IsValid():
-                material_spec = material.GetPrim().GetPrimStack()[-1]
+            material_usd = prim_bindings.ComputeBoundMaterial()[0]
+            if material_usd.GetPrim().IsValid():
+                material_spec = material_usd.GetPrim().GetPrimStack()[-1]
                 material_id = material_spec.layer.identifier + material_spec.path.pathString
-
-                if material_id not in materials:
-                    material_dict, uv_names[material_id] = parse_usd_material(material, zipfiles)
-                    material_surface = surface.copy()
-
-                    if material_dict is not None:
-                        material_surface.update_texture(
-                            color_texture=material_dict.get("color_texture"),
-                            opacity_texture=material_dict.get("opacity_texture"),
-                            roughness_texture=material_dict.get("roughness_texture"),
-                            metallic_texture=material_dict.get("metallic_texture"),
-                            normal_texture=material_dict.get("normal_texture"),
-                            emissive_texture=material_dict.get("emissive_texture"),
-                            ior=material_dict.get("ior"),
-                        )
-                    materials[material_id] = material_surface
-                group_idx = material_id if group_by_material else i
-                uv_name = uv_names[material_id]
+                material, uv_name = materials.get(material_id, (None, "st"))
+                if material is None:
+                    material, uv_name = materials.setdefault(
+                        material_id, parse_usd_material(material_usd, surface, zipfiles)
+                    )
+            else:
+                material, uv_name, material_id = None, "st", None
 
             # parse uvs
             uv_var = UsdGeom.PrimvarsAPI(prim).GetPrimvar(uv_name)
@@ -371,7 +378,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                     if uvs.shape[0] == faces.shape[0]:
                         points_faces_varying = True
                     else:
-                        gs.raise_exception(f"Size of uvs mismatch for mesh {mesh_path} in usd file {path}.")
+                        gs.raise_exception(f"Size of uvs mismatch for mesh {mesh_id} in usd file {path}.")
                 uvs[:, 1] = 1.0 - uvs[:, 1]
 
             # rearrange points and faces
@@ -390,7 +397,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                             triangles.append([faces[bi + 0], faces[bi + i], faces[bi + i + 1]])
                     bi += face_vertex_count
                 triangles = np.array(triangles, dtype=np.int32)
-                gs.logger.warning(f"Mesh {usd_mesh} has non-triangle faces.")
+                gs.logger.warning(f"Mesh {mesh_usd} has non-triangle faces.")
             else:
                 triangles = faces.reshape(-1, 3)
 
@@ -398,9 +405,15 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
             points, normals = mu.apply_transform(matrix, points, normals)
 
-            mesh_infos.append(group_idx, points, triangles, normals, uvs, materials[material_id])
+            group_idx = material_id if group_by_material else i
+            mesh_info, first_created = mesh_infos.get(group_idx)
+            if first_created:
+                mesh_info.set_property(
+                    surface=material, metadata={"path": path, "name": material_id if group_by_material else mesh_id}
+                )
+            mesh_info.append(points, triangles, normals, uvs)
 
-    return mesh_infos.export_meshes(scale=scale, path=path)
+    return mesh_infos.export_meshes(scale=scale)
 
 
 def parse_instance_usd(path):
