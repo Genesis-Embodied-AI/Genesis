@@ -14,6 +14,8 @@ cs_encode = {
     "": None,
 }
 
+yup_rotation = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+
 
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
@@ -296,6 +298,8 @@ def parse_usd_material(material, zipfiles):
 def parse_mesh_usd(path, group_by_material, scale, surface):
     zipfiles = Usd.ZipFile.Open(path) if path.endswith(".usdz") else None
     stage = Usd.Stage.Open(path)
+    scale *= UsdGeom.GetStageMetersPerUnit(stage)
+    yup = UsdGeom.GetStageUpAxis(stage) == "Y"
     xform_cache = UsdGeom.XformCache()
 
     mesh_infos = mu.MeshInfoGroup()
@@ -309,6 +313,8 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
     for i, prim in enumerate(stage.Traverse()):
         if prim.IsA(UsdGeom.Mesh):
             matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
+            if yup:
+                matrix[:3, :3] @= yup_rotation
             usd_mesh = UsdGeom.Mesh(prim)
             mesh_path = prim.GetPath().pathString
 
