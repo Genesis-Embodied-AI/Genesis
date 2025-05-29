@@ -11,7 +11,7 @@ def fem_material():
         E=3.0e4,
         nu=0.45,
         rho=1000.0,
-        model="stable_neohooken",
+        model="stable_neohookean",
     )
 
 

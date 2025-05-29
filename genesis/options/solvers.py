@@ -516,6 +516,11 @@ class FEMOptions(Options):
     gravity: Optional[tuple] = None
     damping: Optional[float] = 0.0
     floor_height: float = None
+    use_explicit_solver: bool = False
+    n_newton_iterations: int = 5
+    n_pcg_iterations: int = 50
+    newton_dx_threshold: float = 1e-6
+    pcg_threshold: float = 1e-6
 
 
 class SFOptions(Options):
