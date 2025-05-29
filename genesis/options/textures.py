@@ -26,8 +26,11 @@ class Texture(Options):
     def check_dim(self, dim):
         raise NotImplementedError
 
+    def check_simplify(self):
+        raise NotImplementedError
+
     def apply_cutoff(self, cutoff):
-        pass
+        raise NotImplementedError
 
 
 class ColorTexture(Texture):
@@ -51,9 +54,12 @@ class ColorTexture(Texture):
 
     def check_dim(self, dim):
         if len(self.color) > dim:
-            self.color, res = self.color[:dim], self.color[dim:]
+            self.color, res = self.color[:dim], self.color[dim]
             return ColorTexture(color=res)
         return None
+
+    def check_simplify(self):
+        return self
 
     def apply_cutoff(self, cutoff):
         if cutoff is None:
@@ -135,6 +141,7 @@ class ImageTexture(Texture):
             if not isinstance(self.image_array, np.ndarray):
                 gs.raise_exception("`image_array` needs to be an numpy array.")
 
+        # calculate channel
         if self.image_array is None:
             self._mean_color = np.array([1.0, 1.0, 1.0], dtype=np.float16)
             self._channel = 3
@@ -142,6 +149,7 @@ class ImageTexture(Texture):
             self._mean_color = (np.mean(self.image_array, axis=(0, 1), dtype=np.float32) / 255.0).astype(np.float16)
             self._channel = self.image_array.shape[2] if self.image_array.ndim == 3 else 1
 
+        # build image color
         if self.image_color is None:
             self.image_color = (1.0,) * self._channel
         else:
@@ -159,10 +167,10 @@ class ImageTexture(Texture):
     def check_dim(self, dim):
         if self.image_array is not None:
             if self._channel > dim:
-                self.image_array, res = self.image_array[:, :, :dim], self.image_array[:, :, dim:]
+                self.image_array, res_array = self.image_array[:, :, :dim], self.image_array[:, :, dim]
                 self.image_color, res_color = self.image_color[:dim], self.image_color[dim:]
                 self._channel = dim
-                return ImageTexture(image_array=res, image_color=res_color, encoding="linear").check_simplify()
+                return ImageTexture(image_array=res_array, image_color=res_color, encoding="linear").check_simplify()
         return None
 
     def check_simplify(self):

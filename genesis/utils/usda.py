@@ -78,8 +78,8 @@ def parse_preview_surface(shader, output_name, zipfiles):
             uvname = emissive_uvname
 
         # parse mertalic
-        use_metallic = get_input_attribute_value(shader, "useSpecularWorkflow", "value")[0] == 0
-        if use_metallic:
+        use_specular = get_input_attribute_value(shader, "useSpecularWorkflow", "value")[0]
+        if not use_specular:
             metallic_texture, metallic_uvname = parse_component("metallic", "linear")
             if metallic_uvname is not None and uvname is None:
                 uvname = metallic_uvname
@@ -386,6 +386,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 points = points[faces]
                 faces = np.arange(faces.shape[0])
 
+            # triangulate faces
             if np.max(faces_vertex_counts) > 3:
                 triangles = []
                 bi = 0
@@ -401,8 +402,20 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             else:
                 triangles = faces.reshape(-1, 3)
 
-            if normals is None:
-                normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
+            # process mesh
+            processed_mesh = trimesh.Trimesh(
+                vertices=points,
+                faces=triangles,
+                vertex_normals=normals,
+                visual=trimesh.visual.TextureVisuals(uv=uvs),
+                process=True,
+            )
+            points = processed_mesh.vertices
+            triangles = processed_mesh.faces
+            normals = processed_mesh.vertex_normals
+            uvs = processed_mesh.visual.uv
+
+            # apply tranform
             points, normals = mu.apply_transform(matrix, points, normals)
 
             group_idx = material_id if group_by_material else i
