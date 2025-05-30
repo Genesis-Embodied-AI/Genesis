@@ -171,6 +171,8 @@ Genesis's development has been made possible thanks to these open-source project
 - [libccd](https://github.com/danfis/libccd): Reference for collision detection.
 - [PyRender](https://github.com/mmatl/pyrender): Rasterization-based renderer.
 - [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) and [LuisaRender](https://github.com/LuisaGroup/LuisaRender): Ray-tracing DSL.
+- [Madrona](https://github.com/shacklettbp/madrona): Madrona batch renderer
+- [Madrona-mjx](https://github.com/shacklettbp/madrona_mjx): Madrona MJX integration
 
 ## Associated Papers
 

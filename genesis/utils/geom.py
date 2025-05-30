@@ -965,34 +965,48 @@ def euler_to_R(euler_xyz):
 
 
 def z_up_to_R(z, up=np.array([0, 0, 1])):
-    z = normalize(z)
-    up = normalize(up)
-    x = np.cross(up, z)
-    if np.linalg.norm(x) == 0:
-        R = np.eye(3)
+    if isinstance(z, torch.Tensor):
+        z = normalize(z)
+        up = normalize(up)
+        x = torch.cross(up, z)
+        if torch.norm(x) == 0:
+            R = torch.eye(3, device=z.device, dtype=z.dtype)
+        else:
+            x = normalize(x)
+            y = normalize(torch.cross(z, x))
+            R = torch.stack([x, y, z], dim=1)
     else:
-        x = normalize(x)
-        y = normalize(np.cross(z, x))
-        R = np.vstack([x, y, z]).T
+        z = normalize(z)
+        up = normalize(up)
+        x = np.cross(up, z)
+        if np.linalg.norm(x) == 0:
+            R = np.eye(3)
+        else:
+            x = normalize(x)
+            y = normalize(np.cross(z, x))
+            R = np.vstack([x, y, z]).T
     return R
 
 
 def pos_lookat_up_to_T(pos, lookat, up):
-    pos = np.array(pos)
-    lookat = np.array(lookat)
-    up = np.array(up)
-    if np.all(pos == lookat):
-        z = np.array([1, 0, 0])
+    if isinstance(pos, torch.Tensor):
+        if (torch.abs(pos - lookat).max() < gs.EPS).all():
+            z = torch.tensor([1.0, 0.0, 0.0], device=pos.device, dtype=pos.dtype)
+        else:
+            z = pos - lookat
     else:
-        z = pos - lookat
+        if (np.abs(pos - lookat).max() < gs.EPS).all():
+            z = np.array([1.0, 0.0, 0.0])
+        else:
+            z = pos - lookat
     R = z_up_to_R(z, up=up)
     return trans_R_to_T(pos, R)
 
 
 def T_to_pos_lookat_up(T):
-    pos = T[:3, 3]
-    lookat = T[:3, 3] - T[:3, 2]
-    up = T[:3, 1]
+    pos = T[..., :3, 3]
+    lookat = T[..., :3, 3] - T[..., :3, 2]
+    up = T[..., :3, 1]
     return pos, lookat, up
 
 

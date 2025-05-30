@@ -1143,6 +1143,7 @@ class RigidSolver(Solver):
             vface_num=gs.ti_int,
             vface_start=gs.ti_int,
             vface_end=gs.ti_int,
+            color=gs.ti_vec4,
         )
         struct_vgeom_state = ti.types.struct(
             pos=gs.ti_vec3,
@@ -1164,6 +1165,7 @@ class RigidSolver(Solver):
                 vgeoms_vface_start=np.array([vgeom.vface_start for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vvert_end=np.array([vgeom.vvert_end for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vface_end=np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
+                vgeoms_color=np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
             )
 
     @ti.kernel
@@ -1176,6 +1178,7 @@ class RigidSolver(Solver):
         vgeoms_vface_start: ti.types.ndarray(),
         vgeoms_vvert_end: ti.types.ndarray(),
         vgeoms_vface_end: ti.types.ndarray(),
+        vgeoms_color: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.n_vgeoms):
@@ -1194,6 +1197,8 @@ class RigidSolver(Solver):
             self.vgeoms_info[i].vface_num = vgeoms_vface_end[i] - vgeoms_vface_start[i]
 
             self.vgeoms_info[i].link_idx = vgeoms_link_idx[i]
+            for j in ti.static(range(4)):
+                self.vgeoms_info[i].color[j] = vgeoms_color[i, j]
 
     def _init_entity_fields(self):
         if self._use_hibernation:
