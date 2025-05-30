@@ -174,7 +174,7 @@ class Elastic(Base):
         _lambda = lam + mu
         _alpha = 1.0 + _mu / _lambda
 
-        Ic = (F.transpose() @ F).trace()
+        Ic = F.norm_sqr()
         Jminus1 = J - _alpha
         energy = 0.5 * (_mu * (Ic - 3.0) + _lambda * Jminus1 * Jminus1)
 
