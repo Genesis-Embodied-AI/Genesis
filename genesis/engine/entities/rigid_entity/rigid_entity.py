@@ -139,7 +139,7 @@ class RigidEntity(Entity):
 
         elif isinstance(morph, gs.options.morphs.Cylinder):
             tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
-            geom_data = None
+            geom_data = np.array([morph.radius, morph.height])
             geom_type = gs.GEOM_TYPE.MESH
             link_name_prefix = "cylinder"
 

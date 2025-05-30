@@ -8,6 +8,7 @@ import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 
 from .mpr_decomp import MPR
+from .gjk_epa_decomp import GJKEPA
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
@@ -38,6 +39,8 @@ class Collider:
         self._init_verts_connectivity()
         self._init_collision_fields()
         self._mpr = MPR(rigid_solver)
+        self._gjk_epa = GJKEPA(rigid_solver)
+        self.use_gjk = self._solver._options.use_gjk_collision
 
         # multi contact perturbation and tolerance
         self._mc_perturbation = 1e-2
@@ -275,7 +278,7 @@ class Collider:
         timer.stamp("func_update_aabbs")
         self._func_broad_phase()
         timer.stamp("func_broad_phase")
-        self._func_narrow_phase()
+        self._func_narrow_phase(self.use_gjk)
         timer.stamp("func_narrow_phase")
         if self._has_terrain:
             self._func_narrow_phase_terrain()
@@ -954,7 +957,8 @@ class Collider:
                             pass
 
     @ti.kernel
-    def _func_narrow_phase(self):
+    def _func_narrow_phase(self, use_gjk: ti.int32):
+        #@TODO: remove [use_gjk] and make it a compile time constant
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
         However, parallelize over both B and collision_pairs (instead of only over B) leads to significantly slow performance for batched scene.
@@ -982,9 +986,15 @@ class Collider:
                         ):
                             self._func_box_box_contact(i_ga, i_gb, i_b)
                         else:
-                            self._func_mpr(i_ga, i_gb, i_b)
+                            if use_gjk:
+                                self._func_gjk_epa(i_ga, i_gb, i_b)
+                            else:
+                                self._func_mpr(i_ga, i_gb, i_b)
                     else:
-                        self._func_mpr(i_ga, i_gb, i_b)
+                        if use_gjk:
+                            self._func_gjk_epa(i_ga, i_gb, i_b)
+                        else:
+                            self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_nonconvex_nonterrain(self):
@@ -1138,6 +1148,7 @@ class Collider:
 
     @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
+        #print("normal: ", normal, "contact_pos:", contact_pos, "penetration:", penetration)
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
@@ -1423,6 +1434,60 @@ class Collider:
                     self._solver.geoms_state[i_ga, i_b].quat = ga_quat
                     self._solver.geoms_state[i_gb, i_b].pos = gb_pos
                     self._solver.geoms_state[i_gb, i_b].quat = gb_quat
+
+    @ti.func
+    def _func_gjk_epa(self, i_ga, i_gb, i_b):
+        '''
+        GJK-EPA algorithm for collision detection between two convex geometries.
+        '''
+        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+            i_gb, i_ga = i_ga, i_gb
+            
+        if (
+            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+        ):
+            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+        else:
+            margin = 0      # @TODO: margin for geoms?
+            
+            self._gjk_epa.func_gjk_contact(i_ga, i_gb, i_b)  
+            # print("GJK Done")
+            # print("GJK simplex 0: ", self._gjk_epa.gjk_simplex[i_b, 0])
+            # print("GJK simplex 1: ", self._gjk_epa.gjk_simplex[i_b, 1])
+            # print("GJK simplex 2: ", self._gjk_epa.gjk_simplex[i_b, 2])
+            # print("GJK simplex 3: ", self._gjk_epa.gjk_simplex[i_b, 3])
+            # print("GJK normal: ", self._gjk_epa.gjk_normal[i_b])
+            
+            self._gjk_epa.func_epa_contact(i_ga, i_gb, i_b)
+            # invert normal, so that the normal points toward [i_ga] (starting from [i_gb])
+            self._gjk_epa.epa_normal[i_b] = -self._gjk_epa.epa_normal[i_b]
+            
+            # print("EPA Done")
+            # print("EPA Depth: ", self._gjk_epa.epa_depth[i_b])
+            # print("EPA Normal: ", self._gjk_epa.epa_normal[i_b])
+            # ga_pos = self._solver.geoms_state[i_ga, i_b].pos
+            # gb_pos = self._solver.geoms_state[i_gb, i_b].pos
+            # print("ga_pos: ", ga_pos)
+            # print("gb_pos: ", gb_pos)
+            
+            depth = self._gjk_epa.epa_depth[i_b]
+            normal = self._gjk_epa.epa_normal[i_b]
+            dist = -depth
+
+            if (dist - margin) < 0.0: # and depth == depth:     @TODO: second condition?
+                self._gjk_epa.func_multiple_contacts(i_ga, i_gb, i_b)
+                count = self._gjk_epa.mc_contact_count[i_b]
+                first_point = self._gjk_epa.mc_contact_points[i_b, 0]
+                
+                # print("Multiple contacts found")
+                # print("Contact count: ", count)
+                # print("First contact point: ", first_point)
+                
+                for i in range(count):
+                    contact_pos = self._gjk_epa.mc_contact_points[i_b, i]
+                    penetration = depth
+                    self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
     def _func_rotate_frame(self, i_g, contact_pos, qrot, i_b):
