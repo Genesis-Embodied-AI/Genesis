@@ -1,54 +1,340 @@
+import hashlib
+import numbers
 import os
 import pytest
+import time
+from enum import Enum
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
+import wandb
 
 import genesis as gs
 
+from .utils import (
+    get_hardware_fingerprint,
+    get_platform_fingerprint,
+    get_git_commit_timestamp,
+    get_git_commit_info,
+)
 
-N_FRAME_FPS = 10
+
+BENCHMARK_NAME = "rigid_body"
 REPORT_FILE = "speed_test.txt"
 
+STEP_DT = 0.01
+NUM_WARMUP_FRAMES = 900
+NUM_RECORD_FRAMES = 100
 
-pytestmark = [pytest.mark.benchmarks]
+pytestmark = [
+    pytest.mark.benchmarks,
+    pytest.mark.taichi_offline_cache(False),
+]
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_txt_logging():
-    if os.path.exists(REPORT_FILE):
-        os.remove(REPORT_FILE)
+def pprint_oneline(data, delimiter, digits=None):
+    msg_items = []
+    for key, value in data.items():
+        if isinstance(value, Enum):
+            value = value.name
+        if digits is not None and isinstance(value, (numbers.Real, np.floating)):
+            value = f"{value:.{digits}f}"
+        msg_item = "=".join((key, str(value)))
+        msg_items.append(msg_item)
+    return delimiter.join(msg_items)
+
+
+def get_rigid_solver_options(**kwargs):
+    timestamp = get_git_commit_timestamp()
+
+    # Beyond this point, track performance for default options, finally !
+    # Note that "reversed" arithmetic is used to properly handle unknown timestamps (aka "nan").
+    if not (get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") <= timestamp):
+        options = {}
+
+    # Try to be comparable to previous official release (ie 0.2.1) as much as possible.
+    elif get_git_commit_timestamp("e46a1ffd33f681155422896c2e343e576e0a72b1") >= timestamp:
+        # * Rename 'constraint_resolve_time' in 'constraint_timeconst'
+        options = dict(
+            enable_mujoco_compatibility=True,
+            enable_self_collision=False,
+            constraint_timeconst=2 * STEP_DT,
+            constraint_solver=gs.constraint_solver.CG,
+            max_collision_pairs=100,
+            iterations=50,
+            tolerance=1e-5,
+        )
+    elif get_git_commit_timestamp("b1ae77d5c838967dff6f85ee83796a4a82811061") >= timestamp:
+        # * 'constraint_solver' now default to Newton (instead of CG)
+        # * 'iterations' now default to 100 (instead of 50)
+        # * 'tolerance' now default to 1e-8 (instead of 1e-5)
+        options = dict(
+            enable_mujoco_compatibility=True,
+            enable_self_collision=False,
+            constraint_resolve_time=2 * STEP_DT,
+            constraint_solver=gs.constraint_solver.CG,
+            max_collision_pairs=100,
+            iterations=50,
+            tolerance=1e-5,
+        )
+    elif get_git_commit_timestamp("6638c6389978594637da216b72be8d7a8f2272c4") >= timestamp:
+        # * 'enable_mpr_vanilla' has been renamed in 'enable_mujoco_compatibility'
+        options = dict(
+            enable_mujoco_compatibility=True,
+            constraint_resolve_time=2 * STEP_DT,
+            max_collision_pairs=100,
+        )
+    elif get_git_commit_timestamp("5d04ec4c3ecba4a1e295d6a4a677c041e69092a7") >= timestamp:
+        # * Expose option 'enable_multi_contact' (default to True)
+        # * Expose 'enable_mpr_vanilla' (default to False)
+        options = dict(
+            enable_mpr_vanilla=True,
+            enable_self_collision=False,
+            constraint_resolve_time=2 * STEP_DT,
+            max_collision_pairs=100,
+        )
+    elif get_git_commit_timestamp("6638c6389978594637da216b72be8d7a8f2272c4") >= timestamp:
+        # * 'enable_self_collision' now default to True (instead of False)
+        options = dict(
+            enable_self_collision=False,
+            constraint_resolve_time=2 * STEP_DT,
+            max_collision_pairs=100,
+        )
+    elif get_git_commit_timestamp("361d9500cd321b25a63a28ace7a3d94fb9e45f65") >= timestamp:
+        # * 'max_collision_pairs' now default to 300 (instead of 100)
+        # * 'constraint_resolve_time' now default to None (instead of 2 * DT)
+        options = dict(
+            constraint_resolve_time=2 * STEP_DT,
+            max_collision_pairs=100,
+        )
+
+    # Official release 0.2.1. Using the default options is fine
+    else:
+        options = {}
+
+    return {**options, **kwargs}
+
+
+def get_file_morph_options(**kwargs):
+    timestamp = get_git_commit_timestamp()
+
+    # Beyond this point, track performance for default options, finally !
+    if not (get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") <= timestamp):
+        options = {}
+
+    # Try to be comparable to previous official release (ie 0.2.1) as much as possible.
+    elif get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") >= timestamp:
+        # * 'decimation' has been enabled back by default
+        # * 'decimate_aggressiveness' now defaults to 5
+        options = dict(
+            decimate=False,
+            decimate_aggressiveness=7,
+            decompose_robot_error_threshold=float("inf"),
+            coacd_options=gs.options.CoacdOptions(
+                resolution=2000,
+                mcts_iterations=150,
+                extrude_margin=0.01,
+            ),
+        )
+    elif get_git_commit_timestamp("d7ea71d5490d0eba6c70a2dfe5943de62227fe68") >= timestamp:
+        # * 'decompose_error_threshold' has been split in 'decompose_object_error_threshold' (default to 0.15) and
+        #   'decompose_robot_error_threshold' (default to inf)
+        options = dict(
+            decimate=False,
+            decimate_aggressiveness=7,
+            decompose_robot_error_threshold=float("inf"),
+            coacd_options=gs.options.CoacdOptions(
+                resolution=2000,
+                mcts_iterations=150,
+                extrude_margin=0.01,
+            ),
+        )
+    elif get_git_commit_timestamp("0e7b4be511d261d6ad25a382e5aa335468f5718b") >= timestamp:
+        # * 'decimate_aggressiveness' has been exposed and default to 2
+        options = dict(
+            decimate=False,
+            decimate_aggressiveness=7,
+            decompose_error_threshold=float("inf"),
+            coacd_options=gs.options.CoacdOptions(
+                resolution=2000,
+                mcts_iterations=150,
+                extrude_margin=0.01,
+            ),
+        )
+    elif get_git_commit_timestamp("361d9500cd321b25a63a28ace7a3d94fb9e45f65") >= timestamp:
+        # * 'decimate' now defaults to 'convexify'
+        # * 'decimate' aggressiveness has been updated from 0 to 2 (but not exposed), it was 7 originally
+        options = dict(
+            decimate=False,
+            decompose_error_threshold=float("inf"),
+            coacd_options=gs.options.CoacdOptions(
+                resolution=2000,
+                mcts_iterations=150,
+                extrude_margin=0.01,
+            ),
+        )
+    elif get_git_commit_timestamp("ec6e16949a65dbc62d318a734eeb7f17b0011e03") >= timestamp:
+        # * 'decompose_error_threshold' default value updated to 0.15
+        options = dict(
+            decompose_error_threshold=float("inf"),
+            coacd_options=gs.options.CoacdOptions(
+                resolution=2000,
+                mcts_iterations=150,
+                extrude_margin=0.01,
+            ),
+        )
+    elif get_git_commit_timestamp("3bc64493a537b7f52fca6b5fd2dd81f764c34433") >= timestamp:
+        # * Move 'decimate', 'decompose_nonconvex' options from Mesh to FileMorph morphs (parent class)
+        #   Before that, decimation and convex decomposition could not be enabled at all.
+        # * 'convexify' has been enabled back by default
+        # * 'decompose_nonconvex' has be deprecated in favor of 'decompose_error_threshold' (default to 0.2)
+        # * 'CoacdOptions' options has been updated
+        options = dict(
+            decompose_error_threshold=float("inf"),
+            coacd_options=gs.options.CoacdOptions(
+                resolution=2000,
+                mcts_iterations=150,
+                extrude_margin=0.01,
+            ),
+        )
+
+    elif get_git_commit_timestamp("8ea732b1a3b340ba7dff295fbd3527cb34b5b676") >= timestamp:
+        # * 'convexify' has been disabled by default
+        # * 'decimate' has been disabled by default (it only affects Mesh morphs at that time)
+        # * 'decompose_nonconvex' has been disabled by default (it only affects Mesh morphs at that time)
+        options = dict(
+            convexify=True,
+        )
+
+    # Official release 0.2.1. Using the default options is fine
+    else:
+        options = {}
+
+    return {**options, **kwargs}
+
+
+@pytest.fixture(scope="session")
+def stream_writers(backend, printer_session):
+    log_path = Path(REPORT_FILE)
+    if os.path.exists(log_path):
+        os.remove(log_path)
+    fd = open(log_path, "w")
+
+    yield (lambda msg: print(msg, file=fd), printer_session)
+
+    fd.close()
+
+
+@pytest.fixture(scope="function")
+def factory_logger(stream_writers):
+    class Logger:
+        def __init__(self, hparams: dict[str, Any]):
+            self.hparams = hparams
+            self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(hparams, delimiter="-")))
+
+            self.logger = None
+            self.wandb_run = None
+
+        def __enter__(self):
+            nonlocal stream_writers
+
+            if "WANDB_API_KEY" in os.environ:
+                assert gs.backend is not None
+                revision, timestamp = get_git_commit_info()
+
+                hardware_fringerprint = get_hardware_fingerprint(include_gpu=(gs.backend != gs.cpu))
+                platform_fringerprint = get_platform_fingerprint()
+                machine_uuid = hashlib.md5(
+                    "-".join((hardware_fringerprint, platform_fringerprint)).encode("UTF-8")
+                ).hexdigest()
+
+                benchmark_uuid = hashlib.md5(self.benchmark_id.encode("UTF-8")).hexdigest()
+
+                run_uuid = hashlib.md5(
+                    "-".join((hardware_fringerprint, platform_fringerprint, self.benchmark_id, revision)).encode(
+                        "UTF-8"
+                    )
+                ).hexdigest()
+
+                self.wandb_run = wandb.init(
+                    project="genesis-benchmarks",
+                    name="-".join((self.benchmark_id, revision)),
+                    id=run_uuid,
+                    tags=[BENCHMARK_NAME, benchmark_uuid],
+                    config={
+                        "revision": revision,
+                        "timestamp": timestamp,
+                        "machine_uuid": machine_uuid,
+                        "hardware": hardware_fringerprint,
+                        "platform": platform_fringerprint,
+                        "backend": str(gs.backend.name),
+                        "benchmark_id": self.benchmark_id,
+                        **self.hparams,
+                    },
+                )
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            if self.wandb_run is not None:
+                self.wandb_run.finish()
+
+        def write(self, items):
+            nonlocal stream_writers
+
+            if self.wandb_run is not None:
+                self.wandb_run.log(
+                    {
+                        "timestamp": self.wandb_run.config["timestamp"],
+                        **items,
+                    }
+                )
+
+            if stream_writers:
+                msg = (
+                    pprint_oneline(self.hparams, delimiter=" \t| ")
+                    + " \t| "
+                    + pprint_oneline(items, delimiter=" \t| ", digits=0)
+                )
+                for writer in stream_writers:
+                    writer(msg)
+
+    return Logger
 
 
 @pytest.fixture
-def anymal_c(solver, n_envs, show_viewer):
+def anymal_c(solver, n_envs):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                constraint_solver=solver,
+                enable_self_collision=False,
+            )
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            constraint_solver=solver,
-        ),
-        show_viewer=show_viewer,
+        show_viewer=False,
+        show_FPS=False,
     )
 
-    ########################## entities ##########################
-    scene.add_entity(
-        gs.morphs.Plane(),
-    )
+    scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(
         gs.morphs.URDF(
-            file="urdf/anymal_c/urdf/anymal_c.urdf",
-            pos=(0, 0, 0.8),
+            **get_file_morph_options(
+                file="urdf/anymal_c/urdf/anymal_c.urdf",
+                pos=(0, 0, 0.8),
+            )
         ),
     )
-    ########################## build ##########################
+    time_start = time.time()
     scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
 
-    ######################## simulate #########################
     joints_name = (
         "RH_HAA",
         "LH_HAA",
@@ -63,180 +349,184 @@ def anymal_c(solver, n_envs, show_viewer):
         "RF_KFE",
         "LF_KFE",
     )
-    motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
-
+    motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
     robot.set_dofs_kp(np.full(12, 1000), motors_dof_idx)
     if n_envs > 0:
         robot.control_dofs_position(np.zeros((n_envs, 12)), motors_dof_idx)
     else:
         robot.control_dofs_position(np.zeros(12), motors_dof_idx)
 
-    vec_fps = []
-    for i in range(1000):
+    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
+        if i == NUM_WARMUP_FRAMES:
+            time_start = time.time()
         scene.step()
-        vec_fps.append(scene.FPS_tracker.total_fps)
-    total_fps = 1.0 / (1.0 / np.array(vec_fps[-N_FRAME_FPS:])).mean()
-    return total_fps
+    run_time = time.time() - time_start
+    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
 @pytest.fixture
-def batched_franka(solver, n_envs, show_viewer):
+def batched_franka(solver, n_envs):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                constraint_solver=solver,
+                enable_self_collision=False,
+            )
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            constraint_solver=solver,
-            # FIXME: Must disable self collision to avoid CUDA OOM error
-            enable_self_collision=False,
-        ),
-        show_viewer=show_viewer,
+        show_viewer=False,
+        show_FPS=True,
     )
 
-    ########################## entities ##########################
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        gs.morphs.MJCF(
+            **get_file_morph_options(
+                file="xml/franka_emika_panda/panda.xml",
+            )
+        ),
         visualize_contact=True,
     )
-
-    ########################## build ##########################
+    time_start = time.time()
     scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
+    compile_time = time.time() - time_start
 
-    ######################## simulate #########################
-    vec_fps = []
-    for i in range(1000):
+    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
+        if i == NUM_WARMUP_FRAMES:
+            time_start = time.time()
         scene.step()
-        vec_fps.append(scene.FPS_tracker.total_fps)
-    total_fps = 1.0 / (1.0 / np.array(vec_fps[-N_FRAME_FPS:])).mean()
-    return total_fps
+    run_time = time.time() - time_start
+    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
 @pytest.fixture
-def random(solver, n_envs, show_viewer):
+def random(solver, n_envs):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                constraint_solver=solver,
+                enable_self_collision=False,
+            )
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            constraint_solver=solver,
-        ),
-        show_viewer=show_viewer,
+        show_viewer=False,
+        show_FPS=False,
     )
 
-    ########################## entities ##########################
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-
+    scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(
         gs.morphs.URDF(
-            file="urdf/anymal_c/urdf/anymal_c.urdf",
-            pos=(0, 0, 0.8),
+            **get_file_morph_options(
+                file="urdf/anymal_c/urdf/anymal_c.urdf",
+                pos=(0, 0, 0.8),
+            )
         ),
         visualize_contact=True,
     )
-
-    ########################## build ##########################
+    time_start = time.time()
     scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
+    compile_time = time.time() - time_start
 
-    ######################## simulate #########################
-    vec_fps = []
-    robot.set_dofs_kp(np.full(12, 1000), np.arange(6, 18))
+    robot.set_dofs_kp(np.full((12,), fill_value=1000.0), np.arange(6, 18))
     dofs = torch.arange(6, 18, device=gs.device)
     robot.control_dofs_position(torch.zeros((n_envs, 12), device=gs.device), dofs)
-    for i in range(1000):
+
+    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
+        if i == NUM_WARMUP_FRAMES:
+            time_start = time.time()
         robot.control_dofs_position(torch.rand((n_envs, 12), device=gs.device) * 0.1 - 0.05, dofs)
         scene.step()
-        vec_fps.append(scene.FPS_tracker.total_fps)
-    total_fps = 1.0 / (1.0 / np.array(vec_fps[-N_FRAME_FPS:])).mean()
-    return total_fps
+    run_time = time.time() - time_start
+    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
 @pytest.fixture
-def cubes(solver, n_envs, n_cubes, is_island, show_viewer):
+def cubes(solver, n_envs, n_cubes, enable_island):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                constraint_solver=solver,
+                use_contact_island=enable_island,
+            )
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            constraint_solver=solver,
-            use_contact_island=is_island,
-        ),
-        show_viewer=show_viewer,
+        show_viewer=False,
+        show_FPS=False,
     )
 
-    ########################## entities ##########################
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    # cube = scene.add_entity(
-    #     gs.morphs.MJCF(file='xml/one_box.xml'),
-    #     visualize_contact=True,
-    # )
-
+    scene.add_entity(gs.morphs.Plane())
     for i in range(n_cubes):
-        cube = scene.add_entity(
+        scene.add_entity(
             gs.morphs.Box(
                 size=(0.1, 0.1, 0.1),
                 pos=(0.0, 0.2 * i, 0.045),
             ),
         )
-
-    ########################## build ##########################
+    time_start = time.time()
     scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
 
-    ######################## simulate #########################
-    vec_fps = []
-    for i in range(1000):
+    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
+        if i == NUM_WARMUP_FRAMES:
+            time_start = time.time()
         scene.step()
-        vec_fps.append(scene.FPS_tracker.total_fps)
-    total_fps = 1.0 / (1.0 / np.array(vec_fps[-N_FRAME_FPS:])).mean()
-    return total_fps
+    run_time = time.time() - time_start
+    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.mark.parametrize(
-    "runnable",
-    ["random", "anymal_c", "batched_franka"],
-)
-@pytest.mark.parametrize(
-    "solver",
-    [gs.constraint_solver.CG, gs.constraint_solver.Newton],
-)
+@pytest.mark.parametrize("runnable", ["random", "anymal_c", "batched_franka"])
+@pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_envs", [30000])
-def test_speed(capsys, request, pytestconfig, runnable, solver, n_envs):
-    total_fps = request.getfixturevalue(runnable)
-    msg = f"{runnable} \t| {solver} \t| {total_fps:,.2f} fps \t| {n_envs} envs\n"
-    if pytestconfig.getoption("-v"):
-        with capsys.disabled():
-            print(f"\n{msg}")
-    with open(REPORT_FILE, "a") as file:
-        file.write(msg)
+def test_speed(factory_logger, request, runnable, solver, n_envs):
+    with factory_logger(
+        {
+            "env": runnable,
+            "batch_size": n_envs,
+            "constraint_solver": solver,
+            "use_contact_island": False,
+        }
+    ) as logger:
+        logger.write(request.getfixturevalue(runnable))
 
 
-@pytest.mark.parametrize(
-    "solver",
-    [gs.constraint_solver.CG, gs.constraint_solver.Newton],
-)
+@pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_cubes", [1, 10])
-@pytest.mark.parametrize("is_island", [False, True])
+@pytest.mark.parametrize("enable_island", [False, True])
 @pytest.mark.parametrize("n_envs", [8192])
-def test_cubes(capsys, request, pytestconfig, solver, n_cubes, is_island, n_envs):
-    total_fps = request.getfixturevalue("cubes")
-    msg = f"{is_island} island \t| {n_cubes} cubes \t| {solver} \t| {total_fps:,.2f} fps \t| {n_envs} envs\n"
-    if pytestconfig.getoption("-v"):
-        with capsys.disabled():
-            print(f"\n{msg}")
-    with open(REPORT_FILE, "a") as file:
-        file.write(msg)
+def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs):
+    with factory_logger(
+        {
+            "env": f"cube#{n_cubes}",
+            "batch_size": n_envs,
+            "constraint_solver": solver,
+            "use_contact_island": enable_island,
+        }
+    ) as logger:
+        logger.write(request.getfixturevalue("cubes"))

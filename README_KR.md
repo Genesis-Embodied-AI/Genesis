@@ -97,6 +97,7 @@ xhost +local:root # 컨테이너가 디스플레이에 접근할 수 있도록 �
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
+-v /dev/dri:/dev/dri \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
 -v $PWD:/workspace \
 genesis

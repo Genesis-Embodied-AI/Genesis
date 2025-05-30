@@ -417,11 +417,11 @@ class FileMorph(Morph):
 
         if self.decompose_nonconvex is not None:
             if self.decompose_nonconvex:
+                # Convex decomposition is automatically disabled if convexify itself is already disabled.
                 self.convexify = True
                 self.decompose_object_error_threshold = 0.0
                 self.decompose_robot_error_threshold = 0.0
             else:
-                self.convexify = False
                 self.decompose_object_error_threshold = float("inf")
                 self.decompose_robot_error_threshold = float("inf")
             gs.logger.warning(

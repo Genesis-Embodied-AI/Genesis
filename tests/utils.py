@@ -1,23 +1,161 @@
+import platform
 import os
+import subprocess
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from functools import cache
 from itertools import chain
 from typing import Literal, Sequence
 
+import cpuinfo
 import numpy as np
-
 import mujoco
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
-from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
+
+
+REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
+DEFAULT_BRANCH_NAME = "main"
+
+# Get repository "root" path (actually test dir is good enough)
+TEST_DIR = os.path.dirname(__file__)
 
 
 @dataclass
 class MjSim:
     model: mujoco.MjModel
     data: mujoco.MjData
+
+
+@cache
+def get_hardware_fingerprint(include_gpu=True):
+    # CPU info
+    cpu_info = cpuinfo.get_cpu_info()
+    infos = [
+        cpu_info.get("brand_raw", cpu_info.get("hardware_raw")),
+        cpu_info.get("arch"),
+    ]
+
+    # GPU info
+    if include_gpu and torch.cuda.is_available():
+        device_index = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(device_index)
+        infos += [
+            props.name,
+            ".".join(map(str, (props.major, props.minor))),
+            props.total_memory,
+            props.multi_processor_count,  # Number of "streaming multiprocessors"
+        ]
+
+    return "-".join(map(str, filter(None, infos)))
+
+
+@cache
+def get_platform_fingerprint():
+    # OS distribution info
+    system = platform.system()
+    dist_name = None
+    if system == "Linux":
+        try:
+            dist_info = platform.freedesktop_os_release()
+            dist_name = dist_info["ID"]
+            dist_ver = dist_info["VERSION_ID"]
+        except FileNotFoundError:
+            pass
+    elif system == "Darwin":
+        dist_name = "MacOS"
+        dist_ver, *_ = platform.mac_ver()
+    if dist_name is None:
+        dist_name = system
+        dist_ver, *_ = platform.release().split(".", 1)  # Only extract major version.
+
+    infos = [
+        dist_name,
+        dist_ver,  # Only extract major version.
+    ]
+
+    # Python info
+    py_major, py_minor, py_patchlevel = platform.python_version_tuple()
+    infos += [
+        ".".join((py_major, py_minor)),  # Ignore patch-level version
+    ]
+
+    return "-".join(map(str, filter(None, infos)))
+
+
+@cache
+def get_git_commit_timestamp(ref="HEAD"):
+    try:
+        contrib_date = subprocess.check_output(
+            ["git", "show", "-s", "--quiet", "--format=%ci", ref], cwd=TEST_DIR, encoding="utf-8"
+        ).strip()
+    except subprocess.CalledProcessError:
+        # Commit not found, either because it does not exist or becaused fo shallow git clone
+        return float("nan")
+
+    try:
+        date = datetime.fromisoformat(contrib_date)
+    except ValueError:
+        date = datetime.strptime(contrib_date, "%Y-%m-%d %H:%M:%S %z")
+    timestamp = date.timestamp()
+
+    return timestamp
+
+
+@cache
+def get_git_commit_info(ref="HEAD"):
+    # Fetch current commit revision
+    try:
+        revision = subprocess.check_output(["git", "rev-parse", ref], cwd=TEST_DIR, encoding="utf-8").strip()
+    except subprocess.CalledProcessError:
+        revision = f"{uuid.uuid4().hex}@UNKNOWN"
+        timestamp = float("nan")
+        return revision, timestamp
+
+    # Fetch all remote branches containing the current commit
+    try:
+        branches = subprocess.check_output(
+            ["git", "branch", "--remote", "--contains", ref], cwd=TEST_DIR, encoding="utf-8"
+        ).splitlines()
+    except subprocess.CalledProcessError:
+        # Raise error if not found neither locally nor remotely
+        branches = ()
+
+    # Check if the current commit is contained by main branch
+    remote_handle = "UNKNOWN"
+    for branch in branches:
+        try:
+            remote_name, branch_name = branch.strip().split("/", 1)
+        except ValueError:
+            continue
+        if branch_name != DEFAULT_BRANCH_NAME:
+            continue
+        remote_url = subprocess.check_output(
+            ["git", "remote", "get-url", remote_name], cwd=TEST_DIR, encoding="utf-8"
+        ).strip()
+        if remote_url.startswith("https://github.com/"):
+            remote_handle = remote_url[19:-4]
+        elif remote_url.startswith("git@github.com:"):
+            remote_handle = remote_url[15:-4]
+        if remote_handle == REPOSITY_URL:
+            is_commit_on_default_branch = True
+            break
+    else:
+        is_commit_on_default_branch = False
+
+    # Return the contribution date as timestamp if and only if the HEAD commit is contained on main branch
+    if is_commit_on_default_branch:
+        timestamp = get_git_commit_timestamp(ref)
+        return revision, timestamp
+
+    revision = f"{revision}@{remote_handle}"
+    timestamp = float("nan")
+    return revision, timestamp
 
 
 def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
@@ -331,6 +469,9 @@ def check_mujoco_model_consistency(
     *,
     tol: float,
 ):
+    # Delay import to enable run benchmarks for old Genesis versions that do not have this method
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
+
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
     (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx) = gs_maps

@@ -593,12 +593,12 @@ def trans_quat_to_T(trans, quat):
         T = np.eye(4, dtype=np.result_type(trans, quat))
         if trans.ndim == 1:
             T[:3, 3] = trans
-            T[:3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
+            T[:3, :3] = quat_to_R(quat)
         elif trans.ndim == 2:
             assert quat.ndim == 2
             T = np.tile(T, [trans.shape[0], 1, 1])
             T[:, :3, 3] = trans
-            T[:, :3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
+            T[:, :3, :3] = quat_to_R(quat)
         else:
             gs.raise_exception(f"ndim expected to be 1 or 2, but got {trans.ndim=}")
         return T

@@ -1,4 +1,5 @@
 import gc
+import os
 import sys
 from enum import Enum
 
@@ -7,6 +8,17 @@ import pyglet
 import numpy as np
 import pytest
 from _pytest.mark import Expression, MarkMatcher
+
+# Mock tkinter module for backward compatibility because old Genesis versions require it
+try:
+    import tkinter
+except ImportError:
+    tkinter = type(sys)("tkinter")
+    tkinter.Tk = type(sys)("Tk")
+    tkinter.filedialog = type(sys)("filedialog")
+    sys.modules["tkinter"] = tkinter
+    sys.modules["tkinter.Tk"] = tkinter.Tk
+    sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
 import genesis as gs
 
@@ -94,27 +106,6 @@ def tol():
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
-@pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend):
-    logging_level = request.config.getoption("--log-cli-level")
-    if backend == gs.cpu:
-        precision = "64"
-        debug = True
-    else:
-        precision = "32"
-        debug = False
-    try:
-        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
-        if backend != gs.cpu and gs.backend == gs.cpu:
-            gs.destroy()
-            pytest.skip("No GPU available on this machine")
-        yield
-    finally:
-        pyglet.app.exit()
-        gs.destroy()
-        gc.collect()
-
-
 @pytest.fixture
 def mujoco_compatibility(request):
     mujoco_compatibility = None
@@ -165,6 +156,42 @@ def dof_damping(request):
     if dof_damping is None:
         dof_damping = False
     return dof_damping
+
+
+@pytest.fixture
+def taichi_offline_cache(request):
+    taichi_offline_cache = None
+    for mark in request.node.iter_markers("taichi_offline_cache"):
+        if mark.args:
+            if taichi_offline_cache is not None:
+                pytest.fail("'taichi_offline_cache' can only be specified once.")
+            (taichi_offline_cache,) = mark.args
+    if taichi_offline_cache is None:
+        taichi_offline_cache = True
+    return taichi_offline_cache
+
+
+@pytest.fixture(scope="function", autouse=True)
+def initialize_genesis(request, backend, taichi_offline_cache):
+    logging_level = request.config.getoption("--log-cli-level")
+    if backend == gs.cpu:
+        precision = "64"
+        debug = True
+    else:
+        precision = "32"
+        debug = False
+    try:
+        if not taichi_offline_cache:
+            os.environ["TI_OFFLINE_CACHE"] = "0"
+        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        if backend != gs.cpu and gs.backend == gs.cpu:
+            gs.destroy()
+            pytest.skip("No GPU available on this machine")
+        yield
+    finally:
+        pyglet.app.exit()
+        gs.destroy()
+        gc.collect()
 
 
 @pytest.fixture
