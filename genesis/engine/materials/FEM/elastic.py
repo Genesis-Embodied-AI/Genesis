@@ -81,7 +81,7 @@ class Elastic(Base):
         return stress
 
     @ti.func
-    def compute_energy_gradient_hessian_linear(self, mu, lam, J, F, actu, m_dir):
+    def compute_energy_gradient_hessian_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         """
         Compute the energy, gradient, and Hessian for linear elasticity.
 
@@ -99,6 +99,8 @@ class Elastic(Base):
             The activation matrix (not used in linear elasticity).
         m_dir: ti.Matrix
             The material direction (not used in linear elasticity).
+        hessian_field: ti.Matrix
+            The Hessian of the energy with respect to the deformation gradient F.
 
         Returns
         -------
@@ -106,8 +108,6 @@ class Elastic(Base):
             The computed energy.
         gradient: ti.Matrix
             The gradient of the energy with respect to the deformation gradient F.
-        H: ti.Matrix
-            The Hessian of the energy with respect to the deformation gradient F.
 
         Notes
         -------
@@ -123,18 +123,33 @@ class Elastic(Base):
 
         gradient = 2.0 * mu * eps + lam * trEps * I
 
-        H = mu * ti.Matrix.identity(dt=gs.ti_float, n=9)
-        H[0, 0] += mu + lam
-        H[4, 4] += mu + lam
-        H[8, 8] += mu + lam
+        # Zero out the matrix
+        for i in ti.static(range(3)):
+            for j in ti.static(range(3)):
+                for k in ti.static(range(3)):
+                    for l in ti.static(range(3)):
+                        hessian_field[i_e, i_b, i, j][k, l] = 0.0
 
-        H[1, 3] = H[3, 1] = mu
-        H[2, 6] = H[6, 2] = mu
-        H[5, 7] = H[7, 5] = mu
+        # Identity part
+        for i in ti.static(range(3)):
+            for k in ti.static(range(3)):
+                hessian_field[i_e, i_b, i, i][k, k] = mu
 
-        H[0, 4] = H[0, 8] = H[4, 8] = lam
-        H[4, 0] = H[8, 0] = H[8, 4] = lam
-        return energy, gradient, H
+        # Diagonal terms
+        hessian_field[i_e, i_b, 0, 0][0, 0] += mu + lam
+        hessian_field[i_e, i_b, 1, 1][1, 1] += mu + lam
+        hessian_field[i_e, i_b, 2, 2][2, 2] += mu + lam
+
+        # Off-diagonal terms
+        hessian_field[i_e, i_b, 0, 1][1, 0] = hessian_field[i_e, i_b, 1, 0][0, 1] = mu
+        hessian_field[i_e, i_b, 0, 2][2, 0] = hessian_field[i_e, i_b, 2, 0][0, 2] = mu
+        hessian_field[i_e, i_b, 1, 2][2, 1] = hessian_field[i_e, i_b, 2, 1][1, 2] = mu
+
+        # Pressure coupling terms
+        hessian_field[i_e, i_b, 0, 1][0, 1] = hessian_field[i_e, i_b, 0, 2][0, 2] = lam
+        hessian_field[i_e, i_b, 1, 0][1, 0] = hessian_field[i_e, i_b, 2, 0][2, 0] = lam
+        hessian_field[i_e, i_b, 1, 2][1, 2] = hessian_field[i_e, i_b, 2, 1][2, 1] = lam
+        return energy, gradient
 
     @ti.func
     def compute_energy_linear(self, mu, lam, J, F, actu, m_dir):
@@ -176,7 +191,7 @@ class Elastic(Base):
         return energy
 
     @ti.func
-    def compute_energy_gradient_hessian_stable_neohookean(self, mu, lam, J, F, actu, m_dir):
+    def compute_energy_gradient_hessian_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         """
         Compute the energy, gradient, and Hessian for the stable Neo-Hookean model.
 
@@ -194,6 +209,8 @@ class Elastic(Base):
             The activation matrix (not used in stable Neo-Hookean).
         m_dir: ti.Matrix
             The material direction (not used in stable Neo-Hookean).
+        hessian_field: ti.Matrix
+            The Hessian of the energy with respect to the deformation gradient F.
 
         Returns
         -------
@@ -212,16 +229,15 @@ class Elastic(Base):
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
         """
-        _mu = mu
         _lambda = lam + mu
-        _alpha = 1.0 + _mu / _lambda
+        _alpha = 1.0 + mu / _lambda
 
         Ic = F.norm_sqr()
         Jminus1 = J - _alpha
-        energy = 0.5 * (_mu * (Ic - 3.0) + _lambda * Jminus1 * Jminus1)
+        energy = 0.5 * (mu * (Ic - 3.0) + _lambda * Jminus1**2)
 
         pJpF = partialJpartialF(F)
-        gradient = _mu * F + _lambda * Jminus1 * pJpF
+        gradient = mu * F + _lambda * Jminus1 * pJpF
 
         raise NotImplementedError("Hessian computation is not implemented for stable_neohookean model.")
         return energy, gradient

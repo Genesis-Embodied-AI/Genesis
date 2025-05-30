@@ -89,7 +89,6 @@ class FEMSolver(Solver):
         element_state_el_energy = ti.types.struct(
             energy=gs.ti_float,  # energy for the element
             gradient=gs.ti_mat3,  # gradient for the element
-            hessian=ti.types.matrix(9, 9, gs.ti_float),  # hessian for the element
         )
 
         element_state_v_energy = ti.types.struct(
@@ -141,6 +140,8 @@ class FEMSolver(Solver):
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
+
+        self.elements_el_hessian = ti.field(shape=(self.n_elements, self._B, 3, 3), dtype=gs.ti_mat3)
 
         self.elements_v_energy = element_state_v_energy.field(
             shape=self._batch_shape((self.n_vertices)),
@@ -362,7 +363,6 @@ class FEMSolver(Solver):
                     (
                         self.elements_el_energy[i_e, i_b].energy,
                         self.elements_el_energy[i_e, i_b].gradient,
-                        self.elements_el_energy[i_e, i_b].hessian,
                     ) = self._mats_compute_energy_gradient_hessian[mat_idx](
                         mu=self.elements_i[i_e].mu,
                         lam=self.elements_i[i_e].lam,
@@ -370,10 +370,16 @@ class FEMSolver(Solver):
                         F=F,
                         actu=self.elements_el[f, i_e, i_b].actu,
                         m_dir=self.elements_i[i_e].muscle_direction,
+                        i_e=i_e,
+                        i_b=i_b,
+                        hessian_field=self.elements_el_hessian,
                     )
             # print(
-            #     f"i_e: {i_e}, energy: {self.elements_el_energy[i_e, i_b].energy}, gradient: {self.elements_el_energy[i_e, i_b].gradient}, hessian: {self.elements_el_energy[i_e, i_b].hessian}"
+            #     f"i_e: {i_e}, energy: {self.elements_el_energy[i_e, i_b].energy}, gradient: {self.elements_el_energy[i_e, i_b].gradient}"
             # )
+            # for i in ti.static(range(3)):
+            #     for j in ti.static(range(3)):
+            #         print(f"hessian_field: {self.elements_el_hessian[i_e, i_b, i, j]}")
 
     @ti.func
     def compute_ele_energy(self, f: ti.i32, i_b):
@@ -435,28 +441,16 @@ class FEMSolver(Solver):
             for i in ti.static(range(3)):
                 for j in ti.static(range(3)):
                     self.pcg_state[ia, i_b].prec += (
-                        V_scaled
-                        * S[0, i]
-                        * S[0, j]
-                        * self.elements_el_energy[i_e, i_b].hessian[i * 3 : i * 3 + 3, j * 3 : j * 3 + 3]
+                        V_scaled * S[0, i] * S[0, j] * self.elements_el_hessian[i_e, i_b, i, j]
                     )
                     self.pcg_state[ib, i_b].prec += (
-                        V_scaled
-                        * S[1, i]
-                        * S[1, j]
-                        * self.elements_el_energy[i_e, i_b].hessian[i * 3 : i * 3 + 3, j * 3 : j * 3 + 3]
+                        V_scaled * S[1, i] * S[1, j] * self.elements_el_hessian[i_e, i_b, i, j]
                     )
                     self.pcg_state[ic, i_b].prec += (
-                        V_scaled
-                        * S[2, i]
-                        * S[2, j]
-                        * self.elements_el_energy[i_e, i_b].hessian[i * 3 : i * 3 + 3, j * 3 : j * 3 + 3]
+                        V_scaled * S[2, i] * S[2, j] * self.elements_el_hessian[i_e, i_b, i, j]
                     )
                     self.pcg_state[id, i_b].prec += (
-                        V_scaled
-                        * S[3, i]
-                        * S[3, j]
-                        * self.elements_el_energy[i_e, i_b].hessian[i * 3 : i * 3 + 3, j * 3 : j * 3 + 3]
+                        V_scaled * S[3, i] * S[3, j] * self.elements_el_hessian[i_e, i_b, i, j]
                     )
 
         # inverse
@@ -505,13 +499,34 @@ class FEMSolver(Solver):
                 + s[2] * self.pcg_state[id, i_b].p
             )
             # print(p9)
-            p9 = self.elements_el_energy[i_e, i_b].hessian @ p9
-            # print(p9)
+            new_p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
+            new_p9[0:3] = (
+                self.elements_el_hessian[i_e, i_b, 0, 0] @ p9[0:3]
+                + self.elements_el_hessian[i_e, i_b, 0, 1] @ p9[3:6]
+                + self.elements_el_hessian[i_e, i_b, 0, 2] @ p9[6:9]
+            )
+            new_p9[3:6] = (
+                self.elements_el_hessian[i_e, i_b, 1, 0] @ p9[0:3]
+                + self.elements_el_hessian[i_e, i_b, 1, 1] @ p9[3:6]
+                + self.elements_el_hessian[i_e, i_b, 1, 2] @ p9[6:9]
+            )
+            new_p9[6:9] = (
+                self.elements_el_hessian[i_e, i_b, 2, 0] @ p9[0:3]
+                + self.elements_el_hessian[i_e, i_b, 2, 1] @ p9[3:6]
+                + self.elements_el_hessian[i_e, i_b, 2, 2] @ p9[6:9]
+            )
+            # print(new_p9)
             # atomic
-            self.pcg_state[ia, i_b].Ap += (B[0, 0] * p9[0:3] + B[0, 1] * p9[3:6] + B[0, 2] * p9[6:9]) * V_scaled
-            self.pcg_state[ib, i_b].Ap += (B[1, 0] * p9[0:3] + B[1, 1] * p9[3:6] + B[1, 2] * p9[6:9]) * V_scaled
-            self.pcg_state[ic, i_b].Ap += (B[2, 0] * p9[0:3] + B[2, 1] * p9[3:6] + B[2, 2] * p9[6:9]) * V_scaled
-            self.pcg_state[id, i_b].Ap += (s[0] * p9[0:3] + s[1] * p9[3:6] + s[2] * p9[6:9]) * V_scaled
+            self.pcg_state[ia, i_b].Ap += (
+                B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]
+            ) * V_scaled
+            self.pcg_state[ib, i_b].Ap += (
+                B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]
+            ) * V_scaled
+            self.pcg_state[ic, i_b].Ap += (
+                B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]
+            ) * V_scaled
+            self.pcg_state[id, i_b].Ap += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_scaled
 
             # print(V_scaled, B, self.elements_el_energy[i_e, i_b].hessian)
 

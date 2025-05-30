@@ -49,7 +49,7 @@ class Base(Material):
         raise NotImplementedError
 
     @ti.func
-    def compute_energy_gradient_hessian(self, mu, lam, J, F, actu, m_dir):
+    def compute_energy_gradient_hessian(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         raise NotImplementedError
 
     @ti.func
