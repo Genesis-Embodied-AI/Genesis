@@ -261,16 +261,15 @@ def parse_urdf(morph, surface):
         else:
             gs.raise_exception(f"Unsupported URDF joint type: {joint.joint_type}")
 
-        # TODO: parse these
-        j_info["dofs_invweight"] = gu.default_dofs_invweight(j_info["n_dofs"])
+        j_info["dofs_invweight"] = np.zeros(j_info["n_dofs"])
         j_info["sol_params"] = gu.default_solver_params()
         j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
         j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
-        j_info["dofs_force_range"] = gu.default_dofs_force_range(j_info["n_dofs"])
+        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
 
         if joint.joint_type in ("floating", "fixed"):
-            j_info["dofs_damping"] = gu.free_dofs_damping(j_info["n_dofs"])
-            j_info["dofs_armature"] = gu.free_dofs_armature(j_info["n_dofs"])
+            j_info["dofs_damping"] = np.zeros(j_info["n_dofs"])
+            j_info["dofs_armature"] = np.zeros(j_info["n_dofs"])
         else:
             j_info["dofs_damping"] = gu.default_dofs_damping(j_info["n_dofs"])
             j_info["dofs_armature"] = gu.default_dofs_armature(j_info["n_dofs"])
@@ -281,11 +280,8 @@ def parse_urdf(morph, surface):
             if joint.safety_controller.k_velocity is not None:
                 j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
 
-        if joint.limit is not None:
-            if joint.limit.effort is not None:
-                j_info["dofs_force_range"] = (
-                    j_info["dofs_force_range"] / np.abs(j_info["dofs_force_range"]) * joint.limit.effort
-                )
+        if joint.limit is not None and joint.limit.effort is not None:
+            j_info["dofs_force_range"] = np.tile([-joint.limit.effort, joint.limit.effort], (6, 1))
 
     # Apply scaling factor
     for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):

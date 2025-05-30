@@ -145,30 +145,36 @@ def parse_link(mj, i_l, scale):
         j_info = dict()
 
         # Parsing joint type
-        if i_j == -1:
+        mj_type = mj.jnt_type[i_j] if i_j != -1 else None
+        if mj_type is None:
             gs_type = gs.JOINT_TYPE.FIXED
             n_qs, n_dofs = 0, 0
+        elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
+            gs_type = gs.JOINT_TYPE.FREE
+            n_qs, n_dofs = 7, 6
+        elif mj_type == mujoco.mjtJoint.mjJNT_HINGE:
+            gs_type = gs.JOINT_TYPE.REVOLUTE
+            n_qs, n_dofs = 1, 1
+        elif mj_type == mujoco.mjtJoint.mjJNT_SLIDE:
+            gs_type = gs.JOINT_TYPE.PRISMATIC
+            n_qs, n_dofs = 1, 1
+        elif mj_type == mujoco.mjtJoint.mjJNT_BALL:
+            gs_type = gs.JOINT_TYPE.SPHERICAL
+            n_qs, n_dofs = 4, 3
         else:
-            mj_type = mj.jnt_type[i_j]
-            if mj_type == mujoco.mjtJoint.mjJNT_HINGE:
-                gs_type = gs.JOINT_TYPE.REVOLUTE
-                n_qs, n_dofs = 1, 1
-            elif mj_type == mujoco.mjtJoint.mjJNT_SLIDE:
-                gs_type = gs.JOINT_TYPE.PRISMATIC
-                n_qs, n_dofs = 1, 1
-            elif mj_type == mujoco.mjtJoint.mjJNT_BALL:
-                gs_type = gs.JOINT_TYPE.SPHERICAL
-                n_qs, n_dofs = 4, 3
-            elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
-                gs_type = gs.JOINT_TYPE.FREE
-                n_qs, n_dofs = 7, 6
-            else:
-                gs.raise_exception(f"Unsupported MJCF joint type: {mj_type}")
+            gs.raise_exception(f"Unsupported MJCF joint type: {mj_type}")
         j_info["type"], j_info["n_qs"], j_info["n_dofs"] = gs_type, n_qs, n_dofs
 
         # Parsing joint parameters that are type-agnostic
         mj_dof_offset = mj.jnt_dofadr[i_j] if i_j != -1 else 0
         mj_qpos_offset = mj.jnt_qposadr[i_j] if i_j != -1 else 0
+        if i_j == -1:
+            j_info["name"] = l_info["name"]
+            j_info["pos"] = np.array([0.0, 0.0, 0.0])
+        else:
+            name_start = mj.name_jntadr[i_j]
+            j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+            j_info["pos"] = mj.jnt_pos[i_j]
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
         j_info["init_qpos"] = np.array(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + n_qs)])
         j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
@@ -183,53 +189,48 @@ def parse_link(mj, i_l, scale):
             gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
 
         # Parsing joint parameters that are type-specific
-        if i_j == -1:
+        mj_stiffness = mj.jnt_stiffness[i_j] if i_j != -1 else 0.0
+        mj_is_limited = mj.jnt_limited[i_j] == 1 if i_j != -1 else False
+        if gs_type == gs.JOINT_TYPE.FIXED:
             j_info["dofs_motion_ang"] = np.zeros((0, 3))
             j_info["dofs_motion_vel"] = np.zeros((0, 3))
             j_info["dofs_limit"] = np.zeros((0, 2))
             j_info["dofs_stiffness"] = np.zeros((0))
+        elif gs_type == gs.JOINT_TYPE.FREE:
+            if mj_stiffness > 0.0:
+                raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
 
-            j_info["name"] = l_info["name"]
-            j_info["pos"] = np.array([0.0, 0.0, 0.0])
+            j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
+            j_info["dofs_motion_vel"] = np.eye(6, 3)
+            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
+            j_info["dofs_stiffness"] = np.zeros(6)
+
+            j_info["init_qpos"][:3] *= scale
+        elif gs_type == gs.JOINT_TYPE.SPHERICAL:
+            if mj_is_limited:
+                gs.logger.warning("(MJCF) Joint limit ignored for ball joints")
+
+            j_info["dofs_motion_ang"] = np.eye(3)
+            j_info["dofs_motion_vel"] = np.zeros((3, 3))
+            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
+            j_info["dofs_stiffness"] = np.full((3,), mj_stiffness)
         else:
-            name_start = mj.name_jntadr[i_j]
-            j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
-            j_info["pos"] = mj.jnt_pos[i_j]
-
-            mj_stiffness = mj.jnt_stiffness[i_j]
-            mj_limit = mj.jnt_range[i_j] if mj.jnt_limited[i_j] == 1 else np.array([-np.inf, np.inf])
             mj_axis = mj.jnt_axis[i_j]
+            mj_limit = mj.jnt_range[i_j] if mj_is_limited else np.array([-np.inf, np.inf])
 
             if gs_type == gs.JOINT_TYPE.REVOLUTE:
                 j_info["dofs_motion_ang"] = np.array([mj_axis])
                 j_info["dofs_motion_vel"] = np.zeros((1, 3))
                 j_info["dofs_limit"] = np.array([mj_limit])
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
-            elif gs_type == gs.JOINT_TYPE.PRISMATIC:
+            else:  # gs_type == gs.JOINT_TYPE.PRISMATIC:
                 j_info["dofs_motion_ang"] = np.zeros((1, 3))
                 j_info["dofs_motion_vel"] = np.array([mj_axis])
                 j_info["dofs_limit"] = np.array([mj_limit]) * scale
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
 
                 j_info["init_qpos"] *= scale
-            elif gs_type == gs.JOINT_TYPE.SPHERICAL:
-                if not np.all(np.isinf(mj_limit)):
-                    gs.logger.warning("(MJCF) Joint limit ignored for ball joints")
 
-                j_info["dofs_motion_ang"] = np.eye(3)
-                j_info["dofs_motion_vel"] = np.zeros((3, 3))
-                j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
-                j_info["dofs_stiffness"] = np.repeat(mj_stiffness[None], 3, axis=0)
-            else:  # gs_type == gs.JOINT_TYPE.FREE:
-                if mj_stiffness > 0:
-                    raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
-
-                j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
-                j_info["dofs_motion_vel"] = np.eye(6, 3)
-                j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
-                j_info["dofs_stiffness"] = np.zeros(6)
-
-                j_info["init_qpos"][:3] *= scale
         if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
             gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
 
