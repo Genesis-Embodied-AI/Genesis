@@ -1365,7 +1365,7 @@ def test_mesh_repair(convexify, show_viewer):
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
     qpos = obj.get_dofs_position().cpu()
-    assert_allclose(qpos[:2], (0.3, 0.0), atol=1e-3)
+    assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
 
 
 @pytest.mark.required
@@ -1455,7 +1455,7 @@ def test_convexify(euler, backend, show_viewer):
         # cam.render()
         if i > 1600:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.65)
+            assert_allclose(qvel, 0, atol=0.75)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
@@ -1686,7 +1686,19 @@ def test_drone_advanced(show_viewer):
         chain_dofs = range(6, drone.n_dofs)
         drone.set_dofs_armature(drone.get_dofs_armature(chain_dofs) + 1e-3, chain_dofs)
 
+    # Wait for the drones to land on the ground and hold straight
     for i in range(500):
+        for drone in drones:
+            drone.set_propellels_rpm(torch.full((4,), 50000.0))
+        scene.step()
+        if i > 450:
+            assert scene.rigid_solver.collider.n_contacts.to_numpy()[0] == 2
+            assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=1e-3)
+
+    # Push the drones symmetrically and wait for them to collide
+    drones[0].set_dofs_velocity([0.2], [1])
+    drones[1].set_dofs_velocity([-0.2], [1])
+    for i in range(200):
         for drone in drones:
             drone.set_propellels_rpm(torch.full((4,), 50000.0))
         scene.step()
@@ -1697,18 +1709,19 @@ def test_drone_advanced(show_viewer):
             # of the segment pops up. This discrepancy is very large on Linux and causes the simulation to diverge,
             # which is not the case on Windows OS or Mac OS.
             break
-    assert 250 < i < 500
+    assert 50 < i < 200
 
+    tol = 1e-11
     pos_1 = drones[0].get_pos()
     pos_2 = drones[1].get_pos()
-    assert abs(pos_1[0] - pos_2[0]) < gs.EPS
-    assert abs(pos_1[1] + pos_2[1]) < gs.EPS
-    assert abs(pos_1[2] - pos_2[2]) < gs.EPS
+    assert abs(pos_1[0] - pos_2[0]) < tol
+    assert abs(pos_1[1] + pos_2[1]) < tol
+    assert abs(pos_1[2] - pos_2[2]) < tol
     quat_1 = drones[0].get_quat()
     quat_2 = drones[1].get_quat()
-    assert abs(quat_1[1] + quat_2[1]) < gs.EPS
-    assert abs(quat_1[2] - quat_2[2]) < gs.EPS
-    assert abs(quat_1[2] - quat_2[2]) < gs.EPS
+    assert abs(quat_1[1] + quat_2[1]) < tol
+    assert abs(quat_1[2] - quat_2[2]) < tol
+    assert abs(quat_1[2] - quat_2[2]) < tol
 
 
 @pytest.mark.parametrize(

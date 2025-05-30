@@ -1088,61 +1088,6 @@ def nowhere():
     return np.array([2333333, 6666666, 5201314])
 
 
-def default_dofs_kp(n=6):
-    return np.tile(100.0, n).astype(gs.np_float)
-
-
-def default_dofs_kv(n=6):
-    return np.tile(10.0, n).astype(gs.np_float)
-
-
-def default_dofs_force_range(n=6):
-    # TODO: This is big enough for robot arms, but is this general?
-    return np.tile([[-100.0, 100.0]], [n, 1])
-
-
-def default_dofs_limit(n=6):
-    return np.tile([[-np.inf, np.inf]], [n, 1])
-
-
-def default_dofs_invweight(n=6):
-    return np.ones(n)
-
-
-def default_dofs_damping(n=6):
-    return np.ones(n)
-
-
-def free_dofs_damping(n=6):
-    return np.zeros(n)
-
-
-def default_dofs_motion_ang(n=6):
-    if n == 6:
-        return np.array(
-            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-        )
-    elif n == 0:
-        return np.zeros((0, 3))
-    else:
-        assert False
-
-
-def default_dofs_motion_vel(n=6):
-    if n == 6:
-        return np.array(
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
-        )
-    elif n == 0:
-        return np.zeros((0, 3))
-    else:
-        return False
-
-
-def default_dofs_stiffness(n=6):
-    return np.zeros(n)
-
-
 def default_solver_params():
     """
     Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
@@ -1156,12 +1101,20 @@ def default_friction():
     return 1.0
 
 
+def default_dofs_damping(n=6):
+    return np.ones(n)
+
+
 def default_dofs_armature(n=6):
     return np.full(n, 0.1)
 
 
-def free_dofs_armature(n=6):
-    return np.zeros(n)
+def default_dofs_kp(n=6):
+    return np.tile(100.0, n).astype(gs.np_float)
+
+
+def default_dofs_kv(n=6):
+    return np.tile(10.0, n).astype(gs.np_float)
 
 
 @ti.data_oriented
