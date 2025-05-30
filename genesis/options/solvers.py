@@ -510,6 +510,16 @@ class FEMOptions(Options):
         Damping factor. Defaults to 45.0.
     floor_height : float, optional
         Height of the floor in meters. If none, it will inherit from `SimOptions`. Defaults to None.
+    use_implicit_solver : bool, optional
+        Whether to use the implicit solver. Defaults to False.
+    n_newton_iterations : int, optional
+        Maximum number of Newton iterations. Defaults to 5.
+    n_pcg_iterations : int, optional
+        Maximum number of PCG iterations. Defaults to 100.
+    newton_dx_threshold : float, optional
+        Threshold for the Newton solver. Defaults to 1e-6.
+    pcg_threshold : float, optional
+        Threshold for the PCG solver. Defaults to 1e-6.
     """
 
     dt: Optional[float] = None
