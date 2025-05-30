@@ -533,6 +533,18 @@ class Camera(Sensor):
         point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
+    # quat for Madrona needs to be transformed to y-forward
+    def _T_to_quat_for_madrona(self, T):
+        if isinstance(T, torch.Tensor):
+            _, quat = gu.T_to_trans_quat(T)
+            to_y_fwd = torch.tensor(
+                [1.0 / np.sqrt(2.0), -1.0 / np.sqrt(2.0), 0, 0], dtype=gs.tc_float, device=gs.device
+            ).expand(quat.shape[0], 4)
+            quat = gu.transform_quat_by_quat(to_y_fwd, quat)
+            return quat
+        else:
+            gs.raise_exception(f"the input must be torch.Tensor. got: {type(T)=}")
+
     @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
         """
@@ -875,3 +887,7 @@ class Camera(Sensor):
         cx = 0.5 * self._res[0]
         cy = 0.5 * self._res[1]
         return np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
+
+    @property
+    def n_envs(self):
+        return max(self._visualizer.scene.n_envs, 1)

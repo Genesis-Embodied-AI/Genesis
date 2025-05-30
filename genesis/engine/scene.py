@@ -515,6 +515,43 @@ class Scene(RBC):
             gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
 
     @gs.assert_unbuilt
+    def add_light(
+        self,
+        pos,
+        dir,
+        intensity,
+        directional,
+        castshadow,
+        cutoff,
+    ):
+        """
+        Add a light to the scene for batch renderer.
+
+        Parameters
+        ----------
+        pos : tuple of float, shape (3,)
+            The position of the light, specified as (x, y, z).
+        dir : tuple of float, shape (3,)
+            The direction of the light, specified as (x, y, z).
+        intensity : float
+            The intensity of the light.
+        directional : bool
+            Whether the light is directional.
+        castshadow : bool
+            Whether the light casts shadows.
+        cutoff : float
+            The cutoff angle of the light in degrees.
+        """
+        if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+            gs.logger.warning(
+                "This add_light() function is only supported when using BatchRenderer."
+                "Please use add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle) instead."
+            )
+            return
+
+        self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+
+    @gs.assert_unbuilt
     def add_camera(
         self,
         model="pinhole",

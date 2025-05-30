@@ -364,6 +364,11 @@ with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
     except ImportError:
         pass
 
+    try:
+        import gs_madrona as _gs_madrona
+    except ImportError:
+        pass
+
 from .constants import (
     IntEnum,
     JOINT_TYPE,

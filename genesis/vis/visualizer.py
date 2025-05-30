@@ -8,7 +8,6 @@ from genesis.repr_base import RBC
 from .camera import Camera
 from .rasterizer import Rasterizer
 
-
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
 
@@ -275,3 +274,15 @@ class Visualizer(RBC):
     @property
     def cameras(self):
         return self._cameras
+
+    @property
+    def camera_pos(self):
+        return torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
+
+    @property
+    def camera_quat(self):
+        return torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+
+    @property
+    def camera_fov(self):
+        return torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
