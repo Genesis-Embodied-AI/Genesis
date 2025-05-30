@@ -1,11 +1,12 @@
 import pyglet
+import numpy as np
+import torch
 
 import genesis as gs
 from genesis.repr_base import RBC
 
 from .camera import Camera
 from .rasterizer import Rasterizer
-
 
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
@@ -24,7 +25,7 @@ class Visualizer(RBC):
     This abstraction layer manages viewer and renderers.
     """
 
-    def __init__(self, scene, show_viewer, vis_options, viewer_options, renderer):
+    def __init__(self, scene, show_viewer, vis_options, viewer_options, renderer_options):
         self._t = -1
         self._scene = scene
 
@@ -32,6 +33,8 @@ class Visualizer(RBC):
         self._viewer = None
         self._rasterizer = None
         self._raytracer = None
+        self._batch_renderer = None
+        self._use_batch_renderer = False
         self.viewer_lock = None  # check if null to know if the Visualizer has been built
 
         # Rasterizer context is shared by viewer and rasterizer
@@ -88,12 +91,18 @@ class Visualizer(RBC):
         # Rasterizer is always needed for depth and segmentation mask rendering.
         self._rasterizer = Rasterizer(self._viewer, self._context)
 
-        if isinstance(renderer, gs.renderers.RayTracer):
+        if isinstance(renderer_options, gs.renderers.BatchRenderer):
+            from .batch_renderer import BatchRenderer
+
+            self._batch_renderer = BatchRenderer(self, renderer_options)
+            self._renderer = self._batch_renderer
+            self._raytracer = None
+            self._use_batch_renderer = True
+        elif isinstance(renderer_options, gs.renderers.RayTracer):
             from .raytracer import Raytracer
 
-            self._renderer = self._raytracer = Raytracer(renderer, vis_options)
-
-        else:
+            self._renderer = self._raytracer = Raytracer(renderer_options, vis_options)
+        elif isinstance(renderer_options, gs.renderers.Rasterizer):
             self._renderer = self._rasterizer
             self._raytracer = None
 
@@ -109,6 +118,9 @@ class Visualizer(RBC):
         if self._rasterizer is not None:
             self._rasterizer.destroy()
             self._rasterizer = None
+        if self._batch_renderer is not None:
+            self._batch_renderer.destroy()
+            self._batch_renderer = None
         if self._raytracer is not None:
             self._raytracer.destroy()
             self._raytracer = None
@@ -124,6 +136,10 @@ class Visualizer(RBC):
         )
         self._cameras.append(camera)
         return camera
+
+    def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
+        if self._use_batch_renderer:
+            self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
 
     def reset(self):
         self._t = -1
@@ -153,7 +169,11 @@ class Visualizer(RBC):
             self._raytracer.build(self._scene)
 
         for camera in self._cameras:
-            camera._build()
+            camera.build()
+
+        if self._use_batch_renderer:
+            # Batch renderer needs to be built after cameras are built
+            self._batch_renderer.build()
 
         if self._cameras:
             # need to update viewer once here, because otherwise camera will update scene if render is called right
@@ -163,7 +183,9 @@ class Visualizer(RBC):
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
                 self._rasterizer.update_scene()
-                self._rasterizer.render_camera(self._cameras[0])
+                # TODO: Is this still necessary with batch renderer?
+                if not self._use_batch_renderer:
+                    self._rasterizer.render_camera(self._cameras[0])
 
     def update(self, force=True, auto=None):
         if force:  # force update
@@ -223,6 +245,10 @@ class Visualizer(RBC):
         return self._rasterizer
 
     @property
+    def batch_renderer(self):
+        return self._batch_renderer
+
+    @property
     def context(self):
         return self._context
 
@@ -245,3 +271,15 @@ class Visualizer(RBC):
     @property
     def cameras(self):
         return self._cameras
+
+    @property
+    def camera_pos(self):
+        return torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
+
+    @property
+    def camera_quat(self):
+        return torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+
+    @property
+    def camera_fov(self):
+        return torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)

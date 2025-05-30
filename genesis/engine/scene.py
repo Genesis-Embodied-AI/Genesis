@@ -31,7 +31,7 @@ from genesis.options import (
 )
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
-from genesis.options.renderers import Rasterizer, Renderer
+from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
@@ -71,8 +71,8 @@ class Scene(RBC):
         The options configuring the visualization system (``scene.visualizer``). Visualizer controls both the interactive viewer and the cameras.
     viewer_options : gs.options.ViewerOptions
         The options configuring the viewer (``scene.visualizer.viewer``).
-    renderer : gs.renderers.Renderer
-        The renderer used by `camera` for rendering images. This doesn't affect the behavior of the interactive viewer.
+    renderer : gs.renderers.RendererOptions
+        The renderer options used by `camera` for rendering images. This doesn't affect the behavior of the interactive viewer.
     show_viewer : bool
         Whether to show the interactive viewer. Set it to False if you only need headless rendering.
     show_FPS : bool
@@ -94,7 +94,7 @@ class Scene(RBC):
         vis_options: VisOptions | None = None,
         viewer_options: ViewerOptions | None = None,
         profiling_options: ProfilingOptions | None = None,
-        renderer: Renderer | None = None,
+        renderer: RendererOptions | None = None,
         show_viewer: bool | None = None,
         show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
@@ -150,6 +150,7 @@ class Scene(RBC):
 
         self.vis_options = vis_options
         self.viewer_options = viewer_options
+        self.renderer_options = renderer
 
         # merge options
         self.tool_options.copy_attributes_from(self.sim_options)
@@ -182,7 +183,7 @@ class Scene(RBC):
             show_viewer=show_viewer,
             vis_options=vis_options,
             viewer_options=viewer_options,
-            renderer=renderer,
+            renderer_options=renderer,
         )
 
         # emitters
@@ -212,7 +213,7 @@ class Scene(RBC):
         vis_options: VisOptions,
         viewer_options: ViewerOptions,
         profiling_options: ProfilingOptions,
-        renderer: Renderer,
+        renderer_options: RendererOptions,
     ):
         if not isinstance(sim_options, SimOptions):
             gs.raise_exception("`sim_options` should be an instance of `SimOptions`.")
@@ -253,7 +254,7 @@ class Scene(RBC):
         if not isinstance(profiling_options, ProfilingOptions):
             gs.raise_exception("`profiling_options` should be an instance of `ProfilingOptions`.")
 
-        if not isinstance(renderer, Renderer):
+        if not isinstance(renderer_options, RendererOptions):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
     @gs.assert_unbuilt
@@ -447,7 +448,8 @@ class Scene(RBC):
         beam_angle=180.0,
     ):
         """
-        Add a light to the scene. Note that lights added this way can be instantiated from morphs (supporting `gs.morphs.Primitive` or `gs.morphs.Mesh`), and will only be used by the RayTracer renderer.
+        Add a light to the scene. Note that lights added this way can be instantiated from morphs
+        (supporting `gs.morphs.Primitive` or `gs.morphs.Mesh`), and will only be used by the RayTracer renderer.
 
         Parameters
         ----------
@@ -464,6 +466,13 @@ class Scene(RBC):
         beam_angle : float
             The beam angle of the light.
         """
+        if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+            gs.logger.warning(
+                "This add_light() function is only supported when NOT using BatchRenderer."
+                "Please use add_light(self, pos, dir, intensity, directional, castshadow, cutoff) instead."
+            )
+            return
+
         if self.visualizer.raytracer is None:
             gs.logger.warning("Light is only supported by RayTracer renderer.")
             return
@@ -475,6 +484,43 @@ class Scene(RBC):
         self.visualizer.raytracer.add_mesh_light(
             mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, beam_angle
         )
+
+    @gs.assert_unbuilt
+    def add_light(
+        self,
+        pos,
+        dir,
+        intensity,
+        directional,
+        castshadow,
+        cutoff,
+    ):
+        """
+        Add a light to the scene for batch renderer.
+
+        Parameters
+        ----------
+        pos : tuple of float, shape (3,)
+            The position of the light, specified as (x, y, z).
+        dir : tuple of float, shape (3,)
+            The direction of the light, specified as (x, y, z).
+        intensity : float
+            The intensity of the light.
+        directional : bool
+            Whether the light is directional.
+        castshadow : bool
+            Whether the light casts shadows.
+        cutoff : float
+            The cutoff angle of the light in degrees.
+        """
+        if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+            gs.logger.warning(
+                "This add_light() function is only supported when using BatchRenderer."
+                "Please use add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle) instead."
+            )
+            return
+
+        self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
 
     @gs.assert_unbuilt
     def add_camera(
@@ -492,7 +538,11 @@ class Scene(RBC):
         denoise=True,
     ):
         """
-        Add a camera to the scene. The camera model can be either 'pinhole' or 'thinlens'. The 'pinhole' model is a simple camera model that captures light rays from a single point in space. The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size, allowing for depth of field effects. When 'pinhole' is used, the `aperture` and `focal_len` parameters are ignored.
+        Add a camera to the scene. The camera model can be either 'pinhole' or 'thinlens'.
+        The 'pinhole' model is a simple camera model that captures light rays from a single point in space.
+        The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size,
+        allowing for depth of field effects. When 'pinhole' is used, the `aperture` and `focal_len`
+        parameters are ignored.
 
         Parameters
         ----------
@@ -517,7 +567,9 @@ class Scene(RBC):
         spp : int, optional
             Samples per pixel. Only available when using RayTracer renderer. Defaults to 256.
         denoise : bool
-            Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer.. Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option when building the RayTracer.
+            Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer..
+            Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser
+            option when building the RayTracer.
 
         Returns
         -------
@@ -1003,7 +1055,8 @@ class Scene(RBC):
         density : float, optional
             Controls the sampling density of the trajectory points to visualize. Default is 0.3.
         frame_scaling : float, optional
-            Scaling factor for the visualization frames' size. Affects the length and thickness of the debug frames. Default is 1.0.
+            Scaling factor for the visualization frames' size. Affects the length and thickness of the debug frames.
+            Default is 1.0.
 
         Returns
         -------
@@ -1013,7 +1066,8 @@ class Scene(RBC):
         Notes
         -----
         The function uses forward kinematics (FK) to convert joint positions to Cartesian space and render debug frames.
-        The density parameter reduces FK computational load by sampling fewer points, with 1.0 representing the whole trajectory.
+        The density parameter reduces FK computational load by sampling fewer points, with 1.0 representing the whole
+        trajectory.
         """
         with self._visualizer.viewer_lock:
             N = len(qposs)
@@ -1029,6 +1083,17 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
             )
+
+    @gs.assert_built
+    def render_all_cameras(self, force_render=False):
+        """
+        Render the scene for all cameras using the batch renderer.
+
+        Returns:
+            A tuple of tensors of shape (n_envs, H, W, 3) if rgb is not None, otherwise a list of tensors of shape (n_envs, H, W, 1) if depth is not None.
+            If n_envs ==0, the first dimension of the tensor is squeezed.
+        """
+        return self._visualizer.batch_renderer.render(force_render=force_render)
 
     @gs.assert_built
     def clear_debug_object(self, object):

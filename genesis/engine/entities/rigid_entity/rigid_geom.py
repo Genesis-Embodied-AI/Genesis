@@ -878,6 +878,7 @@ class RigidVisGeom(RBC):
         self._uvs = vmesh.uvs
         self._surface = vmesh.surface
         self._metadata = vmesh.metadata
+        self._color = vmesh._color
 
     def _build(self):
         pass
