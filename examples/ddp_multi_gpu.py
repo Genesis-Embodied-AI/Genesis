@@ -5,6 +5,10 @@ Multi-node / multi-GPU Genesis ✕ PyTorch DDP demo
 
 Single machine, 2 GPUs:
     torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/ddp_multi_gpu.py
+
+Expectation:
+    - In nvidia-smi, you will see multiple GPUs are being used.
+    - As you increase the number of GPUs, the gradient will be less noisy and the loss decreases faster.
 """
 
 import os, argparse, random, numpy as np
@@ -29,18 +33,10 @@ class TinyMLP(nn.Module):
 def run_worker(args: argparse.Namespace) -> None:
     # setup
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    print("local_rank", local_rank)
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank)
     os.environ["TI_VISIBLE_DEVICE"] = str(local_rank)
-
-    gs.init(backend=gs.gpu)
-
-    seed = local_rank
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    gs.init(backend=gs.gpu, seed=local_rank)
 
     # sim
     scene = gs.Scene(
@@ -60,10 +56,9 @@ def run_worker(args: argparse.Namespace) -> None:
     scene.build(n_envs=args.n_envs)
 
     # model
-    torch.cuda.set_device(0)
+    gpu_id = 0
+    torch.cuda.set_device(gpu_id)
     dist.init_process_group(backend="nccl", init_method="env://")
-    gpu_id = torch.cuda.current_device()
-    print("gpu_id", gpu_id)
     device = torch.device("cuda", gpu_id)
 
     rigid = scene.sim.rigid_solver
@@ -71,7 +66,7 @@ def run_worker(args: argparse.Namespace) -> None:
     obs_dim = qpos.shape[1]
     act_dim = 1
     model = TinyMLP(obs_dim, act_dim).to(device)
-    model = DDP(model, device_ids=[0])
+    model = DDP(model, device_ids=[gpu_id])
     optim = torch.optim.Adam(model.parameters(), lr=3e-4)
 
     # train loop
@@ -79,14 +74,14 @@ def run_worker(args: argparse.Namespace) -> None:
         scene.step()
         qpos = rigid.get_qpos()
 
-        obs = torch.as_tensor(qpos, device=device)
+        obs = qpos + torch.randn_like(qpos)
 
         logits = model(obs)
         target = qpos.sum(dim=1, keepdim=True)
         loss = torch.nn.functional.mse_loss(logits, target)
 
         optim.zero_grad(set_to_none=True)
-        loss.backward()  # DDP handles all-reduce
+        loss.backward()  # DDP handles all-reduce, gradients are averaged
         optim.step()
 
         if local_rank == 0 and step % 100 == 0:
