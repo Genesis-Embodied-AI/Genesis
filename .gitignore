@@ -45,7 +45,6 @@ MANIFEST
 
 # debug
 examples/debug/*
-genesis/assets/usd/*
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
