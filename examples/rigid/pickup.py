@@ -8,27 +8,27 @@ def make_step(scene, cam, franka):
     scene.clear_debug_objects()
     links_force_torque = franka.get_links_force_torque([9, 10]) # 手先のlocal_indexは9, 10
     #force
-    # scene.draw_debug_arrow(
-    #     pos=franka.get_link("left_finger").get_pos().tolist(),
-    #     vec=links_force_torque[0][:3].tolist(),
-    #     color=(1, 0, 0),
-    # )
-    # scene.draw_debug_arrow(
-    #     pos=franka.get_link("right_finger").get_pos().tolist(),
-    #     vec=links_force_torque[1][:3].tolist(),
-    #     color=(1, 0, 0),
-    # )
-    #torque
     scene.draw_debug_arrow(
         pos=franka.get_link("left_finger").get_pos().tolist(),
-        vec=links_force_torque[0][3:].tolist(),
+        vec=links_force_torque[0][:3].tolist(),
         color=(1, 0, 0),
     )
     scene.draw_debug_arrow(
         pos=franka.get_link("right_finger").get_pos().tolist(),
-        vec=links_force_torque[1][3:].tolist(),
+        vec=links_force_torque[1][:3].tolist(),
         color=(1, 0, 0),
     )
+    #torque
+    # scene.draw_debug_arrow(
+    #     pos=franka.get_link("left_finger").get_pos().tolist(),
+    #     vec=links_force_torque[0][3:].tolist(),
+    #     color=(1, 0, 0),
+    # )
+    # scene.draw_debug_arrow(
+    #     pos=franka.get_link("right_finger").get_pos().tolist(),
+    #     vec=links_force_torque[1][3:].tolist(),
+    #     color=(1, 0, 0),
+    # )
 
 # ───────── 初期化 ─────────
 gs.init(backend=gs.gpu)               # GPU / Vulkan
