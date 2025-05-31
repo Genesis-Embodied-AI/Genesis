@@ -36,6 +36,8 @@ def run_worker(args: argparse.Namespace) -> None:
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(local_rank)
     os.environ["TI_VISIBLE_DEVICE"] = str(local_rank)
+    # FIXME: Forcing rendering device is not working reliably on all machines
+    # os.environ["EGL_DEVICE_ID"] = str(local_rank)
     gs.init(backend=gs.gpu, seed=local_rank)
 
     # sim
