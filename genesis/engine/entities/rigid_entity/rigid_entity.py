@@ -1962,12 +1962,29 @@ class RigidEntity(Entity):
         """
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_acc(links_idx, envs_idx, unsafe=unsafe)
-
+    
     @gs.assert_built
-    def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
-        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_inertial_mass(links_idx, envs_idx, unsafe=unsafe)
+    def get_links_force_torque(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns force acting on the specified entity's links.
 
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com"
+            The reference point being used to expressed the force acting on each link.
+
+        Returns
+        -------
+        force : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The force acting on the specified entity's links.
+        """
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_force_torque(links_idx, envs_idx, unsafe=unsafe)
+    
     @gs.assert_built
     def get_links_invweight(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)

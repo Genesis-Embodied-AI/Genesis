@@ -58,7 +58,10 @@ dependencies = [
     # Motion Planning library
     # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
     #          Fix OMPL DLL search directory.
-    "ompl>=1.7.0; platform_system != 'Windows'"
+    "ompl>=1.7.0; platform_system != 'Windows'",
+    "torch>=2.7.0",
+    "torchvision>=0.22.0",
+    "torchaudio>=2.7.0",
 ]
 
 [tool.setuptools.packages.find]
