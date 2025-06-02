@@ -12,6 +12,8 @@ from .utils import assert_allclose, assert_array_equal
 
 VERTICES_TOL = 1e-05
 NORMALS_TOL = 5e-02
+UV_TOL = 1e-07
+COLOR_TOL = 1e-07
 
 
 def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
@@ -61,7 +63,6 @@ def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
     assert_allclose(
         vertices1,
         vertices2,
-        rtol=0,
         atol=VERTICES_TOL,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
@@ -73,13 +74,13 @@ def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
     assert_allclose(
         normals1,
         normals2,
-        rtol=0,
         atol=NORMALS_TOL,
         err_msg=f"Normals match failed in mesh {mesh_name}.",
     )
     assert_allclose(
         uvs1,
         uvs2,
+        rtol=COLOR_TOL,
         err_msg=f"UVs match failed in mesh {mesh_name}.",
     )
 
@@ -101,7 +102,6 @@ def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
     assert_allclose(
         tm_mesh.vertex_normals,
         gs_mesh.trimesh.vertex_normals,
-        rtol=0,
         atol=NORMALS_TOL,
         err_msg=f"Normals match failed in mesh {mesh_name}.",
     )
@@ -109,6 +109,7 @@ def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
         assert_allclose(
             tm_mesh.visual.uv,
             gs_mesh.trimesh.visual.uv,
+            rtol=UV_TOL,
             err_msg=f"UVs match failed in mesh {mesh_name}.",
         )
 
@@ -120,6 +121,7 @@ def check_gs_tm_textures(gs_texture, tm_color, tm_image, default_value, dim, mat
         assert_allclose(
             tm_color,
             gs_texture.color,
+            rtol=COLOR_TOL,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
     elif isinstance(gs_texture, gs.textures.ImageTexture):
@@ -127,6 +129,7 @@ def check_gs_tm_textures(gs_texture, tm_color, tm_image, default_value, dim, mat
         assert_allclose(
             tm_color,
             gs_texture.image_color,
+            rtol=COLOR_TOL,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
         assert_array_equal(
@@ -150,6 +153,7 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
         assert_allclose(
             gs_texture1.color,
             gs_color2,
+            rtol=COLOR_TOL,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
     elif isinstance(gs_texture1, gs.textures.ImageTexture):
@@ -157,6 +161,7 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
         assert_allclose(
             gs_texture1.image_color,
             gs_texture2.image_color,
+            rtol=COLOR_TOL,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
         assert_array_equal(
