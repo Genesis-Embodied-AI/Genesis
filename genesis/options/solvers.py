@@ -511,15 +511,15 @@ class FEMOptions(Options):
     floor_height : float, optional
         Height of the floor in meters. If none, it will inherit from `SimOptions`. Defaults to None.
     use_implicit_solver : bool, optional
-        Whether to use the implicit solver. Defaults to False.
+        Whether to use the implicit solver. Defaults to False. Implicit solver is a more stable solver for FEM. It can be used with a large time step.
     n_newton_iterations : int, optional
-        Maximum number of Newton iterations. Defaults to 5.
+        Maximum number of Newton iterations. Defaults to 5. Only used when `use_implicit_solver` is True.
     n_pcg_iterations : int, optional
-        Maximum number of PCG iterations. Defaults to 100.
+        Maximum number of PCG iterations. Defaults to 100. Only used when `use_implicit_solver` is True.
     newton_dx_threshold : float, optional
-        Threshold for the Newton solver. Defaults to 1e-6.
+        Threshold for the Newton solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
     pcg_threshold : float, optional
-        Threshold for the PCG solver. Defaults to 1e-6.
+        Threshold for the PCG solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
     """
 
     dt: Optional[float] = None

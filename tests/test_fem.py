@@ -211,9 +211,6 @@ def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
-            n_newton_iterations=3,
-            n_pcg_iterations=100,
-            pcg_threshold=1e-6,
         ),
         show_viewer=show_viewer,
     )
@@ -245,6 +242,7 @@ def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
+        entity.get_dofs_velocity()
         vel = state.vel.detach().cpu().numpy()
         assert_allclose(vel, 0.0, atol=2e-3), f"Entity {entity.uid} velocity is not near zero."
         pos = state.pos.detach().cpu().numpy()
