@@ -350,7 +350,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             if normal_attr.HasValue():
                 normals = np.array(normal_attr.Get(), dtype=np.float32)
                 if normals.shape[0] != points.shape[0]:
-                    if normals.shape[0] == faces.shape[0]:  # face varying
+                    if normals.shape[0] == faces.shape[0]:  # face varying meshes, adjacent faces do not share vertices
                         points_faces_varying = True
                     else:
                         gs.raise_exception(f"Size of normals mismatch for mesh {mesh_id} in usd file {path}.")
@@ -444,10 +444,3 @@ def parse_instance_usd(path):
                     instance_list.append((matrix.T, instance_spec.layer.identifier))
 
     return instance_list
-
-
-if __name__ == "__main__":
-    file_path = "table_scene.usd"
-    grouped_meshes = parse_mesh_usd(file_path)
-    for mesh in grouped_meshes:
-        print(mesh)

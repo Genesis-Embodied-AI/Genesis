@@ -10,79 +10,49 @@ import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
 from .utils import assert_allclose, assert_array_equal
 
-VERTICES_TOL = 1e-05
-NORMALS_TOL = 5e-02
-UV_TOL = 1e-07
-COLOR_TOL = 1e-07
+VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
+NORMALS_TOL = 5e-02  # Conversion from .usd to .glb loses a little precision in normals
+UV_TOL = 1e-07  # Default tolerance for np.testing.assert_allclose
+COLOR_TOL = 1e-07  # Default tolerance for np.testing.assert_allclose
 
 
 def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
     """Check if two gs.Mesh objects are equal."""
-    vertices1 = gs_mesh1.trimesh.vertices
-    normals1 = gs_mesh1.trimesh.vertex_normals
-    uvs1 = gs_mesh1.trimesh.visual.uv
-    indices1 = np.lexsort(
-        [
-            uvs1[:, 1],
-            uvs1[:, 0],
-            normals1[:, 2],
-            normals1[:, 1],
-            normals1[:, 0],
-            vertices1[:, 2],
-            vertices1[:, 1],
-            vertices1[:, 0],
-        ]
-    )
-    vertices1 = vertices1[indices1]
-    normals1 = normals1[indices1]
-    uvs1 = uvs1[indices1]
-    invdices1 = np.argsort(indices1)
-    faces1 = invdices1[gs_mesh1.trimesh.faces]
 
-    vertices2 = gs_mesh2.trimesh.vertices
-    normals2 = gs_mesh2.trimesh.vertex_normals
-    uvs2 = gs_mesh2.trimesh.visual.uv
-    indices2 = np.lexsort(
-        [
-            uvs2[:, 1],
-            uvs2[:, 0],
-            normals2[:, 2],
-            normals2[:, 1],
-            normals2[:, 0],
-            vertices2[:, 2],
-            vertices2[:, 1],
-            vertices2[:, 0],
-        ]
-    )
-    vertices2 = vertices2[indices2]
-    normals2 = normals2[indices2]
-    uvs2 = uvs2[indices2]
-    invdices2 = np.argsort(indices2)
-    faces2 = invdices2[gs_mesh2.trimesh.faces]
+    def extract_mesh(gs_mesh):
+        """Extract vertices, normals, uvs, and faces from a gs.Mesh object."""
+        vertices = gs_mesh.trimesh.vertices
+        normals = gs_mesh.trimesh.vertex_normals
+        uvs = gs_mesh.trimesh.visual.uv
+        faces = gs_mesh.trimesh.faces
 
-    assert_allclose(
-        vertices1,
-        vertices2,
-        atol=VERTICES_TOL,
-        err_msg=f"Vertices match failed in mesh {mesh_name}.",
-    )
-    assert_array_equal(
-        faces1,
-        faces2,
-        err_msg=f"Faces match failed in mesh {mesh_name}.",
-    )
-    assert_allclose(
-        normals1,
-        normals2,
-        atol=NORMALS_TOL,
-        err_msg=f"Normals match failed in mesh {mesh_name}.",
-    )
-    assert_allclose(
-        uvs1,
-        uvs2,
-        rtol=COLOR_TOL,
-        err_msg=f"UVs match failed in mesh {mesh_name}.",
-    )
+        indices = np.lexsort(
+            [
+                uvs[:, 1],
+                uvs[:, 0],
+                normals[:, 2],
+                normals[:, 1],
+                normals[:, 0],
+                vertices[:, 2],
+                vertices[:, 1],
+                vertices[:, 0],
+            ]
+        )
+
+        vertices = vertices[indices]
+        normals = normals[indices]
+        uvs = uvs[indices]
+        invdices = np.argsort(indices)
+        faces = invdices[faces]
+        return vertices, faces, normals, uvs
+
+    vertices1, faces1, normals1, uvs1 = extract_mesh(gs_mesh1)
+    vertices2, faces2, normals2, uvs2 = extract_mesh(gs_mesh2)
+
+    assert_allclose(vertices1, vertices2, atol=VERTICES_TOL, err_msg=f"Vertices match failed in mesh {mesh_name}.")
+    assert_array_equal(faces1, faces2, err_msg=f"Faces match failed in mesh {mesh_name}.")
+    assert_allclose(normals1, normals2, atol=NORMALS_TOL, err_msg=f"Normals match failed in mesh {mesh_name}.")
+    assert_allclose(uvs1, uvs2, rtol=COLOR_TOL, err_msg=f"UVs match failed in mesh {mesh_name}.")
 
 
 def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
@@ -90,7 +60,6 @@ def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
     assert_allclose(
         tm_mesh.vertices,
         gs_mesh.trimesh.vertices,
-        rtol=0,
         atol=VERTICES_TOL,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
