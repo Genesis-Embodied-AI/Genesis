@@ -158,7 +158,7 @@ def get_git_commit_info(ref="HEAD"):
     return revision, timestamp
 
 
-def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
+def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
     if tol is not None:
         atol = tol
@@ -167,7 +167,11 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
         rtol = 0.0
     if atol is None:
         atol = 0.0
-    np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol)
+    np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
+
+
+def assert_array_equal(actual, desired, *, err_msg=None):
+    np.testing.assert_array_equal(actual, desired, err_msg=err_msg)
 
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):

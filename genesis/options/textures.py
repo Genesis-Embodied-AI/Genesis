@@ -40,7 +40,8 @@ class ColorTexture(Texture):
     Parameters
     ----------
     color : list of float
-        A list of color values, stored as tuple, supporting any number of channels within the range [0.0, 1.0]. Default is (1.0, 1.0, 1.0).
+        A list of color values, stored as tuple, supporting any number of channels within the range [0.0, 1.0].
+        Default is (1.0, 1.0, 1.0).
     """
 
     color: Union[float, List[float]] = (1.0, 1.0, 1.0)

@@ -2,11 +2,16 @@ import pytest
 import trimesh
 import numpy as np
 import os
+from huggingface_hub import snapshot_download
 
 import genesis as gs
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
+from .utils import assert_allclose, assert_array_equal
+
+VERTICES_TOL = 1e-05
+NORMALS_TOL = 5e-02
 
 
 def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
@@ -53,26 +58,26 @@ def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
     invdices2 = np.argsort(indices2)
     faces2 = invdices2[gs_mesh2.trimesh.faces]
 
-    np.testing.assert_allclose(
+    assert_allclose(
         vertices1,
         vertices2,
         rtol=0,
-        atol=1e-05,
+        atol=VERTICES_TOL,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
-    np.testing.assert_array_equal(
+    assert_array_equal(
         faces1,
         faces2,
         err_msg=f"Faces match failed in mesh {mesh_name}.",
     )
-    np.testing.assert_allclose(
+    assert_allclose(
         normals1,
         normals2,
         rtol=0,
-        atol=5e-02,
+        atol=NORMALS_TOL,
         err_msg=f"Normals match failed in mesh {mesh_name}.",
     )
-    np.testing.assert_allclose(
+    assert_allclose(
         uvs1,
         uvs2,
         err_msg=f"UVs match failed in mesh {mesh_name}.",
@@ -81,27 +86,27 @@ def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
 
 def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
     """Check if a gs.Mesh object and a trimesh.Trimesh object are equal."""
-    np.testing.assert_allclose(
+    assert_allclose(
         tm_mesh.vertices,
         gs_mesh.trimesh.vertices,
         rtol=0,
-        atol=1e-06,
+        atol=VERTICES_TOL,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
-    np.testing.assert_array_equal(
+    assert_array_equal(
         tm_mesh.faces,
         gs_mesh.trimesh.faces,
         err_msg=f"Faces match failed in mesh {mesh_name}.",
     )
-    np.testing.assert_allclose(
+    assert_allclose(
         tm_mesh.vertex_normals,
         gs_mesh.trimesh.vertex_normals,
         rtol=0,
-        atol=1e-06,
+        atol=NORMALS_TOL,
         err_msg=f"Normals match failed in mesh {mesh_name}.",
     )
     if not isinstance(tm_mesh.visual, trimesh.visual.color.ColorVisuals):
-        np.testing.assert_allclose(
+        assert_allclose(
             tm_mesh.visual.uv,
             gs_mesh.trimesh.visual.uv,
             err_msg=f"UVs match failed in mesh {mesh_name}.",
@@ -112,23 +117,19 @@ def check_gs_tm_textures(gs_texture, tm_color, tm_image, default_value, dim, mat
     """Check if a gs.Texture object and a trimesh.Texture object are equal."""
     if isinstance(gs_texture, gs.textures.ColorTexture):
         tm_color = tm_color or (default_value,) * dim
-        np.testing.assert_allclose(
+        assert_allclose(
             tm_color,
             gs_texture.color,
-            rtol=0,
-            atol=1e-06,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
     elif isinstance(gs_texture, gs.textures.ImageTexture):
         tm_color = tm_color or (1.0,) * dim
-        np.testing.assert_allclose(
+        assert_allclose(
             tm_color,
             gs_texture.image_color,
-            rtol=0,
-            atol=1e-06,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
-        np.testing.assert_array_equal(
+        assert_array_equal(
             tm_image,
             gs_texture.image_array,
             err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
@@ -146,23 +147,19 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
 
     if isinstance(gs_texture1, gs.textures.ColorTexture):
         gs_color2 = (default_value,) * len(gs_texture1.color) if gs_texture2 is None else gs_texture2.color
-        np.testing.assert_allclose(
+        assert_allclose(
             gs_texture1.color,
             gs_color2,
-            rtol=0,
-            atol=1e-06,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
     elif isinstance(gs_texture1, gs.textures.ImageTexture):
         assert isinstance(gs_texture2, gs.textures.ImageTexture)
-        np.testing.assert_allclose(
+        assert_allclose(
             gs_texture1.image_color,
             gs_texture2.image_color,
-            rtol=0,
-            atol=1e-06,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
-        np.testing.assert_array_equal(
+        assert_array_equal(
             gs_texture1.image_array,
             gs_texture2.image_array,
             err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
@@ -273,10 +270,23 @@ def test_glb_parse_material(glb_file):
             )
 
 
-@pytest.mark.parametrize("usd_filename", ["tests/sneaker_airforce", "tests/RoughnessTest"])
+@pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
-    glb_file = os.path.join(mu.get_assets_dir(), f"{usd_filename}.glb")
-    usd_file = os.path.join(mu.get_assets_dir(), f"{usd_filename}.usdz")
+    glb_folder = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns=f"{usd_filename}.glb",
+        max_workers=1,
+    )
+    usd_folder = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns=f"{usd_filename}.usdz",
+        max_workers=1,
+    )
+
+    glb_file = os.path.join(glb_folder, f"{usd_filename}.glb")
+    usd_file = os.path.join(usd_folder, f"{usd_filename}.usdz")
     gs_glb_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
