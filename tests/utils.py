@@ -460,6 +460,12 @@ def build_genesis_sim(
     gs_sim = scene.sim
     gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
 
+    # Force recomputation of invweights to make sure it works fine
+    for link in scene.rigid_solver.links:
+        link.invweight[:] = -1
+    for joint in scene.rigid_solver.joints:
+        joint.dofs_invweight[:] = -1
+
     scene.build()
 
     return gs_sim

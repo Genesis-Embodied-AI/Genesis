@@ -12,6 +12,7 @@ jobs:
     runs-on: [self-hosted, coreweave]
 
     env:
+      # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_HUB_DOWNLOAD_TIMEOUT: 60
@@ -22,8 +23,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Checkout of the full history is required for running benchmarks on old commits but not current
-          fetch-depth: 1
+          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
+          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
+          fetch-depth: 0
 
       - name: Run unit tests
         if: github.event_name == 'pull_request'
@@ -59,6 +61,7 @@ jobs:
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
 
+          # Remove `: #` prefixes to enable tmate interactive debugging session
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
@@ -69,9 +72,14 @@ jobs:
             --partition=hpc-low --exclusive --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
+              : # sudo apt install -y tmate && \
+              tmate -S /tmp/tmate.sock new-session -d && \
+              tmate -S /tmp/tmate.sock wait tmate-ready && \
+              tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
               pip install -e '.[dev,render]' && \
               pytest --print -x -m 'benchmarks' --backend gpu ./tests && \
               cp 'speed_test.txt' '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
+              : # tmate -S /tmp/tmate.sock wait tmate-exit
             "
 
       - name: Kill srun job systematically

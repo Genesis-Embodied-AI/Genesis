@@ -273,6 +273,10 @@ def factory_logger(stream_writers):
                         "benchmark_id": self.benchmark_id,
                         **self.hparams,
                     },
+                    settings=wandb.Settings(
+                        x_disable_stats=True,
+                        console="off",
+                    ),
                 )
             return self
 
@@ -383,7 +387,7 @@ def batched_franka(solver, n_envs):
             camera_fov=40,
         ),
         show_viewer=False,
-        show_FPS=True,
+        show_FPS=False,
     )
 
     scene.add_entity(gs.morphs.Plane())
