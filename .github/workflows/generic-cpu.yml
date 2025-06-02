@@ -15,7 +15,6 @@ jobs:
         PYTHON_VERSION: ["3.10", "3.11", "3.12"]
 
     env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_HUB_DOWNLOAD_TIMEOUT: 60
       GS_CACHE_FILE_PATH: ".cache/genesis"
       TI_OFFLINE_CACHE: "1"

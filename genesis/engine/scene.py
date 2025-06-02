@@ -29,7 +29,7 @@ from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import redirect_libc_stderr
+from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
 
 
@@ -989,10 +989,9 @@ class Scene(RBC):
             indices = torch.linspace(0, N - 2, N_new, dtype=int)
 
             Ts = np.zeros((N_new, 4, 4))
-
             for i in range(N_new):
                 pos, quat = entity.forward_kinematics(qposs[indices[i]])
-                Ts[i] = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
+                Ts[i] = tensor_to_array(gu.trans_quat_to_T(pos[link_idx], quat[link_idx]))
 
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005

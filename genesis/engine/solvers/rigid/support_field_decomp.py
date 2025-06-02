@@ -41,7 +41,6 @@ class SupportField:
         support_cell_start = []
         start = 0
         if self.solver.n_geoms > 0:
-
             init_pos = self.solver.verts_info.init_pos.to_numpy()
             for i_g in range(self.solver.n_geoms):
                 vert_start = self.solver.geoms_info.vert_start[i_g]

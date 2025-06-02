@@ -329,34 +329,40 @@ class RigidEntity(Entity):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
             l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
         else:
-            # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints
+            # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
+            # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
 
-            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties
+            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
             morph_ = copy(morph)
             morph_.visualization = False
             try:
-                # Mujoco's unified MJCF+URDF parser for URDF files
-                l_infos_, links_j_infos_, links_g_infos_, _ = mju.parse_xml(morph_, surface)
+                # Mujoco's unified MJCF+URDF parser for URDF files.
+                # Note that Mujoco URDF parser completely ignores equality constraints.
+                l_infos, links_j_infos, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
 
-                # Take into account 'world' body if it was added automatically
-                if len(links_g_infos_) == len(links_g_infos) + 1:
-                    assert not links_g_infos_[0]
+                # Take into account 'world' body if it was added automatically for our legacy URDF parser
+                if len(links_g_infos_mj) == len(links_g_infos) + 1:
+                    assert not links_g_infos_mj[0]
                     links_g_infos.insert(0, [])
-                assert len(links_g_infos_) == len(links_g_infos)
+                assert len(links_g_infos_mj) == len(links_g_infos)
 
-                # Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!)
-                l_infos = l_infos_
-                links_j_infos = links_j_infos_
-                for link_g_infos, link_g_infos_ in zip(links_g_infos, links_g_infos_):
-                    for i, link_g_infos_ in enumerate((link_g_infos, link_g_infos_)):
-                        for idx, g_info in tuple(enumerate(link_g_infos_))[::-1]:
-                            is_col = g_info["contype"] or g_info["conaffinity"]
-                            if morph.collision and is_col:
-                                if i == 0:
-                                    del link_g_infos[idx]
-                                else:
-                                    link_g_infos.append(g_info)
+                # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
+                # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
+                # by our custom legacy URDF parser.
+                # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
+                for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
+                    # Remove collision geometries from our legacy URDF parser
+                    for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            del link_g_infos[i_g]
+
+                    # Add visual geometries from Mujoco's unified MJCF+URDF parser
+                    for g_info in link_g_infos_mj:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            link_g_infos.append(g_info)
             except (ValueError, AssertionError):
                 gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
 
@@ -366,6 +372,14 @@ class RigidEntity(Entity):
             and links_j_infos
             and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
         ):
+            # Pick the depth fixed joint down the kinematic tree
+            for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+                if l_info["parent_idx"] in (0, -1) and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0:
+                    continue
+                idx -= 1
+                break
+
+            # Define free joint
             j_info = dict()
             j_info["name"] = "root_joint"
             j_info["type"] = gs.JOINT_TYPE.FREE
@@ -378,21 +392,24 @@ class RigidEntity(Entity):
             j_info["dofs_motion_vel"] = np.eye(6, 3)
             j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
             j_info["dofs_stiffness"] = np.zeros(6)
-            j_info["dofs_invweight"] = gu.default_dofs_invweight(6)
-            j_info["dofs_damping"] = gu.free_dofs_damping(6)
-            j_info["dofs_armature"] = gu.free_dofs_armature(6)
-            j_info["dofs_kp"] = gu.default_dofs_kp(6)
-            j_info["dofs_kv"] = gu.default_dofs_kv(6)
-            j_info["dofs_force_range"] = gu.default_dofs_force_range(6)
-            links_j_infos[0].append(j_info)
+            j_info["dofs_invweight"] = np.zeros(6)
+            j_info["dofs_damping"] = np.zeros(6)
+            j_info["dofs_armature"] = np.zeros(6)
+            j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
+            links_j_infos[idx] = [j_info]
 
-            # Note that 'invweight' was previously initialized to zero based the root joint was fixed at that time.
-            # It is necessary to re-initialize it to some strictly negative value to trigger recomputation in solver.
-            l_infos[0]["invweight"] = np.full((2,), fill_value=-1.0)
+            # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
+            # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
+            for i_l in range(idx, len(l_infos)):
+                l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
+                for j_info in links_j_infos[i_l]:
+                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
 
-        # Remove the world link if fixed and has no geometry attached
+        # Remove the world link if "unless", i.e. free or fixed joint without any geometry attached
         if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
-            if sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0 and not links_g_infos[0]:
+            if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
                 del l_infos[0], links_j_infos[0], links_g_infos[0]
                 for l_info in l_infos:
                     l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
@@ -585,10 +602,21 @@ class RigidEntity(Entity):
 
             dofs_motion_ang = j_info.get("dofs_motion_ang")
             if dofs_motion_ang is None:
-                dofs_motion_ang = gu.default_dofs_motion_ang(n_dofs)
+                if n_dofs == 6:
+                    dofs_motion_ang = np.eye(6, 3, -3)
+                elif n_dofs == 0:
+                    dofs_motion_ang = np.zeros((0, 3))
+                else:
+                    assert False
+
             dofs_motion_vel = j_info.get("dofs_motion_vel")
             if dofs_motion_vel is None:
-                dofs_motion_vel = gu.default_dofs_motion_vel(n_dofs)
+                if n_dofs == 6:
+                    dofs_motion_vel = np.eye(6, 3)
+                elif n_dofs == 0:
+                    dofs_motion_vel = np.zeros((0, 3))
+                else:
+                    assert False
 
             joint = RigidJoint(
                 entity=self,
@@ -606,14 +634,14 @@ class RigidEntity(Entity):
                 sol_params=sol_params,
                 dofs_motion_ang=dofs_motion_ang,
                 dofs_motion_vel=dofs_motion_vel,
-                dofs_limit=j_info.get("dofs_limit", gu.default_dofs_limit(n_dofs)),
-                dofs_invweight=j_info.get("dofs_invweight", gu.default_dofs_invweight(n_dofs)),
-                dofs_stiffness=j_info.get("dofs_stiffness", gu.default_dofs_stiffness(n_dofs)),
-                dofs_damping=j_info.get("dofs_damping", gu.free_dofs_damping(n_dofs)),
-                dofs_armature=j_info.get("dofs_armature", gu.free_dofs_armature(n_dofs)),
-                dofs_kp=j_info.get("dofs_kp", gu.default_dofs_kp(n_dofs)),
-                dofs_kv=j_info.get("dofs_kv", gu.default_dofs_kv(n_dofs)),
-                dofs_force_range=j_info.get("dofs_force_range", gu.default_dofs_force_range(n_dofs)),
+                dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
+                dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
+                dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
+                dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
+                dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
+                dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
+                dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
+                dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
             )
             joints.append(joint)
 

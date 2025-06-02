@@ -302,9 +302,12 @@ class FEMEntity(Entity):
         Exception
             If no vertices are provided.
         """
+        verts = verts.astype(gs.np_float)
+        elems = elems.astype(gs.np_int)
+
         # rotate
-        R = gu.quat_to_R(np.array(self.morph.quat))
-        verts_COM = verts.mean(0)
+        R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
+        verts_COM = verts.mean(axis=0)
         init_positions = (verts - verts_COM) @ R.T + verts_COM
 
         if not init_positions.shape[0] > 0:
