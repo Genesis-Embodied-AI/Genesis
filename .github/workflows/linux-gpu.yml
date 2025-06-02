@@ -25,7 +25,7 @@ jobs:
           # Checkout of the full history is required for running benchmarks on old commits but not current
           fetch-depth: 1
 
-      - name: Run unit tests
+      - name: Run unit tests with coverage report
         if: github.event_name == 'pull_request'
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
@@ -46,7 +46,7 @@ jobs:
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
               pip install -e '.[dev,render]' && \
-              pytest -v --forked ./tests
+              pytest -v --forked --cov --cov-report=term-missing:skip-covered ./tests
             "
 
       - name: Run benchmarks
