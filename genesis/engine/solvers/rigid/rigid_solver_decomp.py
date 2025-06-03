@@ -3019,10 +3019,10 @@ class RigidSolver(Solver):
                             )
 
                             if for_sensor:
-                                map_sum_ang = (
+                                map_sum_vel = (
                                     map_sum_vel + self.dofs_state[i_d, i_b].cdof_vel * self.dofs_state[i_d, i_b].acc
                                 )
-                                map_sum_vel = (
+                                map_sum_ang = (
                                     map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].acc
                                 )
 
@@ -3057,10 +3057,10 @@ class RigidSolver(Solver):
                         map_sum_ang = map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].vel
 
                         if for_sensor:
-                            map_sum_ang = (
+                            map_sum_vel = (
                                 map_sum_vel + self.dofs_state[i_d, i_b].cdof_vel * self.dofs_state[i_d, i_b].acc
                             )
-                            map_sum_vel = (
+                            map_sum_ang = (
                                 map_sum_ang + self.dofs_state[i_d, i_b].cdofd_ang * self.dofs_state[i_d, i_b].acc
                             )
 
@@ -4662,7 +4662,6 @@ class RigidSolver(Solver):
             correction = ang.cross(lin)  # centrifugal
             final_acc = acc + correction
 
-            final_acc = self.links_state[i_l, i_b].cdd_vel
             for i in range(3):
                 tensor[i_b_, i_l_, i] = final_acc[i]
 
