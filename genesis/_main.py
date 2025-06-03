@@ -196,7 +196,8 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
             )
         scene.visualizer.update(force=True)
     stop_event.set()
-    gui_process.join()
+    if motors_dof_idx:
+        gui_process.join()
 
 
 def animate(filename_pattern, fps):
