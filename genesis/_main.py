@@ -165,18 +165,21 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
 
     # Get motor position limits.
     # Makes sure that all joints are bounded, included revolute joints.
-    motors_position_limit = torch.stack(entity.get_dofs_limit(motors_dof_idx), dim=1).numpy()
-    motors_position_limit[motors_position_limit == -np.inf] = -np.pi
-    motors_position_limit[motors_position_limit == +np.inf] = +np.pi
+    if motors_dof_idx:
+        motors_position_limit = torch.stack(entity.get_dofs_limit(motors_dof_idx), dim=1).numpy()
+        motors_position_limit[motors_position_limit == -np.inf] = -np.pi
+        motors_position_limit[motors_position_limit == +np.inf] = +np.pi
 
-    # Start the GUI process
-    manager = multiprocessing.Manager()
-    motors_position = manager.list([0.0 for _ in motors_dof_idx])
-    stop_event = multiprocessing.Event()
-    gui_process = multiprocessing.Process(
-        target=_start_gui, args=(motors_name, motors_position_limit, motors_position, stop_event), daemon=True
-    )
-    gui_process.start()
+        # Start the GUI process
+        manager = multiprocessing.Manager()
+        motors_position = manager.list([0.0 for _ in motors_dof_idx])
+        stop_event = multiprocessing.Event()
+        gui_process = multiprocessing.Process(
+            target=_start_gui, args=(motors_name, motors_position_limit, motors_position, stop_event), daemon=True
+        )
+        gui_process.start()
+    else:
+        stop_event = multiprocessing.Event()
 
     t = 0
     while scene.viewer.is_alive() and not stop_event.is_set():
@@ -185,14 +188,16 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
             t += 1 / FPS
             entity.set_quat(gs.utils.geom.xyz_to_quat(np.array([0, 0, t * 50]), rpy=True, degrees=True))
 
-        entity.set_dofs_position(
-            position=torch.tensor(motors_position),
-            dofs_idx_local=motors_dof_idx,
-            zero_velocity=True,
-        )
+        if motors_dof_idx:
+            entity.set_dofs_position(
+                position=torch.tensor(motors_position),
+                dofs_idx_local=motors_dof_idx,
+                zero_velocity=True,
+            )
         scene.visualizer.update(force=True)
     stop_event.set()
-    gui_process.join()
+    if motors_dof_idx:
+        gui_process.join()
 
 
 def animate(filename_pattern, fps):
