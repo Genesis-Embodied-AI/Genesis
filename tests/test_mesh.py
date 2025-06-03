@@ -144,6 +144,7 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
         ), f"Both textures should be None for material {material_name} in {texture_name}."
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file):
     """Test glb mesh geometry parsing."""
@@ -170,6 +171,7 @@ def test_glb_parse_geometry(glb_file):
         check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("glb_file", ["tests/chopper.glb"])
 def test_glb_parse_material(glb_file):
     """Test glb mesh geometry parsing."""
@@ -244,6 +246,8 @@ def test_glb_parse_material(glb_file):
             )
 
 
+@pytest.mark.required
+@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
     glb_folder = snapshot_download(
