@@ -2595,28 +2595,17 @@ class RigidEntity(Entity):
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        if exclude_self_contact:
-            valid_mask = torch.logical_xor(
-                torch.logical_and(
-                    scene_contact_info["geom_a"] >= self.geom_start,
-                    scene_contact_info["geom_a"] < self.geom_end,
-                ),
-                torch.logical_and(
-                    scene_contact_info["geom_b"] >= self.geom_start,
-                    scene_contact_info["geom_b"] < self.geom_end,
-                ),
-            )
-        else:
-            valid_mask = torch.logical_or(
-                torch.logical_and(
-                    scene_contact_info["geom_a"] >= self.geom_start,
-                    scene_contact_info["geom_a"] < self.geom_end,
-                ),
-                torch.logical_and(
-                    scene_contact_info["geom_b"] >= self.geom_start,
-                    scene_contact_info["geom_b"] < self.geom_end,
-                ),
-            )
+        logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
+        valid_mask = logical_operation(
+            torch.logical_and(
+                scene_contact_info["geom_a"] >= self.geom_start,
+                scene_contact_info["geom_a"] < self.geom_end,
+            ),
+            torch.logical_and(
+                scene_contact_info["geom_b"] >= self.geom_start,
+                scene_contact_info["geom_b"] < self.geom_end,
+            ),
+        )
         if with_entity is not None:
             if self.idx == with_entity.idx:
                 gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
