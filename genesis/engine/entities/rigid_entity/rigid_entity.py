@@ -2561,7 +2561,7 @@ class RigidEntity(Entity):
         return collision_pairs
 
     @gs.assert_built
-    def get_contacts(self, with_entity=None):
+    def get_contacts(self, with_entity=None, exclude_self_contact=False):
         """
         Returns contact information computed during the most recent `scene.step()`.
         If `with_entity` is provided, only returns contact information involving the caller entity and the specified `with_entity`. Otherwise, returns all contact information involving the caller entity.
@@ -2583,6 +2583,8 @@ class RigidEntity(Entity):
         ----------
         with_entity : RigidEntity, optional
             The entity to check contact with. Defaults to None.
+        exclude_self_contact: bool
+            Exclude the self collision from the returning contacts. Defaults to False.
 
         Returns
         -------
@@ -2593,16 +2595,28 @@ class RigidEntity(Entity):
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        valid_mask = torch.logical_or(
-            torch.logical_and(
-                scene_contact_info["geom_a"] >= self.geom_start,
-                scene_contact_info["geom_a"] < self.geom_end,
-            ),
-            torch.logical_and(
-                scene_contact_info["geom_b"] >= self.geom_start,
-                scene_contact_info["geom_b"] < self.geom_end,
-            ),
-        )
+        if exclude_self_contact:
+            valid_mask = torch.logical_xor(
+                torch.logical_and(
+                    scene_contact_info["geom_a"] >= self.geom_start,
+                    scene_contact_info["geom_a"] < self.geom_end,
+                ),
+                torch.logical_and(
+                    scene_contact_info["geom_b"] >= self.geom_start,
+                    scene_contact_info["geom_b"] < self.geom_end,
+                ),
+            )
+        else:
+            valid_mask = torch.logical_or(
+                torch.logical_and(
+                    scene_contact_info["geom_a"] >= self.geom_start,
+                    scene_contact_info["geom_a"] < self.geom_end,
+                ),
+                torch.logical_and(
+                    scene_contact_info["geom_b"] >= self.geom_start,
+                    scene_contact_info["geom_b"] < self.geom_end,
+                ),
+            )
         if with_entity is not None:
             if self.idx == with_entity.idx:
                 gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
