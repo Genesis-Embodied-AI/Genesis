@@ -8,6 +8,20 @@ class AABB:
     min: gs.ti_vec3
     max: gs.ti_vec3
 
+    @ti.func
+    def intersects(self, other) -> bool:
+        """
+        Check if this AABB intersects with another AABB.
+        """
+        return (
+            self.min[0] <= other.max[0]
+            and self.max[0] >= other.min[0]
+            and self.min[1] <= other.max[1]
+            and self.max[1] >= other.min[1]
+            and self.min[2] <= other.max[2]
+            and self.max[2] >= other.min[2]
+        )
+
 
 @ti.data_oriented
 class LBVH(RBC):
@@ -26,6 +40,8 @@ class LBVH(RBC):
     def __init__(self, n_aabbs, n_batches):
         self.n_aabbs = n_aabbs
         self.n_batches = n_batches
+        self.max_n_query_results = n_aabbs * 8  # Maximum number of query results per batch
+        self.max_stack_depth = 64  # Maximum stack depth for traversal
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(n_aabbs, n_batches))
         self.aabb_min = ti.field(gs.ti_vec3, shape=(n_batches))
         self.aabb_max = ti.field(gs.ti_vec3, shape=(n_batches))
@@ -43,6 +59,12 @@ class LBVH(RBC):
         self.internal_node_visited = ti.field(
             ti.u8, shape=(n_aabbs - 1, n_batches)
         )  # If an internal node has been visited during traversal
+
+        self.query_stack = ti.field(
+            ti.i32, shape=(self.max_stack_depth, self.n_aabbs, n_batches)
+        )  # Stack for traversal
+        self.query_result = ti.field(ti.i32, shape=(self.max_n_query_results, self.n_aabbs, n_batches))  # Query results
+        self.query_result_count = ti.field(ti.i32, shape=(self.n_aabbs, n_batches))  # Count of query results per batch
 
     @ti.kernel
     def build(self, aabbs: ti.template()):
@@ -213,3 +235,37 @@ class LBVH(RBC):
                 self.nodes[cur_idx, i_b].bound.min = ti.min(left_bound.min, right_bound.min)
                 self.nodes[cur_idx, i_b].bound.max = ti.max(left_bound.max, right_bound.max)
                 cur_idx = self.nodes[cur_idx, i_b].parent
+
+    @ti.kernel
+    def query(self, aabbs: ti.template()):
+        """
+        Query the BVH for intersections with the given AABBs.
+        The results are stored in the query_result field.
+        """
+        n_querys = aabbs.shape[0]
+        ti.loop_config(serialize=True)
+        for i_a, i_b in ti.ndrange(n_querys, self.n_batches):
+            self.query_result_count[i_a, i_b] = 0
+            self.query_stack[0, i_a, i_b] = 0  # Start with the root node
+            stack_depth = 1
+
+            while stack_depth > 0:
+                stack_depth -= 1
+                node_idx = self.query_stack[stack_depth, i_a, i_b]
+                node = self.nodes[node_idx, i_b]
+                # Check if the AABB intersects with the node's bounding box
+                if aabbs[i_a, i_b].intersects(node.bound):
+                    # If it's a leaf node, add the AABB index to the query results
+                    if node.left == -1 and node.right == -1:
+                        idx = ti.atomic_add(self.query_result_count[i_a, i_b], 1)
+                        if idx < self.max_n_query_results:
+                            code = self.morton_codes[node_idx - (self.n_aabbs - 1), i_b]
+                            self.query_result[idx, i_a, i_b] = ti.i32(code & ti.u64(0xFFFFFFFF))  # Store the AABB index
+                    else:
+                        # Push children onto the stack
+                        if node.right != -1:
+                            self.query_stack[stack_depth, i_a, i_b] = node.right
+                            stack_depth += 1
+                        if node.left != -1:
+                            self.query_stack[stack_depth, i_a, i_b] = node.left
+                            stack_depth += 1

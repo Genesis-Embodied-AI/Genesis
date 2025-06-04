@@ -26,7 +26,7 @@ def lbvh():
     aabbs.min.from_numpy(min)
     aabbs.max.from_numpy(max)
     tree.build(aabbs)
-    return tree
+    return tree, aabbs
 
 
 def test_morton_code(lbvh):
@@ -66,10 +66,12 @@ def test_expand_bits():
         ), f"Expected {str_expanded_x}, got {''.join(f'00{bit}' for bit in str_x)}"
 
 
-def test_tree_nodes(lbvh):
-    nodes = lbvh.nodes.to_numpy()
-    n_aabbs = lbvh.n_aabbs
-    n_batches = lbvh.n_batches
+def test_build_tree(lbvh):
+    tree, aabbs = lbvh
+
+    nodes = tree.nodes.to_numpy()
+    n_aabbs = tree.n_aabbs
+    n_batches = tree.n_batches
 
     # Check parent-child relationships
     for i in range(n_aabbs * 2 - 1):
@@ -110,6 +112,36 @@ def test_tree_nodes(lbvh):
                 parent_max_expected = np.maximum(left_max, right_max)
                 assert_allclose(parent_min, parent_min_expected, rtol=1e-5, atol=1e-5)
                 assert_allclose(parent_max, parent_max_expected, rtol=1e-5, atol=1e-5)
+
+
+def test_query(lbvh):
+    tree, aabbs = lbvh
+
+    # Query the tree
+    tree.query(aabbs)
+
+    query_result_count = tree.query_result_count.to_numpy()
+    query_result = tree.query_result.to_numpy()
+
+    n_aabbs = tree.n_aabbs
+    n_batches = tree.n_batches
+
+    # Check that the query results are correct
+    for i_b in range(n_batches):
+        intersect = np.zeros((n_aabbs, n_aabbs), dtype=bool)
+        for i_a in range(n_aabbs):
+            count = query_result_count[i_a, i_b]
+            for j in range(count):
+                intersect[i_a, query_result[j, i_a, i_b]] = True
+
+        for i_a in range(n_aabbs):
+            for j_a in range(n_aabbs):
+                if i_a == j_a:
+                    assert intersect[i_a, j_a] == True, f"AABB {i_a} should intersect with itself"
+                else:
+                    assert (
+                        intersect[i_a, j_a] == intersect[j_a, i_a]
+                    ), f"AABBs {i_a} and {j_a} should have the same intersection result"
 
 
 if __name__ == "__main__":
