@@ -2565,6 +2565,7 @@ class RigidEntity(Entity):
         """
         Returns contact information computed during the most recent `scene.step()`.
         If `with_entity` is provided, only returns contact information involving the caller entity and the specified `with_entity`. Otherwise, returns all contact information involving the caller entity.
+        When `with_entity` is `self`, it will return the self-collision only.
 
         The returned dict contains the following keys (a contact pair consists of two geoms: A and B):
 
@@ -2591,11 +2592,15 @@ class RigidEntity(Entity):
         contact_info : dict
             The contact information.
         """
-
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
+        if with_entity is not None and self.idx == with_entity.idx:
+            if exclude_self_contact:
+                gs.raise_exception("`with_entity` is self but `exclude_self_contact` is True.")
+            logical_operation = torch.logical_and
+
         valid_mask = logical_operation(
             torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
@@ -2606,9 +2611,7 @@ class RigidEntity(Entity):
                 scene_contact_info["geom_b"] < self.geom_end,
             ),
         )
-        if with_entity is not None:
-            if self.idx == with_entity.idx:
-                gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
+        if with_entity is not None and self.idx != with_entity.idx:
             valid_mask = torch.logical_and(
                 valid_mask,
                 torch.logical_or(
