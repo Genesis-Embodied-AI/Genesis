@@ -516,10 +516,16 @@ class FEMOptions(Options):
         Maximum number of Newton iterations. Defaults to 5. Only used when `use_implicit_solver` is True.
     n_pcg_iterations : int, optional
         Maximum number of PCG iterations. Defaults to 100. Only used when `use_implicit_solver` is True.
+    n_linesearch_iterations : int, optional
+        Maximum number of line search iterations. Defaults to 10. Only used when `use_implicit_solver` is True.
     newton_dx_threshold : float, optional
         Threshold for the Newton solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
     pcg_threshold : float, optional
         Threshold for the PCG solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
+    linesearch_c : float, optional
+        Line search sufficient decrease parameter. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
+    linesearch_tau : float, optional
+        Line search step size reduction factor. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     """
 
     dt: Optional[float] = None
@@ -529,8 +535,11 @@ class FEMOptions(Options):
     use_implicit_solver: bool = False
     n_newton_iterations: int = 5
     n_pcg_iterations: int = 100
+    n_linesearch_iterations: int = 10
     newton_dx_threshold: float = 1e-6
     pcg_threshold: float = 1e-6
+    linesearch_c: float = 1e-4  # line search sufficient decrease parameter
+    linesearch_tau: float = 0.5  # line search step size reduction factor
 
 
 class SFOptions(Options):
