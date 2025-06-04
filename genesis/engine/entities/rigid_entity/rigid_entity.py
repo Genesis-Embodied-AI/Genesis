@@ -2564,21 +2564,28 @@ class RigidEntity(Entity):
     def get_contacts(self, with_entity=None, exclude_self_contact=False):
         """
         Returns contact information computed during the most recent `scene.step()`.
-        If `with_entity` is provided, only returns contact information involving the caller entity and the specified `with_entity`. Otherwise, returns all contact information involving the caller entity.
+        If `with_entity` is provided, only returns contact information involving the caller and the specified entity.
+        Otherwise, returns all contact information involving the caller entity.
         When `with_entity` is `self`, it will return the self-collision only.
 
         The returned dict contains the following keys (a contact pair consists of two geoms: A and B):
 
-        - 'geom_a'     : The global geom index of geom A in the contact pair. (actual geom object can be obtained by scene.rigid_solver.geoms[geom_a])
-        - 'geom_b'     : The global geom index of geom B in the contact pair. (actual geom object can be obtained by scene.rigid_solver.geoms[geom_b])
-        - 'link_a'     : The global link index of link A (that contains geom A) in the contact pair. (actual link object can be obtained by scene.rigid_solver.links[link_a])
-        - 'link_b'     : The global link index of link B (that contains geom B) in the contact pair. (actual link object can be obtained by scene.rigid_solver.links[link_b])
+        - 'geom_a'     : The global geom index of geom A in the contact pair.
+                        (actual geom object can be obtained by scene.rigid_solver.geoms[geom_a])
+        - 'geom_b'     : The global geom index of geom B in the contact pair.
+                        (actual geom object can be obtained by scene.rigid_solver.geoms[geom_b])
+        - 'link_a'     : The global link index of link A (that contains geom A) in the contact pair.
+                        (actual link object can be obtained by scene.rigid_solver.links[link_a])
+        - 'link_b'     : The global link index of link B (that contains geom B) in the contact pair.
+                        (actual link object can be obtained by scene.rigid_solver.links[link_b])
         - 'position'   : The contact position in world frame.
         - 'force_a'    : The contact force applied to geom A.
         - 'force_b'    : The contact force applied to geom B.
-        - 'valid_mask' : (Only when scene is parallelized) A boolean mask indicating whether the contact information is valid.
+        - 'valid_mask' : A boolean mask indicating whether the contact information is valid.
+                        (Only when scene is parallelized)
 
-        The shape of each entry is (n_envs, n_contacts, ...) for scene with parallel envs, and (n_contacts, ...) for non-parallelized scene.
+        The shape of each entry is (n_envs, n_contacts, ...) for scene with parallel envs
+                               and (n_contacts, ...) for non-parallelized scene.
 
         Parameters
         ----------
