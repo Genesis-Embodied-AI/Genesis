@@ -372,7 +372,8 @@ class RigidEntity(Entity):
             and links_j_infos
             and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
         ):
-            # Pick the depth fixed joint down the kinematic tree
+            # Select the deepest fixed joint down the kinematic tree
+            idx = 0
             for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
                 if l_info["parent_idx"] in (0, -1) and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0:
                     continue
@@ -1987,7 +1988,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, unsafe=False):
+    def set_pos(self, pos, envs_idx=None, *, relative=False, zero_velocity=True, unsafe=False):
         """
         Set position of the entity's base link.
 
@@ -1995,8 +1996,12 @@ class RigidEntity(Entity):
         ----------
         pos : array_like
             The position to set.
+        relative : bool, optional
+            Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
+            False.
         zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
@@ -2006,13 +2011,18 @@ class RigidEntity(Entity):
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             pos = _pos
         self._solver.set_base_links_pos(
-            pos.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
+            pos.unsqueeze(-2),
+            self._base_links_idx,
+            envs_idx,
+            relative=relative,
+            unsafe=unsafe,
+            skip_forward=zero_velocity,
         )
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, unsafe=False):
+    def set_quat(self, quat, envs_idx=None, *, relative=False, zero_velocity=True, unsafe=False):
         """
         Set quaternion of the entity's base link.
 
@@ -2020,8 +2030,12 @@ class RigidEntity(Entity):
         ----------
         quat : array_like
             The quaternion to set.
+        relative : bool, optional
+            Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
+            False.
         zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
@@ -2031,7 +2045,12 @@ class RigidEntity(Entity):
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             quat = _quat
         self._solver.set_base_links_quat(
-            quat.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
+            quat.unsqueeze(-2),
+            self._base_links_idx,
+            envs_idx,
+            relative=relative,
+            unsafe=unsafe,
+            skip_forward=zero_velocity,
         )
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)

@@ -64,7 +64,7 @@ class Morph(Options):
     """
 
     pos: tuple = (0.0, 0.0, 0.0)
-    euler: Optional[tuple] = (0.0, 0.0, 0.0)
+    euler: Optional[tuple] = None
     quat: Optional[tuple] = None
     visualization: bool = True
     collision: bool = True
@@ -85,9 +85,13 @@ class Morph(Options):
             if not isinstance(self.quat, tuple) or len(self.quat) != 4:
                 gs.raise_exception("`quat` should be a 4-tuple.")
 
+        if (self.quat is not None) and (self.euler is not None):
+            gs.raise_exception("`euler` and `quat` cannot be jointly specified.")
+
         if self.euler is not None:
-            if self.quat is None:
-                self.quat = tuple(gs.utils.geom.xyz_to_quat(np.array(self.euler), rpy=True, degrees=True))
+            self.quat = tuple(gs.utils.geom.xyz_to_quat(np.array(self.euler), rpy=True, degrees=True))
+        elif self.quat is None:
+            self.quat = (1.0, 0.0, 0.0, 0.0)
 
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")
