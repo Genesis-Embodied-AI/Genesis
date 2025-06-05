@@ -2561,39 +2561,54 @@ class RigidEntity(Entity):
         return collision_pairs
 
     @gs.assert_built
-    def get_contacts(self, with_entity=None):
+    def get_contacts(self, with_entity=None, exclude_self_contact=False):
         """
         Returns contact information computed during the most recent `scene.step()`.
-        If `with_entity` is provided, only returns contact information involving the caller entity and the specified `with_entity`. Otherwise, returns all contact information involving the caller entity.
+        If `with_entity` is provided, only returns contact information involving the caller and the specified entity.
+        Otherwise, returns all contact information involving the caller entity.
+        When `with_entity` is `self`, it will return the self-collision only.
 
         The returned dict contains the following keys (a contact pair consists of two geoms: A and B):
 
-        - 'geom_a'     : The global geom index of geom A in the contact pair. (actual geom object can be obtained by scene.rigid_solver.geoms[geom_a])
-        - 'geom_b'     : The global geom index of geom B in the contact pair. (actual geom object can be obtained by scene.rigid_solver.geoms[geom_b])
-        - 'link_a'     : The global link index of link A (that contains geom A) in the contact pair. (actual link object can be obtained by scene.rigid_solver.links[link_a])
-        - 'link_b'     : The global link index of link B (that contains geom B) in the contact pair. (actual link object can be obtained by scene.rigid_solver.links[link_b])
+        - 'geom_a'     : The global geom index of geom A in the contact pair.
+                        (actual geom object can be obtained by scene.rigid_solver.geoms[geom_a])
+        - 'geom_b'     : The global geom index of geom B in the contact pair.
+                        (actual geom object can be obtained by scene.rigid_solver.geoms[geom_b])
+        - 'link_a'     : The global link index of link A (that contains geom A) in the contact pair.
+                        (actual link object can be obtained by scene.rigid_solver.links[link_a])
+        - 'link_b'     : The global link index of link B (that contains geom B) in the contact pair.
+                        (actual link object can be obtained by scene.rigid_solver.links[link_b])
         - 'position'   : The contact position in world frame.
         - 'force_a'    : The contact force applied to geom A.
         - 'force_b'    : The contact force applied to geom B.
-        - 'valid_mask' : (Only when scene is parallelized) A boolean mask indicating whether the contact information is valid.
+        - 'valid_mask' : A boolean mask indicating whether the contact information is valid.
+                        (Only when scene is parallelized)
 
-        The shape of each entry is (n_envs, n_contacts, ...) for scene with parallel envs, and (n_contacts, ...) for non-parallelized scene.
+        The shape of each entry is (n_envs, n_contacts, ...) for scene with parallel envs
+                               and (n_contacts, ...) for non-parallelized scene.
 
         Parameters
         ----------
         with_entity : RigidEntity, optional
             The entity to check contact with. Defaults to None.
+        exclude_self_contact: bool
+            Exclude the self collision from the returning contacts. Defaults to False.
 
         Returns
         -------
         contact_info : dict
             The contact information.
         """
-
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        valid_mask = torch.logical_or(
+        logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
+        if with_entity is not None and self.idx == with_entity.idx:
+            if exclude_self_contact:
+                gs.raise_exception("`with_entity` is self but `exclude_self_contact` is True.")
+            logical_operation = torch.logical_and
+
+        valid_mask = logical_operation(
             torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
                 scene_contact_info["geom_a"] < self.geom_end,
@@ -2603,9 +2618,7 @@ class RigidEntity(Entity):
                 scene_contact_info["geom_b"] < self.geom_end,
             ),
         )
-        if with_entity is not None:
-            if self.idx == with_entity.idx:
-                gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
+        if with_entity is not None and self.idx != with_entity.idx:
             valid_mask = torch.logical_and(
                 valid_mask,
                 torch.logical_or(
