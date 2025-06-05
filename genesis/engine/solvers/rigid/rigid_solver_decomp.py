@@ -2443,8 +2443,8 @@ class RigidSolver(Solver):
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
                     pos = pos + self.joints_state[i_j, i_b].xaxis * self.dofs_state[dof_start, i_b].pos
 
-            # Skip link pose update for fixed root links to allow the user for manually overwriting them
-            if not (l_info.is_fixed and l_info.parent_idx == -1):
+            # Skip link pose update for fixed root links to let users manually overwrite them
+            if not (l_info.parent_idx == -1 and l_info.is_fixed):
                 self.links_state[i_l, i_b].pos = pos
                 self.links_state[i_l, i_b].quat = quat
 

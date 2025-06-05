@@ -405,9 +405,9 @@ class RigidEntity(Entity):
                 l_infos[idx]["name"] = "base"
 
             # Shift root idx for all child links
-            for i_l in range(idx, len(l_infos)):
-                if l_infos[i_l]["root_idx"] == idx + 1:
-                    l_infos[i_l]["root_idx"] = idx
+            for l_info in l_infos[idx:]:
+                if l_info["root_idx"] == idx + 1:
+                    l_info["root_idx"] = idx
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
@@ -417,17 +417,21 @@ class RigidEntity(Entity):
                     j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
 
         # Remove the world link if "useless", i.e. free or fixed joint without any geometry attached
-        if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
-            if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
-                del l_infos[0], links_j_infos[0], links_g_infos[0]
-                for l_info in l_infos:
-                    l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
-                    if "root_idx" in l_info:
-                        l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+        if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
+            del l_infos[0], links_j_infos[0], links_g_infos[0]
+            for l_info in l_infos:
+                l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
+                if "root_idx" in l_info:
+                    l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+
+        # Genesis requires links associated with free joints to be attached to the world directly
+        for i_l, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+            if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
+                l_info["parent_idx"] = -1
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
-        for i, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
             if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
                 if l_info["parent_idx"] >= 0:
                     l_info["is_robot"] = l_infos[l_info["parent_idx"]]["is_robot"]
