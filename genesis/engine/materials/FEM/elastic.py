@@ -128,27 +128,27 @@ class Elastic(Base):
             for j in ti.static(range(3)):
                 for k in ti.static(range(3)):
                     for l in ti.static(range(3)):
-                        hessian_field[i_e, i_b, i, j][k, l] = 0.0
+                        hessian_field[i_b, i, j, i_e][k, l] = 0.0
 
         # Identity part
         for i in ti.static(range(3)):
             for k in ti.static(range(3)):
-                hessian_field[i_e, i_b, i, i][k, k] = mu
+                hessian_field[i_b, i, i, i_e][k, k] = mu
 
         # Diagonal terms
-        hessian_field[i_e, i_b, 0, 0][0, 0] += mu + lam
-        hessian_field[i_e, i_b, 1, 1][1, 1] += mu + lam
-        hessian_field[i_e, i_b, 2, 2][2, 2] += mu + lam
+        hessian_field[i_b, 0, 0, i_e][0, 0] += mu + lam
+        hessian_field[i_b, 1, 1, i_e][1, 1] += mu + lam
+        hessian_field[i_b, 2, 2, i_e][2, 2] += mu + lam
 
         # Off-diagonal terms
-        hessian_field[i_e, i_b, 0, 1][1, 0] = hessian_field[i_e, i_b, 1, 0][0, 1] = mu
-        hessian_field[i_e, i_b, 0, 2][2, 0] = hessian_field[i_e, i_b, 2, 0][0, 2] = mu
-        hessian_field[i_e, i_b, 1, 2][2, 1] = hessian_field[i_e, i_b, 2, 1][1, 2] = mu
+        hessian_field[i_b, 0, 1, i_e][1, 0] = hessian_field[i_b, 1, 0, i_e][0, 1] = mu
+        hessian_field[i_b, 0, 2, i_e][2, 0] = hessian_field[i_b, 2, 0, i_e][0, 2] = mu
+        hessian_field[i_b, 1, 2, i_e][2, 1] = hessian_field[i_b, 2, 1, i_e][1, 2] = mu
 
         # Pressure coupling terms
-        hessian_field[i_e, i_b, 0, 1][0, 1] = hessian_field[i_e, i_b, 0, 2][0, 2] = lam
-        hessian_field[i_e, i_b, 1, 0][1, 0] = hessian_field[i_e, i_b, 2, 0][2, 0] = lam
-        hessian_field[i_e, i_b, 1, 2][1, 2] = hessian_field[i_e, i_b, 2, 1][2, 1] = lam
+        hessian_field[i_b, 0, 1, i_e][0, 1] = hessian_field[i_b, 0, 2, i_e][0, 2] = lam
+        hessian_field[i_b, 1, 0, i_e][1, 0] = hessian_field[i_b, 2, 0, i_e][2, 0] = lam
+        hessian_field[i_b, 1, 2, i_e][1, 2] = hessian_field[i_b, 2, 1, i_e][2, 1] = lam
         return energy, gradient
 
     @ti.func
