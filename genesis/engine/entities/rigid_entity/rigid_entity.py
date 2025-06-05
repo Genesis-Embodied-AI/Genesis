@@ -400,6 +400,15 @@ class RigidEntity(Entity):
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
             links_j_infos[idx] = [j_info]
 
+            # Rename root link for clarity if relevant
+            if idx == 0:
+                l_infos[idx]["name"] = "base"
+
+            # Shift root idx for all child links
+            for i_l in range(idx, len(l_infos)):
+                if l_infos[i_l]["root_idx"] == idx + 1:
+                    l_infos[i_l]["root_idx"] = idx
+
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
             for i_l in range(idx, len(l_infos)):
@@ -407,7 +416,7 @@ class RigidEntity(Entity):
                 for j_info in links_j_infos[i_l]:
                     j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
 
-        # Remove the world link if "unless", i.e. free or fixed joint without any geometry attached
+        # Remove the world link if "useless", i.e. free or fixed joint without any geometry attached
         if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
             if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
                 del l_infos[0], links_j_infos[0], links_g_infos[0]
