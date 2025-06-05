@@ -164,11 +164,10 @@ class LBVH(RBC):
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
 
-        self.query_stack = ti.field(
-            ti.i32, shape=(self.max_stack_depth, self.n_aabbs, n_batches)
-        )  # Stack for traversal
-        self.query_result = ti.field(ti.i32, shape=(self.max_n_query_results, self.n_aabbs, n_batches))  # Query results
-        self.query_result_count = ti.field(ti.i32, shape=(self.n_aabbs, n_batches))  # Count of query results per batch
+        self.query_result = ti.field(
+            gs.ti_ivec2, shape=(self.n_batches, self.max_n_query_results)
+        )  # Query results, vec2 first is self id, second is query id
+        self.query_result_count = ti.field(ti.i32, shape=(self.n_batches))  # Count of query results per batch
 
     @ti.kernel
     def build(self):
