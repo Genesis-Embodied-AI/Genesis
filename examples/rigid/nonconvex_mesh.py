@@ -21,7 +21,6 @@ def main():
             camera_fov=40,
         ),
         show_viewer=args.vis,
-        rigid_options=gs.options.RigidOptions(),
     )
 
     ########################## entities ##########################
