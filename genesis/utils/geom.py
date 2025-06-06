@@ -858,55 +858,39 @@ def transform_by_T(pos, T):
     """
     assert pos.shape[-1] == 3, "Input positions must have 3 dimensions"
 
+    if T.ndim == 2:
+        T = T.reshape(1, 4, 4)
+
     if isinstance(pos, torch.Tensor) and isinstance(T, torch.Tensor):
-        if T.ndim == 2:
-            T = T.unsqueeze(0)
         if pos.ndim > 1:
             ones_shape = pos.shape[:-1] + (1,)
             pos_hom = torch.cat([pos, torch.ones(ones_shape, dtype=pos.dtype, device=pos.device)], dim=-1)
         else:
             pos_hom = torch.cat([pos, torch.tensor([1.0], dtype=pos.dtype, device=pos.device)])
-        if pos_hom.ndim == 1:
-            pos_hom = pos_hom.unsqueeze(0).unsqueeze(0)  # [1, 1, 4]
-        elif pos_hom.ndim == 2:
-            assert T.shape[0] == 1 or T.shape[0] == pos.shape[0]
-            pos_hom = pos_hom.unsqueeze(-2)  # [B, 1, 4]
-
-        pos_hom_t = pos_hom.swapaxes(-1, -2)  # (..., N, 4) -> (..., 4, N)
-        transformed_hom = T @ pos_hom_t
-        transformed_hom = transformed_hom.swapaxes(-1, -2)[..., :3]
-
-        if pos.ndim == 1:
-            transformed_hom = transformed_hom.squeeze(0).squeeze(0)
-        elif pos.ndim == 2:
-            transformed_hom = transformed_hom.squeeze(-2)
-        return transformed_hom
-
     elif isinstance(pos, np.ndarray) and isinstance(T, np.ndarray):
-        if T.ndim == 2:
-            T = T.reshape(1, 4, 4)
         if pos.ndim > 1:
             ones_shape = pos.shape[:-1] + (1,)
             pos_hom = np.concatenate([pos, np.ones(ones_shape, dtype=pos.dtype)], axis=-1)
         else:
             pos_hom = np.append(pos, 1)
-        if pos_hom.ndim == 1:
-            pos_hom = pos_hom.reshape(1, 1, -1)
-        elif pos_hom.ndim == 2:
-            assert T.shape[0] == 1 or T.shape[0] == pos.shape[0], f"{T.shape}, {pos.shape}"
-            pos_hom = pos_hom.reshape(-1, 1, 4)
-
-        pos_hom_t = pos_hom.swapaxes(-1, -2)  # (..., N, 4) -> (..., 4, N)
-        transformed_hom = T @ pos_hom_t
-        transformed_hom = transformed_hom.swapaxes(-1, -2)[..., :3]
-
-        if pos.ndim == 1:
-            transformed_hom = transformed_hom.reshape(-1)
-        elif pos.ndim == 2:
-            transformed_hom = transformed_hom.reshape(-1, 3)
-        return transformed_hom
     else:
         gs.raise_exception(f"Inputs must be both torch.Tensor or both np.ndarray. Got: {type(pos)=} and {type(T)=}")
+
+    if pos_hom.ndim == 1:
+        pos_hom = pos_hom.reshape(1, 1, -1)
+    elif pos_hom.ndim == 2:
+        assert T.shape[0] == 1 or T.shape[0] == pos.shape[0], f"{T.shape}, {pos.shape}"
+        pos_hom = pos_hom.reshape(-1, 1, 4)
+
+    pos_hom_t = pos_hom.swapaxes(-1, -2)  # (..., N, 4) -> (..., 4, N)
+    transformed_hom = T @ pos_hom_t
+    transformed_hom = transformed_hom.swapaxes(-1, -2)[..., :3]
+
+    if pos.ndim == 1:
+        transformed_hom = transformed_hom.reshape(-1)
+    elif pos.ndim == 2:
+        transformed_hom = transformed_hom.reshape(-1, 3)
+    return transformed_hom
 
 
 # ------------------------------------------------------------------------------------

@@ -5,7 +5,11 @@ import numpy as np
 import genesis as gs
 from genesis.utils.geom import *
 from scipy.spatial.transform import Rotation as R
+from .utils import (
+    assert_allclose,
+)
 
+TOL = 1e-7
 
 pytestmark = [pytest.mark.required]
 
@@ -22,13 +26,7 @@ def test_torch_round_trip(batch_size):
     d6 = R_to_rot6d(R_torch)
     R_recon = rot6d_to_R(d6)
 
-    np.testing.assert_allclose(
-        R_torch.cpu().numpy(),
-        R_recon.cpu().numpy(),
-        rtol=1e-5,
-        atol=1e-6,
-        err_msg=f"Torch round-trip failed for batch size {batch_size}",
-    )
+    assert_allclose(R_torch.cpu(), R_recon.cpu(), tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
@@ -42,9 +40,7 @@ def test_numpy_round_trip(batch_size):
     d6 = R_to_rot6d(R_np)
     R_recon = rot6d_to_R(d6)
 
-    np.testing.assert_allclose(
-        R_np, R_recon, rtol=1e-5, atol=1e-6, err_msg=f"NumPy round-trip failed for batch size {batch_size}"
-    )
+    assert_allclose(R_np, R_recon, tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 100])
@@ -58,41 +54,17 @@ def test_torch_identity_transform(batch_size):
 
     T_identity = torch.eye(4)
 
-    transformed = transform_by_T(pos, T_identity).cpu().numpy()
-    np.testing.assert_allclose(
-        pos.cpu().numpy(),
-        transformed,
-        rtol=1e-5,
-        atol=1e-6,
-        err_msg=f"NumPy identity_transform failed for batch size {batch_size}",
-    )
-    transformed = transform_by_T(b_pos, T_identity).cpu().numpy()
-    np.testing.assert_allclose(
-        b_pos.cpu().numpy(),
-        transformed,
-        rtol=1e-5,
-        atol=1e-6,
-        err_msg=f"NumPy identity_transform failed for batch size {batch_size}",
-    )
+    transformed = transform_by_T(pos, T_identity).cpu()
+    assert_allclose(pos.cpu(), transformed, tol=TOL)
+    transformed = transform_by_T(b_pos, T_identity).cpu()
+    assert_allclose(b_pos.cpu(), transformed, tol=TOL)
 
     if batch_size > 0:
         T_batched_identity = torch.eye(4).reshape(1, 4, 4).repeat(batch_size, 1, 1)
-        transformed = transform_by_T(pos, T_batched_identity).cpu().numpy()
-        np.testing.assert_allclose(
-            pos.cpu().numpy(),
-            transformed,
-            rtol=1e-5,
-            atol=1e-6,
-            err_msg=f"NumPy identity_transform failed for batch size {batch_size}",
-        )
-        transformed = transform_by_T(b_pos, T_batched_identity).cpu().numpy()
-        np.testing.assert_allclose(
-            b_pos.cpu().numpy(),
-            transformed,
-            rtol=1e-5,
-            atol=1e-6,
-            err_msg=f"NumPy identity_transform failed for batch size {batch_size}",
-        )
+        transformed = transform_by_T(pos, T_batched_identity).cpu()
+        assert_allclose(pos.cpu(), transformed, tol=TOL)
+        transformed = transform_by_T(b_pos, T_batched_identity).cpu()
+        assert_allclose(b_pos.cpu(), transformed, tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 100])
@@ -107,29 +79,13 @@ def test_numpy_identity_transform(batch_size):
     T_identity = np.eye(4)
 
     transformed = transform_by_T(pos, T_identity)
-    np.testing.assert_allclose(
-        pos, transformed, rtol=1e-5, atol=1e-6, err_msg=f"NumPy identity_transform failed for batch size {batch_size}"
-    )
+    assert_allclose(pos, transformed, tol=TOL)
     transformed = transform_by_T(b_pos, T_identity)
-    np.testing.assert_allclose(
-        b_pos, transformed, rtol=1e-5, atol=1e-6, err_msg=f"NumPy identity_transform failed for batch size {batch_size}"
-    )
+    assert_allclose(b_pos, transformed, tol=TOL)
 
     if batch_size > 0:
         T_batched_identity = np.eye(4).reshape(1, 4, 4).repeat(batch_size, 0)
         transformed = transform_by_T(pos, T_batched_identity)
-        np.testing.assert_allclose(
-            pos,
-            transformed,
-            rtol=1e-5,
-            atol=1e-6,
-            err_msg=f"NumPy identity_transform failed for batch size {batch_size}",
-        )
+        assert_allclose(pos, transformed, tol=TOL)
         transformed = transform_by_T(b_pos, T_batched_identity)
-        np.testing.assert_allclose(
-            b_pos,
-            transformed,
-            rtol=1e-5,
-            atol=1e-6,
-            err_msg=f"NumPy identity_transform failed for batch size {batch_size}",
-        )
+        assert_allclose(b_pos, transformed, tol=TOL)
