@@ -858,20 +858,20 @@ def transform_by_R(pos, R):
     """
     assert pos.shape[-1] == 3
 
+    dim_added = False
     if R.ndim == 2:
-        if pos.ndim == 2:
-            new_pos = (R @ pos.T).T
-        elif pos.ndim == 1:
-            new_pos = R @ pos
-        else:
-            gs.raise_exception(f"invalid input dim for pos: {pos.shape=}")
-    elif R.ndim == 3:  # batched R and pos
-        if pos.ndim == 2:
-            new_pos = (R @ pos[:, :, None])[...,0]
-        elif pos.ndim == 1:
-            new_pos = (R @ pos[None, :, None])[...,0]
-        else:
-            gs.raise_exception(f"invalid input dim for pos: {pos.shape=}")
+        R = R[None]
+        dim_added = True
+    if pos.ndim == 3:
+        new_pos = (R @ pos.swapaxes(-1, -2)).swapaxes(-1, -2) 
+    elif pos.ndim == 2:
+        new_pos = (R @ pos[:, :, None])[...,0]
+    elif pos.ndim == 1:
+        new_pos = (R @ pos[None, :, None])[...,0]
+        if dim_added:
+            new_pos = new_pos[0]
+    else:
+        gs.raise_exception(f"invalid input dim for pos: {pos.shape=}")
     return new_pos
 
 
