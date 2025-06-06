@@ -93,6 +93,7 @@ addopts = [
     "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=40.0",
+    "--no-cov-on-fail",
     "-m not benchmarks",
 ]
 filterwarnings = [
@@ -105,6 +106,17 @@ markers = [
 ]
 log_cli_level = "WARNING"
 
+[tool.coverage.run]
+branch = true
+source = ["genesis"]
+# parallel = true
+# sigterm = true
+# concurrency = ["thread", "multiprocessing"]
+omit = [
+    "genesis/ext/*",  # Ignore bundled external dependencies
+    "*/__init__.py",  # Ignore all '__init__.py' files
+]
+
 [project.scripts]
 gs = "genesis._main:main"
 
@@ -116,6 +128,7 @@ dev = [
     "pytest-forked",
     "pytest-random-order",
     "pytest-print",
+    "pytest-cov",
     "huggingface_hub",
     "wandb",
 ]
