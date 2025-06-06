@@ -397,21 +397,31 @@ class FEMSolver(Solver):
             )
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
 
+    @ti.func
+    def _compute_ele_J_F(self, f: ti.i32, i_e: ti.i32, i_b: ti.i32):
+        """
+        Compute the determinant (J) and deformation gradient (F) for an element.
+        """
+        i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
+        pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
+        pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
+        pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
+        pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
+        D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
+
+        B = self.elements_i[i_e].B
+        F = D @ B
+        J = F.determinant()
+
+        return J, F
+
     @ti.kernel
     def compute_ele_hessian_gradient(self, f: ti.i32):
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
             if not self.batch_active[i_b]:
                 continue
-            i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
-            pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
-            pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
-            pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
-            pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
-            D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
 
-            B = self.elements_i[i_e].B
-            F = D @ B
-            J = F.determinant()
+            J, F = self._compute_ele_J_F(f, i_e, i_b)
 
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
@@ -438,16 +448,8 @@ class FEMSolver(Solver):
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
             if not self.batch_linesearch_active[i_b]:
                 continue
-            i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
-            pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
-            pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
-            pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
-            pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
-            D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
 
-            B = self.elements_i[i_e].B
-            F = D @ B
-            J = F.determinant()
+            J, F = self._compute_ele_J_F(f, i_e, i_b)
 
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
@@ -536,6 +538,7 @@ class FEMSolver(Solver):
                 continue
             V_scaled = self.elements_i[i_e].V_scaled
             B = self.elements_i[i_e].B
+            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
             s = ti.Vector([-B[0, 0] - B[1, 0] - B[2, 0], -B[0, 1] - B[1, 1] - B[2, 1], -B[0, 2] - B[1, 2] - B[2, 2]])
             p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
             i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
