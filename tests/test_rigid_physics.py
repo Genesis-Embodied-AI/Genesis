@@ -804,7 +804,13 @@ def test_pd_control(show_viewer):
 
 
 @pytest.mark.required
-def test_set_root_pose(show_viewer, tol):
+@pytest.mark.parametrize("relative", [False, True])
+def test_set_root_pose(relative, show_viewer, tol):
+    ROBOT_POS_ZERO = (0.0, 0.4, 0.1)
+    ROBOT_EULER_ZERO = (0.0, 0.0, 90.0)
+    CUBE_POS_ZERO = (0.65, 0.0, 0.02)
+    CUBE_EULER_ZERO = (0.0, 90.0, 0.0)
+
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -812,14 +818,15 @@ def test_set_root_pose(show_viewer, tol):
     robot = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
-            pos=(0.0, 0.4, 0.1),
-            euler=(0, 0, 90),
+            pos=ROBOT_POS_ZERO,
+            euler=ROBOT_EULER_ZERO,
         ),
     )
     cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
+            pos=CUBE_POS_ZERO,
+            euler=CUBE_EULER_ZERO,
         ),
     )
     scene.build()
@@ -827,14 +834,33 @@ def test_set_root_pose(show_viewer, tol):
     for _ in range(2):
         scene.reset()
 
-        assert_allclose(robot.get_pos(), (0.0, 0.4, 0.1), tol=tol)
-        assert_allclose(gs.utils.geom.quat_to_xyz(robot.get_quat(), rpy=True, degrees=True), (0, 0, 90), tol=tol)
-        robot.set_pos(torch.tensor((-0.1, -0.2, 0.2), dtype=gs.tc_float))
-        assert_allclose(robot.get_pos(), (-0.1, -0.2, 0.2), tol=tol)
+        for entity, pos_zero, euler_zero in (
+            (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO),
+            (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO),
+        ):
+            pos_zero = torch.tensor(pos_zero, dtype=gs.tc_float)
+            euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
 
-        assert_allclose(cube.get_pos(), (0.65, 0.0, 0.02), tol=tol)
-        cube.set_pos(torch.tensor((0.0, 0.5, 0.2), dtype=gs.tc_float))
-        assert_allclose(cube.get_pos(), (0.0, 0.5, 0.2), tol=tol)
+            assert_allclose(entity.get_pos(), pos_zero, tol=tol)
+            euler = gs.utils.geom.quat_to_xyz(entity.get_quat(), rpy=True)
+            assert_allclose(euler, euler_zero, tol=1e-7)
+
+            pos_delta = torch.rand(3, dtype=gs.tc_float)
+            entity.set_pos(pos_delta, relative=relative)
+            quat_delta = torch.rand(4, dtype=gs.tc_float)
+            quat_delta /= torch.linalg.norm(quat_delta)
+            entity.set_quat(quat_delta, relative=relative)
+
+            pos_ref = pos_delta + pos_zero if relative else pos_delta
+            assert_allclose(entity.get_pos(), pos_ref, tol=tol)
+            euler = gs.utils.geom.quat_to_xyz(entity.get_quat(), rpy=True)
+            quat_zero = gs.utils.geom.xyz_to_quat(euler_zero, rpy=True)
+            if relative:
+                quat_ref = gs.utils.geom.transform_quat_by_quat(quat_zero, quat_delta)
+            else:
+                quat_ref = quat_delta
+            euler_ref = gs.utils.geom.quat_to_xyz(quat_ref, rpy=True)
+            assert_allclose(euler, euler_ref, tol=tol)
 
 
 @pytest.mark.required
@@ -1018,13 +1044,11 @@ def move_cube(use_suction, mode, show_viewer):
     for i in range(50):
         scene.step()
 
-    rigid = scene.sim.rigid_solver
-
     # grasp
     if use_suction:
         link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
         link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
-        rigid.add_weld_constraint(link_cube, link_franka)
+        scene.sim.rigid_solver.add_weld_constraint(link_cube, link_franka)
     else:
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
@@ -1064,7 +1088,7 @@ def move_cube(use_suction, mode, show_viewer):
 
     # release
     if use_suction:
-        rigid.delete_weld_constraint(link_cube, link_franka)
+        scene.sim.rigid_solver.delete_weld_constraint(link_cube, link_franka)
     else:
         franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
 
@@ -1599,7 +1623,7 @@ def test_terrain_generation(show_viewer):
     )
     scene.build(n_envs=225)
 
-    ball.set_pos(torch.cartesian_prod(*(torch.linspace(1.0, 10.0, 15),) * 2, torch.tensor((0.6,))))
+    ball.set_pos(torch.cartesian_prod(*(torch.linspace(0.3, 9.2, 15),) * 2, torch.tensor((0.6,))))
     for _ in range(400):
         scene.step()
 
@@ -1615,13 +1639,120 @@ def test_terrain_generation(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])  # TODO: Cannot afford GPU test for this one
-def test_urdf_mimic_panda(show_viewer, tol):
+@pytest.mark.xdist_group(name="huggingface_hub")
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_urdf_parsing(show_viewer, tol):
+    POS_OFFSET = 0.8
+    WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
+    DOOR_JOINT_DAMPING = 1.5
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        allow_patterns="microwave/*",
+        max_workers=1,
+    )
+    entities = {}
+    for i, (fixed, merge_fixed_links) in enumerate(
+        ((False, False), (False, True), (True, False), (True, True)),
+    ):
+        entity = scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=f"{asset_path}/microwave/microwave.urdf",
+                fixed=fixed,
+                merge_fixed_links=merge_fixed_links,
+                pos=(0.0, (i - 1.5) * POS_OFFSET, 0.0),
+                quat=tuple(WOLRD_QUAT / np.linalg.norm(WOLRD_QUAT)),
+            ),
+            vis_mode="collision",
+        )
+        entities[(fixed, merge_fixed_links)] = entity
+    scene.build()
+
+    def _check_entity_positions(relative, tol):
+        nonlocal entities
+        AABB_all = []
+        for key in ((False, False), (False, True), (True, False), (True, True)):
+            AABB = np.array(
+                [
+                    [np.inf, np.inf, np.inf],
+                    [-np.inf, -np.inf, -np.inf],
+                ]
+            )
+            for geom in entities[key].geoms:
+                AABB_i = geom.get_AABB()
+                AABB[0] = np.minimum(AABB[0], AABB_i[0])
+                AABB[1] = np.maximum(AABB[1], AABB_i[1])
+            AABB_all.append(AABB)
+        AABB_diff = np.diff(AABB_all, axis=0)
+        if relative:
+            AABB_diff[..., 1] -= POS_OFFSET
+        assert_allclose(AABB_diff, 0.0, tol=tol)
+
+    # Check that `set_pos` / `set_quat` applies the same transform in all cases
+    for relative in (False, True):
+        for key in ((False, False), (False, True), (True, False), (True, True)):
+            entities[key].set_pos(np.array([0.5, 0.0, 0.0]), relative=relative)
+            entities[key].set_quat(np.array([0.0, 0.0, 0.0, 1.0]), relative=relative)
+        if show_viewer:
+            scene.visualizer.update()
+        _check_entity_positions(relative, tol=gs.EPS)
+
+    # Check that `set_qpos` applies the same absolute transform in all cases
+    door_angle = np.array([1.1])
+    for i, key in enumerate(((False, False), (False, True))):
+        qpos = np.concatenate(
+            ((0.0, (i - 1.5) * POS_OFFSET, 0.0), tuple(WOLRD_QUAT / np.linalg.norm(WOLRD_QUAT)), door_angle)
+        )
+        entities[key].set_qpos(qpos)
+    for i, key in enumerate(((True, False), (True, True))):
+        entities[key].set_pos(np.array([0.0, 0.0, 0.0]), relative=True)
+        entities[key].set_quat(np.array([1.0, 0.0, 0.0, 0.0]), relative=True)
+        entities[key].set_qpos(door_angle)
+    if show_viewer:
+        scene.visualizer.update()
+    _check_entity_positions(relative=True, tol=gs.EPS)
+
+    # Add dof damping to stabilitze the physics
+    for key in ((False, False), (False, True), (True, False), (True, True)):
+        entities[key].set_dofs_damping(entities[key].get_dofs_damping() + DOOR_JOINT_DAMPING)
+
+    # Make sure that the dynamics of the door is the same in all cases
+    door_vel = np.array([-0.2])
+    entities[(False, False)].set_dofs_velocity(door_vel, 6)
+    entities[(False, True)].set_dofs_velocity(door_vel, 6)
+    entities[(True, False)].set_dofs_velocity(door_vel)
+    entities[(True, True)].set_dofs_velocity(door_vel)
+    link_1 = np.array([entities[(True, True)].link_start], dtype=gs.np_int)
+    for key in ((False, False), (False, True)):
+        link_2 = np.array([entities[key].link_start], dtype=gs.np_int)
+        scene.rigid_solver.add_weld_constraint(link_1, link_2)
+
+    for i in range(2000):
+        scene.step()
+        door_pos_all = (
+            entities[(False, False)].get_dofs_position(6),
+            entities[(False, True)].get_dofs_position(6),
+            entities[(True, False)].get_dofs_position(0),
+            entities[(True, True)].get_dofs_position(0),
+        )
+        door_pos_diff = np.diff(torch.concatenate(door_pos_all))
+        assert_allclose(door_pos_diff, 0, tol=5e-3)
+    assert_allclose(scene.rigid_solver.dofs_state.vel.to_numpy(), 0.0, tol=1e-3)
+    _check_entity_positions(relative=True, tol=2e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_urdf_mimic(show_viewer, tol):
     # create and build the scene
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-
     hand = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/panda_bullet/hand.urdf",
@@ -1629,18 +1760,15 @@ def test_urdf_mimic_panda(show_viewer, tol):
         ),
     )
     scene.build()
+    assert scene.rigid_solver.n_equalities == 1
 
-    rigid = scene.sim.rigid_solver
-    assert rigid.n_equalities == 1
-
-    qvel = rigid.dofs_state.vel.to_numpy()
+    qvel = scene.rigid_solver.dofs_state.vel.to_numpy()
     qvel[-1] = 1
-    rigid.dofs_state.vel.from_numpy(qvel)
-
+    scene.rigid_solver.dofs_state.vel.from_numpy(qvel)
     for i in range(200):
         scene.step()
 
-    gs_qpos = rigid.qpos.to_numpy()[:, 0]
+    gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
 
 
@@ -1747,7 +1875,6 @@ def test_data_accessor(n_envs, batched, tol):
     gs_robot = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
-            pos=(0.0, 0.0, 0.5),
         ),
     )
     scene.build(n_envs=n_envs)
@@ -1822,8 +1949,8 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, -1, gs_s.get_dofs_limit, None, gs_s.dofs_info.limit),
         (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, None, gs_s.dofs_info.stiffness),
         (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dofs_info.invweight),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_armature, None, gs_s.dofs_info.armature),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_damping, None, gs_s.dofs_info.damping),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_armature, gs_s.set_dofs_armature, gs_s.dofs_info.armature),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_damping, gs_s.set_dofs_damping, gs_s.dofs_info.damping),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.kp),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, gs_s.dofs_info.kv),
         (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
