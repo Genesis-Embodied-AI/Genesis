@@ -7,7 +7,7 @@ import psutil
 import pyglet
 import numpy as np
 import pytest
-from request.exceptions import HTTPError
+from requests.exceptions import HTTPError
 from _pytest.mark import Expression, MarkMatcher
 
 # Mock tkinter module for backward compatibility because old Genesis versions require it
