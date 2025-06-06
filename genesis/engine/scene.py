@@ -75,28 +75,37 @@ class Scene(RBC):
 
     def __init__(
         self,
-        sim_options=SimOptions(),
-        coupler_options=CouplerOptions(),
-        tool_options=ToolOptions(),
-        rigid_options=RigidOptions(),
-        avatar_options=AvatarOptions(),
-        mpm_options=MPMOptions(),
-        sph_options=SPHOptions(),
-        fem_options=FEMOptions(),
-        sf_options=SFOptions(),
-        pbd_options=PBDOptions(),
-        vis_options=VisOptions(),
-        viewer_options=ViewerOptions(),
-        renderer=Rasterizer(),
+        sim_options=None,
+        coupler_options=None,
+        tool_options=None,
+        rigid_options=None,
+        avatar_options=None,
+        mpm_options=None,
+        sph_options=None,
+        fem_options=None,
+        sf_options=None,
+        pbd_options=None,
+        vis_options=None,
+        viewer_options=None,
+        renderer=None,
         show_viewer=True,
         show_FPS=True,
         FPS_tracker_alpha: float = 0.95,
     ):
-        self._uid = gs.UID()
-        self._t = 0
-        self._is_built = False
-        self._show_FPS = show_FPS
-        self.FPS_tracker_alpha = FPS_tracker_alpha
+        # Handling of default arguments
+        sim_options = sim_options or SimOptions()
+        coupler_options = coupler_options or CouplerOptions()
+        tool_options = tool_options or ToolOptions()
+        rigid_options = rigid_options or RigidOptions()
+        avatar_options = avatar_options or AvatarOptions()
+        mpm_options = mpm_options or MPMOptions()
+        sph_options = sph_options or SPHOptions()
+        fem_options = fem_options or FEMOptions()
+        sf_options = sf_options or SFOptions()
+        pbd_options = pbd_options or PBDOptions()
+        vis_options = vis_options or VisOptions()
+        viewer_options = viewer_options or ViewerOptions()
+        renderer = renderer or Rasterizer()
 
         # validate options
         self._validate_options(
@@ -168,6 +177,12 @@ class Scene(RBC):
 
         self._backward_ready = False
         self._forward_ready = False
+
+        self._uid = gs.UID()
+        self._t = 0
+        self._is_built = False
+        self._show_FPS = show_FPS
+        self._FPS_tracker_alpha = FPS_tracker_alpha
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
@@ -611,7 +626,7 @@ class Scene(RBC):
             self._visualizer.build()
 
         if self._show_FPS:
-            self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.FPS_tracker_alpha)
+            self.FPS_tracker = FPSTracker(self.n_envs, alpha=self._FPS_tracker_alpha)
 
         gs.global_scene_list.add(self)
 

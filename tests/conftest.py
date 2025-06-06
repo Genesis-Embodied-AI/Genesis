@@ -21,6 +21,7 @@ except ImportError:
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
 import genesis as gs
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
 from .utils import MjSim, build_mujoco_sim, build_genesis_sim
 
@@ -184,6 +185,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")
