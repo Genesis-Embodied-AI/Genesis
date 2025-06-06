@@ -90,11 +90,13 @@ class Scene(RBC):
         renderer=Rasterizer(),
         show_viewer=True,
         show_FPS=True,
+        FPS_tracker_alpha: float = 0.95,
     ):
         self._uid = gs.UID()
         self._t = 0
         self._is_built = False
         self._show_FPS = show_FPS
+        self.FPS_tracker_alpha = FPS_tracker_alpha
 
         # validate options
         self._validate_options(
@@ -570,7 +572,7 @@ class Scene(RBC):
         n_envs_per_row: int | None = None,
         center_envs_at_origin=True,
         compile_kernels=True,
-    ):
+    ) -> None:
         """
         Builds the scene once all entities have been added. This operation is required before running the simulation.
 
@@ -609,7 +611,7 @@ class Scene(RBC):
             self._visualizer.build()
 
         if self._show_FPS:
-            self.FPS_tracker = FPSTracker(self.n_envs)
+            self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.FPS_tracker_alpha)
 
         gs.global_scene_list.add(self)
 

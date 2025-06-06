@@ -11,6 +11,12 @@ def main():
     parser.add_argument("-s", "--sep", action="store_true", default=False)
     parser.add_argument("-r", "--record", action="store_true", default=False)
     parser.add_argument("-n", "--num_env", type=int, default=1)
+    parser.add_argument(
+        "--fps-tracker-alpha",
+        type=float,
+        default=0.95,
+        help="lambda value for exponential moving average of fps. 0 means no averaging, 1 is infinite averaging",
+    )
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -34,6 +40,7 @@ def main():
         rigid_options=gs.options.RigidOptions(
             # constraint_solver=gs.constraint_solver.Newton,
         ),
+        FPS_tracker_alpha=args.fps_tracker_alpha,
     )
 
     ########################## entities ##########################
