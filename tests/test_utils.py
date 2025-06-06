@@ -7,6 +7,9 @@ from genesis.utils.geom import *
 from scipy.spatial.transform import Rotation as R
 
 
+pytestmark = [pytest.mark.required]
+
+
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
 def test_torch_round_trip(batch_size):
     print(f"Testing torch implementation with batch size {batch_size}...")
