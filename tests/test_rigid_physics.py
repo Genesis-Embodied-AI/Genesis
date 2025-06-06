@@ -1394,7 +1394,7 @@ def test_mesh_repair(convexify, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.xdist_group(name="huggingface_hub")
-@pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
+@pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer):
     OBJ_OFFSET_X = 0.0  # 0.02
@@ -1474,12 +1474,15 @@ def test_convexify(euler, backend, show_viewer):
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
     # cam.start_recording()
+    qvel_norminf_all = []
     for i in range(1700):
         scene.step()
         # cam.render()
         if i > 1600:
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.75)
+            qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
+            qvel_norminf_all.append(qvel_norminf)
+    np.testing.assert_array_less(torch.stack(qvel_norminf_all, dim=0).mean(), 0.1)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
@@ -1623,7 +1626,7 @@ def test_terrain_generation(show_viewer):
     )
     scene.build(n_envs=225)
 
-    ball.set_pos(torch.cartesian_prod(*(torch.linspace(0.3, 9.2, 15),) * 2, torch.tensor((0.6,))))
+    ball.set_pos(torch.cartesian_prod(*(torch.linspace(1.0, 10.0, 15),) * 2, torch.tensor((0.6,))))
     for _ in range(400):
         scene.step()
 
