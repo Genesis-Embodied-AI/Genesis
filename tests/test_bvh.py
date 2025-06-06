@@ -45,6 +45,10 @@ def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()
 
 
 def test_expand_bits():
+    """
+    Test the expand_bits function for LBVH.
+    A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
+    """
     # random integer
     x_np = np.random.randint(0, 1024, (10,), dtype=np.uint32)
     x_ti = ti.field(ti.uint32, shape=x_np.shape)
@@ -108,8 +112,8 @@ def test_build_tree(lbvh):
 
                 parent_min_expected = np.minimum(left_min, right_min)
                 parent_max_expected = np.maximum(left_max, right_max)
-                assert_allclose(parent_min, parent_min_expected, rtol=1e-5, atol=1e-5)
-                assert_allclose(parent_max, parent_max_expected, rtol=1e-5, atol=1e-5)
+                assert_allclose(parent_min, parent_min_expected, atol=1e-6, rtol=1e-5)
+                assert_allclose(parent_max, parent_max_expected, atol=1e-6, rtol=1e-5)
 
 
 def test_query(lbvh):
@@ -139,7 +143,3 @@ def test_query(lbvh):
                     assert (
                         intersect[i_b, i_a, j_a] == intersect[i_b, j_a, i_a]
                     ), f"AABBs {i_a} and {j_a} should have the same intersection result"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

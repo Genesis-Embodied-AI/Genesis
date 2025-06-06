@@ -5,6 +5,26 @@ from genesis.repr_base import RBC
 
 @ti.data_oriented
 class AABB(RBC):
+    """
+    AABB (Axis-Aligned Bounding Box) class for managing collections of bounding boxes in batches.
+
+    This class defines an axis-aligned bounding box (AABB) structure and provides a Taichi dataclass
+    for efficient computation and intersection testing on the GPU. Each AABB is represented by its
+    minimum and maximum 3D coordinates. The class supports batch processing of multiple AABBs.
+
+    Attributes:
+        n_batches (int): Number of batches of AABBs.
+        n_aabbs (int): Number of AABBs per batch.
+        ti_aabb (taichi.dataclass): Taichi dataclass representing an individual AABB with min and max vectors.
+        aabbs (taichi.field): Taichi field storing all AABBs in the specified batches.
+
+    Args:
+        n_batches (int): Number of batches to allocate.
+        n_aabbs (int): Number of AABBs per batch.
+
+    Example:
+        aabb_manager = AABB(n_batches=4, n_aabbs=128)
+    """
 
     def __init__(self, n_batches, n_aabbs):
         self.n_batches = n_batches
@@ -41,8 +61,54 @@ class AABB(RBC):
 @ti.data_oriented
 class LBVH(RBC):
     """
-    A bounding volume hierarchy (BVH) is a data structure that allows for efficient spatial partitioning of objects in a scene.
-    It is used to accelerate collision detection and ray tracing. Linear BVH is a simple BVH that is used to accelerate collision detection and ray tracing using parallelization.
+    Linear BVH is a simple BVH that is used to accelerate collision detection. It supports parallel building and
+    querying of the BVH tree. Only supports axis-aligned bounding boxes (AABBs).
+
+    Attributes
+    -----
+        aabbs : ti.field
+        The input AABBs to be organized in the BVH, shape (n_batches, n_aabbs).
+        n_aabbs : int
+            Number of AABBs per batch.
+        n_batches : int
+            Number of batches.
+        max_n_query_results : int
+            Maximum number of query results allowed.
+        max_stack_depth : int
+            Maximum stack depth for BVH traversal.
+        aabb_centers : ti.field
+            Centers of the AABBs, shape (n_batches, n_aabbs).
+        aabb_min : ti.field
+            Minimum coordinates of AABB centers per batch, shape (n_batches).
+        aabb_max : ti.field
+            Maximum coordinates of AABB centers per batch, shape (n_batches).
+        scale : ti.field
+            Scaling factors for normalizing AABB centers, shape (n_batches).
+        morton_codes : ti.field
+            Morton codes for each AABB, shape (n_batches, n_aabbs).
+        hist : ti.field
+            Histogram for radix sort, shape (n_batches, 256).
+        prefix_sum : ti.field
+            Prefix sum for histogram, shape (n_batches, 256).
+        offset : ti.field
+            Offset for radix sort, shape (n_batches, n_aabbs).
+        tmp_morton_codes : ti.field
+            Temporary storage for radix sort, shape (n_batches, n_aabbs).
+        Node : ti.dataclass
+            Node structure for the BVH tree, containing left, right, parent indices and bounding box.
+        nodes : ti.field
+            BVH nodes, shape (n_batches, n_aabbs * 2 - 1).
+        internal_node_visited : ti.field
+            Flags indicating if an internal node has been visited during traversal, shape (n_batches, n_aabbs - 1).
+        query_result : ti.field
+            Query results as a vector of (batch id, self id, query id), shape (max_n_query_results).
+        query_result_count : ti.field
+            Counter for the number of query results.
+
+    Notes
+    ------
+        For algorithmic details, see:
+        https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf
     """
 
     def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8):
@@ -68,10 +134,20 @@ class LBVH(RBC):
 
         @ti.dataclass
         class Node:
-            left: ti.i32  # Index of the left child
-            right: ti.i32  # Index of the right child
-            parent: ti.i32  # Index of the parent node
-            bound: aabb.ti_aabb  # Bounding box of the node
+            """
+            Node structure for the BVH tree.
+
+            Attributes:
+                left (int): Index of the left child node.
+                right (int): Index of the right child node.
+                parent (int): Index of the parent node.
+                bound (ti_aabb): Bounding box of the node, represented as an AABB.
+            """
+
+            left: ti.i32
+            right: ti.i32
+            parent: ti.i32
+            bound: aabb.ti_aabb
 
         self.Node = Node
 
@@ -90,14 +166,7 @@ class LBVH(RBC):
     @ti.kernel
     def build(self):
         """
-        Build the BVH from the given axis-aligned bounding boxes (AABBs).
-        The AABBs are expected to be in the format of a 2D array with shape (n_aabbs, n_batches),
-        where n_aabbs is the number of AABBs and n_batches is the number of batches.
-        Each AABB is represented by its minimum and maximum corners.
-
-        Notes
-        ------
-        https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf
+        Build the BVH from the axis-aligned bounding boxes (AABBs).
         """
 
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
@@ -123,43 +192,57 @@ class LBVH(RBC):
 
     @ti.func
     def compute_morton_codes(self):
+        """
+        Compute the Morton codes for each AABB.
+
+        The first 32 bits is the Morton code for the x, y, z coordinates, and the last 32 bits is the index of the AABB
+        in the original array. The x, y, z coordinates are scaled to a 10-bit integer range [0, 1024) and interleaved to
+        form the Morton code.
+        """
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
             center = self.aabb_centers[i_b, i_a] - self.aabb_min[i_b]
             scaled_center = center * self.scale[i_b]
-            morton_code_x = ti.floor(scaled_center[0] * 1024.0, dtype=ti.u32)
-            morton_code_y = ti.floor(scaled_center[1] * 1024.0, dtype=ti.u32)
-            morton_code_z = ti.floor(scaled_center[2] * 1024.0, dtype=ti.u32)
+            morton_code_x = ti.floor(scaled_center[0] * 1023.0, dtype=ti.u32)
+            morton_code_y = ti.floor(scaled_center[1] * 1023.0, dtype=ti.u32)
+            morton_code_z = ti.floor(scaled_center[2] * 1023.0, dtype=ti.u32)
             morton_code_x = self.expand_bits(morton_code_x)
             morton_code_y = self.expand_bits(morton_code_y)
             morton_code_z = self.expand_bits(morton_code_z)
             morton_code = (morton_code_x << 2) | (morton_code_y << 1) | (morton_code_z)
             self.morton_codes[i_b, i_a] = (ti.u64(morton_code) << 32) | ti.u64(i_a)
 
-    # Expands a 10-bit integer into 30 bits by inserting 2 zeros after each bit.
     @ti.func
     def expand_bits(self, v):
+        """
+        Expands a 10-bit integer into 30 bits by inserting 2 zeros before each bit.
+        """
         v = (v * ti.u32(0x00010001)) & ti.u32(0xFF0000FF)
         v = (v * ti.u32(0x00000101)) & ti.u32(0x0F00F00F)
         v = (v * ti.u32(0x00000011)) & ti.u32(0xC30C30C3)
         v = (v * ti.u32(0x00000005)) & ti.u32(0x49249249)
         return v
 
-    # radix sort the morton codes, using 8 bits at a time
     @ti.func
     def radix_sort_morton_codes(self):
+        """
+        Radix sort the morton codes, using 8 bits at a time.
+        """
         for i in ti.static(range(8)):
             # Clear histogram
             for i_b, j in ti.ndrange(self.n_batches, 256):
                 self.hist[i_b, j] = 0
+
             # Fill histogram
             for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
                 code = (self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF
                 self.offset[i_b, i_a] = ti.atomic_add(self.hist[i_b, ti.i32(code)], 1)
+
             # Compute prefix sum
             for i_b in ti.ndrange(self.n_batches):
                 self.prefix_sum[i_b, 0] = 0
                 for j in range(1, 256):  # sequential prefix sum
                     self.prefix_sum[i_b, j] = self.prefix_sum[i_b, j - 1] + self.hist[i_b, j - 1]
+
             # Reorder morton codes
             for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
                 code = (self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF
@@ -172,6 +255,11 @@ class LBVH(RBC):
 
     @ti.func
     def build_radix_tree(self):
+        """
+        Build the radix tree from the sorted morton codes.
+
+        The tree is built in parallel for every internal node.
+        """
         # Initialize the first node
         for i_b in ti.ndrange(self.n_batches):
             self.nodes[i_b, 0].parent = -1
@@ -180,6 +268,8 @@ class LBVH(RBC):
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs):
             self.nodes[i_b, i + self.n_aabbs - 1].left = -1
             self.nodes[i_b, i + self.n_aabbs - 1].right = -1
+
+        # Parallel build for every internal node
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
             d = ti.select(
                 self.delta(i, i + 1, i_b) > self.delta(i, i - 1, i_b),
@@ -233,7 +323,9 @@ class LBVH(RBC):
     @ti.func
     def compute_bounds(self):
         """
-        Compute the bounds of the BVH nodes. Starts from the leaf nodes and works upwards.
+        Compute the bounds of the BVH nodes.
+
+        Starts from the leaf nodes and works upwards.
         """
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
             self.internal_node_visited[i_b, i] = ti.u8(0)
@@ -258,6 +350,7 @@ class LBVH(RBC):
     def query(self, aabbs: ti.template()):
         """
         Query the BVH for intersections with the given AABBs.
+
         The results are stored in the query_result field.
         """
         self.query_result_count[None] = 0
