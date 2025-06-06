@@ -60,8 +60,7 @@ def main():
     if args.record:
         cam_0.start_recording()
 
-    horizon = args.horizon
-    for i in range(horizon):
+    for i in range(args.horizon):
         scene.step()
 
         color, depth, seg, normal = cam_0.render(
