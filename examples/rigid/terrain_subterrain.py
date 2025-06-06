@@ -20,17 +20,16 @@ def main():
     ########################## create a scene ##########################
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+            constraint_solver=gs.constraint_solver.Newton,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-5.0, -5.0, 10.0),
             camera_lookat=(5.0, 5.0, 0.0),
             camera_fov=40,
         ),
         show_viewer=args.vis,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            constraint_solver=gs.constraint_solver.Newton,
-        ),
-        vis_options=gs.options.VisOptions(),
     )
 
     horizontal_scale = 0.25
