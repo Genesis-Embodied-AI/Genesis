@@ -242,7 +242,6 @@ def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        entity.get_dofs_velocity()
         vel = state.vel.detach().cpu().numpy()
         assert_allclose(vel, 0.0, atol=2e-3), f"Entity {entity.uid} velocity is not near zero."
         pos = state.pos.detach().cpu().numpy()

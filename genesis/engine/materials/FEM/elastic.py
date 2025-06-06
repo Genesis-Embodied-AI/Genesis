@@ -124,16 +124,12 @@ class Elastic(Base):
         gradient = 2.0 * mu * eps + lam * trEps * I
 
         # Zero out the matrix
-        for i in ti.static(range(3)):
-            for j in ti.static(range(3)):
-                for k in ti.static(range(3)):
-                    for l in ti.static(range(3)):
-                        hessian_field[i_b, i, j, i_e][k, l] = 0.0
+        for i in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            hessian_field[i_b, i, i_e].fill(0.0)
 
         # Identity part
-        for i in ti.static(range(3)):
-            for k in ti.static(range(3)):
-                hessian_field[i_b, i, i, i_e][k, k] = mu
+        for i, k in ti.static(ti.ndrange(3, 3)):
+            hessian_field[i_b, i, i, i_e][k, k] = mu
 
         # Diagonal terms
         hessian_field[i_b, 0, 0, i_e][0, 0] += mu + lam
@@ -222,7 +218,8 @@ class Elastic(Base):
         Raises
         -------
         NotImplementedError
-            This implementation does not compute the Hessian for the stable Neo-Hookean model. The Hessian needs SVD decomposition for accurate computation, which is not implemented here.
+            This implementation does not compute the Hessian for the stable Neo-Hookean model.
+            The Hessian needs SVD decomposition for accurate computation, which is not implemented here.
 
         Notes
         -------
@@ -272,13 +269,12 @@ class Elastic(Base):
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
         """
-        _mu = mu
         _lambda = lam + mu
-        _alpha = 1.0 + _mu / _lambda
+        _alpha = 1.0 + mu / _lambda
 
         Ic = F.norm_sqr()
         Jminus1 = J - _alpha
-        energy = 0.5 * (_mu * (Ic - 3.0) + _lambda * Jminus1 * Jminus1)
+        energy = 0.5 * (mu * (Ic - 3.0) + _lambda * Jminus1**2)
 
         return energy
 
