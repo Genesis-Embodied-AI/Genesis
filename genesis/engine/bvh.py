@@ -6,9 +6,9 @@ from genesis.repr_base import RBC
 @ti.data_oriented
 class AABB(RBC):
 
-    def __init__(self, n_aabbs, n_batches):
-        self.n_aabbs = n_aabbs
+    def __init__(self, n_batches, n_aabbs):
         self.n_batches = n_batches
+        self.n_aabbs = n_aabbs
 
         @ti.dataclass
         class ti_aabb:
@@ -49,9 +49,9 @@ class LBVH(RBC):
         self.aabbs = aabb.aabbs
         self.n_aabbs = aabb.n_aabbs
         self.n_batches = aabb.n_batches
-        self.max_n_query_results = (
-            self.n_aabbs * max_n_query_result_per_aabb
-        )  # Maximum number of query results per batch
+        self.max_n_query_results = min(
+            self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF
+        )  # Maximum number of query results
         self.max_stack_depth = 64  # Maximum stack depth for traversal
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(self.n_batches, self.n_aabbs))
         self.aabb_min = ti.field(gs.ti_vec3, shape=(self.n_batches))
@@ -83,9 +83,9 @@ class LBVH(RBC):
         )  # If an internal node has been visited during traversal
 
         self.query_result = ti.field(
-            gs.ti_ivec2, shape=(self.n_batches, self.max_n_query_results)
-        )  # Query results, vec2 first is self id, second is query id
-        self.query_result_count = ti.field(ti.i32, shape=(self.n_batches))  # Count of query results per batch
+            gs.ti_ivec3, shape=(self.max_n_query_results)
+        )  # Query results, vec3 of batch id, self id, query id
+        self.query_result_count = ti.field(ti.i32, shape=())  # Count of query results
 
     @ti.kernel
     def build(self):
@@ -260,8 +260,7 @@ class LBVH(RBC):
         Query the BVH for intersections with the given AABBs.
         The results are stored in the query_result field.
         """
-        for i_b in ti.ndrange(self.n_batches):
-            self.query_result_count[i_b] = 0
+        self.query_result_count[None] = 0
 
         n_querys = aabbs.shape[1]
         for i_b, i_q in ti.ndrange(self.n_batches, n_querys):
@@ -276,11 +275,11 @@ class LBVH(RBC):
                 if aabbs[i_b, i_q].intersects(node.bound):
                     # If it's a leaf node, add the AABB index to the query results
                     if node.left == -1 and node.right == -1:
-                        idx = ti.atomic_add(self.query_result_count[i_b], 1)
+                        idx = ti.atomic_add(self.query_result_count[None], 1)
                         if idx < self.max_n_query_results:
                             code = self.morton_codes[i_b, node_idx - (self.n_aabbs - 1)]
-                            self.query_result[i_b, idx] = gs.ti_ivec2(
-                                ti.i32(code & ti.u64(0xFFFFFFFF)), i_q
+                            self.query_result[idx] = gs.ti_ivec3(
+                                i_b, ti.i32(code & ti.u64(0xFFFFFFFF)), i_q
                             )  # Store the AABB index
                     else:
                         # Push children onto the stack

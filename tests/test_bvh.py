@@ -13,11 +13,11 @@ from .utils import assert_allclose
 def lbvh():
     """Fixture for a LBVH tree"""
 
-    n_aabbs = 10
+    n_aabbs = 20
     n_batches = 10
-    aabb = AABB(n_aabbs=n_aabbs, n_batches=n_batches)
-    min = np.random.rand(n_aabbs, n_batches, 3).astype(np.float32)
-    max = min + np.random.rand(n_aabbs, n_batches, 3).astype(np.float32)
+    aabb = AABB(n_batches=n_batches, n_aabbs=n_aabbs)
+    min = np.random.rand(n_batches, n_aabbs, 3).astype(np.float32)
+    max = min + np.random.rand(n_batches, n_aabbs, 3).astype(np.float32)
 
     aabb.aabbs.min.from_numpy(min)
     aabb.aabbs.max.from_numpy(max)
@@ -125,19 +125,19 @@ def test_query(lbvh):
     n_batches = lbvh.n_batches
 
     # Check that the query results are correct
-    for i_b in range(n_batches):
-        intersect = np.zeros((n_aabbs, n_aabbs), dtype=bool)
-        count = query_result_count[i_b]
-        for j in range(count):
-            intersect[query_result[i_b, j, 0], query_result[i_b, j, 1]] = True
+    intersect = np.zeros((n_batches, n_aabbs, n_aabbs), dtype=bool)
+    for j in range(query_result_count):
+        i_b, i_a, j_a = query_result[j]
+        intersect[i_b, i_a, j_a] = True
 
+    for i_b in range(n_batches):
         for i_a in range(n_aabbs):
             for j_a in range(n_aabbs):
                 if i_a == j_a:
-                    assert intersect[i_a, j_a] == True, f"AABB {i_a} should intersect with itself"
+                    assert intersect[i_b, i_a, j_a] == True, f"AABB {i_a} should intersect with itself"
                 else:
                     assert (
-                        intersect[i_a, j_a] == intersect[j_a, i_a]
+                        intersect[i_b, i_a, j_a] == intersect[i_b, j_a, i_a]
                     ), f"AABBs {i_a} and {j_a} should have the same intersection result"
 
 
