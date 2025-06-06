@@ -900,7 +900,6 @@ def transform_by_T(pos, T):
         transformed_hom = T @ pos_hom_t
         transformed_hom = transformed_hom.swapaxes(-1, -2)[..., :3]
 
-        print(transformed_hom)
         if pos.ndim == 1:
             transformed_hom = transformed_hom.reshape(-1)
         elif pos.ndim == 2:
