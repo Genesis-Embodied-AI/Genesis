@@ -17,6 +17,7 @@ def main():
         default=0.95,
         help="Exponential decay momentum for FPS moving average",
     )
+    parser.add_argument("--horizon", type=int, default=1000)
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -66,8 +67,7 @@ def main():
     if args.record:
         cam_0.start_recording()
 
-    horizon = 1000
-    for i in range(horizon):
+    for i in range(args.horizon):
         scene.step()
 
         color, depth, seg, normal = cam_0.render(
