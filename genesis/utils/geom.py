@@ -838,6 +838,43 @@ def transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
     return new_pos, new_quat
 
 
+def transform_by_R(pos, R):
+    """
+    Transforms 3D points by a 3x3 rotation matrix or a batch of matrices,
+    supporting both NumPy arrays and PyTorch tensors.
+
+    Parameters
+    ----------
+    pos: np.ndarray | torch.Tensor
+        A numpy array or torch tensor of 3D points. Can be a single point
+         (3,), a batch of points (B, 3), or a batched batch of points (B, N, 3).
+    T: np.ndarray | torch.Tensor
+        The 3x3 rotation matrix or a batch of B rotation
+        matrices of shape (B, 3, 3). Must be of the same type as `pos`.
+
+    Returns
+    -------
+        The transformed points in a shape corresponding to the input dimensions.
+    """
+    assert pos.shape[-1] == 3
+
+    if R.ndim == 2:
+        if pos.ndim == 2:
+            new_pos = (R @ pos.T).T
+        elif pos.ndim == 1:
+            new_pos = R @ pos
+        else:
+            gs.raise_exception(f"invalid input dim for pos: {pos.shape=}")
+    elif R.ndim == 3:  # batched R and pos
+        if pos.ndim == 2:
+            new_pos = (R @ pos[:, :, None])[...,0]
+        elif pos.ndim == 1:
+            new_pos = (R @ pos[None, :, None])[...,0]
+        else:
+            gs.raise_exception(f"invalid input dim for pos: {pos.shape=}")
+    return new_pos
+
+
 def transform_by_T(pos, T):
     """
     Transforms 3D points by a 4x4 transformation matrix or a batch of matrices,
@@ -900,7 +937,6 @@ def transform_by_T(pos, T):
         transformed_hom = T @ pos_hom_t
         transformed_hom = transformed_hom.swapaxes(-1, -2)[..., :3]
 
-        print(transformed_hom)
         if pos.ndim == 1:
             transformed_hom = transformed_hom.reshape(-1)
         elif pos.ndim == 2:
@@ -908,6 +944,16 @@ def transform_by_T(pos, T):
         return transformed_hom
     else:
         gs.raise_exception(f"Inputs must be both torch.Tensor or both np.ndarray. Got: {type(pos)=} and {type(T)=}")
+
+
+def inv_transform_by_T(pos, T):
+    if isinstance(T, torch.Tensor):
+        T_inv = torch.linalg.inv(T)
+    elif isinstance(T, np.ndarray):
+        T_inv = np.linalg.inv(T)
+    else:
+        gs.raise_exception(f"Inputs must be both torch.Tensor or both np.ndarray. Got: {type(pos)=} and {type(T)=}")
+    return transform_by_T(pos, T_inv)
 
 
 # ------------------------------------------------------------------------------------
@@ -1025,30 +1071,6 @@ def compute_camera_angle(camera_pos, camera_lookat):
     angle_z = 0.0
 
     return np.array([angle_x, angle_y, angle_z])
-
-
-def transform_by_R(pos, R):
-    assert pos.shape[-1] == 3
-
-    if R.ndim == 2:
-        if pos.ndim == 2:
-            new_pos = (R @ pos.T).T
-        elif pos.ndim == 1:
-            new_pos = R @ pos
-        else:
-            assert False
-    elif R.ndim == 3:  # batched R and pos
-        if pos.ndim == 2:
-            new_pos = (R @ pos[:, :, None]).squeeze(-1)
-        else:
-            assert False
-
-    return new_pos
-
-
-def inv_transform_by_T(pos, T):
-    T_inv = np.linalg.inv(T)
-    return transform_by_T(pos, T_inv)
 
 
 def transform_inertia_by_T(inertia_tensor, T, mass):
