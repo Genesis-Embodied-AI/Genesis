@@ -1,19 +1,161 @@
+import platform
+import os
+import subprocess
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from functools import cache
 from itertools import chain
 from typing import Literal, Sequence
 
+import cpuinfo
 import numpy as np
-
 import mujoco
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils import mjcf as mju
+from genesis.utils.mesh import get_assets_dir
+
+
+REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
+DEFAULT_BRANCH_NAME = "main"
+
+# Get repository "root" path (actually test dir is good enough)
+TEST_DIR = os.path.dirname(__file__)
 
 
 @dataclass
 class MjSim:
     model: mujoco.MjModel
     data: mujoco.MjData
+
+
+@cache
+def get_hardware_fingerprint(include_gpu=True):
+    # CPU info
+    cpu_info = cpuinfo.get_cpu_info()
+    infos = [
+        cpu_info.get("brand_raw", cpu_info.get("hardware_raw")),
+        cpu_info.get("arch"),
+    ]
+
+    # GPU info
+    if include_gpu and torch.cuda.is_available():
+        device_index = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(device_index)
+        infos += [
+            props.name,
+            ".".join(map(str, (props.major, props.minor))),
+            props.total_memory,
+            props.multi_processor_count,  # Number of "streaming multiprocessors"
+        ]
+
+    return "-".join(map(str, filter(None, infos)))
+
+
+@cache
+def get_platform_fingerprint():
+    # OS distribution info
+    system = platform.system()
+    dist_name = None
+    if system == "Linux":
+        try:
+            dist_info = platform.freedesktop_os_release()
+            dist_name = dist_info["ID"]
+            dist_ver = dist_info["VERSION_ID"]
+        except FileNotFoundError:
+            pass
+    elif system == "Darwin":
+        dist_name = "MacOS"
+        dist_ver, *_ = platform.mac_ver()
+    if dist_name is None:
+        dist_name = system
+        dist_ver, *_ = platform.release().split(".", 1)  # Only extract major version.
+
+    infos = [
+        dist_name,
+        dist_ver,  # Only extract major version.
+    ]
+
+    # Python info
+    py_major, py_minor, py_patchlevel = platform.python_version_tuple()
+    infos += [
+        ".".join((py_major, py_minor)),  # Ignore patch-level version
+    ]
+
+    return "-".join(map(str, filter(None, infos)))
+
+
+@cache
+def get_git_commit_timestamp(ref="HEAD"):
+    try:
+        contrib_date = subprocess.check_output(
+            ["git", "show", "-s", "--quiet", "--format=%ci", ref], cwd=TEST_DIR, encoding="utf-8"
+        ).strip()
+    except subprocess.CalledProcessError:
+        # Commit not found, either because it does not exist or becaused fo shallow git clone
+        return float("nan")
+
+    try:
+        date = datetime.fromisoformat(contrib_date)
+    except ValueError:
+        date = datetime.strptime(contrib_date, "%Y-%m-%d %H:%M:%S %z")
+    timestamp = date.timestamp()
+
+    return timestamp
+
+
+@cache
+def get_git_commit_info(ref="HEAD"):
+    # Fetch current commit revision
+    try:
+        revision = subprocess.check_output(["git", "rev-parse", ref], cwd=TEST_DIR, encoding="utf-8").strip()
+    except subprocess.CalledProcessError:
+        revision = f"{uuid.uuid4().hex}@UNKNOWN"
+        timestamp = float("nan")
+        return revision, timestamp
+
+    # Fetch all remote branches containing the current commit
+    try:
+        branches = subprocess.check_output(
+            ["git", "branch", "--remote", "--contains", ref], cwd=TEST_DIR, encoding="utf-8"
+        ).splitlines()
+    except subprocess.CalledProcessError:
+        # Raise error if not found neither locally nor remotely
+        branches = ()
+
+    # Check if the current commit is contained by main branch
+    remote_handle = "UNKNOWN"
+    for branch in branches:
+        try:
+            remote_name, branch_name = branch.strip().split("/", 1)
+        except ValueError:
+            continue
+        if branch_name != DEFAULT_BRANCH_NAME:
+            continue
+        remote_url = subprocess.check_output(
+            ["git", "remote", "get-url", remote_name], cwd=TEST_DIR, encoding="utf-8"
+        ).strip()
+        if remote_url.startswith("https://github.com/"):
+            remote_handle = remote_url[19:-4]
+        elif remote_url.startswith("git@github.com:"):
+            remote_handle = remote_url[15:-4]
+        if remote_handle == REPOSITY_URL:
+            is_commit_on_default_branch = True
+            break
+    else:
+        is_commit_on_default_branch = False
+
+    # Return the contribution date as timestamp if and only if the HEAD commit is contained on main branch
+    if is_commit_on_default_branch:
+        timestamp = get_git_commit_timestamp(ref)
+        return revision, timestamp
+
+    revision = f"{revision}@{remote_handle}"
+    timestamp = float("nan")
+    return revision, timestamp
 
 
 def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
@@ -220,6 +362,111 @@ def _get_model_mappings(
     return gs_maps, mj_maps
 
 
+def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
+    if gs_solver == gs.constraint_solver.CG:
+        mj_solver = mujoco.mjtSolver.mjSOL_CG
+    elif gs_solver == gs.constraint_solver.Newton:
+        mj_solver = mujoco.mjtSolver.mjSOL_NEWTON
+    else:
+        raise ValueError(f"Solver '{gs_solver}' not supported")
+    if gs_integrator == gs.integrator.Euler:
+        mj_integrator = mujoco.mjtIntegrator.mjINT_EULER
+    elif gs_integrator == gs.integrator.implicitfast:
+        mj_integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+    else:
+        raise ValueError(f"Integrator '{gs_integrator}' not supported")
+
+    xml_path = os.path.join(get_assets_dir(), xml_path)
+    model = mju.build_model(xml_path, discard_visual=True, merge_fixed_links=True, links_to_keep=())
+
+    model.opt.solver = mj_solver
+    model.opt.integrator = mj_integrator
+    model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
+    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    if multi_contact:
+        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+    else:
+        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+    if adjacent_collision:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
+    else:
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
+    data = mujoco.MjData(model)
+
+    return MjSim(model, data)
+
+
+def build_genesis_sim(
+    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            res=(960, 640),
+            max_FPS=60,
+        ),
+        sim_options=gs.options.SimOptions(
+            dt=mj_sim.model.opt.timestep,
+            substeps=1,
+            gravity=mj_sim.model.opt.gravity.tolist(),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=gs_integrator,
+            constraint_solver=gs_solver,
+            enable_mujoco_compatibility=mujoco_compatibility,
+            box_box_detection=True,
+            enable_self_collision=True,
+            enable_adjacent_collision=adjacent_collision,
+            enable_multi_contact=multi_contact,
+            iterations=mj_sim.model.opt.iterations,
+            tolerance=mj_sim.model.opt.tolerance,
+            ls_iterations=mj_sim.model.opt.ls_iterations,
+            ls_tolerance=mj_sim.model.opt.ls_tolerance,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    morph_kwargs = dict(
+        file=xml_path,
+        convexify=True,
+        decompose_robot_error_threshold=float("inf"),
+    )
+    if xml_path.endswith(".xml"):
+        morph = gs.morphs.MJCF(**morph_kwargs)
+    else:
+        morph = gs.morphs.URDF(
+            fixed=True,
+            merge_fixed_links=True,
+            links_to_keep=(),
+            **morph_kwargs,
+        )
+    gs_robot = scene.add_entity(
+        morph,
+        visualize_contact=True,
+    )
+
+    # Force matching Mujoco safety factor for constraint time constant.
+    # Note that this time constant affects the penetration depth at rest.
+    gs_sim = scene.sim
+    gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
+
+    # Force recomputation of invweights to make sure it works fine
+    for link in scene.rigid_solver.links:
+        link.invweight[:] = -1
+    for joint in scene.rigid_solver.joints:
+        joint.dofs_invweight[:] = -1
+
+    scene.build()
+
+    return gs_sim
+
+
 def check_mujoco_model_consistency(
     gs_sim,
     mj_sim,
@@ -228,6 +475,9 @@ def check_mujoco_model_consistency(
     *,
     tol: float,
 ):
+    # Delay import to enable run benchmarks for old Genesis versions that do not have this method
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
+
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
     (gs_bodies_idx, gs_joints_idx, gs_q_idx, gs_dofs_idx, gs_geoms_idx, gs_motors_idx) = gs_maps
@@ -278,6 +528,13 @@ def check_mujoco_model_consistency(
     else:
         assert False
 
+    gs_roots_name = sorted(
+        gs_sim.rigid_solver.links[i].name
+        for i in set(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
+    )
+    mj_roots_name = sorted(mj_sim.model.body(i).name for i in set(mj_sim.model.body_rootid[mj_bodies_idx]))
+    assert gs_roots_name == mj_roots_name
+
     # body
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
         gs_invweight_i = gs_sim.rigid_solver.links_info.invweight.to_numpy()[gs_i]
@@ -321,24 +578,27 @@ def check_mujoco_model_consistency(
     assert_allclose(gs_dof_invweight0[gs_dofs_idx], mj_dof_invweight0[mj_dofs_idx], tol=tol)
 
     # TODO: Genesis does not support frictionloss contraint at dof level for now
-    gs_joint_solparams = np.array([joint.sol_params for entity in gs_sim.entities for joint in entity.joints])
-    mj_joint_solref = mj_sim.model.jnt_solref
-    assert_allclose(gs_joint_solparams[gs_joints_idx, :2], mj_joint_solref[mj_joints_idx], tol=tol)
-    mj_joint_solimp = mj_sim.model.jnt_solimp
-    assert_allclose(gs_joint_solparams[gs_joints_idx, 2:], mj_joint_solimp[mj_joints_idx], tol=tol)
-    gs_geom_solparams = np.array([geom.sol_params for entity in gs_sim.entities for geom in entity.geoms])
-    mj_geom_solref = mj_sim.model.geom_solref
-    assert_allclose(gs_geom_solparams[gs_geoms_idx, :2], mj_geom_solref[mj_geoms_idx], tol=tol)
-    mj_geom_solimp = mj_sim.model.geom_solimp
-    assert_allclose(gs_geom_solparams[gs_geoms_idx, 2:], mj_geom_solimp[mj_geoms_idx], tol=tol)
+    gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
+    mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
+    gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
+    mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
     # FIXME: Masking geometries and equality constraints is not supported for now
     gs_eq_solparams = np.array(
-        [equality.sol_params for entity in gs_sim.entities for equality in entity.equalities]
+        [equality.sol_params.cpu() for entity in gs_sim.entities for equality in entity.equalities]
     ).reshape((-1, 7))
-    mj_eq_solref = mj_sim.model.eq_solref
-    assert_allclose(gs_eq_solparams[:, :2], mj_eq_solref, tol=tol)
-    mj_eq_solimp = mj_sim.model.eq_solimp
-    assert_allclose(gs_eq_solparams[:, 2:], mj_eq_solimp, tol=tol)
+    mj_eq_solparams = np.concatenate((mj_sim.model.eq_solref, mj_sim.model.eq_solimp), axis=-1)
+    _sanitize_sol_params(
+        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+    )
+    assert_allclose(gs_eq_solparams, mj_eq_solparams, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
@@ -434,6 +694,8 @@ def check_mujoco_data_consistency(
         mj_penetration = -mj_sim.data.contact.dist
         assert_allclose(gs_penetration[gs_sidx], mj_penetration[mj_sidx], tol=tol)
 
+        # FIXME: It is not always possible to reshape Mujoco jacobian because joint bound constraints are computed in
+        # "sparse" dof space, unlike contact constraints.
         error = None
         gs_jac = gs_sim.rigid_solver.constraint_solver.jac.to_numpy()[:gs_n_constraints, :, 0]
         mj_jac = mj_sim.data.efc_J.reshape([mj_n_constraints, -1])
@@ -446,7 +708,16 @@ def check_mujoco_data_consistency(
             (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
         ):
             try:
-                assert_allclose(gs_jac[gs_sidx][:, gs_dofs_idx], mj_jac[mj_sidx][:, mj_dofs_idx], tol=tol)
+                gs_jac_nz_mask = (np.abs(gs_jac[gs_sidx]) > 0.0).all(axis=0)
+                gs_jac_nz = gs_jac[gs_sidx][:, np.array(gs_dofs_idx)[gs_jac_nz_mask[gs_dofs_idx]]]
+                mj_jac_nz_mask = np.zeros_like(gs_jac_nz_mask, dtype=np.bool_)
+                mj_jac_nz_mask[mj_dofs_idx] = gs_jac_nz_mask[gs_dofs_idx]
+                if mj_jac.shape[-1] == len(mj_dofs_idx):
+                    mj_jac_nz = mj_jac[mj_sidx][:, np.array(mj_dofs_idx)[mj_jac_nz_mask[mj_dofs_idx]]]
+                else:
+                    mj_jac_nz = mj_jac[mj_sidx]
+
+                assert_allclose(gs_jac_nz, mj_jac_nz, tol=tol)
                 assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], tol=tol)
                 assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], tol=tol)
                 break
@@ -518,12 +789,14 @@ def check_mujoco_data_consistency(
     mujoco.mj_fwdVelocity(mj_sim.model, mj_sim.data)
     gs_sim.rigid_solver._kernel_forward_kinematics_links_geoms(np.array([0]))
 
-    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[0, 0]
-    mj_com = mj_sim.data.subtree_com[0]
-    assert_allclose(gs_com, mj_com, tol=tol)
+    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
+    gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
+    mj_com = mj_sim.data.subtree_com
+    mj_root_idx = np.unique(mj_sim.model.body_rootid[mj_bodies_idx])
+    assert_allclose(gs_com[gs_root_idx], mj_com[mj_root_idx], tol=tol)
 
     gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[:, 0]
-    mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[0]
+    mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[mj_sim.model.body_rootid]
     assert_allclose(gs_xipos[gs_bodies_idx], mj_xipos[mj_bodies_idx], tol=tol)
 
     gs_xpos = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]

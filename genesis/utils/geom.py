@@ -593,12 +593,12 @@ def trans_quat_to_T(trans, quat):
         T = np.eye(4, dtype=np.result_type(trans, quat))
         if trans.ndim == 1:
             T[:3, 3] = trans
-            T[:3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
+            T[:3, :3] = quat_to_R(quat)
         elif trans.ndim == 2:
             assert quat.ndim == 2
             T = np.tile(T, [trans.shape[0], 1, 1])
             T[:, :3, 3] = trans
-            T[:, :3, :3] = Rotation.from_quat(quat, scalar_first=True).as_matrix()
+            T[:, :3, :3] = quat_to_R(quat)
         else:
             gs.raise_exception(f"ndim expected to be 1 or 2, but got {trans.ndim=}")
         return T
@@ -1088,61 +1088,6 @@ def nowhere():
     return np.array([2333333, 6666666, 5201314])
 
 
-def default_dofs_kp(n=6):
-    return np.tile(100.0, n).astype(gs.np_float)
-
-
-def default_dofs_kv(n=6):
-    return np.tile(10.0, n).astype(gs.np_float)
-
-
-def default_dofs_force_range(n=6):
-    # TODO: This is big enough for robot arms, but is this general?
-    return np.tile([[-100.0, 100.0]], [n, 1])
-
-
-def default_dofs_limit(n=6):
-    return np.tile([[-np.inf, np.inf]], [n, 1])
-
-
-def default_dofs_invweight(n=6):
-    return np.ones(n)
-
-
-def default_dofs_damping(n=6):
-    return np.ones(n)
-
-
-def free_dofs_damping(n=6):
-    return np.zeros(n)
-
-
-def default_dofs_motion_ang(n=6):
-    if n == 6:
-        return np.array(
-            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-        )
-    elif n == 0:
-        return np.zeros((0, 3))
-    else:
-        assert False
-
-
-def default_dofs_motion_vel(n=6):
-    if n == 6:
-        return np.array(
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
-        )
-    elif n == 0:
-        return np.zeros((0, 3))
-    else:
-        return False
-
-
-def default_dofs_stiffness(n=6):
-    return np.zeros(n)
-
-
 def default_solver_params():
     """
     Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
@@ -1156,12 +1101,20 @@ def default_friction():
     return 1.0
 
 
+def default_dofs_damping(n=6):
+    return np.ones(n)
+
+
 def default_dofs_armature(n=6):
     return np.full(n, 0.1)
 
 
-def free_dofs_armature(n=6):
-    return np.zeros(n)
+def default_dofs_kp(n=6):
+    return np.tile(100.0, n).astype(gs.np_float)
+
+
+def default_dofs_kv(n=6):
+    return np.tile(10.0, n).astype(gs.np_float)
 
 
 @ti.data_oriented

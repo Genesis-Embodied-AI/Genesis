@@ -288,7 +288,7 @@ class SPHSolver(Solver):
                 # external force fields
                 for i_ff in ti.static(range(len(self._ffs))):
                     acc += self._ffs[i_ff].get_acc(
-                        self.particles_reordered[i_p, i_b].pos, self.particles_reordered[i_p, i_b].vel, t
+                        self.particles_reordered[i_p, i_b].pos, self.particles_reordered[i_p, i_b].vel, t, i_p
                     )
                 self.particles_reordered[i_p, i_b].acc = acc
 

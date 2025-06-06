@@ -9,11 +9,20 @@ import numpy as np
 import pytest
 from _pytest.mark import Expression, MarkMatcher
 
-import mujoco
-import genesis as gs
-from genesis.utils.mesh import get_assets_dir
+# Mock tkinter module for backward compatibility because old Genesis versions require it
+try:
+    import tkinter
+except ImportError:
+    tkinter = type(sys)("tkinter")
+    tkinter.Tk = type(sys)("Tk")
+    tkinter.filedialog = type(sys)("filedialog")
+    sys.modules["tkinter"] = tkinter
+    sys.modules["tkinter.Tk"] = tkinter.Tk
+    sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
-from .utils import MjSim
+import genesis as gs
+
+from .utils import MjSim, build_mujoco_sim, build_genesis_sim
 
 
 TOL_SINGLE = 5e-5
@@ -97,27 +106,6 @@ def tol():
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
-@pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend):
-    logging_level = request.config.getoption("--log-cli-level")
-    if backend == gs.cpu:
-        precision = "64"
-        debug = True
-    else:
-        precision = "32"
-        debug = False
-    try:
-        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
-        if backend != gs.cpu and gs.backend == gs.cpu:
-            gs.destroy()
-            pytest.skip("No GPU available on this machine")
-        yield
-    finally:
-        pyglet.app.exit()
-        gs.destroy()
-        gc.collect()
-
-
 @pytest.fixture
 def mujoco_compatibility(request):
     mujoco_compatibility = None
@@ -171,94 +159,53 @@ def dof_damping(request):
 
 
 @pytest.fixture
+def taichi_offline_cache(request):
+    taichi_offline_cache = None
+    for mark in request.node.iter_markers("taichi_offline_cache"):
+        if mark.args:
+            if taichi_offline_cache is not None:
+                pytest.fail("'taichi_offline_cache' can only be specified once.")
+            (taichi_offline_cache,) = mark.args
+    if taichi_offline_cache is None:
+        taichi_offline_cache = True
+    return taichi_offline_cache
+
+
+@pytest.fixture(scope="function", autouse=True)
+def initialize_genesis(request, backend, taichi_offline_cache):
+    logging_level = request.config.getoption("--log-cli-level")
+    if backend == gs.cpu:
+        precision = "64"
+        debug = True
+    else:
+        precision = "32"
+        debug = False
+    try:
+        if not taichi_offline_cache:
+            os.environ["TI_OFFLINE_CACHE"] = "0"
+        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        if backend != gs.cpu and gs.backend == gs.cpu:
+            gs.destroy()
+            pytest.skip("No GPU available on this machine")
+        yield
+    finally:
+        pyglet.app.exit()
+        gs.destroy()
+        gc.collect()
+
+
+@pytest.fixture
 def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
-    if gs_solver == gs.constraint_solver.CG:
-        mj_solver = mujoco.mjtSolver.mjSOL_CG
-    elif gs_solver == gs.constraint_solver.Newton:
-        mj_solver = mujoco.mjtSolver.mjSOL_NEWTON
-    else:
-        raise ValueError(f"Solver '{gs_solver}' not supported")
-    if gs_integrator == gs.integrator.Euler:
-        mj_integrator = mujoco.mjtIntegrator.mjINT_EULER
-    elif gs_integrator == gs.integrator.implicitfast:
-        mj_integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
-    else:
-        raise ValueError(f"Integrator '{gs_integrator}' not supported")
-
-    if not os.path.isabs(xml_path):
-        xml_path = os.path.join(get_assets_dir(), xml_path)
-
-    model = mujoco.MjModel.from_xml_path(xml_path)
-    model.opt.solver = mj_solver
-    model.opt.integrator = mj_integrator
-    model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
-    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
-    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
-    model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
-    if multi_contact:
-        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
-    else:
-        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
-    if adjacent_collision:
-        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
-    else:
-        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
-    data = mujoco.MjData(model)
-
-    return MjSim(model, data)
+    return build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping)
 
 
 @pytest.fixture
 def gs_sim(
     xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
 ):
-    scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            res=(960, 640),
-            max_FPS=60,
-        ),
-        sim_options=gs.options.SimOptions(
-            dt=mj_sim.model.opt.timestep,
-            substeps=1,
-            gravity=mj_sim.model.opt.gravity.tolist(),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            integrator=gs_integrator,
-            constraint_solver=gs_solver,
-            enable_mujoco_compatibility=mujoco_compatibility,
-            box_box_detection=True,
-            enable_self_collision=True,
-            enable_adjacent_collision=adjacent_collision,
-            enable_multi_contact=multi_contact,
-            iterations=mj_sim.model.opt.iterations,
-            tolerance=mj_sim.model.opt.tolerance,
-            ls_iterations=mj_sim.model.opt.ls_iterations,
-            ls_tolerance=mj_sim.model.opt.ls_tolerance,
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
+    return build_genesis_sim(
+        xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
     )
-    gs_robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file=xml_path,
-            convexify=True,
-            decompose_robot_error_threshold=float("inf"),
-        ),
-        visualize_contact=True,
-    )
-    gs_sim = scene.sim
-
-    # Force matching Mujoco safety factor for constraint time constant.
-    # Note that this time constant affects the penetration depth at rest.
-    gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
-
-    scene.build()
-
-    return gs_sim
 
 
 @pytest.fixture(scope="session")

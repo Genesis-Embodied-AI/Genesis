@@ -1,3 +1,5 @@
+import math
+from copy import copy
 from itertools import chain
 from typing import Literal
 
@@ -90,10 +92,8 @@ class RigidEntity(Entity):
 
         if isinstance(self._morph, gs.morphs.Mesh):
             self._load_mesh(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.MJCF):
-            self._load_MJCF(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.URDF, gs.morphs.Drone)):
-            self._load_URDF(self._morph, self._surface)
+        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
+            self._load_scene(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Terrain):
@@ -118,7 +118,6 @@ class RigidEntity(Entity):
             n_qs = 0
             n_dofs = 0
             init_qpos = np.zeros(0)
-
         else:
             joint_type = gs.JOINT_TYPE.FREE
             n_qs = 7
@@ -205,7 +204,6 @@ class RigidEntity(Entity):
             n_qs = 0
             n_dofs = 0
             init_qpos = np.zeros(0)
-
         else:
             joint_type = gs.JOINT_TYPE.FREE
             n_qs = 7
@@ -322,14 +320,104 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _load_MJCF(self, morph, surface):
-        l_infos, links_j_infos, links_g_infos, world_l_info, world_j_info, world_g_info, eqs_info = mju.parse_mjcf(
-            morph, surface
-        )
+    def _load_scene(self, morph, surface):
+        # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
+        # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
+        # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
+        # initialized undetermined physics parameters.
+        if isinstance(morph, gs.morphs.MJCF):
+            # Mujoco's unified MJCF+URDF parser systematically for MJCF files
+            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
+        else:
+            # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
+            # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
+            l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
 
-        # Define flag to determine whether the link at hand is associated with a robot.
+            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
+            morph_ = copy(morph)
+            morph_.visualization = False
+            try:
+                # Mujoco's unified MJCF+URDF parser for URDF files.
+                # Note that Mujoco URDF parser completely ignores equality constraints.
+                l_infos, links_j_infos, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+
+                # Take into account 'world' body if it was added automatically for our legacy URDF parser
+                if len(links_g_infos_mj) == len(links_g_infos) + 1:
+                    assert not links_g_infos_mj[0]
+                    links_g_infos.insert(0, [])
+                assert len(links_g_infos_mj) == len(links_g_infos)
+
+                # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
+                # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
+                # by our custom legacy URDF parser.
+                # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
+                for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
+                    # Remove collision geometries from our legacy URDF parser
+                    for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            del link_g_infos[i_g]
+
+                    # Add visual geometries from Mujoco's unified MJCF+URDF parser
+                    for g_info in link_g_infos_mj:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            link_g_infos.append(g_info)
+            except (ValueError, AssertionError):
+                gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+
+        # Add free floating joint at root if necessary
+        if (
+            (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))
+            and links_j_infos
+            and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
+        ):
+            # Pick the depth fixed joint down the kinematic tree
+            for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+                if l_info["parent_idx"] in (0, -1) and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0:
+                    continue
+                idx -= 1
+                break
+
+            # Define free joint
+            j_info = dict()
+            j_info["name"] = "root_joint"
+            j_info["type"] = gs.JOINT_TYPE.FREE
+            j_info["n_qs"] = 7
+            j_info["n_dofs"] = 6
+            j_info["init_qpos"] = np.concatenate([gu.zero_pos(), gu.identity_quat()])
+            j_info["pos"] = gu.zero_pos()
+            j_info["quat"] = gu.identity_quat()
+            j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
+            j_info["dofs_motion_vel"] = np.eye(6, 3)
+            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
+            j_info["dofs_stiffness"] = np.zeros(6)
+            j_info["dofs_invweight"] = np.zeros(6)
+            j_info["dofs_damping"] = np.zeros(6)
+            j_info["dofs_armature"] = np.zeros(6)
+            j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
+            links_j_infos[idx] = [j_info]
+
+            # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
+            # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
+            for i_l in range(idx, len(l_infos)):
+                l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
+                for j_info in links_j_infos[i_l]:
+                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
+
+        # Remove the world link if "unless", i.e. free or fixed joint without any geometry attached
+        if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
+            if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
+                del l_infos[0], links_j_infos[0], links_g_infos[0]
+                for l_info in l_infos:
+                    l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
+                    if "root_idx" in l_info:
+                        l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+
+        # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
-        world_l_info["is_robot"] = np.array(False, dtype=np.bool_)
         for i, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
             if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
                 if l_info["parent_idx"] >= 0:
@@ -343,12 +431,8 @@ class RigidEntity(Entity):
                 if l_info["parent_idx"] >= 0:
                     l_infos[l_info["parent_idx"]]["is_robot"][()] = True
 
-        # Add all bodies to this entity
-        all_infos = list(zip(l_infos, links_j_infos, links_g_infos))
-        if world_g_info:
-            # Only take into account the world if it features at least one geometry
-            all_infos.append((world_l_info, world_j_info, world_g_info))
-        for l_info, link_j_infos, link_g_infos in all_infos:
+        # Add (link, joints, geoms) tuples sequentially
+        for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
             if l_info["parent_idx"] < 0:
                 if morph.pos is not None or morph.quat is not None:
                     gs.logger.info("Applying offset to base link's pose with user provided value in morph.")
@@ -372,37 +456,12 @@ class RigidEntity(Entity):
                         # but this initial value will be reflected
                         j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
 
+            # Exclude joints with 0 dofs to align with Mujoco
+            link_j_infos = [j_info for j_info in link_j_infos if j_info["n_dofs"] > 0]
+
             self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
 
-        for eq_info in eqs_info:
-            self._add_equality(
-                name=eq_info["name"],
-                type=eq_info["type"],
-                objs_name=eq_info["objs_name"],
-                data=eq_info["data"],
-                sol_params=eq_info["sol_params"],
-            )
-
-    def _load_URDF(self, morph, surface):
-        l_infos, j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-
-        # Define flag to determine whether the link at hand is associated with a robot
-        is_robot = any(j_info["type"] not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos)
-
-        for l_info, j_info, link_g_infos in zip(l_infos, j_infos, links_g_infos):
-            if l_info["parent_idx"] < 0:  # base link
-                l_info["pos"] = np.array(morph.pos)
-                l_info["quat"] = np.array(morph.quat)
-
-                if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver,
-                    # but this initial value will be reflected in init_qpos
-                    j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
-
-            l_info["is_robot"] = is_robot
-
-            self._add_by_info(l_info, (j_info,), link_g_infos, morph, surface)
-
+        # Add equality constraints sequentially
         for eq_info in eqs_info:
             self._add_equality(
                 name=eq_info["name"],
@@ -493,6 +552,9 @@ class RigidEntity(Entity):
         parent_idx = l_info["parent_idx"]
         if parent_idx >= 0:
             parent_idx += self._link_start
+        root_idx = l_info.get("root_idx")
+        if root_idx is not None and root_idx >= 0:
+            root_idx += self._link_start
 
         link = RigidLink(
             entity=self,
@@ -516,6 +578,7 @@ class RigidEntity(Entity):
             inertial_i=l_info.get("inertial_i"),
             inertial_mass=l_info.get("inertial_mass"),
             parent_idx=parent_idx,
+            root_idx=root_idx,
             invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
         )
@@ -539,10 +602,21 @@ class RigidEntity(Entity):
 
             dofs_motion_ang = j_info.get("dofs_motion_ang")
             if dofs_motion_ang is None:
-                dofs_motion_ang = gu.default_dofs_motion_ang(n_dofs)
+                if n_dofs == 6:
+                    dofs_motion_ang = np.eye(6, 3, -3)
+                elif n_dofs == 0:
+                    dofs_motion_ang = np.zeros((0, 3))
+                else:
+                    assert False
+
             dofs_motion_vel = j_info.get("dofs_motion_vel")
             if dofs_motion_vel is None:
-                dofs_motion_vel = gu.default_dofs_motion_vel(n_dofs)
+                if n_dofs == 6:
+                    dofs_motion_vel = np.eye(6, 3)
+                elif n_dofs == 0:
+                    dofs_motion_vel = np.zeros((0, 3))
+                else:
+                    assert False
 
             joint = RigidJoint(
                 entity=self,
@@ -560,14 +634,14 @@ class RigidEntity(Entity):
                 sol_params=sol_params,
                 dofs_motion_ang=dofs_motion_ang,
                 dofs_motion_vel=dofs_motion_vel,
-                dofs_limit=j_info.get("dofs_limit", gu.default_dofs_limit(n_dofs)),
-                dofs_invweight=j_info.get("dofs_invweight", gu.default_dofs_invweight(n_dofs)),
-                dofs_stiffness=j_info.get("dofs_stiffness", gu.default_dofs_stiffness(n_dofs)),
-                dofs_damping=j_info.get("dofs_damping", gu.free_dofs_damping(n_dofs)),
-                dofs_armature=j_info.get("dofs_armature", gu.free_dofs_armature(n_dofs)),
-                dofs_kp=j_info.get("dofs_kp", gu.default_dofs_kp(n_dofs)),
-                dofs_kv=j_info.get("dofs_kv", gu.default_dofs_kv(n_dofs)),
-                dofs_force_range=j_info.get("dofs_force_range", gu.default_dofs_force_range(n_dofs)),
+                dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
+                dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
+                dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
+                dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
+                dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
+                dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
+                dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
+                dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
             )
             joints.append(joint)
 
@@ -1431,7 +1505,9 @@ class RigidEntity(Entity):
         self,
         qpos_goal,
         qpos_start=None,
+        resolution=0.01,
         timeout=5.0,
+        max_retry=1,
         smooth_path=True,
         num_waypoints=100,
         ignore_collision=False,
@@ -1447,8 +1523,13 @@ class RigidEntity(Entity):
             The goal state.
         qpos_start : None | array_like, optional
             The start state. If None, the current state of the rigid entity will be used. Defaults to None.
+        resolution : float, optiona
+            Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
+            for validity along a path segment. Default to 1%.
         timeout : float, optional
             The maximum time (in seconds) allowed for the motion planning algorithm to find a solution. Defaults to 5.0.
+        max_retry : float, optional
+            Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
         num_waypoints : int, optional
@@ -1456,7 +1537,7 @@ class RigidEntity(Entity):
         ignore_collision : bool, optional
             Whether to ignore collision checking during motion planning. Defaults to False.
         ignore_joint_limit : bool, optional
-            Whether to ignore joint limits during motion planning. Defaults to False.
+            This option has been deprecated and is not longer doing anything.
         planner : str, optional
             The name of the motion planning algorithm to use. Supported planners: 'PRM', 'RRT', 'RRTConnect', 'RRTstar', 'EST', 'FMT', 'BITstar', 'ABITstar'. Defaults to 'RRTConnect'.
 
@@ -1477,6 +1558,9 @@ class RigidEntity(Entity):
             else:
                 raise
 
+        assert timeout > 0.0 and math.isfinite(timeout)
+        assert max_retry > 0
+
         if self._solver.n_envs > 0:
             gs.raise_exception("Motion planning is not supported for batched envs (yet).")
 
@@ -1493,11 +1577,8 @@ class RigidEntity(Entity):
 
         ######### process joint limit ##########
         if ignore_joint_limit:
-            q_limit_lower = np.full_like(self.q_limit[0], -1e6)
-            q_limit_upper = np.full_like(self.q_limit[1], 1e6)
-        else:
-            q_limit_lower = self.q_limit[0]
-            q_limit_upper = self.q_limit[1]
+            gs.logger.warning("This option is deprecated and is no longer doing anything.")
+        q_limit_lower, q_limit_upper = self.q_limit[0], self.q_limit[1]
 
         if (qpos_start < q_limit_lower).any() or (qpos_start > q_limit_upper).any():
             gs.logger.warning(
@@ -1524,12 +1605,12 @@ class RigidEntity(Entity):
         space.setBounds(bounds)
         ss = og.SimpleSetup(space)
 
-        geoms_idx = list(range(self._geom_start, self._geom_start + len(self._geoms)))
+        geoms_idx = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
         mask_collision_pairs = set(
             (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geoms_idx or i_gb in geoms_idx
         )
         if not ignore_collision and mask_collision_pairs:
-            gs.logger.info("Ingoring collision pairs already active for starting pos.")
+            gs.logger.info("Ignoring collision pairs already active for starting pos.")
 
         def is_ompl_state_valid(state):
             if ignore_collision:
@@ -1541,13 +1622,24 @@ class RigidEntity(Entity):
 
         ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
 
+        si = ss.getSpaceInformation()
+        si.setStateValidityCheckingResolution(resolution)
+
+        def allocOBValidStateSampler(si):
+            vss = ob.UniformValidStateSampler(si)
+            vss.setNrAttempts(100)
+            return vss
+
+        si.setValidStateSamplerAllocator(ob.ValidStateSamplerAllocator(allocOBValidStateSampler))
+
         try:
             planner_cls = getattr(og, planner)
             if not issubclass(planner_cls, ob.Planner):
                 raise ValueError
-            ss.setPlanner(planner_cls(ss.getSpaceInformation()))
+            planner = planner_cls(si)
         except (AttributeError, ValueError) as e:
             gs.raise_exception_from(f"'{planner}' is not a valid planner. See OMPL documentation for details.", e)
+        ss.setPlanner(planner)
 
         state_start = ob.State(space)
         state_goal = ob.State(space)
@@ -1557,29 +1649,69 @@ class RigidEntity(Entity):
         ss.setStartAndGoalStates(state_start, state_goal)
 
         ######### solve ##########
-        solved = ss.solve(timeout)
         waypoints = []
-        if solved:
-            gs.logger.info("Path solution found successfully.")
-            path = ss.getSolutionPath()
-            if smooth_path:
-                ps = og.PathSimplifier(ss.getSpaceInformation())
-                # simplify the path
-                try:
-                    ps.partialShortcutPath(path)
-                    ps.ropeShortcutPath(path)
-                except:
-                    ps.shortcutPath(path)
-                ps.smoothBSpline(path)
+        for i in range(max_retry):
+            # Try solve the motion planning problem
+            if ss.getPlanner():
+                ss.getPlanner().clear()
+            status = ss.solve(timeout)
+            status_type = status.getStatus()
 
-            if num_waypoints is not None:
-                path.interpolate(num_waypoints)
-            waypoints = [
-                torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-                for state in path.getStates()
-            ]
-        else:
-            gs.logger.warning("Path planning failed. Returning empty path.")
+            # Check if there was some unrecoverable failure
+            if status_type in (
+                ob.PlannerStatus.StatusType.UNKNOWN,
+                ob.PlannerStatus.StatusType.CRASH,
+                ob.PlannerStatus.StatusType.ABORT,
+            ):
+                gs.raise_exception("Unknown error.")
+            if status_type in (
+                ob.PlannerStatus.StatusType.INVALID_START,
+                ob.PlannerStatus.StatusType.INVALID_GOAL,
+                ob.PlannerStatus.StatusType.UNRECOGNIZED_GOAL_TYPE,
+                ob.PlannerStatus.StatusType.INFEASIBLE,
+            ):
+                gs.logger.warning("Path planning infeasible. Returning empty path.")
+                break
+
+            # Extract solution if any
+            if status:
+                # ss.simplifySolution()
+                path = ss.getSolutionPath()
+
+                # Simplify path
+                if smooth_path:
+                    ps = og.PathSimplifier(si)
+                    try:
+                        # ps.simplifyMax(path)
+                        ps.partialShortcutPath(path)
+                        ps.ropeShortcutPath(path)
+                    except:
+                        ps.shortcutPath(path)
+                    ps.smoothBSpline(path)
+
+                # Interpolate path
+                if num_waypoints is not None:
+                    path.interpolate(num_waypoints)
+
+                # Extract waypoints
+                waypoints = [
+                    torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
+                    for state in path.getStates()
+                ]
+
+            # Return once an exact solution was found or maximum number of iterations was reached
+            if status_type in (ob.PlannerStatus.StatusType.TIMEOUT, ob.PlannerStatus.StatusType.APPROXIMATE_SOLUTION):
+                if i + 1 < max_retry:
+                    gs.logger.warning("Path planning did not converge. Trying again...")
+                    continue
+                else:
+                    if waypoints:
+                        gs.logger.warning("Path planning did not converge. Returning approximation path.")
+                    else:
+                        gs.logger.warning("Path planning did not converge. Returning empty path.")
+                    break
+            gs.logger.info("Path solution found successfully.")
+            break
 
         ########## restore original state #########
         self.set_qpos(qpos_start, zero_velocity=False)
@@ -2104,7 +2236,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, unsafe=unsafe)
+        self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=False, unsafe=unsafe)
 
     @gs.assert_built
     def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True, unsafe=False):
@@ -2429,39 +2561,54 @@ class RigidEntity(Entity):
         return collision_pairs
 
     @gs.assert_built
-    def get_contacts(self, with_entity=None):
+    def get_contacts(self, with_entity=None, exclude_self_contact=False):
         """
         Returns contact information computed during the most recent `scene.step()`.
-        If `with_entity` is provided, only returns contact information involving the caller entity and the specified `with_entity`. Otherwise, returns all contact information involving the caller entity.
+        If `with_entity` is provided, only returns contact information involving the caller and the specified entity.
+        Otherwise, returns all contact information involving the caller entity.
+        When `with_entity` is `self`, it will return the self-collision only.
 
         The returned dict contains the following keys (a contact pair consists of two geoms: A and B):
 
-        - 'geom_a'     : The global geom index of geom A in the contact pair. (actual geom object can be obtained by scene.rigid_solver.geoms[geom_a])
-        - 'geom_b'     : The global geom index of geom B in the contact pair. (actual geom object can be obtained by scene.rigid_solver.geoms[geom_b])
-        - 'link_a'     : The global link index of link A (that contains geom A) in the contact pair. (actual link object can be obtained by scene.rigid_solver.links[link_a])
-        - 'link_b'     : The global link index of link B (that contains geom B) in the contact pair. (actual link object can be obtained by scene.rigid_solver.links[link_b])
+        - 'geom_a'     : The global geom index of geom A in the contact pair.
+                        (actual geom object can be obtained by scene.rigid_solver.geoms[geom_a])
+        - 'geom_b'     : The global geom index of geom B in the contact pair.
+                        (actual geom object can be obtained by scene.rigid_solver.geoms[geom_b])
+        - 'link_a'     : The global link index of link A (that contains geom A) in the contact pair.
+                        (actual link object can be obtained by scene.rigid_solver.links[link_a])
+        - 'link_b'     : The global link index of link B (that contains geom B) in the contact pair.
+                        (actual link object can be obtained by scene.rigid_solver.links[link_b])
         - 'position'   : The contact position in world frame.
         - 'force_a'    : The contact force applied to geom A.
         - 'force_b'    : The contact force applied to geom B.
-        - 'valid_mask' : (Only when scene is parallelized) A boolean mask indicating whether the contact information is valid.
+        - 'valid_mask' : A boolean mask indicating whether the contact information is valid.
+                        (Only when scene is parallelized)
 
-        The shape of each entry is (n_envs, n_contacts, ...) for scene with parallel envs, and (n_contacts, ...) for non-parallelized scene.
+        The shape of each entry is (n_envs, n_contacts, ...) for scene with parallel envs
+                               and (n_contacts, ...) for non-parallelized scene.
 
         Parameters
         ----------
         with_entity : RigidEntity, optional
             The entity to check contact with. Defaults to None.
+        exclude_self_contact: bool
+            Exclude the self collision from the returning contacts. Defaults to False.
 
         Returns
         -------
         contact_info : dict
             The contact information.
         """
-
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        valid_mask = torch.logical_or(
+        logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
+        if with_entity is not None and self.idx == with_entity.idx:
+            if exclude_self_contact:
+                gs.raise_exception("`with_entity` is self but `exclude_self_contact` is True.")
+            logical_operation = torch.logical_and
+
+        valid_mask = logical_operation(
             torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
                 scene_contact_info["geom_a"] < self.geom_end,
@@ -2471,9 +2618,7 @@ class RigidEntity(Entity):
                 scene_contact_info["geom_b"] < self.geom_end,
             ),
         )
-        if with_entity is not None:
-            if self.idx == with_entity.idx:
-                gs.raise_exception("`with_entity` cannot be the same as the caller entity.")
+        if with_entity is not None and self.idx != with_entity.idx:
             valid_mask = torch.logical_and(
                 valid_mask,
                 torch.logical_or(
@@ -2662,7 +2807,9 @@ class RigidEntity(Entity):
     @property
     def init_qpos(self):
         """The initial qpos of the entity."""
-        return np.concatenate([joint.init_qpos for joint in self.joints])
+        if self.joints:
+            return np.concatenate([joint.init_qpos for joint in self.joints])
+        return np.array([])
 
     @property
     def n_qs(self):

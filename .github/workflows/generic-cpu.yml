@@ -15,6 +15,7 @@ jobs:
         PYTHON_VERSION: ["3.10", "3.11", "3.12"]
 
     env:
+      HF_HUB_DOWNLOAD_TIMEOUT: 60
       GS_CACHE_FILE_PATH: ".cache/genesis"
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
@@ -102,4 +103,4 @@ jobs:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ github.run_id }}
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}

@@ -1,4 +1,7 @@
 import os
+import xml.etree.ElementTree as ET
+from contextlib import redirect_stderr
+from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
 
@@ -10,34 +13,108 @@ from PIL import Image
 import z3
 import mujoco
 import genesis as gs
+from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import urdf as uu
-from .misc import get_assets_dir
+from .misc import get_assets_dir, redirect_libc_stderr
 
 
-def parse_mjcf(morph, surface):
-    if isinstance(morph.file, str):
-        path = os.path.join(get_assets_dir(), morph.file)
-        mj = mujoco.MjModel.from_xml_path(path)
+def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
+    if isinstance(xml, (str, Path)):
+        # Make sure that it is pointing to a valid XML content (either file path or string)
+        path = os.path.join(get_assets_dir(), xml)
+        is_valid_path = False
+        try:
+            if os.path.exists(path):
+                xml = ET.parse(path)
+                is_valid_path = True
+            else:
+                xml = ET.fromstring(xml)
+        except ET.ParseError:
+            gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
+
+        # Must pre-process URDF to overwrite default Mujoco compile flags
+        root = xml.getroot()
+        is_urdf_file = root.tag == "robot"
+        if is_urdf_file:
+            # Best guess for the search path
+            asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
+            robot = urdfpy.URDF._from_xml(root, root, asset_path)
+
+            # Merge fixed links if requested
+            if merge_fixed_links:
+                robot = uu.merge_fixed_links(robot, links_to_keep)
+                root = robot._to_xml(None, asset_path)
+
+            # Set default compiler options if none is specified in URDF file if none
+            if not any(child.tag == "mujoco" for child in root):
+                mjcf = ET.SubElement(root, "mujoco")
+                compiler = ET.SubElement(
+                    mjcf,
+                    "compiler",
+                    fusestatic="false",
+                    strippath="false",
+                    assetdir=asset_path,
+                    inertiafromgeom="auto",
+                    balanceinertia="true",
+                    discardvisual="true" if discard_visual else "false",
+                    autolimits="true",
+                    # boundmass=gs.EPS,
+                    # boundinertia=gs.EPS,
+                )
+
+            # Resolve relative mesh paths
+            for elem in root.findall(".//mesh"):
+                mesh_path = elem.get("filename")
+                if mesh_path.startswith("package://"):
+                    mesh_path = mesh_path[10:]
+                elem.set("filename", os.path.abspath(os.path.join(asset_path, mesh_path)))
+
+        with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+            if is_urdf_file:
+                # Parse updated URDF file as a string
+                data = ET.tostring(root, encoding="utf8")
+                mj = mujoco.MjModel.from_xml_string(data)
+            else:
+                # Parsing MJCF files from XML string is not reliable because it would use the current directory instead
+                # of the parent directory of the XML file as base directory when using relative paths for assets.
+                mj = mujoco.MjModel.from_xml_path(path)
+    elif isinstance(xml, mujoco.MjModel):
+        mj = xml
     else:
-        mj = morph.file
+        raise gs.raise_exception(f"'{xml}' is not a valid MJCF file.")
+
+    return mj
+
+
+def parse_xml(morph, surface):
+    # Always merge fixed links unless explicitly asked not to do so
+    merge_fixed_links, links_to_keep = None, None
+    if isinstance(morph, gs.morphs.URDF):
+        merge_fixed_links = morph.merge_fixed_links
+        links_to_keep = morph.links_to_keep
+
+    # Build model from XML (either URDF or MJCF)
+    mj = build_model(morph.file, not morph.visualization, merge_fixed_links, links_to_keep)
 
     # Check if there is any tendon. Report a warning if so.
     if mj.ntendon:
         gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    world_g_info, *links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
 
     # Parse all bodies (links and joints)
-    (world_l_info, *l_infos), (world_j_info, *links_j_infos) = parse_links(mj, morph.scale)
+    l_infos, links_j_infos = parse_links(mj, morph.scale)
+
+    # Re-order kinematic tree info
     l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
 
     # Parsing all equality constraints
     eqs_info = parse_equalities(mj, morph.scale)
 
-    return l_infos, links_j_infos, links_g_infos, world_l_info, world_j_info, world_g_info, eqs_info
+    return l_infos, links_j_infos, links_g_infos, eqs_info
 
 
 def parse_link(mj, i_l, scale):
@@ -53,7 +130,11 @@ def parse_link(mj, i_l, scale):
     l_info["inertial_quat"] = mj.body_iquat[i_l]
     l_info["inertial_i"] = np.diag(mj.body_inertia[i_l])
     l_info["inertial_mass"] = float(mj.body_mass[i_l])
-    l_info["parent_idx"] = int(mj.body_parentid[i_l] - 1)
+    if mj.body_parentid[i_l] == i_l:
+        l_info["parent_idx"] = -1
+    else:
+        l_info["parent_idx"] = int(mj.body_parentid[i_l])
+    l_info["root_idx"] = int(mj.body_rootid[i_l])
     l_info["invweight"] = mj.body_invweight0[i_l]
 
     jnt_adr = mj.body_jntadr[i_l]
@@ -64,95 +145,99 @@ def parse_link(mj, i_l, scale):
         j_info = dict()
 
         # Parsing joint type
-        if i_j == -1:
+        mj_type = mj.jnt_type[i_j] if i_j != -1 else None
+        if mj_type is None:
             gs_type = gs.JOINT_TYPE.FIXED
             n_qs, n_dofs = 0, 0
+        elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
+            gs_type = gs.JOINT_TYPE.FREE
+            n_qs, n_dofs = 7, 6
+        elif mj_type == mujoco.mjtJoint.mjJNT_HINGE:
+            gs_type = gs.JOINT_TYPE.REVOLUTE
+            n_qs, n_dofs = 1, 1
+        elif mj_type == mujoco.mjtJoint.mjJNT_SLIDE:
+            gs_type = gs.JOINT_TYPE.PRISMATIC
+            n_qs, n_dofs = 1, 1
+        elif mj_type == mujoco.mjtJoint.mjJNT_BALL:
+            gs_type = gs.JOINT_TYPE.SPHERICAL
+            n_qs, n_dofs = 4, 3
         else:
-            mj_type = mj.jnt_type[i_j]
-            if mj_type == mujoco.mjtJoint.mjJNT_HINGE:
-                gs_type = gs.JOINT_TYPE.REVOLUTE
-                n_qs, n_dofs = 1, 1
-            elif mj_type == mujoco.mjtJoint.mjJNT_SLIDE:
-                gs_type = gs.JOINT_TYPE.PRISMATIC
-                n_qs, n_dofs = 1, 1
-            elif mj_type == mujoco.mjtJoint.mjJNT_BALL:
-                gs_type = gs.JOINT_TYPE.SPHERICAL
-                n_qs, n_dofs = 4, 3
-            elif mj_type == mujoco.mjtJoint.mjJNT_FREE:
-                gs_type = gs.JOINT_TYPE.FREE
-                n_qs, n_dofs = 7, 6
-            else:
-                gs.raise_exception(f"Unsupported MJCF joint type: {mj_type}")
+            gs.raise_exception(f"Unsupported MJCF joint type: {mj_type}")
         j_info["type"], j_info["n_qs"], j_info["n_dofs"] = gs_type, n_qs, n_dofs
 
         # Parsing joint parameters that are type-agnostic
-        mj_jnt_offset = i_j if i_j != -1 else 0
         mj_dof_offset = mj.jnt_dofadr[i_j] if i_j != -1 else 0
         mj_qpos_offset = mj.jnt_qposadr[i_j] if i_j != -1 else 0
-        j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
-        j_info["init_qpos"] = np.array(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + n_qs)])
-        j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
-        j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
-        j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
-        j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
-        if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
-            gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
-
-        # Parsing joint parameters that are type-specific
         if i_j == -1:
-            j_info["dofs_motion_ang"] = np.zeros((0, 3))
-            j_info["dofs_motion_vel"] = np.zeros((0, 3))
-            j_info["dofs_limit"] = np.zeros((0, 2))
-            j_info["dofs_stiffness"] = np.zeros((0))
-
             j_info["name"] = l_info["name"]
             j_info["pos"] = np.array([0.0, 0.0, 0.0])
         else:
             name_start = mj.name_jntadr[i_j]
             j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
             j_info["pos"] = mj.jnt_pos[i_j]
+        j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
+        j_info["init_qpos"] = np.array(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + n_qs)])
+        j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
+        j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
+        j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
+        if mj.njnt > 0:
+            mj_jnt_offset = i_j if i_j != -1 else 0
+            j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
+        else:
+            j_info["sol_params"] = gu.default_solver_params()  # Placeholder. It will not be used anyway.
+        if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
+            gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
 
-            mj_stiffness = mj.jnt_stiffness[i_j]
-            mj_limit = mj.jnt_range[i_j] if mj.jnt_limited[i_j] == 1 else np.array([-np.inf, np.inf])
+        # Parsing joint parameters that are type-specific
+        mj_stiffness = mj.jnt_stiffness[i_j] if i_j != -1 else 0.0
+        mj_is_limited = mj.jnt_limited[i_j] == 1 if i_j != -1 else False
+        if gs_type == gs.JOINT_TYPE.FIXED:
+            j_info["dofs_motion_ang"] = np.zeros((0, 3))
+            j_info["dofs_motion_vel"] = np.zeros((0, 3))
+            j_info["dofs_limit"] = np.zeros((0, 2))
+            j_info["dofs_stiffness"] = np.zeros((0))
+        elif gs_type == gs.JOINT_TYPE.FREE:
+            if mj_stiffness > 0.0:
+                raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
+
+            j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
+            j_info["dofs_motion_vel"] = np.eye(6, 3)
+            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
+            j_info["dofs_stiffness"] = np.zeros(6)
+
+            j_info["init_qpos"][:3] *= scale
+        elif gs_type == gs.JOINT_TYPE.SPHERICAL:
+            if mj_is_limited:
+                gs.logger.warning("(MJCF) Joint limit ignored for ball joints")
+
+            j_info["dofs_motion_ang"] = np.eye(3)
+            j_info["dofs_motion_vel"] = np.zeros((3, 3))
+            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
+            j_info["dofs_stiffness"] = np.full((3,), mj_stiffness)
+        else:
             mj_axis = mj.jnt_axis[i_j]
+            mj_limit = mj.jnt_range[i_j] if mj_is_limited else np.array([-np.inf, np.inf])
 
             if gs_type == gs.JOINT_TYPE.REVOLUTE:
                 j_info["dofs_motion_ang"] = np.array([mj_axis])
                 j_info["dofs_motion_vel"] = np.zeros((1, 3))
                 j_info["dofs_limit"] = np.array([mj_limit])
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
-            elif gs_type == gs.JOINT_TYPE.PRISMATIC:
+            else:  # gs_type == gs.JOINT_TYPE.PRISMATIC:
                 j_info["dofs_motion_ang"] = np.zeros((1, 3))
                 j_info["dofs_motion_vel"] = np.array([mj_axis])
                 j_info["dofs_limit"] = np.array([mj_limit]) * scale
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
 
                 j_info["init_qpos"] *= scale
-            elif gs_type == gs.JOINT_TYPE.SPHERICAL:
-                if not np.all(np.isinf(mj_limit)):
-                    gs.logger.warning("(MJCF) Joint limit ignored for ball joints")
 
-                j_info["dofs_motion_ang"] = np.eye(3)
-                j_info["dofs_motion_vel"] = np.zeros((3, 3))
-                j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
-                j_info["dofs_stiffness"] = np.repeat(mj_stiffness[None], 3, axis=0)
-            else:  # gs_type == gs.JOINT_TYPE.FREE:
-                if mj_stiffness > 0:
-                    raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
-
-                j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
-                j_info["dofs_motion_vel"] = np.eye(6, 3)
-                j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
-                j_info["dofs_stiffness"] = np.zeros(6)
-
-                j_info["init_qpos"][:3] *= scale
         if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
             gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
 
         # Parsing actuator parameters
         j_info["dofs_kp"] = np.zeros((n_dofs,), dtype=gs.np_float)
         j_info["dofs_kv"] = np.zeros((n_dofs,), dtype=gs.np_float)
-        j_info["dofs_force_range"] = np.zeros((n_dofs, 2), dtype=gs.np_float)
+        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         i_a = -1
         try:
@@ -219,7 +304,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_force_range"] = np.minimum(
                     j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                 )
-        elif gs_type == gs.JOINT_TYPE.FREE:
+        elif gs_type != gs.JOINT_TYPE.FREE:
             gs.logger.debug(f"(MJCF) No actuator found for joint `{j_info['name']}`")
 
         j_infos.append(j_info)
@@ -232,9 +317,6 @@ def parse_link(mj, i_l, scale):
     l_info["invweight"] /= scale**3
     for j_info in j_infos:
         j_info["pos"] *= scale
-
-    # Exclude joints with 0 dofs in MJCF models to align with mujoco
-    j_infos = [j_info for j_info in j_infos if j_info["n_dofs"] > 0]
 
     return l_info, j_infos
 

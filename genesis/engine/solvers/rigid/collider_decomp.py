@@ -75,35 +75,40 @@ class Collider:
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
         geoms_contype = self._solver.geoms_info.contype.to_numpy()
         geoms_conaffinity = self._solver.geoms_info.conaffinity.to_numpy()
+        links_entity_idx = self._solver.links_info.entity_idx.to_numpy()
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
         if self._solver._options.batch_links_info:
+            links_entity_idx = links_entity_idx[:, 0]
             links_root_idx = links_root_idx[:, 0]
             links_parent_idx = links_parent_idx[:, 0]
             links_is_fixed = links_is_fixed[:, 0]
         n_possible_pairs = 0
-        for i in range(self._solver.n_geoms):
-            for j in range(i + 1, self._solver.n_geoms):
-                i_la = geoms_link_idx[i]
-                i_lb = geoms_link_idx[j]
+        for i_ga in range(self._solver.n_geoms):
+            for i_gb in range(i_ga + 1, self._solver.n_geoms):
+                i_la = geoms_link_idx[i_ga]
+                i_lb = geoms_link_idx[i_gb]
 
                 # geoms in the same link
                 if i_la == i_lb:
                     continue
 
                 # self collision
-                if not self._solver._enable_self_collision and links_root_idx[i_la] == links_root_idx[i_lb]:
-                    continue
+                if links_root_idx[i_la] == links_root_idx[i_lb]:
+                    if not self._solver._enable_self_collision:
+                        continue
 
-                # adjacent links
-                if not self._solver._enable_adjacent_collision and (
-                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
-                ):
-                    continue
+                    # adjacent links
+                    if not self._solver._enable_adjacent_collision and (
+                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                    ):
+                        continue
 
                 # contype and conaffinity
-                if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
+                if links_entity_idx[i_la] == links_entity_idx[i_lb] and not (
+                    (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
+                ):
                     continue
 
                 # pair of fixed links wrt the world
@@ -700,27 +705,26 @@ class Collider:
         i_lb = self._solver.geoms_info[i_gb].link_idx
         I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
         I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+
         is_valid = True
 
         # geoms in the same link
         if i_la == i_lb:
             is_valid = False
 
-        # self collision
-        if (
-            ti.static(not self._solver._enable_self_collision)
-            and self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx
-        ):
-            is_valid = False
+        if self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx:
+            # self collision
+            if ti.static(not self._solver._enable_self_collision):
+                is_valid = False
 
-        # adjacent links
-        if ti.static(not self._solver._enable_adjacent_collision) and (
-            self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
-        ):
-            is_valid = False
+            # adjacent links
+            if ti.static(not self._solver._enable_adjacent_collision) and (
+                self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
+            ):
+                is_valid = False
 
         # contype and conaffinity
-        if not (
+        if self._solver.links_info[I_la].entity_idx == self._solver.links_info[I_lb].entity_idx and not (
             (self._solver.geoms_info[i_ga].contype & self._solver.geoms_info[i_gb].conaffinity)
             or (self._solver.geoms_info[i_gb].contype & self._solver.geoms_info[i_ga].conaffinity)
         ):
@@ -1292,21 +1296,26 @@ class Collider:
                             contact_pos = v1 - 0.5 * penetration * normal
                             is_col = penetration > 0
                         else:
-                            is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].normal
-                            )
+                            # Try using MPR before anything else
+                            is_mpr_updated = False
+                            is_mpr_guess_direction_available = True
+                            normal_ws = self.contact_cache[i_ga, i_gb, i_b].normal
+                            for i_mpr in range(2):
+                                if i_mpr == 1:
+                                    # Try without warm-start if no contact was detected using it.
+                                    # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
+                                    # contact while they actually are. This helps to improve contact persistence without increasing
+                                    # much the overall computational cost since the fallback should not be triggered very often.
+                                    is_mpr_guess_direction_available = (ti.abs(normal_ws) > gs.EPS).any()
+                                    if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
+                                        normal_ws = ti.Vector.zero(gs.ti_float, 3)
+                                        is_mpr_updated = False
 
-                            # Try without warm-start if no contact was detected using it.
-                            # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
-                            # contact while they actually are. This helps to improve contact persistence without increasing
-                            # much the overall computational cost since the fallback should not be triggered very often.
-                            is_mpr_guess_direction_available = (
-                                ti.abs(self.contact_cache[i_ga, i_gb, i_b].normal) > gs.EPS
-                            ).any()
-                            if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
-                                is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                    i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
-                                )
+                                if not is_mpr_updated:
+                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
+                                        i_ga, i_gb, i_b, normal_ws
+                                    )
+                                    is_mpr_updated = True
 
                             # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
                             # initial penetration is already quite large, because the contact information provided by MPR
@@ -1320,16 +1329,29 @@ class Collider:
                                     # Note that SDF may detect different collision points depending on geometry ordering.
                                     # Because of this, it is necessary to run it twice and take the contact information
                                     # associated with the point of deepest penetration.
-                                    is_col_a, normal_a, penetration_a, contact_pos_a = self._func_contact_vertex_sdf(
-                                        i_ga, i_gb, i_b
-                                    )
-                                    is_col_b, normal_b, penetration_b, contact_pos_b = self._func_contact_vertex_sdf(
-                                        i_gb, i_ga, i_b
-                                    )
-                                    if is_col_a and (not is_col_b or penetration_a >= penetration_b):
-                                        normal, penetration, contact_pos = normal_a, penetration_a, contact_pos_a
-                                    elif is_col_b and (not is_col_a or penetration_b > penetration_a):
-                                        normal, penetration, contact_pos = -normal_b, penetration_b, contact_pos_b
+                                    for i_sdf in range(2):
+                                        is_col_tmp, normal_tmp, penetration_tmp, contact_pos_tmp = (
+                                            self._func_contact_vertex_sdf(
+                                                i_ga if i_sdf == 0 else i_gb, i_gb if i_sdf == 0 else i_ga, i_b
+                                            )
+                                        )
+                                        if i_sdf == 0:
+                                            if is_col_tmp:
+                                                normal, penetration, contact_pos = (
+                                                    normal_tmp,
+                                                    penetration_tmp,
+                                                    contact_pos_tmp,
+                                                )
+                                            else:
+                                                is_col = False
+                                        else:
+                                            if is_col_tmp and (not is_col or penetration_tmp > penetration):
+                                                normal, penetration, contact_pos = (
+                                                    -normal_tmp,
+                                                    penetration_tmp,
+                                                    contact_pos_tmp,
+                                                )
+                                    is_col = True
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos

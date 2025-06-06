@@ -1,13 +1,13 @@
+import os
+
 import numpy as np
 import torch
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
-from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
-import genesis.utils.geom as gu
 from genesis.engine.entities import Emitter
 from genesis.engine.simulator import Simulator
 from genesis.options import (
@@ -24,9 +24,12 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
+from genesis.options.morphs import Morph
+from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
+from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
 
 
@@ -354,10 +357,6 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
 
-            # Decimate if convexify by default
-            if morph.decimate is None:
-                morph.decimate = morph.convexify
-
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
@@ -592,7 +591,8 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            self._sim.build()
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                self._sim.build()
 
             # reset state
             self._reset()
@@ -989,10 +989,9 @@ class Scene(RBC):
             indices = torch.linspace(0, N - 2, N_new, dtype=int)
 
             Ts = np.zeros((N_new, 4, 4))
-
             for i in range(N_new):
                 pos, quat = entity.forward_kinematics(qposs[indices[i]])
-                Ts[i] = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
+                Ts[i] = tensor_to_array(gu.trans_quat_to_T(pos[link_idx], quat[link_idx]))
 
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005

@@ -129,7 +129,6 @@ class Logger:
             self._logger.critical(message)
 
     def raw(self, message):
-
         self._stream.write(self._formatter.extra_fmt(message))
         self._stream.flush()
         if message.endswith("\n"):
