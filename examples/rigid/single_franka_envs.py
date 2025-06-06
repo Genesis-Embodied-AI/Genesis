@@ -15,7 +15,7 @@ def main():
         "--fps-tracker-alpha",
         type=float,
         default=0.95,
-        help="lambda value for exponential moving average of fps. 0 means no averaging, 1 is infinite averaging",
+        help="Exponential decay momentum for FPS moving average",
     )
     args = parser.parse_args()
 
