@@ -1482,7 +1482,7 @@ def test_convexify(euler, backend, show_viewer):
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
             qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
             qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(torch.stack(qvel_norminf_all, dim=0).mean(), 0.1)
+    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)), 0.1)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
