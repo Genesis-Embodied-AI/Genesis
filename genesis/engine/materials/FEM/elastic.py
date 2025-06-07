@@ -226,18 +226,7 @@ class Elastic(Base):
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
         """
-        _lambda = lam + mu
-        _alpha = 1.0 + mu / _lambda
-
-        Ic = F.norm_sqr()
-        Jminus1 = J - _alpha
-        energy = 0.5 * (mu * (Ic - 3.0) + _lambda * Jminus1**2)
-
-        pJpF = partialJpartialF(F)
-        gradient = mu * F + _lambda * Jminus1 * pJpF
-
         raise NotImplementedError("Hessian computation is not implemented for stable_neohookean model.")
-        return energy, gradient
 
     @ti.func
     def compute_energy_stable_neohookean(self, mu, lam, J, F, actu, m_dir):
