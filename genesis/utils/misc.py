@@ -429,10 +429,9 @@ def ti_field_to_torch(
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
                 # Resort on post-mortem analysis for bounds check because runtime would be to costly
                 is_out_of_bounds = None
-            else:  # np.ndarray
-                mask_start, mask_end = mask[0], mask[-1]
+            else:  # np.ndarray, list, tuple, range
                 try:
-                    mask_start, mask_end = int(mask_start), int(mask_end)
+                    mask_start, mask_end = min(mask), max(mask)
                 except ValueError:
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
                 is_out_of_bounds = not (0 <= mask_start <= mask_end < _field_shape[i])
