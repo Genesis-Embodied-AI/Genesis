@@ -7,6 +7,7 @@ from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
 
 from .base_solver import Solver
+import numpy as np
 
 
 @ti.data_oriented
@@ -21,6 +22,14 @@ class FEMSolver(Solver):
         # options
         self._floor_height = options.floor_height
         self._damping = options.damping
+        self._use_implicit_solver = options.use_implicit_solver
+        self._n_newton_iterations = options.n_newton_iterations
+        self._newton_dx_threshold = options.newton_dx_threshold
+        self._n_pcg_iterations = options.n_pcg_iterations
+        self._pcg_threshold = options.pcg_threshold
+        self._n_linesearch_iterations = options.n_linesearch_iterations
+        self._linesearch_c = options.linesearch_c
+        self._linesearch_tau = options.linesearch_tau
 
         # use scaled volume for better numerical stability, similar to p_vol_scale in mpm
         self._vol_scale = float(1e4)
@@ -29,6 +38,8 @@ class FEMSolver(Solver):
         self._mats = list()
         self._mats_idx = list()
         self._mats_update_stress = list()
+        self._mats_compute_energy_gradient_hessian = list()
+        self._mats_compute_energy = list()
 
         # boundary
         self.setup_boundary()
@@ -46,6 +57,54 @@ class FEMSolver(Solver):
 
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self._floor_height)
+
+    def init_batch_fields(self):
+        self.batch_active = ti.field(
+            dtype=ti.u1,
+            shape=self._batch_shape(),
+            needs_grad=False,
+        )
+
+        self.batch_pcg_active = ti.field(
+            dtype=ti.u1,
+            shape=self._batch_shape(),
+            needs_grad=False,
+        )
+
+        self.batch_linesearch_active = ti.field(
+            dtype=ti.u1,
+            shape=self._batch_shape(),
+            needs_grad=False,
+        )
+
+        pcg_state = ti.types.struct(
+            rTr=gs.ti_float,
+            rTz=gs.ti_float,
+            rTr_new=gs.ti_float,
+            rTz_new=gs.ti_float,
+            pTAp=gs.ti_float,
+            alpha=gs.ti_float,
+            beta=gs.ti_float,
+        )
+
+        self.pcg_state = pcg_state.field(
+            shape=self._batch_shape(),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
+        linesearch_state = ti.types.struct(
+            prev_energy=gs.ti_float,
+            energy=gs.ti_float,
+            step_size=gs.ti_float,
+            m=gs.ti_float,
+        )
+
+        self.linesearch_state = linesearch_state.field(
+            shape=self._batch_shape(),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
 
     def init_element_fields(self):
         # element state in vertices
@@ -71,10 +130,39 @@ class FEMSolver(Solver):
             lam=gs.ti_float,  # lame parameters (2)
             mass_scaled=gs.ti_float,  # scaled element mass. The real mass is mass_scaled / self._vol_scale
             mat_idx=gs.ti_int,  # material model index
-            B=gs.ti_mat3,
+            B=gs.ti_mat3,  # inverse of the deformation gradient at rest state
+            V_scaled=gs.ti_float,  # scaled rest volume of the element
             # for muscle
             muscle_group=gs.ti_int,
             muscle_direction=gs.ti_vec3,
+        )
+
+        # element state for energy
+        element_state_el_energy = ti.types.struct(
+            energy=gs.ti_float,  # energy for the element
+            gradient=gs.ti_mat3,  # gradient for the element
+        )
+
+        element_state_v_energy = ti.types.struct(
+            inertia=gs.ti_vec3,  # inertia for the vertex
+            force=gs.ti_vec3,
+        )
+
+        element_v_info = ti.types.struct(
+            mass_scaled_over_dt2=gs.ti_float,  # scaled mass of the vertex over dt^2
+        )
+
+        pcg_state_v = ti.types.struct(
+            prec=gs.ti_mat3,  # preconditioner
+            x=gs.ti_vec3,  # solution vector
+            r=gs.ti_vec3,  # residual vector
+            z=gs.ti_vec3,  # preconditioned residual vector
+            p=gs.ti_vec3,  # search direction vector
+            Ap=gs.ti_vec3,  # matrix-vector product
+        )
+
+        linesearch_state_v = ti.types.struct(
+            x_prev=gs.ti_vec3,  # solution vector
         )
 
         # construct field
@@ -99,10 +187,43 @@ class FEMSolver(Solver):
             layout=ti.Layout.SOA,
         )
 
+        self.elements_el_energy = element_state_el_energy.field(
+            shape=self._batch_shape((self.n_elements), first_dim=True),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
+        self.elements_el_hessian = ti.field(
+            shape=self._batch_shape((3, 3, self.n_elements), first_dim=True), dtype=gs.ti_mat3
+        )
+
+        self.elements_v_energy = element_state_v_energy.field(
+            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
+        self.elements_v_info = element_v_info.field(
+            shape=(self.n_vertices),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
+        self.pcg_state_v = pcg_state_v.field(
+            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
+        self.linesearch_state_v = linesearch_state_v.field(
+            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
     def init_surface_fields(self):
-        # NOTE: the number of triangles won't exceed number of tetrahedrons even if bodies are changed
         n_vertices_max = self.n_vertices
-        n_surfaces_max = self.n_elements
+        n_surfaces_max = self.n_surfaces
 
         # surface info (for coupling)
         surface_state = ti.types.struct(
@@ -151,6 +272,10 @@ class FEMSolver(Solver):
     def build(self):
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
+
+        # batch fields
+        self.init_batch_fields()
+
         # elements and bodies
         self._n_elements_max = self.n_elements
         self._n_vertices_max = self.n_vertices
@@ -175,6 +300,8 @@ class FEMSolver(Solver):
             material._idx = len(self._mats_idx)
             self._mats_idx.append(material._idx)
             self._mats_update_stress.append(material.update_stress)
+            self._mats_compute_energy_gradient_hessian.append(material.compute_energy_gradient_hessian)
+            self._mats_compute_energy.append(material.compute_energy)
 
         # create entity
         entity = FEMEntity(
@@ -208,14 +335,14 @@ class FEMSolver(Solver):
     @ti.kernel
     def compute_vel(self, f: ti.i32):
         for i_e, i_b in ti.ndrange(self.n_elements, self._B):
-            ia, ib, ic, id = self.elements_i[i_e].el2v
-            a = self.elements_v[f, ia, i_b].pos
-            b = self.elements_v[f, ib, i_b].pos
-            c = self.elements_v[f, ic, i_b].pos
-            d = self.elements_v[f, id, i_b].pos
-            D = ti.Matrix.cols([a - d, b - d, c - d])
+            i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
+            pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
+            pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
+            pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
+            pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
+            D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
 
-            V_scaled = ti.abs(D.determinant()) / 6.0 * self._vol_scale
+            V_scaled = self.elements_i[i_e].V_scaled
             B = self.elements_i[i_e].B
             F = D @ B
             J = F.determinant()
@@ -261,6 +388,373 @@ class FEMSolver(Solver):
             dt = self.substep_dt
             self.elements_v[f + 1, i_v, i_b].pos += dt * self.elements_v[f + 1, i_v, i_b].vel
 
+    @ti.kernel
+    def init_pos_and_inertia(self, f: ti.i32):
+        dt = self.substep_dt
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            self.elements_v_energy[i_b, i_v].inertia = (
+                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
+            )
+            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
+
+    @ti.func
+    def _compute_ele_J_F(self, f: ti.i32, i_e: ti.i32, i_b: ti.i32):
+        """
+        Compute the determinant (J) and deformation gradient (F) for an element.
+        """
+        i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
+        pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
+        pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
+        pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
+        pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
+        D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
+
+        B = self.elements_i[i_e].B
+        F = D @ B
+        J = F.determinant()
+
+        return J, F
+
+    @ti.kernel
+    def compute_ele_hessian_gradient(self, f: ti.i32):
+        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
+            if not self.batch_active[i_b]:
+                continue
+
+            J, F = self._compute_ele_J_F(f, i_e, i_b)
+
+            for mat_idx in ti.static(self._mats_idx):
+                if self.elements_i[i_e].mat_idx == mat_idx:
+                    (
+                        self.elements_el_energy[i_b, i_e].energy,
+                        self.elements_el_energy[i_b, i_e].gradient,
+                    ) = self._mats_compute_energy_gradient_hessian[mat_idx](
+                        mu=self.elements_i[i_e].mu,
+                        lam=self.elements_i[i_e].lam,
+                        J=J,
+                        F=F,
+                        actu=self.elements_el[f, i_e, i_b].actu,
+                        m_dir=self.elements_i[i_e].muscle_direction,
+                        i_e=i_e,
+                        i_b=i_b,
+                        hessian_field=self.elements_el_hessian,
+                    )
+
+    @ti.func
+    def compute_ele_energy(self, f: ti.i32):
+        """
+        Compute the energy for each element in the batch. Only for the ones used in linesearch.
+        """
+        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+
+            J, F = self._compute_ele_J_F(f, i_e, i_b)
+
+            for mat_idx in ti.static(self._mats_idx):
+                if self.elements_i[i_e].mat_idx == mat_idx:
+                    self.elements_el_energy[i_b, i_e].energy = self._mats_compute_energy[mat_idx](
+                        mu=self.elements_i[i_e].mu,
+                        lam=self.elements_i[i_e].lam,
+                        J=J,
+                        F=F,
+                        actu=self.elements_el[f, i_e, i_b].actu,
+                        m_dir=self.elements_i[i_e].muscle_direction,
+                    )
+
+    @ti.kernel
+    def accumulate_vertex_force_preconditioner(self, f: ti.i32):
+        # inertia
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_active[i_b]:
+                continue
+            self.elements_v_energy[i_b, i_v].force = -self.elements_v_info[i_v].mass_scaled_over_dt2 * (
+                self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
+            )
+            self.pcg_state_v[i_b, i_v].prec = ti.Matrix.zero(gs.ti_float, 3, 3)
+            for i in ti.static(range(3)):
+                self.pcg_state_v[i_b, i_v].prec[i, i] = self.elements_v_info[i_v].mass_scaled_over_dt2
+
+        # elastic
+        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
+            if not self.batch_active[i_b]:
+                continue
+            V_scaled = self.elements_i[i_e].V_scaled
+            B = self.elements_i[i_e].B
+            gradient = self.elements_el_energy[i_b, i_e].gradient
+            force = -V_scaled * gradient @ B.transpose()
+            i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
+            # atomic
+            self.elements_v_energy[i_b, i_v0].force += force[:, 0]
+            self.elements_v_energy[i_b, i_v1].force += force[:, 1]
+            self.elements_v_energy[i_b, i_v2].force += force[:, 2]
+            self.elements_v_energy[i_b, i_v3].force -= force[:, 0] + force[:, 1] + force[:, 2]
+            S = ti.Matrix.zero(gs.ti_float, 4, 3)
+            S[:3, :] = B
+            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+            for i in ti.static(range(3)):
+                for j in ti.static(range(3)):
+                    self.pcg_state_v[i_b, i_v0].prec += (
+                        V_scaled * S[0, i] * S[0, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                    )
+                    self.pcg_state_v[i_b, i_v1].prec += (
+                        V_scaled * S[1, i] * S[1, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                    )
+                    self.pcg_state_v[i_b, i_v2].prec += (
+                        V_scaled * S[2, i] * S[2, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                    )
+                    self.pcg_state_v[i_b, i_v3].prec += (
+                        V_scaled * S[3, i] * S[3, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                    )
+
+        # inverse
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_active[i_b]:
+                continue
+            # Use 3-by-3 inverse for preconditioner
+            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].prec.inverse()
+
+            # Other options for preconditioner:
+            # Uncomment one of the following lines to test different preconditioners
+            # Use identity for preconditioner
+            # self.pcg_state[i_v, i_b].prec = ti.Matrix.identity(gs.ti_float, 3)
+
+            # Use diagonal for preconditioner
+            # self.pcg_state[i_v, i_b].prec = ti.Matrix([[1 / self.pcg_state[i_v, i_b].prec[0, 0], 0, 0],
+            #                                            [0, 1 / self.pcg_state[i_v, i_b].prec[1, 1], 0],
+            #                                            [0, 0, 1 / self.pcg_state[i_v, i_b].prec[2, 2]]])
+
+    @ti.func
+    def compute_Ap(self):
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state_v[i_b, i_v].Ap = (
+                self.elements_v_info[i_v].mass_scaled_over_dt2 * self.pcg_state_v[i_b, i_v].p
+            )
+
+        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            V_scaled = self.elements_i[i_e].V_scaled
+            B = self.elements_i[i_e].B
+            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
+            s = ti.Vector([-B[0, 0] - B[1, 0] - B[2, 0], -B[0, 1] - B[1, 1] - B[2, 1], -B[0, 2] - B[1, 2] - B[2, 2]])
+            p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
+            i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
+
+            for i in ti.static(range(3)):
+                p9[i * 3 : i * 3 + 3] = (
+                    B[0, i] * self.pcg_state_v[i_b, i_v0].p
+                    + B[1, i] * self.pcg_state_v[i_b, i_v1].p
+                    + B[2, i] * self.pcg_state_v[i_b, i_v2].p
+                    + s[i] * self.pcg_state_v[i_b, i_v3].p
+                )
+
+            new_p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
+
+            for i in ti.static(range(3)):
+                new_p9[i * 3 : i * 3 + 3] = (
+                    self.elements_el_hessian[i_b, i, 0, i_e] @ p9[0:3]
+                    + self.elements_el_hessian[i_b, i, 1, i_e] @ p9[3:6]
+                    + self.elements_el_hessian[i_b, i, 2, i_e] @ p9[6:9]
+                )
+
+            # atomic
+            self.pcg_state_v[i_b, i_v0].Ap += (
+                B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]
+            ) * V_scaled
+            self.pcg_state_v[i_b, i_v1].Ap += (
+                B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]
+            ) * V_scaled
+            self.pcg_state_v[i_b, i_v2].Ap += (
+                B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]
+            ) * V_scaled
+            self.pcg_state_v[i_b, i_v3].Ap += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_scaled
+
+    @ti.kernel
+    def init_pcg_solve(self):
+        for i_b in ti.ndrange(self._B):
+            self.batch_pcg_active[i_b] = self.batch_active[i_b]
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].rTr = 0.0
+            self.pcg_state[i_b].rTz = 0.0
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state_v[i_b, i_v].x = 0
+            self.pcg_state_v[i_b, i_v].r = self.elements_v_energy[i_b, i_v].force
+            self.pcg_state_v[i_b, i_v].z = self.pcg_state_v[i_b, i_v].prec @ self.pcg_state_v[i_b, i_v].r
+            self.pcg_state_v[i_b, i_v].p = self.pcg_state_v[i_b, i_v].z
+            ti.atomic_add(self.pcg_state[i_b].rTr, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r))
+            ti.atomic_add(self.pcg_state[i_b].rTz, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z))
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
+
+    @ti.kernel
+    def one_pcg_iter(self):
+        self.compute_Ap()
+
+        # compute pTAp
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].pTAp = 0.0
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            ti.atomic_add(self.pcg_state[i_b].pTAp, self.pcg_state_v[i_b, i_v].p.dot(self.pcg_state_v[i_b, i_v].Ap))
+
+        # compute alpha and update x, r, z, rTr, rTz
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
+            self.pcg_state[i_b].rTr_new = 0.0
+            self.pcg_state[i_b].rTz_new = 0.0
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state_v[i_b, i_v].x += self.pcg_state[i_b].alpha * self.pcg_state_v[i_b, i_v].p
+            self.pcg_state_v[i_b, i_v].r -= self.pcg_state[i_b].alpha * self.pcg_state_v[i_b, i_v].Ap
+            self.pcg_state_v[i_b, i_v].z = self.pcg_state_v[i_b, i_v].prec @ self.pcg_state_v[i_b, i_v].r
+            ti.atomic_add(self.pcg_state[i_b].rTr_new, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r))
+            ti.atomic_add(self.pcg_state[i_b].rTz_new, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z))
+
+        # check convergence
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
+
+        # update beta, rTr, rTz
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTr_new / self.pcg_state[i_b].rTr
+            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
+            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
+
+        # update p
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state_v[i_b, i_v].p = (
+                self.pcg_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_state_v[i_b, i_v].p
+            )
+
+    def pcg_solve(self):
+        self.init_pcg_solve()
+        for i in range(self._n_pcg_iterations):
+            self.one_pcg_iter()
+
+    @ti.kernel
+    def init_linesearch(self, f: ti.i32):
+        for i_b in ti.ndrange(self._B):
+            self.batch_linesearch_active[i_b] = self.batch_active[i_b]
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].prev_energy = 0.0
+            self.linesearch_state[i_b].step_size = 1.0
+            self.linesearch_state[i_b].m = 0.0
+
+        # Inertia, x_prev, m
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
+            self.linesearch_state[i_b].prev_energy += (
+                0.5 * self.elements_v_info[i_v].mass_scaled_over_dt2 * diff.dot(diff)
+            )
+            self.linesearch_state_v[i_b, i_v].x_prev = self.elements_v[f + 1, i_v, i_b].pos
+            self.linesearch_state[i_b].m += self.pcg_state_v[i_b, i_v].x.dot(self.elements_v_energy[i_b, i_v].force)
+
+        # Elastic
+        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].prev_energy += (
+                self.elements_el_energy[i_b, i_e].energy * self.elements_i[i_e].V_scaled
+            )
+
+    @ti.kernel
+    def one_linesearch_iter(self, f: ti.i32):
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].energy = 0.0
+
+        # update pos and compute Inertia energy
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.elements_v[f + 1, i_v, i_b].pos = (
+                self.linesearch_state_v[i_b, i_v].x_prev
+                + self.linesearch_state[i_b].step_size * self.pcg_state_v[i_b, i_v].x
+            )
+            diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
+            self.linesearch_state[i_b].energy += 0.5 * self.elements_v_info[i_v].mass_scaled_over_dt2 * diff.dot(diff)
+
+        # compute elastic energy
+        self.compute_ele_energy(f)
+        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].energy += (
+                self.elements_el_energy[i_b, i_e].energy * self.elements_i[i_e].V_scaled
+            )
+
+        # check condition
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.batch_linesearch_active[i_b] = (
+                self.linesearch_state[i_b].energy
+                > self.linesearch_state[i_b].prev_energy
+                + self._linesearch_c * self.linesearch_state[i_b].step_size * self.linesearch_state[i_b].m
+            )
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].step_size *= self._linesearch_tau
+
+    def linesearch(self, f: ti.i32):
+        """
+        Note
+        ------
+        https://en.wikipedia.org/wiki/Backtracking_line_search#Algorithm
+        """
+        self.init_linesearch(f)
+        for i in range(self._n_linesearch_iterations):
+            self.one_linesearch_iter(f)
+
+    def batch_solve(self, f: ti.i32):
+        self.batch_active.fill(True)
+
+        for i in range(self._n_newton_iterations):
+            # compute element energy and gradient
+            self.compute_ele_hessian_gradient(f)
+
+            # accumulate vertex force and preconditioner
+            self.accumulate_vertex_force_preconditioner(f)
+
+            # solve for the vertex positions
+            self.pcg_solve()
+
+            # line search
+            self.linesearch(f)
+
+    @ti.kernel
+    def setup_pos_vel(self, f: ti.i32):
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            # set pos and vel
+            self.elements_v[f + 1, i_v, i_b].vel = (
+                self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos
+            ) / self.substep_dt
+            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
+
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
@@ -275,12 +769,19 @@ class FEMSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active():
-            self.init_pos_and_vel(f)
-            self.compute_vel(f)
-            self.apply_uniform_force(f)
+            if self._use_implicit_solver:
+                self.init_pos_and_inertia(f)
+                self.batch_solve(f)
+                self.setup_pos_vel(f)
+            else:
+                self.init_pos_and_vel(f)
+                self.compute_vel(f)
+                self.apply_uniform_force(f)
 
     def substep_pre_coupling_grad(self, f):
         if self.is_active():
+            if self._use_implicit_solver:
+                gs.raise_exception("Gradient computation is not supported for implicit solver.")
             self.apply_uniform_force.grad(f)
             self.compute_vel.grad(f)
             self.init_pos_and_vel.grad(f)
@@ -430,7 +931,9 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+            self.elements_v_info[i_global].mass_scaled_over_dt2 = 0
 
+        one_over_dt2 = 1.0 / (self.substep_dt * self.substep_dt)
         n_elems_local = elems.shape[0]
         for i_e in range(n_elems_local):
             i_global = i_e + el_start
@@ -442,6 +945,7 @@ class FEMSolver(Solver):
             B_inv = ti.Matrix.cols([a - d, b - d, c - d])
             self.elements_i[i_global].B = B_inv.inverse()
             V_scaled = ti.abs(B_inv.determinant()) / 6 * self._vol_scale
+            self.elements_i[i_global].V_scaled = V_scaled
 
             for j in ti.static(range(4)):
                 self.elements_i[i_global].el2v[j] = elems[i_e, j] + v_start
@@ -449,6 +953,10 @@ class FEMSolver(Solver):
             self.elements_i[i_global].mu = mat_mu
             self.elements_i[i_global].lam = mat_lam
             self.elements_i[i_global].mass_scaled = mat_rho * V_scaled
+            for j in ti.static(range(4)):
+                self.elements_v_info[self.elements_i[i_global].el2v[j]].mass_scaled_over_dt2 += (
+                    0.25 * self.elements_i[i_global].mass_scaled * one_over_dt2
+                )
             self.elements_i[i_global].muscle_group = 0
             self.elements_i[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
@@ -457,7 +965,7 @@ class FEMSolver(Solver):
             self.elements_el[f, i_global, i_b].actu = 0.0
             self.elements_el_ng[f, i_global, i_b].active = 1
 
-        for i_s, i_b in ti.ndrange(n_surfaces, self._B):
+        for i_s in range(n_surfaces):
             i_global = i_s + s_start
             for j in ti.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start

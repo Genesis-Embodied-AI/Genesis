@@ -7,6 +7,7 @@ import psutil
 import pyglet
 import numpy as np
 import pytest
+from requests.exceptions import HTTPError
 from _pytest.mark import Expression, MarkMatcher
 
 # Mock tkinter module for backward compatibility because old Genesis versions require it
@@ -21,6 +22,7 @@ except ImportError:
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
 import genesis as gs
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
 from .utils import MjSim, build_mujoco_sim, build_genesis_sim
 
@@ -76,6 +78,10 @@ def pytest_xdist_auto_num_workers(config):
         int(vram_memory / vram_memory_per_worker),
         physical_core_count,
     )
+
+
+def pytest_set_filtered_exceptions():
+    return (HTTPError,)
 
 
 def pytest_addoption(parser):
@@ -184,6 +190,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")

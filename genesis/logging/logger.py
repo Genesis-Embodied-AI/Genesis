@@ -80,6 +80,12 @@ class Logger:
 
         self.timer_lock = threading.Lock()
 
+    def addFilter(self, filter):
+        self._logger.addFilter(filter)
+
+    def removeFilter(self, filter):
+        self._logger.removeFilter(filter)
+
     def removeHandler(self, handler):
         self._logger.removeHandler(handler)
 
