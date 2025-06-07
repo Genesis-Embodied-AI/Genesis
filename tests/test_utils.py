@@ -16,8 +16,8 @@ from .utils import (
 TOL = 1e-7
 
 pytestmark = [pytest.mark.required]
-        
-        
+
+
 @pytest.fixture
 def clear_seen_fixture():
     warnings_mod._seen.clear()
