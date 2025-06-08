@@ -171,18 +171,26 @@ class Rate:
 
 
 class FPSTracker:
-    def __init__(self, n_envs, alpha=0.95, compensate_logging_cost=True):
-        self.last_time = time.perf_counter()
+    def __init__(self, n_envs, alpha=0.95):
+        self.last_time = None
         self.n_envs = n_envs
-        self.dt = 0
+        self.dt_ema = None
         self.alpha = alpha
-        self.compensate_logging_cost = compensate_logging_cost
 
     def step(self):
         current_time = time.perf_counter()
-        dt = current_time - self.last_time
-        self.dt = self.alpha * self.dt + (1 - self.alpha) * dt
-        fps = 1 / self.dt
+
+        if self.last_time:
+            dt = current_time - self.last_time
+        else:
+            self.last_time = current_time
+            return
+
+        if self.dt_ema:
+            self.dt_ema = self.alpha * self.dt_ema + (1 - self.alpha) * dt
+        else:
+            self.dt_ema = dt
+        fps = 1 / self.dt_ema
         if self.n_envs > 0:
             self.total_fps = fps * self.n_envs
             gs.logger.info(
@@ -191,7 +199,4 @@ class FPSTracker:
         else:
             self.total_fps = fps
             gs.logger.info(f"Running at ~<{fps:.2f}>~ FPS.")
-        if self.compensate_logging_cost:  # skip logging cost
-            self.last_time = time.perf_counter()
-        else:
-            self.last_time = current_time
+        self.last_time = current_time

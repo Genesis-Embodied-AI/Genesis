@@ -1,13 +1,28 @@
 import pytest
 import torch
 import numpy as np
+from unittest.mock import patch
+import pytest
 
 import genesis as gs
 from genesis.utils.geom import *
+from genesis.utils import warnings as warnings_mod
+from genesis.utils.warnings import warn_once
 from scipy.spatial.transform import Rotation as R
+from .utils import (
+    assert_allclose,
+)
 
+TOL = 1e-7
 
 pytestmark = [pytest.mark.required]
+
+
+@pytest.fixture
+def clear_seen_fixture():
+    warnings_mod._seen.clear()
+    yield
+    warnings_mod._seen.clear()
 
 
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
@@ -22,13 +37,7 @@ def test_torch_round_trip(batch_size):
     d6 = R_to_rot6d(R_torch)
     R_recon = rot6d_to_R(d6)
 
-    np.testing.assert_allclose(
-        R_torch.cpu().numpy(),
-        R_recon.cpu().numpy(),
-        rtol=1e-5,
-        atol=1e-6,
-        err_msg=f"Torch round-trip failed for batch size {batch_size}",
-    )
+    assert_allclose(R_torch.cpu(), R_recon.cpu(), tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
@@ -42,6 +51,84 @@ def test_numpy_round_trip(batch_size):
     d6 = R_to_rot6d(R_np)
     R_recon = rot6d_to_R(d6)
 
+    assert_allclose(R_np, R_recon, tol=TOL)
+
+
+@pytest.mark.parametrize("batch_size", [0, 1, 100])
+def test_torch_identity_transform(batch_size):
+    if batch_size == 0:
+        pos = torch.randn(3)
+        b_pos = torch.randn(10, 3)
+    else:
+        pos = torch.randn(batch_size, 3)
+        b_pos = torch.randn(batch_size, 10, 3)
+
+    T_identity = torch.eye(4)
+
+    transformed = transform_by_T(pos, T_identity).cpu()
+    assert_allclose(pos.cpu(), transformed, tol=TOL)
+    transformed = transform_by_T(b_pos, T_identity).cpu()
+    assert_allclose(b_pos.cpu(), transformed, tol=TOL)
+
+    if batch_size > 0:
+        T_batched_identity = torch.eye(4).reshape(1, 4, 4).repeat(batch_size, 1, 1)
+        transformed = transform_by_T(pos, T_batched_identity).cpu()
+        assert_allclose(pos.cpu(), transformed, tol=TOL)
+        transformed = transform_by_T(b_pos, T_batched_identity).cpu()
+        assert_allclose(b_pos.cpu(), transformed, tol=TOL)
+
+
+@pytest.mark.parametrize("batch_size", [0, 1, 100])
+def test_numpy_identity_transform(batch_size):
+    if batch_size == 0:
+        pos = np.random.randn(3)
+        b_pos = np.random.randn(10, 3)
+    else:
+        pos = np.random.randn(batch_size, 3)
+        b_pos = np.random.randn(batch_size, 10, 3)
+
+    T_identity = np.eye(4)
+
+    transformed = transform_by_T(pos, T_identity)
+    assert_allclose(pos, transformed, tol=TOL)
+    transformed = transform_by_T(b_pos, T_identity)
+    assert_allclose(b_pos, transformed, tol=TOL)
+
+    if batch_size > 0:
+        T_batched_identity = np.eye(4).reshape(1, 4, 4).repeat(batch_size, 0)
+        transformed = transform_by_T(pos, T_batched_identity)
+        assert_allclose(pos, transformed, tol=TOL)
+        transformed = transform_by_T(b_pos, T_batched_identity)
+        assert_allclose(b_pos, transformed, tol=TOL)
+
+
+def test_warn_once_logs_once(clear_seen_fixture):
+    msg = "This is a warning"
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            warn_once(msg)
+            warn_once(msg)
+            mock_warning.assert_called_once_with(msg)
+
+
+def test_warn_once_logs_different_messages(clear_seen_fixture):
+    msg1 = "Warning 1"
+    msg2 = "Warning 2"
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            warn_once(msg1)
+            warn_once(msg2)
+            assert mock_warning.call_count == 2
+            mock_warning.assert_any_call(msg1)
+            mock_warning.assert_any_call(msg2)
+
+
+def test_warn_once_with_empty_message(clear_seen_fixture):
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            warn_once("")
+            warn_once("")
+            mock_warning.assert_called_once_with("")
     np.testing.assert_allclose(
         R_np, R_recon, rtol=1e-5, atol=1e-6, err_msg=f"NumPy round-trip failed for batch size {batch_size}"
     )

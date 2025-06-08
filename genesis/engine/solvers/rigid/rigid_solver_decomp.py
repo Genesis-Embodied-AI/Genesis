@@ -2443,8 +2443,8 @@ class RigidSolver(Solver):
                     self.dofs_state[dof_start, i_b].pos = self.qpos[q_start, i_b] - self.qpos0[q_start, i_b]
                     pos = pos + self.joints_state[i_j, i_b].xaxis * self.dofs_state[dof_start, i_b].pos
 
-            # Skip link pose update for fixed root links to allow the user for manually overwriting them
-            if not (l_info.is_fixed and l_info.parent_idx == -1):
+            # Skip link pose update for fixed root links to let users manually overwrite them
+            if not (l_info.parent_idx == -1 and l_info.is_fixed):
                 self.links_state[i_l, i_b].pos = pos
                 self.links_state[i_l, i_b].quat = quat
 
@@ -3853,7 +3853,9 @@ class RigidSolver(Solver):
     def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
+    def set_base_links_pos(
+        self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False, unsafe=False
+    ):
         if links_idx is None:
             links_idx = self._base_links_idx
         pos, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -3863,32 +3865,46 @@ class RigidSolver(Solver):
             pos = pos.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
-        self._kernel_set_links_pos(pos, links_idx, envs_idx)
+        self._kernel_set_links_pos(relative, pos, links_idx, envs_idx)
         if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_links_pos(
         self,
+        relative: ti.i32,
         pos: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             i_l = links_idx[i_l_]
-            I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
-            for i in ti.static(range(3)):
-                self.links_state[i_l, envs_idx[i_b_]].pos[i] = pos[i_b_, i_l_, i]
-            if not (self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed):
+            I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
+
+            if self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed:
+                for i in ti.static(range(3)):
+                    self.links_state[i_l, i_b].pos[i] = pos[i_b_, i_l_, i]
+                if relative:
+                    for i in ti.static(range(3)):
+                        self.links_state[i_l, i_b].pos[i] = (
+                            self.links_state[i_l, i_b].pos[i] + self.links_info[I_l].pos[i]
+                        )
+            else:
                 q_start = self.links_info[I_l].q_start
                 for i in ti.static(range(3)):
-                    self.qpos[q_start + i, envs_idx[i_b_]] = pos[i_b_, i_l_, i]
+                    self.qpos[q_start + i, i_b] = pos[i_b_, i_l_, i]
+                if relative:
+                    for i in ti.static(range(3)):
+                        self.qpos[q_start + i, i_b] = self.qpos[q_start + i, i_b] + self.qpos0[q_start + i, i_b]
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
-    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
+    def set_base_links_quat(
+        self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False, unsafe=False
+    ):
         if links_idx is None:
             links_idx = self._base_links_idx
         quat, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -3898,27 +3914,58 @@ class RigidSolver(Solver):
             quat = quat.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
-        self._kernel_set_links_quat(quat, links_idx, envs_idx)
+        self._kernel_set_links_quat(relative, quat, links_idx, envs_idx)
         if not skip_forward:
             self._kernel_forward_kinematics_links_geoms(envs_idx)
 
     @ti.kernel
     def _kernel_set_links_quat(
         self,
+        relative: ti.i32,
         quat: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             i_l = links_idx[i_l_]
-            I_l = [i_l, i_b_] if ti.static(self._options.batch_links_info) else i_l
-            for i in ti.static(range(4)):
-                self.links_state[i_l, envs_idx[i_b_]].quat[i] = quat[i_b_, i_l_, i]
-            if not (self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed):
-                q_start = self.links_info[I_l].q_start
-                for i in ti.static(range(4)):
-                    self.qpos[q_start + i + 3, envs_idx[i_b_]] = quat[i_b_, i_l_, i]
+            I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
+
+            if relative:
+                quat_ = ti.Vector(
+                    [
+                        quat[i_b_, i_l_, 0],
+                        quat[i_b_, i_l_, 1],
+                        quat[i_b_, i_l_, 2],
+                        quat[i_b_, i_l_, 3],
+                    ],
+                    dt=gs.ti_float,
+                )
+                if self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed:
+                    self.links_state[i_l, i_b].quat = gu.ti_transform_quat_by_quat(self.links_info[I_l].quat, quat_)
+                else:
+                    q_start = self.links_info[I_l].q_start
+                    quat0 = ti.Vector(
+                        [
+                            self.qpos0[q_start + 3, i_b],
+                            self.qpos0[q_start + 4, i_b],
+                            self.qpos0[q_start + 5, i_b],
+                            self.qpos0[q_start + 6, i_b],
+                        ],
+                        dt=gs.ti_float,
+                    )
+                    quat_ = gu.ti_transform_quat_by_quat(quat0, quat_)
+                    for i in ti.static(range(4)):
+                        self.qpos[q_start + i + 3, i_b] = quat_[i]
+            else:
+                if self.links_info[I_l].parent_idx == -1 and self.links_info[I_l].is_fixed:
+                    for i in ti.static(range(4)):
+                        self.links_state[i_l, i_b].quat[i] = quat[i_b_, i_l_, i]
+                else:
+                    q_start = self.links_info[I_l].q_start
+                    for i in ti.static(range(4)):
+                        self.qpos[q_start + i + 3, i_b] = quat[i_b_, i_l_, i]
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(

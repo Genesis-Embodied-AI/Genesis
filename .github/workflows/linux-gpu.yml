@@ -44,7 +44,7 @@ jobs:
             --export=\
           HF_TOKEN="${HF_TOKEN}",\
           NVIDIA_DRIVER_CAPABILITIES=all \
-            --partition=hpc-low --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
               pip install -e '.[dev,render]' && \
@@ -69,7 +69,7 @@ jobs:
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
             --export=${SLURM_ENV_VARS} \
-            --partition=hpc-low --exclusive --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid --exclusive --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
               : # sudo apt install -y tmate && \

@@ -104,6 +104,9 @@ markers = [
     "required: marks minimal test set that must pass systematically on any environment before merging.",
 ]
 log_cli_level = "WARNING"
+retries = 4
+retry_delay = 30
+cumulative_timing = true
 
 [project.scripts]
 gs = "genesis._main:main"
@@ -116,6 +119,7 @@ dev = [
     "pytest-forked",
     "pytest-random-order",
     "pytest-print",
+    "pytest-retry",
     "huggingface_hub",
     "wandb",
 ]
