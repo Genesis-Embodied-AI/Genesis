@@ -232,52 +232,56 @@ class Collider:
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b_ in range(envs_idx.shape[0]):
-            i_b = envs_idx[i_b_]
+        for i_b in envs_idx:
+            self._func_clear_single_env(i_b)
 
-            if ti.static(self._solver._use_hibernation):
-                self.n_contacts_hibernated[i_b] = 0
+    @ti.func
+    def _func_clear_single_env(self, i_b: ti.i32):
+        if ti.static(self._solver._use_hibernation):
+            self.n_contacts_hibernated[i_b] = 0
 
-                # advect hibernated contacts
-                for i_c in range(self.n_contacts[i_b]):
-                    i_la = self.contact_data[i_c, i_b].link_a
-                    i_lb = self.contact_data[i_c, i_b].link_b
+            # advect hibernated contacts
+            for i_c in range(self.n_contacts[i_b]):
+                i_la = self.contact_data[i_c, i_b].link_a
+                i_lb = self.contact_data[i_c, i_b].link_b
 
-                    I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
-                    I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+                I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
+                I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
 
-                    # pair of hibernated-fixed links -> hibernated contact
-                    # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
-                    # once a new collision is detected
-                    if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
-                        self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
-                    ):
-                        i_c_hibernated = self.n_contacts_hibernated[i_b]
-                        if i_c != i_c_hibernated:
-                            self.contact_data[i_c_hibernated, i_b] = self.contact_data[i_c, i_b]
-                        self.n_contacts_hibernated[i_b] = i_c_hibernated + 1
+                # pair of hibernated-fixed links -> hibernated contact
+                # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
+                # once a new collision is detected
+                if (self._solver.links_state[i_la, i_b].hibernated and self._solver.links_info[I_lb].is_fixed) or (
+                    self._solver.links_state[i_lb, i_b].hibernated and self._solver.links_info[I_la].is_fixed
+                ):
+                    i_c_hibernated = self.n_contacts_hibernated[i_b]
+                    if i_c != i_c_hibernated:
+                        self.contact_data[i_c_hibernated, i_b] = self.contact_data[i_c, i_b]
+                    self.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
-                self.n_contacts[i_b] = self.n_contacts_hibernated[i_b]
+            self.n_contacts[i_b] = self.n_contacts_hibernated[i_b]
+        else:
+            self.n_contacts[i_b] = 0
 
-            else:
-                self.n_contacts[i_b] = 0
+    def detection(self, envs_idx=None) -> None:
+        if envs_idx is None:
+            envs_idx = self._solver._scene._envs_idx
 
-    def detection(self) -> None:
         from genesis.utils.tools import create_timer
 
         timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
-        self._func_update_aabbs()
+        self._kernel_update_aabbs(envs_idx)
         timer.stamp("func_update_aabbs")
-        self._func_broad_phase()
+        self._kernel_broad_phase(envs_idx)
         timer.stamp("func_broad_phase")
-        self._func_narrow_phase()
+        self._kernel_narrow_phase(envs_idx)
         timer.stamp("func_narrow_phase")
         if self._has_terrain:
-            self._func_narrow_phase_terrain()
-            timer.stamp("_func_narrow_phase_terrain")
+            self._kernel_narrow_phase_terrain(envs_idx)
+            timer.stamp("_kernel_narrow_phase_terrain")
         if self._has_nonconvex_nonterrain:
-            self._func_narrow_phase_nonconvex_nonterrain()
-            timer.stamp("_func_narrow_phase_nonconvex_nonterrain")
+            self._kernel_narrow_phase_nonconvex_nonterrain(envs_idx)
+            timer.stamp("_kernel_narrow_phase_nonconvex_nonterrain")
 
     @ti.func
     def _func_point_in_geom_aabb(self, point, i_g, i_b):
@@ -691,8 +695,8 @@ class Collider:
         self.prism[5, i_b][2] = z
 
     @ti.kernel
-    def _func_update_aabbs(self):
-        self._solver._func_update_geom_aabbs()
+    def _kernel_update_aabbs(self, envs_idx: ti.types.ndarray()):
+        self._solver._func_update_geom_aabbs(envs_idx)
 
     @ti.func
     def _func_check_collision_valid(self, i_ga, i_gb, i_b):
@@ -740,77 +744,128 @@ class Collider:
         return is_valid
 
     @ti.kernel
-    def _func_broad_phase(self):
+    def _kernel_broad_phase(self, envs_idx: ti.types.ndarray()):
         """
         Sweep and Prune (SAP) for broad-phase collision detection.
 
-        This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for potential collision pairs based on the AABB overlap.
+        This function sorts the geometry axis-aligned bounding boxes (AABBs)
+        along a specified axis and checks for potential collision pairs based on the AABB overlap.
         """
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
-            axis = 0
+        for i_b in envs_idx:
+            self._func_broad_phase_single_env(i_b)
 
-            # copy updated geom aabbs to buffer for sorting
-            if self.first_time[i_b]:
-                for i in range(self._solver.n_geoms):
-                    self.sort_buffer[2 * i, i_b].value = self._solver.geoms_state[i, i_b].aabb_min[axis]
-                    self.sort_buffer[2 * i, i_b].i_g = i
-                    self.sort_buffer[2 * i, i_b].is_max = 0
+    @ti.func
+    def _func_broad_phase_single_env(self, i_b: ti.i32):
+        axis = 0
+        # copy updated geom aabbs to buffer for sorting
+        if self.first_time[i_b]:
+            for i in range(self._solver.n_geoms):
+                self.sort_buffer[2 * i, i_b].value = self._solver.geoms_state[i, i_b].aabb_min[axis]
+                self.sort_buffer[2 * i, i_b].i_g = i
+                self.sort_buffer[2 * i, i_b].is_max = 0
 
-                    self.sort_buffer[2 * i + 1, i_b].value = self._solver.geoms_state[i, i_b].aabb_max[axis]
-                    self.sort_buffer[2 * i + 1, i_b].i_g = i
-                    self.sort_buffer[2 * i + 1, i_b].is_max = 1
+                self.sort_buffer[2 * i + 1, i_b].value = self._solver.geoms_state[i, i_b].aabb_max[axis]
+                self.sort_buffer[2 * i + 1, i_b].i_g = i
+                self.sort_buffer[2 * i + 1, i_b].is_max = 1
 
-                    self._solver.geoms_state[i, i_b].min_buffer_idx = 2 * i
-                    self._solver.geoms_state[i, i_b].max_buffer_idx = 2 * i + 1
+                self._solver.geoms_state[i, i_b].min_buffer_idx = 2 * i
+                self._solver.geoms_state[i, i_b].max_buffer_idx = 2 * i + 1
 
-                self.first_time[i_b] = False
+            self.first_time[i_b] = False
 
-            else:
-                # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
-                if ti.static(not self._solver._use_hibernation):
-                    for i in range(self._solver.n_geoms * 2):
-                        if self.sort_buffer[i, i_b].is_max:
-                            self.sort_buffer[i, i_b].value = self._solver.geoms_state[
-                                self.sort_buffer[i, i_b].i_g, i_b
-                            ].aabb_max[axis]
-                        else:
-                            self.sort_buffer[i, i_b].value = self._solver.geoms_state[
-                                self.sort_buffer[i, i_b].i_g, i_b
-                            ].aabb_min[axis]
+        else:
+            # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
+            if ti.static(not self._solver._use_hibernation):
+                for i in range(self._solver.n_geoms * 2):
+                    if self.sort_buffer[i, i_b].is_max:
+                        self.sort_buffer[i, i_b].value = self._solver.geoms_state[
+                            self.sort_buffer[i, i_b].i_g, i_b
+                        ].aabb_max[axis]
+                    else:
+                        self.sort_buffer[i, i_b].value = self._solver.geoms_state[
+                            self.sort_buffer[i, i_b].i_g, i_b
+                        ].aabb_min[axis]
 
-            # insertion sort, which has complexity near O(n) for nearly sorted array
-            for i in range(1, 2 * self._solver.n_geoms):
-                key = self.sort_buffer[i, i_b]
+        # insertion sort, which has complexity near O(n) for nearly sorted array
+        for i in range(1, 2 * self._solver.n_geoms):
+            key = self.sort_buffer[i, i_b]
 
-                j = i - 1
-                while j >= 0 and key.value < self.sort_buffer[j, i_b].value:
-                    self.sort_buffer[j + 1, i_b] = self.sort_buffer[j, i_b]
-
-                    if ti.static(self._solver._use_hibernation):
-                        if self.sort_buffer[j, i_b].is_max:
-                            self._solver.geoms_state[self.sort_buffer[j, i_b].i_g, i_b].max_buffer_idx = j + 1
-                        else:
-                            self._solver.geoms_state[self.sort_buffer[j, i_b].i_g, i_b].min_buffer_idx = j + 1
-
-                    j -= 1
-                self.sort_buffer[j + 1, i_b] = key
+            j = i - 1
+            while j >= 0 and key.value < self.sort_buffer[j, i_b].value:
+                self.sort_buffer[j + 1, i_b] = self.sort_buffer[j, i_b]
 
                 if ti.static(self._solver._use_hibernation):
-                    if key.is_max:
-                        self._solver.geoms_state[key.i_g, i_b].max_buffer_idx = j + 1
+                    if self.sort_buffer[j, i_b].is_max:
+                        self._solver.geoms_state[self.sort_buffer[j, i_b].i_g, i_b].max_buffer_idx = j + 1
                     else:
-                        self._solver.geoms_state[key.i_g, i_b].min_buffer_idx = j + 1
+                        self._solver.geoms_state[self.sort_buffer[j, i_b].i_g, i_b].min_buffer_idx = j + 1
 
-            # sweep over the sorted AABBs to find potential collision pairs
-            self.n_broad_pairs[i_b] = 0
-            if ti.static(not self._solver._use_hibernation):
-                n_active = 0
+                j -= 1
+            self.sort_buffer[j + 1, i_b] = key
+
+            if ti.static(self._solver._use_hibernation):
+                if key.is_max:
+                    self._solver.geoms_state[key.i_g, i_b].max_buffer_idx = j + 1
+                else:
+                    self._solver.geoms_state[key.i_g, i_b].min_buffer_idx = j + 1
+
+        # sweep over the sorted AABBs to find potential collision pairs
+        self.n_broad_pairs[i_b] = 0
+        if ti.static(not self._solver._use_hibernation):
+            n_active = 0
+            for i in range(2 * self._solver.n_geoms):
+                if not self.sort_buffer[i, i_b].is_max:
+                    for j in range(n_active):
+                        i_ga = self.active_buffer[j, i_b]
+                        i_gb = self.sort_buffer[i, i_b].i_g
+                        if i_ga > i_gb:
+                            i_ga, i_gb = i_gb, i_ga
+
+                        if not self._func_check_collision_valid(i_ga, i_gb, i_b):
+                            continue
+
+                        if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
+                            # Clear collision normal cache if not in contact
+                            self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                            continue
+
+                        if self.n_broad_pairs[i_b] == self._max_collision_pairs:
+                            print(
+                                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
+                                f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
+                                f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
+                            )
+                            break
+                        self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
+                        self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
+                        self.n_broad_pairs[i_b] = self.n_broad_pairs[i_b] + 1
+
+                    self.active_buffer[n_active, i_b] = self.sort_buffer[i, i_b].i_g
+                    n_active = n_active + 1
+                else:
+                    i_g_to_remove = self.sort_buffer[i, i_b].i_g
+                    for j in range(n_active):
+                        if self.active_buffer[j, i_b] == i_g_to_remove:
+                            if j < n_active - 1:
+                                for k in range(j, n_active - 1):
+                                    self.active_buffer[k, i_b] = self.active_buffer[k + 1, i_b]
+                            n_active = n_active - 1
+                            break
+        else:
+            if self._solver.n_awake_dofs[i_b] == 0:
+                pass
+            else:
+                n_active_awake = 0
+                n_active_hib = 0
                 for i in range(2 * self._solver.n_geoms):
+                    is_incoming_geom_hibernated = self._solver.geoms_state[self.sort_buffer[i, i_b].i_g, i_b].hibernated
+
                     if not self.sort_buffer[i, i_b].is_max:
-                        for j in range(n_active):
-                            i_ga = self.active_buffer[j, i_b]
+                        # both awake and hibernated geom check with active awake geoms
+                        for j in range(n_active_awake):
+                            i_ga = self.active_buffer_awake[j, i_b]
                             i_gb = self.sort_buffer[i, i_b].i_g
                             if i_ga > i_gb:
                                 i_ga, i_gb = i_gb, i_ga
@@ -823,43 +878,14 @@ class Collider:
                                 self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
                                 continue
 
-                            if self.n_broad_pairs[i_b] == self._max_collision_pairs:
-                                print(
-                                    f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
-                                    f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
-                                    f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
-                                )
-                                break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
                             self.n_broad_pairs[i_b] = self.n_broad_pairs[i_b] + 1
 
-                        self.active_buffer[n_active, i_b] = self.sort_buffer[i, i_b].i_g
-                        n_active = n_active + 1
-                    else:
-                        i_g_to_remove = self.sort_buffer[i, i_b].i_g
-                        for j in range(n_active):
-                            if self.active_buffer[j, i_b] == i_g_to_remove:
-                                if j < n_active - 1:
-                                    for k in range(j, n_active - 1):
-                                        self.active_buffer[k, i_b] = self.active_buffer[k + 1, i_b]
-                                n_active = n_active - 1
-                                break
-            else:
-                if self._solver.n_awake_dofs[i_b] == 0:
-                    pass
-                else:
-                    n_active_awake = 0
-                    n_active_hib = 0
-                    for i in range(2 * self._solver.n_geoms):
-                        is_incoming_geom_hibernated = self._solver.geoms_state[
-                            self.sort_buffer[i, i_b].i_g, i_b
-                        ].hibernated
-
-                        if not self.sort_buffer[i, i_b].is_max:
-                            # both awake and hibernated geom check with active awake geoms
-                            for j in range(n_active_awake):
-                                i_ga = self.active_buffer_awake[j, i_b]
+                        # if incoming geom is awake, also need to check with hibernated geoms
+                        if not is_incoming_geom_hibernated:
+                            for j in range(n_active_hib):
+                                i_ga = self.active_buffer_hib[j, i_b]
                                 i_gb = self.sort_buffer[i, i_b].i_g
                                 if i_ga > i_gb:
                                     i_ga, i_gb = i_gb, i_ga
@@ -876,81 +902,70 @@ class Collider:
                                 self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
                                 self.n_broad_pairs[i_b] = self.n_broad_pairs[i_b] + 1
 
-                            # if incoming geom is awake, also need to check with hibernated geoms
-                            if not is_incoming_geom_hibernated:
-                                for j in range(n_active_hib):
-                                    i_ga = self.active_buffer_hib[j, i_b]
-                                    i_gb = self.sort_buffer[i, i_b].i_g
-                                    if i_ga > i_gb:
-                                        i_ga, i_gb = i_gb, i_ga
-
-                                    if not self._func_check_collision_valid(i_ga, i_gb, i_b):
-                                        continue
-
-                                    if not self._func_is_geom_aabbs_overlap(i_ga, i_gb, i_b):
-                                        # Clear collision normal cache if not in contact
-                                        self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
-                                        continue
-
-                                    self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
-                                    self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
-                                    self.n_broad_pairs[i_b] = self.n_broad_pairs[i_b] + 1
-
-                            if is_incoming_geom_hibernated:
-                                self.active_buffer_hib[n_active_hib, i_b] = self.sort_buffer[i, i_b].i_g
-                                n_active_hib = n_active_hib + 1
-                            else:
-                                self.active_buffer_awake[n_active_awake, i_b] = self.sort_buffer[i, i_b].i_g
-                                n_active_awake = n_active_awake + 1
+                        if is_incoming_geom_hibernated:
+                            self.active_buffer_hib[n_active_hib, i_b] = self.sort_buffer[i, i_b].i_g
+                            n_active_hib = n_active_hib + 1
                         else:
-                            i_g_to_remove = self.sort_buffer[i, i_b].i_g
-                            if is_incoming_geom_hibernated:
-                                for j in range(n_active_hib):
-                                    if self.active_buffer_hib[j, i_b] == i_g_to_remove:
-                                        if j < n_active_hib - 1:
-                                            for k in range(j, n_active_hib - 1):
-                                                self.active_buffer_hib[k, i_b] = self.active_buffer_hib[k + 1, i_b]
-                                        n_active_hib = n_active_hib - 1
-                                        break
-                            else:
-                                for j in range(n_active_awake):
-                                    if self.active_buffer_awake[j, i_b] == i_g_to_remove:
-                                        if j < n_active_awake - 1:
-                                            for k in range(j, n_active_awake - 1):
-                                                self.active_buffer_awake[k, i_b] = self.active_buffer_awake[k + 1, i_b]
-                                        n_active_awake = n_active_awake - 1
-                                        break
+                            self.active_buffer_awake[n_active_awake, i_b] = self.sort_buffer[i, i_b].i_g
+                            n_active_awake = n_active_awake + 1
+                    else:
+                        i_g_to_remove = self.sort_buffer[i, i_b].i_g
+                        if is_incoming_geom_hibernated:
+                            for j in range(n_active_hib):
+                                if self.active_buffer_hib[j, i_b] == i_g_to_remove:
+                                    if j < n_active_hib - 1:
+                                        for k in range(j, n_active_hib - 1):
+                                            self.active_buffer_hib[k, i_b] = self.active_buffer_hib[k + 1, i_b]
+                                    n_active_hib = n_active_hib - 1
+                                    break
+                        else:
+                            for j in range(n_active_awake):
+                                if self.active_buffer_awake[j, i_b] == i_g_to_remove:
+                                    if j < n_active_awake - 1:
+                                        for k in range(j, n_active_awake - 1):
+                                            self.active_buffer_awake[k, i_b] = self.active_buffer_awake[k + 1, i_b]
+                                    n_active_awake = n_active_awake - 1
+                                    break
 
     @ti.kernel
-    def _func_narrow_phase_terrain(self):
+    def _kernel_narrow_phase_terrain(self, envs_idx: ti.types.ndarray()):
         """
-        NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
+        NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize
+        over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B)
+        leads to significantly slow performance for batched scene.
+        We can treat B=0 and B>0 separately, but we will end up with messier code.
         Therefore, for a big non-batched scene, users are encouraged to simply use `gs.cpu` backend.
-        Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
-        Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
+        Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU.
+        Let's save this for later.
+        Update2: Now we use n_broad_pairs instead of n_collision_pairs,
+        so we probably need to think about how to handle non-batched large scene better.
         """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
-            for i_pair in range(self.n_broad_pairs[i_b]):
-                i_ga = self.broad_collision_pairs[i_pair, i_b][0]
-                i_gb = self.broad_collision_pairs[i_pair, i_b][1]
+        for i_b in envs_idx:
+            self._func_narrow_phase_terrain_single_env(i_b)
 
-                if (
-                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
-                    or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
-                ):
-                    if ti.static(self._has_terrain):
-                        if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN:
-                            i_ga, i_gb = i_gb, i_ga
+    @ti.func
+    def _func_narrow_phase_terrain_single_env(self, i_b: ti.i32):
+        for i_pair in range(self.n_broad_pairs[i_b]):
+            i_ga = self.broad_collision_pairs[i_pair, i_b][0]
+            i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
-                        if self._solver.geoms_info[i_ga].is_convex:
-                            self._func_contact_mpr_terrain(i_ga, i_gb, i_b)
-                        else:
-                            # TODO: support nonconvex<->terrain
-                            pass
+            if (
+                self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
+                or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
+            ):
+                if ti.static(self._has_terrain):
+                    if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN:
+                        i_ga, i_gb = i_gb, i_ga
+
+                    if self._solver.geoms_info[i_ga].is_convex:
+                        self._func_contact_mpr_terrain(i_ga, i_gb, i_b)
+                    else:
+                        # TODO: support nonconvex<->terrain
+                        pass
 
     @ti.kernel
-    def _func_narrow_phase(self):
+    def _kernel_narrow_phase(self, envs_idx: ti.types.ndarray()):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
         However, parallelize over both B and collision_pairs (instead of only over B) leads to significantly slow performance for batched scene.
@@ -960,144 +975,152 @@ class Collider:
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
-            for i_pair in range(self.n_broad_pairs[i_b]):
-                i_ga = self.broad_collision_pairs[i_pair, i_b][0]
-                i_gb = self.broad_collision_pairs[i_pair, i_b][1]
+        for i_b in envs_idx:
+            self._func_narrow_phase_single_env(i_b)
 
-                if (
-                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
-                    or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
-                ):
-                    pass
-                elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
-                    if ti.static(self._solver._box_box_detection):
-                        if (
-                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                        ):
-                            self._func_box_box_contact(i_ga, i_gb, i_b)
-                        else:
-                            self._func_mpr(i_ga, i_gb, i_b)
+    @ti.func
+    def _func_narrow_phase_single_env(self, i_b: ti.i32):
+        for i_pair in range(self.n_broad_pairs[i_b]):
+            i_ga = self.broad_collision_pairs[i_pair, i_b][0]
+            i_gb = self.broad_collision_pairs[i_pair, i_b][1]
+
+            if (
+                self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
+                or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
+            ):
+                pass
+            elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
+                if ti.static(self._solver._box_box_detection):
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
+                        self._func_box_box_contact(i_ga, i_gb, i_b)
                     else:
                         self._func_mpr(i_ga, i_gb, i_b)
+                else:
+                    self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
-    def _func_narrow_phase_nonconvex_nonterrain(self):
+    def _kernel_narrow_phase_nonconvex_nonterrain(self, envs_idx: ti.types.ndarray()):
         """
-        NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
+        NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
+        However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene.
+        We can treat B=0 and B>0 separately, but we will end up with messier code.
         Therefore, for a big non-batched scene, users are encouraged to simply use `gs.cpu` backend.
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
-            for i_pair in range(self.n_broad_pairs[i_b]):
-                i_ga = self.broad_collision_pairs[i_pair, i_b][0]
-                i_gb = self.broad_collision_pairs[i_pair, i_b][1]
+        for i_b in envs_idx:
+            self._func_narrow_phase_nonconvex_nonterrain_single_env(i_b)
 
-                if (
-                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
-                    or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
-                ):
-                    pass
+    @ti.func
+    def _func_narrow_phase_nonconvex_nonterrain_single_env(self, i_b: ti.i32):
+        for i_pair in range(self.n_broad_pairs[i_b]):
+            i_ga = self.broad_collision_pairs[i_pair, i_b][0]
+            i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
-                elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
-                    pass
+            if (
+                self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN
+                or self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
+            ):
+                pass
 
-                else:  # non-convex non-terrain object
-                    if ti.static(self._has_nonconvex_nonterrain):
-                        is_col = False
-                        tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
-                        for i in range(2):
-                            if i == 1:
-                                i_ga, i_gb = i_gb, i_ga
+            elif self._solver.geoms_info[i_ga].is_convex and self._solver.geoms_info[i_gb].is_convex:
+                pass
 
-                            # initial point
-                            is_col_0, normal_0, penetration_0, contact_pos_0 = self._func_contact_vertex_sdf(
-                                i_ga, i_gb, i_b
-                            )
+            else:  # non-convex non-terrain object
+                if ti.static(self._has_nonconvex_nonterrain):
+                    is_col = False
+                    tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+                    for i in range(2):
+                        if i == 1:
+                            i_ga, i_gb = i_gb, i_ga
 
-                            if is_col_0:
-                                self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
+                        # initial point
+                        is_col_0, normal_0, penetration_0, contact_pos_0 = self._func_contact_vertex_sdf(
+                            i_ga, i_gb, i_b
+                        )
 
-                            if is_col_0 and ti.static(self._solver._enable_multi_contact):
-                                ga_state = self._solver.geoms_state[i_ga, i_b]
-                                gb_state = self._solver.geoms_state[i_gb, i_b]
-                                ga_pos, ga_quat = ga_state.pos, ga_state.quat
-                                gb_pos, gb_quat = gb_state.pos, gb_state.quat
+                        if is_col_0:
+                            self._func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b)
 
-                                # Perturb geom_a around two orthogonal axes to find multiple contacts
-                                axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal_0, i_b)
+                        if is_col_0 and ti.static(self._solver._enable_multi_contact):
+                            ga_state = self._solver.geoms_state[i_ga, i_b]
+                            gb_state = self._solver.geoms_state[i_gb, i_b]
+                            ga_pos, ga_quat = ga_state.pos, ga_state.quat
+                            gb_pos, gb_quat = gb_state.pos, gb_state.quat
 
-                                n_con = 1
-                                for i_rot in range(1, 5):
-                                    axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
+                            # Perturb geom_a around two orthogonal axes to find multiple contacts
+                            axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal_0, i_b)
 
-                                    qrot = gu.ti_rotvec_to_quat(self._mc_perturbation * axis)
-                                    self._func_rotate_frame(i_ga, contact_pos_0, qrot, i_b)
-                                    self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
+                            n_con = 1
+                            for i_rot in range(1, 5):
+                                axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
-                                    is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(
-                                        i_ga, i_gb, i_b
+                                qrot = gu.ti_rotvec_to_quat(self._mc_perturbation * axis)
+                                self._func_rotate_frame(i_ga, contact_pos_0, qrot, i_b)
+                                self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
+
+                                is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(
+                                    i_ga, i_gb, i_b
+                                )
+
+                                if is_col:
+                                    # 1. Project the contact point on both geometries
+                                    # 2. Revert the effect of small rotation
+                                    # 3. Update contact point
+                                    contact_point_a = (
+                                        gu.ti_transform_by_quat(
+                                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                                            gu.ti_inv_quat(qrot),
+                                        )
+                                        + contact_pos_0
                                     )
-
-                                    if is_col:
-                                        # 1. Project the contact point on both geometries
-                                        # 2. Revert the effect of small rotation
-                                        # 3. Update contact point
-                                        contact_point_a = (
-                                            gu.ti_transform_by_quat(
-                                                (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                                                gu.ti_inv_quat(qrot),
-                                            )
-                                            + contact_pos_0
+                                    contact_point_b = (
+                                        gu.ti_transform_by_quat(
+                                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                                            qrot,
                                         )
-                                        contact_point_b = (
-                                            gu.ti_transform_by_quat(
-                                                (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                                                qrot,
-                                            )
-                                            + contact_pos_0
-                                        )
-                                        contact_point = 0.5 * (contact_point_a + contact_point_b)
+                                        + contact_pos_0
+                                    )
+                                    contact_point = 0.5 * (contact_point_a + contact_point_b)
 
-                                        # Discard contact point is repeated
-                                        repeated = False
-                                        for i_con in range(n_con):
-                                            if not repeated:
-                                                idx_prev = self.n_contacts[i_b] - 1 - i_con
-                                                prev_contact = self.contact_data[idx_prev, i_b].pos
-                                                if (contact_pos - prev_contact).norm() < tolerance:
-                                                    repeated = True
-
+                                    # Discard contact point is repeated
+                                    repeated = False
+                                    for i_con in range(n_con):
                                         if not repeated:
-                                            # First-order correction of the normal direction
-                                            twist_rotvec = ti.math.clamp(
-                                                normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
-                                            )
-                                            normal += twist_rotvec.cross(normal)
+                                            idx_prev = self.n_contacts[i_b] - 1 - i_con
+                                            prev_contact = self.contact_data[idx_prev, i_b].pos
+                                            if (contact_pos - prev_contact).norm() < tolerance:
+                                                repeated = True
 
-                                            # Make sure that the penetration is still positive
-                                            penetration = normal.dot(contact_point_b - contact_point_a)
-                                            if penetration > 0.0:
-                                                self._func_add_contact(
-                                                    i_ga, i_gb, normal, contact_pos, penetration, i_b
-                                                )
-                                                n_con += 1
+                                    if not repeated:
+                                        # First-order correction of the normal direction
+                                        twist_rotvec = ti.math.clamp(
+                                            normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
+                                        )
+                                        normal += twist_rotvec.cross(normal)
 
-                                    self._solver.geoms_state[i_ga, i_b].pos = ga_pos
-                                    self._solver.geoms_state[i_ga, i_b].quat = ga_quat
-                                    self._solver.geoms_state[i_gb, i_b].pos = gb_pos
-                                    self._solver.geoms_state[i_gb, i_b].quat = gb_quat
+                                        # Make sure that the penetration is still positive
+                                        penetration = normal.dot(contact_point_b - contact_point_a)
+                                        if penetration > 0.0:
+                                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                                            n_con += 1
 
-                                break
+                                self._solver.geoms_state[i_ga, i_b].pos = ga_pos
+                                self._solver.geoms_state[i_ga, i_b].quat = ga_quat
+                                self._solver.geoms_state[i_gb, i_b].pos = gb_pos
+                                self._solver.geoms_state[i_gb, i_b].quat = gb_quat
 
-                        if not is_col:  # check edge-edge if vertex-face is not detected
-                            is_col, normal, penetration, contact_pos = self._func_contact_edge_sdf(i_ga, i_gb, i_b)
+                            break
 
-                            if is_col:
-                                self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                    if not is_col:  # check edge-edge if vertex-face is not detected
+                        is_col, normal, penetration, contact_pos = self._func_contact_edge_sdf(i_ga, i_gb, i_b)
+
+                        if is_col:
+                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
     def _func_plane_box_multi_contact(self, i_ga, i_gb, i_b):

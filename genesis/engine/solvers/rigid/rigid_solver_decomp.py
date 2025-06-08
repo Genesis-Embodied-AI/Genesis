@@ -1715,15 +1715,15 @@ class RigidSolver(Solver):
             self._func_forward_velocity(i_b)
             self._func_update_geoms(i_b)
 
-    def _kernel_detect_collision(self):
-        self.collider.clear()
-        self.collider.detection()
+    def _detect_collision(self, envs_idx=None):
+        self.collider.clear(envs_idx)
+        self.collider.detection(envs_idx)
 
     # @@@@@@@@@ Composer ends here
 
     def detect_collision(self, env_idx=0):
         # TODO: support batching
-        self._kernel_detect_collision()
+        self._detect_collision()
         n_collision = self.collider.n_contacts.to_numpy()[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
         collision_pairs[:, 0] = self.collider.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
@@ -2547,9 +2547,28 @@ class RigidSolver(Solver):
                 )
 
     @ti.func
-    def _func_update_geom_aabbs(self):
+    def _func_update_geom_aabbs(self, envs_idx: ti.types.ndarray()):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
+        for i_g, _i_b in ti.ndrange(self.n_geoms, envs_idx.shape[0]):
+            i_b = envs_idx[_i_b]
+            g_state = self.geoms_state[i_g, i_b]
+
+            lower = gu.ti_vec3(ti.math.inf)
+            upper = gu.ti_vec3(-ti.math.inf)
+            for i_corner in range(8):
+                corner_pos = gu.ti_transform_by_trans_quat(
+                    self.geoms_init_AABB[i_g, i_corner], g_state.pos, g_state.quat
+                )
+                lower = ti.min(lower, corner_pos)
+                upper = ti.max(upper, corner_pos)
+
+            self.geoms_state[i_g, i_b].aabb_min = lower
+            self.geoms_state[i_g, i_b].aabb_max = upper
+
+    @ti.func
+    def _func_update_geom_aabbs_single_env(self, i_b: ti.i32):
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_g in range(self.n_geoms):
             g_state = self.geoms_state[i_g, i_b]
 
             lower = gu.ti_vec3(ti.math.inf)
