@@ -80,8 +80,8 @@ def pytest_xdist_auto_num_workers(config):
     )
 
 
-def pytest_set_filtered_exceptions():
-    return (HTTPError,)
+# def pytest_set_filtered_exceptions():
+#     return (HTTPError,)
 
 
 def pytest_addoption(parser):
