@@ -4670,7 +4670,7 @@ class RigidSolver(Solver):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 6, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
-        self._kernel_inverse_dynamics_for_sensors()
+        # self._kernel_inverse_dynamics_for_sensors()
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
         self._kernel_get_links_force_torque(tensor, links_idx, envs_idx)
         return _tensor
@@ -4690,12 +4690,16 @@ class RigidSolver(Solver):
 
             quat = gu.ti_inv_quat(l_st.j_quat)  # joint → world
             dpos = l_st.pos - l_st.COM  # p_joint - p_COM
-            force = gu.ti_transform_by_quat(  # world → joint
-                l_st.cfrc_flat_vel, 
-                quat,
-            )
+            # print("force", l_st.contact_force)
+            # force = gu.ti_transform_by_quat(  # world → joint
+            #     l_st.contact_force, 
+            #     quat,
+            # )
+            contact_force = l_st.contact_force
+            internal_force = l_st.cfrc_flat_vel
+            force = contact_force + internal_force
             torque = gu.ti_transform_by_quat(  # world → joint
-                l_st.cfrc_flat_ang + dpos.cross(l_st.cfrc_flat_vel), 
+                l_st.cfrc_flat_ang + dpos.cross(l_st.cfrc_flat_vel),  # TODO
                 quat,
             )
 
