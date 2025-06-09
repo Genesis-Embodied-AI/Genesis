@@ -36,11 +36,17 @@ class ColorTexture(Texture):
 
     Parameters
     ----------
-    color : tuple, shape (3,)
+    color : tuple, shape (N,)
         RGB color value.
     """
 
-    color: tuple = (1.0, 1.0, 1.0)
+    color: tuple[float, ...] = (1.0, 1.0, 1.0)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+
+        # Make sure that all color channel values are floating point
+        self.color = tuple(map(float, self.color))
 
     def check_dim(self, dim):
         if len(self.color) > dim:
@@ -51,7 +57,7 @@ class ColorTexture(Texture):
     def apply_cutoff(self, cutoff):
         if cutoff is None:
             return
-        self.color = tuple([1.0 if c >= cutoff else 0.0 for c in self.color])
+        self.color = tuple(1.0 if c >= cutoff else 0.0 for c in self.color)
 
 
 class ImageTexture(Texture):
