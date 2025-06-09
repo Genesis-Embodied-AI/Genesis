@@ -97,6 +97,7 @@ xhost +local:root # 컨테이너가 디스플레이에 접근할 수 있도록 �
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
+-v /dev/dri:/dev/dri \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
 -v $PWD:/workspace \
 genesis
@@ -168,10 +169,11 @@ Genesis는 다양한 기존 및 진행 중인 연구의 최첨단 기술을 하�
 연구에서 Genesis를 사용하는 경우, 다음을 인용해 주세요:
 
 ```bibtex
-@software{Genesis,
+@misc{Genesis,
   author = {Genesis Authors},
-  title = {Genesis: A Universal and Generative Physics Engine for Robotics and Beyond},
+  title = {Genesis: A Generative and Universal Physics Engine for Robotics and Beyond},
   month = {December},
   year = {2024},
   url = {https://github.com/Genesis-Embodied-AI/Genesis}
 }
+```

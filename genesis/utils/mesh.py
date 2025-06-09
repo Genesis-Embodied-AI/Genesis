@@ -190,7 +190,7 @@ def compute_sdf_data(mesh, res):
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
-    voxels = igl.signed_distance(query_points, mesh.vertices, mesh.faces)[0]
+    voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
     voxels = voxels.reshape([res, res, res])
 
     T_mesh_to_sdf = np.eye(4)
@@ -316,7 +316,7 @@ def postprocess_collision_geoms(
                 tmesh._cache.clear()
                 tmesh.visual._cache.clear()
 
-    # Check if all the geometries can be convexify without decomposition
+    # Check if all the geometries can be convexified without decomposition
     must_decompose = False
     if convexify:
         for g_info in g_infos:

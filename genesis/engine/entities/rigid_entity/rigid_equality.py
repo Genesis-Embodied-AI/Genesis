@@ -37,6 +37,28 @@ class RigidEquality(RBC):
         self._sol_params = sol_params
 
     # ------------------------------------------------------------------------------------
+    # -------------------------------- real-time state -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def set_sol_params(self, sol_params):
+        """
+        Set the solver parameters of this equality constraint.
+        """
+        if self.is_built:
+            self._solver.set_sol_params(sol_params[..., None, :], eqs_idx=self._idx, envs_idx=None, unsafe=False)
+        else:
+            self._sol_params = sol_params
+
+    @property
+    def sol_params(self):
+        """
+        Returns the solver parameters of this equality constraint.
+        """
+        if self.is_built:
+            return self._solver.get_sol_params(eqs_idx=self._idx, envs_idx=None, unsafe=True)[..., 0, :]
+        return self._sol_params
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 
@@ -111,8 +133,8 @@ class RigidEquality(RBC):
         return self._eq_data
 
     @property
-    def sol_params(self):
+    def is_built(self):
         """
-        Returns the solver parameters of the equality.
+        Whether the rigid entity this equality constraint belongs to is built.
         """
-        return self._sol_params
+        return self.entity.is_built

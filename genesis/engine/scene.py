@@ -1,13 +1,13 @@
+import os
+
 import numpy as np
 import torch
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
-from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
-import genesis.utils.geom as gu
 from genesis.engine.entities import Emitter
 from genesis.engine.simulator import Simulator
 from genesis.options import (
@@ -16,6 +16,7 @@ from genesis.options import (
     FEMOptions,
     MPMOptions,
     PBDOptions,
+    ProfilingOptions,
     RigidOptions,
     SFOptions,
     SimOptions,
@@ -24,10 +25,14 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
+from genesis.options.morphs import Morph
+from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
+from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
+from genesis.utils.warnings import warn_once
 
 
 @gs.assert_initialized
@@ -72,26 +77,42 @@ class Scene(RBC):
 
     def __init__(
         self,
-        sim_options=SimOptions(),
-        coupler_options=CouplerOptions(),
-        tool_options=ToolOptions(),
-        rigid_options=RigidOptions(),
-        avatar_options=AvatarOptions(),
-        mpm_options=MPMOptions(),
-        sph_options=SPHOptions(),
-        fem_options=FEMOptions(),
-        sf_options=SFOptions(),
-        pbd_options=PBDOptions(),
-        vis_options=VisOptions(),
-        viewer_options=ViewerOptions(),
-        renderer=Rasterizer(),
-        show_viewer=True,
-        show_FPS=True,
+        sim_options: SimOptions | None = None,
+        coupler_options: CouplerOptions | None = None,
+        tool_options: ToolOptions | None = None,
+        rigid_options: RigidOptions | None = None,
+        avatar_options: AvatarOptions | None = None,
+        mpm_options: MPMOptions | None = None,
+        sph_options: SPHOptions | None = None,
+        fem_options: FEMOptions | None = None,
+        sf_options: SFOptions | None = None,
+        pbd_options: PBDOptions | None = None,
+        vis_options: ViewerOptions | None = None,
+        viewer_options: ViewerOptions | None = None,
+        profiling_options: ProfilingOptions | None = None,
+        renderer: Renderer | None = None,
+        show_viewer: bool | None = None,
+        show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
-        self._uid = gs.UID()
-        self._t = 0
-        self._is_built = False
-        self._show_FPS = show_FPS
+        # Handling of default arguments
+        sim_options = sim_options or SimOptions()
+        coupler_options = coupler_options or CouplerOptions()
+        tool_options = tool_options or ToolOptions()
+        rigid_options = rigid_options or RigidOptions()
+        avatar_options = avatar_options or AvatarOptions()
+        mpm_options = mpm_options or MPMOptions()
+        sph_options = sph_options or SPHOptions()
+        fem_options = fem_options or FEMOptions()
+        sf_options = sf_options or SFOptions()
+        pbd_options = pbd_options or PBDOptions()
+        vis_options = vis_options or VisOptions()
+        viewer_options = viewer_options or ViewerOptions()
+        profiling_options = profiling_options or ProfilingOptions()
+        renderer = renderer or Rasterizer()
+
+        if show_FPS is not None:
+            warn_once("Scene.show_FPS is deprecated. Please use Scene.profiling_options.show_FPS")
+            profiling_options.show_FPS = show_FPS
 
         # validate options
         self._validate_options(
@@ -107,6 +128,7 @@ class Scene(RBC):
             pbd_options,
             vis_options,
             viewer_options,
+            profiling_options,
             renderer,
         )
 
@@ -120,6 +142,7 @@ class Scene(RBC):
         self.fem_options = fem_options
         self.sf_options = sf_options
         self.pbd_options = pbd_options
+        self.profiling_options = profiling_options
 
         self.vis_options = vis_options
         self.viewer_options = viewer_options
@@ -164,6 +187,10 @@ class Scene(RBC):
         self._backward_ready = False
         self._forward_ready = False
 
+        self._uid = gs.UID()
+        self._t = 0
+        self._is_built = False
+
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def _validate_options(
@@ -180,6 +207,7 @@ class Scene(RBC):
         pbd_options: PBDOptions,
         vis_options: VisOptions,
         viewer_options: ViewerOptions,
+        profiling_options: ProfilingOptions,
         renderer: Renderer,
     ):
         if not isinstance(sim_options, SimOptions):
@@ -217,6 +245,9 @@ class Scene(RBC):
 
         if not isinstance(viewer_options, ViewerOptions):
             gs.raise_exception("`viewer_options` should be an instance of `ViewerOptions`.")
+
+        if not isinstance(profiling_options, ProfilingOptions):
+            gs.raise_exception("`profiling_options` should be an instance of `ProfilingOptions`.")
 
         if not isinstance(renderer, Renderer):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
@@ -353,10 +384,6 @@ class Scene(RBC):
             # Rigid entities will convexify geom by default
             if morph.convexify is None:
                 morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
-
-            # Decimate if convexify by default
-            if morph.decimate is None:
-                morph.decimate = morph.convexify
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
@@ -592,7 +619,8 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            self._sim.build()
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                self._sim.build()
 
             # reset state
             self._reset()
@@ -608,8 +636,8 @@ class Scene(RBC):
         with gs.logger.timer("Building visualizer..."):
             self._visualizer.build()
 
-        if self._show_FPS:
-            self.FPS_tracker = FPSTracker(self.n_envs)
+        if self.profiling_options.show_FPS:
+            self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.profiling_options.FPS_tracker_alpha)
 
         gs.global_scene_list.add(self)
 
@@ -730,7 +758,7 @@ class Scene(RBC):
         if update_visualizer:
             self._visualizer.update(force=False, auto=refresh_visualizer)
 
-        if self._show_FPS:
+        if self.profiling_options.show_FPS:
             self.FPS_tracker.step()
 
     def _step_grad(self):
@@ -989,10 +1017,9 @@ class Scene(RBC):
             indices = torch.linspace(0, N - 2, N_new, dtype=int)
 
             Ts = np.zeros((N_new, 4, 4))
-
             for i in range(N_new):
                 pos, quat = entity.forward_kinematics(qposs[indices[i]])
-                Ts[i] = gu.trans_quat_to_T(pos[link_idx], quat[link_idx])
+                Ts[i] = tensor_to_array(gu.trans_quat_to_T(pos[link_idx], quat[link_idx]))
 
             return self._visualizer.context.draw_debug_frames(
                 Ts, axis_length=frame_scaling * 0.1, origin_size=0.001, axis_radius=frame_scaling * 0.005
@@ -1067,7 +1094,8 @@ class Scene(RBC):
     @property
     def show_FPS(self):
         """Whether to print the frames per second (FPS) in the terminal."""
-        return self._show_FPS
+        warn_once("Scene.show_FPS is deprecated. Please use profiling_options.show_FPS")
+        return self.profiling_options.show_FPS
 
     @property
     def gravity(self):

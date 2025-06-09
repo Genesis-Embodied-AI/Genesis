@@ -75,35 +75,40 @@ class Collider:
         geoms_link_idx = self._solver.geoms_info.link_idx.to_numpy()
         geoms_contype = self._solver.geoms_info.contype.to_numpy()
         geoms_conaffinity = self._solver.geoms_info.conaffinity.to_numpy()
+        links_entity_idx = self._solver.links_info.entity_idx.to_numpy()
         links_root_idx = self._solver.links_info.root_idx.to_numpy()
         links_parent_idx = self._solver.links_info.parent_idx.to_numpy()
         links_is_fixed = self._solver.links_info.is_fixed.to_numpy()
         if self._solver._options.batch_links_info:
+            links_entity_idx = links_entity_idx[:, 0]
             links_root_idx = links_root_idx[:, 0]
             links_parent_idx = links_parent_idx[:, 0]
             links_is_fixed = links_is_fixed[:, 0]
         n_possible_pairs = 0
-        for i in range(self._solver.n_geoms):
-            for j in range(i + 1, self._solver.n_geoms):
-                i_la = geoms_link_idx[i]
-                i_lb = geoms_link_idx[j]
+        for i_ga in range(self._solver.n_geoms):
+            for i_gb in range(i_ga + 1, self._solver.n_geoms):
+                i_la = geoms_link_idx[i_ga]
+                i_lb = geoms_link_idx[i_gb]
 
                 # geoms in the same link
                 if i_la == i_lb:
                     continue
 
                 # self collision
-                if not self._solver._enable_self_collision and links_root_idx[i_la] == links_root_idx[i_lb]:
-                    continue
+                if links_root_idx[i_la] == links_root_idx[i_lb]:
+                    if not self._solver._enable_self_collision:
+                        continue
 
-                # adjacent links
-                if not self._solver._enable_adjacent_collision and (
-                    links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
-                ):
-                    continue
+                    # adjacent links
+                    if not self._solver._enable_adjacent_collision and (
+                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                    ):
+                        continue
 
                 # contype and conaffinity
-                if not ((geoms_contype[i] & geoms_conaffinity[j]) or (geoms_contype[j] & geoms_conaffinity[i])):
+                if links_entity_idx[i_la] == links_entity_idx[i_lb] and not (
+                    (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
+                ):
                     continue
 
                 # pair of fixed links wrt the world
@@ -704,27 +709,26 @@ class Collider:
         i_lb = self._solver.geoms_info[i_gb].link_idx
         I_la = [i_la, i_b] if ti.static(self._solver._options.batch_links_info) else i_la
         I_lb = [i_lb, i_b] if ti.static(self._solver._options.batch_links_info) else i_lb
+
         is_valid = True
 
         # geoms in the same link
         if i_la == i_lb:
             is_valid = False
 
-        # self collision
-        if (
-            ti.static(not self._solver._enable_self_collision)
-            and self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx
-        ):
-            is_valid = False
+        if self._solver.links_info[I_la].root_idx == self._solver.links_info[I_lb].root_idx:
+            # self collision
+            if ti.static(not self._solver._enable_self_collision):
+                is_valid = False
 
-        # adjacent links
-        if ti.static(not self._solver._enable_adjacent_collision) and (
-            self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
-        ):
-            is_valid = False
+            # adjacent links
+            if ti.static(not self._solver._enable_adjacent_collision) and (
+                self._solver.links_info[I_la].parent_idx == i_lb or self._solver.links_info[I_lb].parent_idx == i_la
+            ):
+                is_valid = False
 
         # contype and conaffinity
-        if not (
+        if self._solver.links_info[I_la].entity_idx == self._solver.links_info[I_lb].entity_idx and not (
             (self._solver.geoms_info[i_ga].contype & self._solver.geoms_info[i_gb].conaffinity)
             or (self._solver.geoms_info[i_gb].contype & self._solver.geoms_info[i_ga].conaffinity)
         ):

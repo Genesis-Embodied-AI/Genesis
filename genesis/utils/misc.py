@@ -1,12 +1,14 @@
+import ctypes
 import datetime
 import functools
-import os
-import types
+import logging
 import platform
 import random
-import logging
+import types
 import shutil
 import subprocess
+import sys
+import os
 from dataclasses import dataclass
 from collections import OrderedDict
 from typing import Any
@@ -40,6 +42,33 @@ def raise_exception(msg="Something went wrong."):
 
 def raise_exception_from(msg="Something went wrong.", cause=None):
     raise gs.GenesisException(msg) from cause
+
+
+class redirect_libc_stderr:
+    def __init__(self, fd):
+        self.fd = fd
+        self.stderr_fileno = None
+        self.original_stderr_fileno = None
+
+    def __enter__(self):
+        # TODO: Add Linux and Windows support
+        if sys.platform == "darwin":
+            libc = ctypes.CDLL(None)
+            self.stderr_fileno = sys.stderr.fileno()
+            self.original_stderr_fileno = os.dup(self.stderr_fileno)
+            sys.stderr.flush()
+            libc.fflush(None)
+            libc.dup2(self.fd.fileno(), self.stderr_fileno)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.stderr_fileno is not None:
+            libc = ctypes.CDLL(None)
+            sys.stderr.flush()
+            libc.fflush(None)
+            libc.dup2(self.original_stderr_fileno, self.stderr_fileno)
+            os.close(self.original_stderr_fileno)
+        self.stderr_fileno = None
+        self.original_stderr_fileno = None
 
 
 def assert_initialized(cls):
@@ -400,10 +429,9 @@ def ti_field_to_torch(
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
                 # Resort on post-mortem analysis for bounds check because runtime would be to costly
                 is_out_of_bounds = None
-            else:  # np.ndarray
-                mask_start, mask_end = mask[0], mask[-1]
+            else:  # np.ndarray, list, tuple, range
                 try:
-                    mask_start, mask_end = int(mask_start), int(mask_end)
+                    mask_start, mask_end = min(mask), max(mask)
                 except ValueError:
                     gs.raise_exception(f"Expecting 1D tensor for masks.")
                 is_out_of_bounds = not (0 <= mask_start <= mask_end < _field_shape[i])

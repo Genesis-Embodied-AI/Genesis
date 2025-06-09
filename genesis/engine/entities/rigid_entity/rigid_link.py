@@ -39,6 +39,7 @@ class RigidLink(RBC):
         inertial_i,
         inertial_mass,
         parent_idx,
+        root_idx,
         invweight,
         visualize_contact,
     ):
@@ -50,6 +51,7 @@ class RigidLink(RBC):
         self._uid = gs.UID()
         self._idx = idx
         self._parent_idx = parent_idx
+        self._root_idx = root_idx
         self._child_idxs = list()
         self._invweight = invweight
 
@@ -95,7 +97,8 @@ class RigidLink(RBC):
             link = solver_links[link.parent_idx]
             if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
                 is_fixed = False
-        self.root_idx = gs.np_int(link.idx)
+        if self._root_idx is None:
+            self._root_idx = gs.np_int(link.idx)
         self.is_fixed = gs.np_int(is_fixed)
 
         # inertial_mass and inertia_i
@@ -509,6 +512,13 @@ class RigidLink(RBC):
         The global index of the link's parent link in the RigidSolver. If the link is the root link, return -1.
         """
         return self._parent_idx
+
+    @property
+    def root_idx(self):
+        """
+        The global index of the link's root link in the RigidSolver.
+        """
+        return self._root_idx
 
     @property
     def child_idxs(self):

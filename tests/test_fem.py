@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import genesis as gs
+from .utils import assert_allclose
 
 
 @pytest.fixture(scope="session")
@@ -11,7 +12,7 @@ def fem_material():
         E=3.0e4,
         nu=0.45,
         rho=1000.0,
-        model="stable_neohooken",
+        model="stable_neohookean",
     )
 
 
@@ -193,3 +194,58 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
         f"Mesh with maxvolume=0.01 generated {len(fem2.elems)} elements; "
         f"expected more than {len(fem1.elems)} elements without a volume limit."
     )
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic()
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
+    """Test adding multiple FEM entities to the scene"""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1e-2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    # Add first FEM entity
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.5, -0.2, 0.3),
+            radius=0.1,
+        ),
+        material=fem_material_linear,
+    )
+
+    # Add second FEM entity
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+        ),
+        material=fem_material_linear,
+    )
+
+    # Build the scene
+    scene.build()
+
+    # Run simulation
+    for _ in range(500):
+        scene.step()
+
+    for entity in scene.entities:
+        state = entity.get_state()
+        vel = state.vel.detach().cpu().numpy()
+        assert_allclose(vel, 0.0, atol=2e-3), f"Entity {entity.uid} velocity is not near zero."
+        pos = state.pos.detach().cpu().numpy()
+        min_pos_z = np.min(pos[..., 2])
+        assert_allclose(
+            min_pos_z, 0.0, atol=5e-2
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
