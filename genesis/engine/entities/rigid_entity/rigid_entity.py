@@ -407,7 +407,7 @@ class RigidEntity(Entity):
 
             # Shift root idx for all child links
             for l_info in l_infos[idx:]:
-                if l_info["root_idx"] == idx + 1:
+                if "root_idx" in l_info and l_info["root_idx"] == idx + 1:
                     l_info["root_idx"] = idx
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
@@ -2177,7 +2177,10 @@ class RigidEntity(Entity):
         elif isinstance(idx_local, int):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
-            idx_global = [i + idx_global_start for i in idx_local]
+            try:
+                idx_global = [i + idx_global_start for i in idx_local]
+            except TypeError:
+                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:
