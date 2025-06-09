@@ -407,7 +407,7 @@ class RigidEntity(Entity):
 
             # Shift root idx for all child links
             for l_info in l_infos[idx:]:
-                if l_info["root_idx"] == idx + 1:
+                if "root_idx" in l_info and l_info["root_idx"] == idx + 1:
                     l_info["root_idx"] = idx
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
