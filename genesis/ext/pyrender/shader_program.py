@@ -221,7 +221,8 @@ class ShaderProgram(object):
                 func1(loc, 1, GL_TRUE, value)
 
         # Call correct uniform function
-        elif isinstance(value, float):
+        elif isinstance(value, float) or isinstance(value, np.float32):
+            value = float(value)
             glUniform1f(loc, value)
         elif isinstance(value, int):
             if unsigned:
