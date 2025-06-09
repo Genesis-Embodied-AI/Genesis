@@ -221,14 +221,9 @@ class ShaderProgram(object):
                 func1(loc, 1, GL_TRUE, value)
 
         # Call correct uniform function
-        elif isinstance(value, float):
-            glUniform1f(loc, value)
-        elif isinstance(value, int):
-            if unsigned:
-                glUniform1ui(loc, value)
-            else:
-                glUniform1i(loc, value)
-        elif isinstance(value, bool):
+        elif isinstance(value, (numbers.Real, np.floating)):
+            glUniform1f(loc, float(value))
+        elif isinstance(value, (numbers.Integer, np.integer)):
             if unsigned:
                 glUniform1ui(loc, int(value))
             else:
