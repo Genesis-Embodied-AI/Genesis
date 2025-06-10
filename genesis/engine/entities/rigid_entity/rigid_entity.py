@@ -407,7 +407,7 @@ class RigidEntity(Entity):
 
             # Shift root idx for all child links
             for l_info in l_infos[idx:]:
-                if l_info["root_idx"] == idx + 1:
+                if "root_idx" in l_info and l_info["root_idx"] == idx + 1:
                     l_info["root_idx"] = idx
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
@@ -1958,9 +1958,10 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_accelerometer_data(self, links_idx_local=None, envs_idx=None, *, imu=False, unsafe=False):
         """
-        Returns linear acceleration of the specified entity's links. (Mimicking accelerometer)
+        Returns the accelerometer data that would be measured by a IMU rigidly attached to the specified entity's links,
+        i.e. the true linear acceleration of the links expressed at their respective origin in local frame coordinates.
 
         Parameters
         ----------
@@ -1972,10 +1973,52 @@ class RigidEntity(Entity):
         Returns
         -------
         acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
-            The linear acceleration of the specified entity's links.
+            The accelerometer data of IMUs rigidly attached of the specified entity's links.
         """
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_acc(links_idx, envs_idx, unsafe=unsafe)
+        return self._solver.get_links_acc(links_idx, envs_idx, mimick_imu=True, unsafe=unsafe)
+
+    @gs.assert_built
+    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns true linear acceleration (aka. "classical acceleration") of the specified entity's links expressed at
+        their respective origin in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear classical acceleration of the specified entity's links.
+        """
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_acc(links_idx, envs_idx, mimick_imu=False, unsafe=unsafe)
+
+    @gs.assert_built
+    def get_links_acc_ang(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns angular acceleration of the specified entity's links expressed at their respective origin in world
+        coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear classical acceleration of the specified entity's links.
+        """
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_acc_ang(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
@@ -2134,7 +2177,10 @@ class RigidEntity(Entity):
         elif isinstance(idx_local, int):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
-            idx_global = [i + idx_global_start for i in idx_local]
+            try:
+                idx_global = [i + idx_global_start for i in idx_local]
+            except TypeError:
+                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:

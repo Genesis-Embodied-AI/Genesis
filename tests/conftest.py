@@ -139,6 +139,19 @@ def adjacent_collision(request):
 
 
 @pytest.fixture
+def merge_fixed_links(request):
+    merge_fixed_links = None
+    for mark in request.node.iter_markers("merge_fixed_links"):
+        if mark.args:
+            if merge_fixed_links is not None:
+                pytest.fail("'merge_fixed_links' can only be specified once.")
+            (merge_fixed_links,) = mark.args
+    if merge_fixed_links is None:
+        merge_fixed_links = True
+    return merge_fixed_links
+
+
+@pytest.fixture
 def multi_contact(request):
     multi_contact = None
     for mark in request.node.iter_markers("multi_contact"):
@@ -202,16 +215,34 @@ def initialize_genesis(request, backend, taichi_offline_cache):
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
-    return build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping)
+def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping):
+    return build_mujoco_sim(
+        xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
+    )
 
 
 @pytest.fixture
 def gs_sim(
-    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+    xml_path,
+    gs_solver,
+    gs_integrator,
+    merge_fixed_links,
+    multi_contact,
+    mujoco_compatibility,
+    adjacent_collision,
+    show_viewer,
+    mj_sim,
 ):
     return build_genesis_sim(
-        xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+        xml_path,
+        gs_solver,
+        gs_integrator,
+        merge_fixed_links,
+        multi_contact,
+        mujoco_compatibility,
+        adjacent_collision,
+        show_viewer,
+        mj_sim,
     )
 
 

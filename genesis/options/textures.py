@@ -65,7 +65,7 @@ class ColorTexture(Texture):
     def apply_cutoff(self, cutoff):
         if cutoff is None:
             return
-        self.color = tuple([1.0 if c >= cutoff else 0.0 for c in self.color])
+        self.color = tuple(1.0 if c >= cutoff else 0.0 for c in self.color)
 
 
 class ImageTexture(Texture):
