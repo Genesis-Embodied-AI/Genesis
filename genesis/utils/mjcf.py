@@ -34,34 +34,48 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
         except ET.ParseError:
             gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
 
-        # Must pre-process URDF to overwrite default Mujoco compile flags
+        # Best guess for the search path
+        asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
+
+        # Detect whether it is a URDF file or a Mujoco MJCF file
         root = xml.getroot()
         is_urdf_file = root.tag == "robot"
+
+        # Make sure compiler options are defined
+        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
+        compiler = mjcf.find("compiler")
+        if compiler is None:
+            compiler = ET.SubElement(mjcf, "compiler")
+
+        # Set absolute asset search directory
+        for name in ("assetdir", "meshdir", "texturedir"):
+            compiler.attrib[name] = str(Path(asset_path) / compiler.attrib.get(name, ""))
+
+        # Must pre-process URDF to overwrite default Mujoco compile flags
         if is_urdf_file:
-            # Best guess for the search path
-            asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
             robot = urdfpy.URDF._from_xml(root, root, asset_path)
 
             # Merge fixed links if requested
             if merge_fixed_links:
                 robot = uu.merge_fixed_links(robot, links_to_keep)
                 root = robot._to_xml(None, asset_path)
+                root.append(mjcf)
 
-            # Set default compiler options if none is specified in URDF file if none
-            if not any(child.tag == "mujoco" for child in root):
-                mjcf = ET.SubElement(root, "mujoco")
-                compiler = ET.SubElement(
-                    mjcf,
-                    "compiler",
-                    fusestatic="false",
-                    strippath="false",
-                    assetdir=asset_path,
-                    inertiafromgeom="auto",
-                    balanceinertia="true",
-                    discardvisual="true" if discard_visual else "false",
-                    autolimits="true",
-                    # boundmass=gs.EPS,
-                    # boundinertia=gs.EPS,
+            # Enforce some compiler options
+            compiler.attrib |= dict(
+                fusestatic="false",
+                strippath="false",
+                inertiafromgeom="false",  # This option is unreliable, so doing this ourselves
+                balanceinertia="false",
+                discardvisual="true" if discard_visual else "false",
+                autolimits="true",
+            )
+
+            # Bound mass and inertia if necessary
+            if not all(link.inertial is not None for link in robot.links):
+                compiler.attrib |= dict(
+                    boundmass=str(gs.EPS),
+                    boundinertia=str(gs.EPS),
                 )
 
             # Resolve relative mesh paths
@@ -72,14 +86,18 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
                 elem.set("filename", os.path.abspath(os.path.join(asset_path, mesh_path)))
 
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+            # Parse updated URDF file as a string
+            data = ET.tostring(root, encoding="utf8")
+            mj = mujoco.MjModel.from_xml_string(data)
+
+            # Discard placeholder inertias that were used to avoid parsing failure
             if is_urdf_file:
-                # Parse updated URDF file as a string
-                data = ET.tostring(root, encoding="utf8")
-                mj = mujoco.MjModel.from_xml_string(data)
-            else:
-                # Parsing MJCF files from XML string is not reliable because it would use the current directory instead
-                # of the parent directory of the XML file as base directory when using relative paths for assets.
-                mj = mujoco.MjModel.from_xml_path(path)
+                for i, link in enumerate(robot.links):
+                    if link.inertial is None:
+                        body = mj.body(link.name)
+                        body.inertia[:] = 0.0
+                        body.mass[:] = 0.0
+                        body.invweight0[:] = 0.0
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
@@ -90,7 +108,7 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
 
 def parse_xml(morph, surface):
     # Always merge fixed links unless explicitly asked not to do so
-    merge_fixed_links, links_to_keep = None, None
+    merge_fixed_links, links_to_keep = False, ()
     if isinstance(morph, gs.morphs.URDF):
         merge_fixed_links = morph.merge_fixed_links
         links_to_keep = morph.links_to_keep

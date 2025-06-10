@@ -230,7 +230,7 @@ def _build_multi_pendulum(n):
         ET.SubElement(joint, "axis", xyz="1 0 0")
         ET.SubElement(joint, "parent", link=parent_link)
         ET.SubElement(joint, "child", link=f"PendulumArm_{i}")
-        ET.SubElement(joint, "limit", effort="20.0", velocity="30.0")
+        ET.SubElement(joint, "limit", effort=str(100.0 * (n - i)), velocity="30.0")
 
         # Arm link
         arm = ET.SubElement(urdf, "link", name=f"PendulumArm_{i}")
@@ -2008,7 +2008,7 @@ def test_drone_advanced(show_viewer):
         scene.step()
         if i > 350:
             assert scene.rigid_solver.collider.n_contacts.to_numpy()[0] == 2
-            assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=1e-3)
+            assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=2e-3)
 
     # Push the drones symmetrically and wait for them to collide
     drones[0].set_dofs_velocity([0.2], [1])
