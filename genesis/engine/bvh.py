@@ -115,29 +115,25 @@ class LBVH(RBC):
         self.aabbs = aabb.aabbs
         self.n_aabbs = aabb.n_aabbs
         self.n_batches = aabb.n_batches
-        
+
         # Maximum number of query results
-        self.max_n_query_results = min(
-            self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF
-        )  
+        self.max_n_query_results = min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF)
         # Maximum stack depth for traversal
-        self.max_stack_depth = 64  
+        self.max_stack_depth = 64
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(self.n_batches, self.n_aabbs))
         self.aabb_min = ti.field(gs.ti_vec3, shape=(self.n_batches))
         self.aabb_max = ti.field(gs.ti_vec3, shape=(self.n_batches))
         self.scale = ti.field(gs.ti_vec3, shape=(self.n_batches))
         self.morton_codes = ti.field(ti.u64, shape=(self.n_batches, self.n_aabbs))
-        
+
         # Histogram for radix sort
-        self.hist = ti.field(ti.u32, shape=(self.n_batches, 256))  
+        self.hist = ti.field(ti.u32, shape=(self.n_batches, 256))
         # Prefix sum for histogram
-        self.prefix_sum = ti.field(ti.u32, shape=(self.n_batches, 256))  
+        self.prefix_sum = ti.field(ti.u32, shape=(self.n_batches, 256))
         # Offset for radix sort
-        self.offset = ti.field(ti.u32, shape=(self.n_batches, self.n_aabbs))  
+        self.offset = ti.field(ti.u32, shape=(self.n_batches, self.n_aabbs))
         # Temporary storage for radix sort
-        self.tmp_morton_codes = ti.field(
-            ti.u64, shape=(self.n_batches, self.n_aabbs)
-        )  
+        self.tmp_morton_codes = ti.field(ti.u64, shape=(self.n_batches, self.n_aabbs))
 
         @ti.dataclass
         class Node:
@@ -159,20 +155,14 @@ class LBVH(RBC):
         self.Node = Node
 
         # Nodes of the BVH, first n_aabbs - 1 are internal nodes, last n_aabbs are leaf nodes
-        self.nodes = self.Node.field(
-           shape=(self.n_batches, self.n_aabbs * 2 - 1)
-        )  
+        self.nodes = self.Node.field(shape=(self.n_batches, self.n_aabbs * 2 - 1))
         # Whether an internal node has been visited during traversal
-        self.internal_node_visited = ti.field(
-            ti.u8, shape=(self.n_batches, self.n_aabbs - 1)
-        )  
+        self.internal_node_visited = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
 
         # Query results, vec3 of batch id, self id, query id
-        self.query_result = ti.field(
-            gs.ti_ivec3, shape=(self.max_n_query_results)
-        )  
+        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
         # Count of query results
-        self.query_result_count = ti.field(ti.i32, shape=())  
+        self.query_result_count = ti.field(ti.i32, shape=())
 
     @ti.kernel
     def build(self):
