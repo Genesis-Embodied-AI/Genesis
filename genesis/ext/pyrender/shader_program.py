@@ -1,8 +1,9 @@
 """OpenGL shader program wrapper."""
-
-import numpy as np
+import numbers
 import os
 import re
+
+import numpy as np
 
 import OpenGL
 from OpenGL.GL import *
