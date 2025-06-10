@@ -455,7 +455,7 @@ class RigidEntity(Entity):
                     continue
                 for k, v in j_gs.items():
                     if k in j_mj:
-                        if k in ["dofs_force_range", "dofs_armature"]:
+                        if k in ["dofs_force_range", "dofs_armature", "sol_params"]:
                             # some of mujoco parser's default values are not good for solver
                             # dofs_force_range: -inf, inf, ours: according to the config file
                             # dofs_armature: 0.0, ours: 0.1
