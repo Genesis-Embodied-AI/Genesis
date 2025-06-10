@@ -428,7 +428,9 @@ def build_mujoco_sim(
         raise ValueError(f"Integrator '{gs_integrator}' not supported")
 
     xml_path = os.path.join(get_assets_dir(), xml_path)
-    model = mju.build_model(xml_path, discard_visual=True, merge_fixed_links=merge_fixed_links, links_to_keep=())
+    model = mju.build_model(
+        xml_path, discard_visual=True, default_armature=None, merge_fixed_links=merge_fixed_links, links_to_keep=()
+    )
 
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
@@ -495,6 +497,7 @@ def build_genesis_sim(
         file=xml_path,
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
+        default_armature=None,
     )
     if xml_path.endswith(".xml"):
         morph = gs.morphs.MJCF(**morph_kwargs)

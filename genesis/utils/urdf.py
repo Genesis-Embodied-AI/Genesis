@@ -267,12 +267,10 @@ def parse_urdf(morph, surface):
         j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
 
-        if joint.joint_type in ("floating", "fixed"):
-            j_info["dofs_damping"] = np.zeros(j_info["n_dofs"])
-            j_info["dofs_armature"] = np.zeros(j_info["n_dofs"])
-        else:
-            j_info["dofs_damping"] = gu.default_dofs_damping(j_info["n_dofs"])
-            j_info["dofs_armature"] = gu.default_dofs_armature(j_info["n_dofs"])
+        j_info["dofs_damping"] = np.zeros(j_info["n_dofs"])
+        j_info["dofs_armature"] = np.zeros(j_info["n_dofs"])
+        if joint.joint_type not in ("floating", "fixed") and morph.default_armature is not None:
+            j_info["dofs_armature"] = np.full((j_info["n_dofs"],), morph.default_armature)
 
         if joint.safety_controller is not None:
             if joint.safety_controller.k_position is not None:

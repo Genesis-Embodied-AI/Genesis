@@ -20,7 +20,7 @@ from . import urdf as uu
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
-def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
+def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
     if isinstance(xml, (str, Path)):
         # Make sure that it is pointing to a valid XML content (either file path or string)
         path = os.path.join(get_assets_dir(), xml)
@@ -51,7 +51,7 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
         for name in ("assetdir", "meshdir", "texturedir"):
             compiler.attrib[name] = str(Path(asset_path) / compiler.attrib.get(name, ""))
 
-        # Set default constraint solver time constant.
+        # Set default constraint solver time constant and motor armature.
         # Note that these default options are ignored when parsing URDF files.
         default = mjcf.find("default")
         if default is None:
@@ -68,6 +68,8 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
                 # 0.0 cannot be used because it is considered as an error, so that it will fallback to the original
                 # default value...
                 group.attrib.setdefault(param_name, str(gs.EPS))
+        if default_armature is not None:
+            default.find("joint").attrib.setdefault("armature", str(default_armature))
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
         if is_urdf_file:
@@ -122,6 +124,8 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
                 mj.jnt_solref[:, 0] = 0.0
                 mj.geom_solref[:, 0] = 0.0
                 mj.eq_solref[:, 0] = 0.0
+                if default_armature is not None:
+                    mj.dof_armature[:] = default_armature
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
@@ -138,7 +142,7 @@ def parse_xml(morph, surface):
         links_to_keep = morph.links_to_keep
 
     # Build model from XML (either URDF or MJCF)
-    mj = build_model(morph.file, not morph.visualization, merge_fixed_links, links_to_keep)
+    mj = build_model(morph.file, not morph.visualization, morph.default_armature, merge_fixed_links, links_to_keep)
 
     # Check if there is any tendon. Report a warning if so.
     if mj.ntendon:
@@ -346,7 +350,7 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_force_range"] = np.minimum(
                     j_info["dofs_force_range"], np.tile(gear * mj.actuator_ctrlrange[i_a], (n_dofs, 1))
                 )
-        elif gs_type != gs.JOINT_TYPE.FREE:
+        elif gs_type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE):
             gs.logger.debug(f"(MJCF) No actuator found for joint `{j_info['name']}`")
 
         j_infos.append(j_info)
