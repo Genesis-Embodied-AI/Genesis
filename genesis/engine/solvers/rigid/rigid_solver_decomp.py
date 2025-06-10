@@ -41,7 +41,7 @@ def _sanitize_sol_params(
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
     if global_timeconst is not None:
         timeconst[:] = global_timeconst
-    if (timeconst < gs.EPS).any():
+    if (timeconst <= gs.EPS).any():
         # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
         gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
     if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():

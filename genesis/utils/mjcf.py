@@ -51,6 +51,24 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
         for name in ("assetdir", "meshdir", "texturedir"):
             compiler.attrib[name] = str(Path(asset_path) / compiler.attrib.get(name, ""))
 
+        # Set default constraint solver time constant.
+        # Note that these default options are ignored when parsing URDF files.
+        default = mjcf.find("default")
+        if default is None:
+            default = ET.SubElement(mjcf, "default")
+        for group_name, params_name in (
+            ("geom", ("solref",)),
+            ("joint", ("solreflimit", "solreffriction")),
+            ("equality", ("solref",)),
+        ):
+            group = default.find(group_name)
+            if group is None:
+                group = ET.SubElement(default, group_name)
+            for param_name in params_name:
+                # 0.0 cannot be used because it is considered as an error, so that it will fallback to the original
+                # default value...
+                group.attrib.setdefault(param_name, str(gs.EPS))
+
         # Must pre-process URDF to overwrite default Mujoco compile flags
         if is_urdf_file:
             robot = urdfpy.URDF._from_xml(root, root, asset_path)
@@ -90,14 +108,20 @@ def build_model(xml, discard_visual, merge_fixed_links=False, links_to_keep=()):
             data = ET.tostring(root, encoding="utf8")
             mj = mujoco.MjModel.from_xml_string(data)
 
-            # Discard placeholder inertias that were used to avoid parsing failure
+            # Special treatment for URDF
             if is_urdf_file:
+                # Discard placeholder inertias that were used to avoid parsing failure
                 for i, link in enumerate(robot.links):
                     if link.inertial is None:
                         body = mj.body(link.name)
                         body.inertia[:] = 0.0
                         body.mass[:] = 0.0
                         body.invweight0[:] = 0.0
+
+                # Set default constraint solver time constant
+                mj.jnt_solref[:, 0] = 0.0
+                mj.geom_solref[:, 0] = 0.0
+                mj.eq_solref[:, 0] = 0.0
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
