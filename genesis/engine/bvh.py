@@ -164,11 +164,6 @@ class LBVH(RBC):
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
 
-        self.query_result = ti.field(
-            gs.ti_ivec3, shape=(self.max_n_query_results)
-        )  # Query results, vec3 of batch id, self id, query id
-        self.query_result_count = ti.field(ti.i32, shape=())  # Count of query results
-
     @ti.kernel
     def build(self):
         """
