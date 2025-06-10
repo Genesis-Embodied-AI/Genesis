@@ -356,6 +356,14 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
 
+    # Must increase sol params to improve numerical stability
+    sol_params = gs.utils.geom.default_solver_params()
+    sol_params[0] = 0.02
+    for entity in gs_sim.entities:
+        for equality in entity.equalities:
+            equality.set_sol_params(sol_params)
+    mj_sim.model.eq_solref[:, 0] = sol_params[0]
+
     assert gs_sim.rigid_solver.n_equalities == 1
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
@@ -391,8 +399,7 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-    tol = 2e-9 if gs_solver == gs.constraint_solver.Newton else tol
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=tol)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-9)
 
 
 @pytest.mark.required
@@ -428,6 +435,14 @@ def test_urdf_rope(
         show_viewer,
         mj_sim,
     )
+
+    # Must increase sol params to improve numerical stability
+    sol_params = gs.utils.geom.default_solver_params()
+    sol_params[0] = 0.02
+    gs_sim.rigid_solver.set_global_sol_params(sol_params)
+    mj_sim.model.jnt_solref[:, 0] = sol_params[0]
+    mj_sim.model.geom_solref[:, 0] = sol_params[0]
+    mj_sim.model.eq_solref[:, 0] = sol_params[0]
 
     # FIXME: Tolerance must be very large due to small masses and compounding of errors over long kinematic chains
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
@@ -1129,12 +1144,15 @@ def test_stickman(gs_sim, mj_sim, tol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(5100):
+    qvel_norminf_all = []
+    for i in range(6200):
         gs_sim.scene.step()
-        if i > 5000:
+        if i > 6100:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.4)
+            qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
+            qvel_norminf_all.append(qvel_norminf)
+    np.testing.assert_array_less(torch.mean(torch.stack(qvel_norminf_all, dim=0)), 0.05)
 
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3

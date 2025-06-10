@@ -41,7 +41,7 @@ def _sanitize_sol_params(
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
     if global_timeconst is not None:
         timeconst[:] = global_timeconst
-    if (timeconst <= gs.EPS).any():
+    if (timeconst < gs.EPS).any():
         # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
         gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
     if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():
@@ -3967,9 +3967,9 @@ class RigidSolver(Solver):
                 self.joints_info[I_j].sol_params[i] = sol_params[i]
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_eq in range(self.n_equalities):
+        for i_eq, i_b in ti.ndrange(self.n_equalities, self._B):
             for i in ti.static(range(7)):
-                self.equalities_info[i_eq].sol_params[i] = sol_params[i]
+                self.equalities_info[i_eq, i_b].sol_params[i] = sol_params[i]
 
     def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
         """

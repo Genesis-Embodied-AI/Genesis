@@ -20,6 +20,9 @@ from . import urdf as uu
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
+MIN_TIMECONST = np.finfo(np.double).eps
+
+
 def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
     if isinstance(xml, (str, Path)):
         # Make sure that it is pointing to a valid XML content (either file path or string)
@@ -67,7 +70,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             for param_name in params_name:
                 # 0.0 cannot be used because it is considered as an error, so that it will fallback to the original
                 # default value...
-                group.attrib.setdefault(param_name, str(gs.EPS))
+                group.attrib.setdefault(param_name, str(MIN_TIMECONST))
         if default_armature is not None:
             default.find("joint").attrib.setdefault("armature", str(default_armature))
 
@@ -94,8 +97,8 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             # Bound mass and inertia if necessary
             if not all(link.inertial is not None for link in robot.links):
                 compiler.attrib |= dict(
-                    boundmass=str(gs.EPS),
-                    boundinertia=str(gs.EPS),
+                    boundmass=str(MIN_TIMECONST),
+                    boundinertia=str(MIN_TIMECONST),
                 )
 
             # Resolve relative mesh paths
@@ -121,11 +124,15 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                         body.invweight0[:] = 0.0
 
                 # Set default constraint solver time constant
-                mj.jnt_solref[:, 0] = 0.0
-                mj.geom_solref[:, 0] = 0.0
-                mj.eq_solref[:, 0] = 0.0
+                mj.jnt_solref[:, 0] = MIN_TIMECONST
+                mj.geom_solref[:, 0] = MIN_TIMECONST
+                mj.eq_solref[:, 0] = MIN_TIMECONST
+
+                # Set default rotor armature inertia
                 if default_armature is not None:
                     mj.dof_armature[:] = default_armature
+                    mj.body_invweight0[:] = 0.0
+                    mj.dof_invweight0[:] = 0.0
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
