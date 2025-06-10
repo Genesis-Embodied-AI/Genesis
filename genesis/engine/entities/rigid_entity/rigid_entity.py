@@ -1,5 +1,5 @@
 import math
-from copy import copy
+import copy
 from itertools import chain
 from typing import Literal
 
@@ -333,8 +333,11 @@ class RigidEntity(Entity):
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
 
+            # copy links_j_infos for later use
+            links_j_infos_gs = copy.deepcopy(links_j_infos)
+
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
-            morph_ = copy(morph)
+            morph_ = copy.copy(morph)
             morph_.visualization = False
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
@@ -444,6 +447,22 @@ class RigidEntity(Entity):
                 l_info["is_robot"] = np.array(True, dtype=np.bool_)
                 if l_info["parent_idx"] >= 0:
                     l_infos[l_info["parent_idx"]]["is_robot"][()] = True
+
+        for js_gs, js_mj in zip(links_j_infos_gs, links_j_infos):
+            for j_gs, j_mj in zip(js_gs, js_mj):
+                if j_gs["name"] != j_mj["name"]:
+                    gs.logger.warning(f"joint order is not same: {j_gs['name']} != {j_mj['name']}")
+                    continue
+                for k, v in j_gs.items():
+                    if k in j_mj:
+                        if k in ["dofs_force_range", "dofs_armature"]:
+                            # some of mujoco parser's default values are not good for solver
+                            # dofs_force_range: -inf, inf, ours: according to the config file
+                            # dofs_armature: 0.0, ours: 0.1
+                            # dofs_damping: 0.0, ours: 1.0
+                            # dofs_kp: 0.0, ours: 100.0
+                            # dofs_kv: 0.0, ours: 10.0
+                            j_mj[k] = v
 
         # Add (link, joints, geoms) tuples sequentially
         for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
