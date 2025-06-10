@@ -103,6 +103,7 @@ class Simulator(RBC):
         self._substeps_local = options.substeps_local
         self._requires_grad = options.requires_grad
         self._steps_local = options._steps_local
+        self._use_hydroelastic_contact = options.use_hydroelastic_contact
 
         self._cur_substep_global = 0
         self._gravity = np.array(options.gravity)

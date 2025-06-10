@@ -466,11 +466,12 @@ class Coupler(RBC):
                             self.fem_solver.elements_v[f + 1, iv, i_b].vel = vel_fem_sv
 
                 # boundary condition
-                for j in ti.static(range(3)):
-                    iv = self.fem_solver.surface[i_s].tri2v[j]
-                    _, self.fem_solver.elements_v[f + 1, iv, i_b].vel = self.fem_solver.boundary.impose_pos_vel(
-                        self.fem_solver.elements_v[f, iv, i_b].pos, self.fem_solver.elements_v[f + 1, iv, i_b].vel
-                    )
+                if self.sim._use_hydroelastic_contact == False:
+                    for j in ti.static(range(3)):
+                        iv = self.fem_solver.surface[i_s].tri2v[j]
+                        _, self.fem_solver.elements_v[f + 1, iv, i_b].vel = self.fem_solver.boundary.impose_pos_vel(
+                            self.fem_solver.elements_v[f, iv, i_b].pos, self.fem_solver.elements_v[f + 1, iv, i_b].vel
+                        )
 
     @ti.kernel
     def sph_rigid(self, f: ti.i32):

@@ -2,6 +2,8 @@ import numpy as np
 import taichi as ti
 import torch
 
+from igl import signed_distance
+
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
@@ -81,6 +83,8 @@ class FEMEntity(Entity):
         )
         unique_el = all_el[unique_idcs]
         self._surface_el_np = unique_el[cnt == 1].astype(gs.np_int)
+
+        self.compute_pressure_field()
 
         self.init_tgt_vars()
         self.init_ckpt()
@@ -381,6 +385,21 @@ class FEMEntity(Entity):
             tri2el=self._surface_el_np,
         )
         self.active = True
+
+    def compute_pressure_field(self, margin=0.0):
+        """
+        Compute the pressure field for the FEM entity based on its tetrahedral elements.
+        For hydroelastic contact: https://drake.mit.edu/doxygen_cxx/group__hydroelastic__user__guide.html
+
+        Notes
+        -----
+        https://github.com/RobotLocomotion/drake/blob/master/geometry/proximity/make_mesh_field.cc
+        """
+        init_positions = self.init_positions.cpu().numpy()
+        self.pressure_field_np, _, _, _ = signed_distance(init_positions, init_positions, self._surface_tri_np)
+        self.pressure_field_np = np.abs(self.pressure_field_np) + margin
+        max_distance = np.max(self.pressure_field_np)
+        self.pressure_field_np = self.pressure_field_np / max_distance * self.material._contact_stiffness  # normalize
 
     # ------------------------------------------------------------------------------------
     # ---------------------------- checkpoint and buffer ---------------------------------

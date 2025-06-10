@@ -36,6 +36,8 @@ class SimOptions(Options):
         Height of the floor in meters. Defaults to 0.0.
     requires_grad : bool, optional
         Whether to enable differentiable mode. Defaults to False.
+    use_hydroelastic_contact : bool, optional
+        Whether to use hydroelastic contact. Defaults to False.
     """
 
     dt: float = 1e-2
@@ -44,6 +46,7 @@ class SimOptions(Options):
     gravity: tuple = (0.0, 0.0, -9.81)
     floor_height: float = 0.0
     requires_grad: bool = False
+    use_hydroelastic_contact: bool = False
 
     # not set by user
     _steps_local: Optional[int] = None
