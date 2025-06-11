@@ -114,6 +114,10 @@ class Logger:
         finally:
             self.timer_lock.release()
 
+    def log(self, level, msg, *args, **kwargs):
+        with self.log_wrapper():
+            self._logger.log(level, msg, *args, **kwargs)
+
     def debug(self, message):
         with self.log_wrapper():
             self._logger.debug(message)
