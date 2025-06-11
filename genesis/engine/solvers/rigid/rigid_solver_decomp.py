@@ -566,6 +566,7 @@ class RigidSolver(Solver):
             cfrc_ext_vel=gs.ti_vec3,
             # net force from external contacts
             contact_force=gs.ti_vec3,
+            contact_torque=gs.ti_vec3,
             # Flag for links that converge into a static state (hibernation)
             hibernated=gs.ti_int,
         )
@@ -4687,9 +4688,10 @@ class RigidSolver(Solver):
             i_l = links_idx[i_l_]
             i_b = envs_idx[i_b_]
             l_st = self.links_state[i_l, i_b]
-
-            quat = gu.ti_inv_quat(l_st.j_quat)  # joint → world
-            dpos = l_st.pos - l_st.COM  # p_joint - p_COM
+            # quat = gu.ti_inv_quat(self.links_state[i_l, i_b].j_quat)
+            # dpos = self.links_state[i_l, i_b].pos - self.links_state[i_l, i_b].COM
+            # quat = gu.ti_inv_quat(l_st.cinr_quat)
+            quat = gu.ti_inv_quat(l_st.j_quat)  # joint quat
             # print("force", l_st.contact_force)
             # force = gu.ti_transform_by_quat(  # world → joint
             #     l_st.contact_force, 
@@ -4697,12 +4699,14 @@ class RigidSolver(Solver):
             # )
             contact_force = l_st.contact_force
             internal_force = l_st.cfrc_flat_vel
+            contact_torque = l_st.contact_torque
+            internal_torque = l_st.cfrc_flat_ang
+            internal_torque -= ti.math.cross(l_st.pos, internal_force)  # centrifugal force
+            print("pos: ", l_st.pos)
             force = contact_force + internal_force
-            torque = gu.ti_transform_by_quat(  # world → joint
-                l_st.cfrc_flat_ang + dpos.cross(l_st.cfrc_flat_vel),  # TODO
-                quat,
-            )
-
+            torque = contact_torque + internal_torque
+            force = gu.ti_transform_by_quat(force, quat)  
+            torque = gu.ti_transform_by_quat(torque, quat)
             for i in range(3):
                 tensor[i_b_, i_l_, i] = force[i]
                 tensor[i_b_, i_l_, i + 3] = torque[i]

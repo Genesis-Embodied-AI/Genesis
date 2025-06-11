@@ -768,6 +768,7 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_l, i_b in ti.ndrange(self._solver.n_links, self._B):
             self._solver.links_state[i_l, i_b].contact_force = ti.Vector.zero(gs.ti_float, 3)
+            self._solver.links_state[i_l, i_b].contact_torque = ti.Vector.zero(gs.ti_float, 3)
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
@@ -789,6 +790,14 @@ class ConstraintSolver:
                 self._solver.links_state[contact_data.link_b, i_b].contact_force = (
                     self._solver.links_state[contact_data.link_b, i_b].contact_force + force
                 )
+                pos_a = self._solver.links_state[contact_data.link_a, i_b].pos
+                pos_b = self._solver.links_state[contact_data.link_b, i_b].pos
+                contact_pos_a = contact_data.pos - pos_a
+                contact_pos_b = contact_data.pos - pos_b
+                torque_a = ti.math.cross(contact_pos_a, -force)
+                torque_b = ti.math.cross(contact_pos_b, force)
+                self._solver.links_state[contact_data.link_a, i_b].contact_torque += torque_a
+                self._solver.links_state[contact_data.link_b, i_b].contact_torque += torque_b
 
     @ti.kernel
     def _func_update_qacc(self):

@@ -4,9 +4,7 @@ MUJOCO_LOG.TXT
 imgui.ini
 .DS_Store
 sftp-config.json
-*.mp4
 genesis/assets/terrain/
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
