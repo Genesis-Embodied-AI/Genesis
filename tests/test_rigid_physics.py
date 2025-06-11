@@ -7,12 +7,12 @@ import pytest
 import trimesh
 import torch
 import numpy as np
-from huggingface_hub import snapshot_download
 
 import mujoco
 import genesis as gs
 
 from .utils import (
+    get_hf_assets,
     assert_allclose,
     build_mujoco_sim,
     build_genesis_sim,
@@ -411,12 +411,7 @@ def test_urdf_rope(
     dof_damping,
     show_viewer,
 ):
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="linear_deformable.urdf",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="linear_deformable.urdf")
     xml_path = os.path.join(asset_path, "linear_deformable.urdf")
 
     mj_sim = build_mujoco_sim(
@@ -1562,12 +1557,7 @@ def test_mesh_repair(convexify, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="work_table.glb",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="work_table.glb")
     table = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
@@ -1576,12 +1566,7 @@ def test_mesh_repair(convexify, show_viewer):
         ),
         vis_mode="collision",
     )
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="spoon.glb",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="spoon.glb")
     obj = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
@@ -1652,12 +1637,7 @@ def test_convexify(euler, backend, show_viewer):
     )
     objs = []
     for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
-        asset_path = snapshot_download(
-            repo_type="dataset",
-            repo_id="Genesis-Intelligence/assets",
-            allow_patterns=f"{asset_name}/*",
-            max_workers=1,
-        )
+        asset_path = get_hf_assets(pattern=f"{asset_name}/*")
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/output.xml",
@@ -1764,12 +1744,7 @@ def test_collision_plane_convex(show_viewer, tol):
 
         scene.add_entity(morph)
 
-        asset_path = snapshot_download(
-            repo_type="dataset",
-            repo_id="Genesis-Intelligence/assets",
-            allow_patterns="image_0000_segmented.glb",
-            max_workers=1,
-        )
+        asset_path = get_hf_assets(pattern="image_0000_segmented.glb")
         asset = scene.add_entity(
             gs.morphs.Mesh(
                 file=f"{asset_path}/image_0000_segmented.glb",
@@ -1872,12 +1847,7 @@ def test_urdf_parsing(show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="microwave/*",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="microwave/*")
     entities = {}
     for i, (fixed, merge_fixed_links) in enumerate(
         ((False, False), (False, True), (True, False), (True, True)),
@@ -2012,12 +1982,7 @@ def test_drone_advanced(show_viewer):
         show_FPS=False,
     )
     plane = scene.add_entity(gs.morphs.Plane())
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="drone_sus/*",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="drone_sus/*")
     drones = []
     for offset, merge_fixed_links in ((-0.3, False), (0.3, True)):
         drone = scene.add_entity(

@@ -7,7 +7,6 @@ import psutil
 import pyglet
 import numpy as np
 import pytest
-from requests.exceptions import HTTPError
 from _pytest.mark import Expression, MarkMatcher
 
 # Mock tkinter module for backward compatibility because old Genesis versions require it
@@ -78,10 +77,6 @@ def pytest_xdist_auto_num_workers(config):
         int(vram_memory / vram_memory_per_worker),
         physical_core_count,
     )
-
-
-def pytest_set_filtered_exceptions():
-    return (HTTPError,)
 
 
 def pytest_addoption(parser):

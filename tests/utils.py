@@ -1,17 +1,22 @@
 import platform
 import os
 import subprocess
+import time
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
 from itertools import chain
+from pathlib import Path
 from typing import Literal, Sequence
 
 import cpuinfo
 import numpy as np
 import mujoco
 import torch
+from huggingface_hub import snapshot_download
+from requests.exceptions import HTTPError
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -156,6 +161,46 @@ def get_git_commit_info(ref="HEAD"):
     revision = f"{revision}@{remote_handle}"
     timestamp = float("nan")
     return revision, timestamp
+
+
+def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
+    assert num_retry >= 1
+
+    num_trials = 0
+    try:
+        # Try downloading the assets
+        asset_path = snapshot_download(
+            repo_type="dataset",
+            repo_id="Genesis-Intelligence/assets",
+            allow_patterns=pattern,
+            max_workers=1,
+        )
+
+        # Make sure that download was successful
+        has_files = False
+        for path in Path(asset_path).rglob("*"):
+            if not path.is_file():
+                continue
+            has_files = True
+
+            if path.stat().st_size == 0:
+                raise HTTPError(f"File '{path}' is empty.")
+
+            if path.suffix.lower() == ".xml":
+                try:
+                    ET.parse(path)
+                except ET.ParseError as e:
+                    raise HTTPError(f"Impossible to parse XML file.") from e
+        if not has_files:
+            raise HTTPError("No file downloaded.")
+    except HTTPError:
+        if num_trials == num_retry:
+            raise
+        print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
+        time.sleep(retry_delay)
+        num_trials += 1
+
+    return asset_path
 
 
 def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
