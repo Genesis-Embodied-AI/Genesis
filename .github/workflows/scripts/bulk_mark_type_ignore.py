@@ -43,12 +43,12 @@ def walk(target_folder: str) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    walk(target_folder=args.in_filepath)
+    walk(target_folder=args.in_dir)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--in-filepath", type=str, required=True)
+    parser.add_argument("--in-dir", type=str, required=True)
     args = parser.parse_args()
     run(args)
 
