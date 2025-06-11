@@ -1,0 +1,10 @@
+# Requirements for real robot deployment
+torch>=1.9.0
+numpy>=1.20.0
+
+# Unitree Go2 SDK
+# Install from: https://github.com/unitreerobotics/unitree_sdk2_python
+# pip install unitree_sdk2py
+
+# Optional: For additional safety features
+psutil  # For system monitoring
