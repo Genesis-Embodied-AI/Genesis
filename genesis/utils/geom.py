@@ -918,11 +918,11 @@ def transform_by_R(pos, R):
         R = R[None]
         dim_added = True
     if pos.ndim == 3:
-        new_pos = (R @ pos.swapaxes(-1, -2)).swapaxes(-1, -2) 
+        new_pos = (R @ pos.swapaxes(-1, -2)).swapaxes(-1, -2)
     elif pos.ndim == 2:
-        new_pos = (R @ pos[:, :, None])[...,0]
+        new_pos = (R @ pos[:, :, None])[..., 0]
     elif pos.ndim == 1:
-        new_pos = (R @ pos[None, :, None])[...,0]
+        new_pos = (R @ pos[None, :, None])[..., 0]
         if dim_added:
             new_pos = new_pos[0]
     else:
