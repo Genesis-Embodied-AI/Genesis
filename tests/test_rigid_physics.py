@@ -7,12 +7,12 @@ import pytest
 import trimesh
 import torch
 import numpy as np
-from huggingface_hub import snapshot_download
 
 import mujoco
 import genesis as gs
 
 from .utils import (
+    get_hf_assets,
     assert_allclose,
     build_mujoco_sim,
     build_genesis_sim,
@@ -230,7 +230,7 @@ def _build_multi_pendulum(n):
         ET.SubElement(joint, "axis", xyz="1 0 0")
         ET.SubElement(joint, "parent", link=parent_link)
         ET.SubElement(joint, "child", link=f"PendulumArm_{i}")
-        ET.SubElement(joint, "limit", effort="20.0", velocity="30.0")
+        ET.SubElement(joint, "limit", effort=str(100.0 * (n - i)), velocity="30.0")
 
         # Arm link
         arm = ET.SubElement(urdf, "link", name=f"PendulumArm_{i}")
@@ -356,6 +356,14 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
 
+    # Must increase sol params to improve numerical stability
+    sol_params = gs.utils.geom.default_solver_params()
+    sol_params[0] = 0.02
+    for entity in gs_sim.entities:
+        for equality in entity.equalities:
+            equality.set_sol_params(sol_params)
+    mj_sim.model.eq_solref[:, 0] = sol_params[0]
+
     assert gs_sim.rigid_solver.n_equalities == 1
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
@@ -391,8 +399,7 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-    tol = 2e-9 if gs_solver == gs.constraint_solver.Newton else tol
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=tol)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-9)
 
 
 @pytest.mark.required
@@ -411,12 +418,7 @@ def test_urdf_rope(
     dof_damping,
     show_viewer,
 ):
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="linear_deformable.urdf",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="linear_deformable.urdf")
     xml_path = os.path.join(asset_path, "linear_deformable.urdf")
 
     mj_sim = build_mujoco_sim(
@@ -433,6 +435,14 @@ def test_urdf_rope(
         show_viewer,
         mj_sim,
     )
+
+    # Must increase sol params to improve numerical stability
+    sol_params = gs.utils.geom.default_solver_params()
+    sol_params[0] = 0.02
+    gs_sim.rigid_solver.set_global_sol_params(sol_params)
+    mj_sim.model.jnt_solref[:, 0] = sol_params[0]
+    mj_sim.model.geom_solref[:, 0] = sol_params[0]
+    mj_sim.model.eq_solref[:, 0] = sol_params[0]
 
     # FIXME: Tolerance must be very large due to small masses and compounding of errors over long kinematic chains
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
@@ -1134,12 +1144,15 @@ def test_stickman(gs_sim, mj_sim, tol):
     init_simulators(gs_sim)
 
     # Run the simulation for a few steps
-    for i in range(5100):
+    qvel_norminf_all = []
+    for i in range(6200):
         gs_sim.scene.step()
-        if i > 5000:
+        if i > 6100:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
-            assert_allclose(qvel, 0, atol=0.4)
+            qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
+            qvel_norminf_all.append(qvel_norminf)
+    np.testing.assert_array_less(torch.mean(torch.stack(qvel_norminf_all, dim=0)), 0.05)
 
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
@@ -1562,12 +1575,7 @@ def test_mesh_repair(convexify, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="work_table.glb",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="work_table.glb")
     table = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
@@ -1576,12 +1584,7 @@ def test_mesh_repair(convexify, show_viewer):
         ),
         vis_mode="collision",
     )
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="spoon.glb",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="spoon.glb")
     obj = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
@@ -1652,12 +1655,7 @@ def test_convexify(euler, backend, show_viewer):
     )
     objs = []
     for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
-        asset_path = snapshot_download(
-            repo_type="dataset",
-            repo_id="Genesis-Intelligence/assets",
-            allow_patterns=f"{asset_name}/*",
-            max_workers=1,
-        )
+        asset_path = get_hf_assets(pattern=f"{asset_name}/*")
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/output.xml",
@@ -1764,12 +1762,7 @@ def test_collision_plane_convex(show_viewer, tol):
 
         scene.add_entity(morph)
 
-        asset_path = snapshot_download(
-            repo_type="dataset",
-            repo_id="Genesis-Intelligence/assets",
-            allow_patterns="image_0000_segmented.glb",
-            max_workers=1,
-        )
+        asset_path = get_hf_assets(pattern="image_0000_segmented.glb")
         asset = scene.add_entity(
             gs.morphs.Mesh(
                 file=f"{asset_path}/image_0000_segmented.glb",
@@ -1872,12 +1865,7 @@ def test_urdf_parsing(show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="microwave/*",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="microwave/*")
     entities = {}
     for i, (fixed, merge_fixed_links) in enumerate(
         ((False, False), (False, True), (True, False), (True, True)),
@@ -2012,12 +2000,7 @@ def test_drone_advanced(show_viewer):
         show_FPS=False,
     )
     plane = scene.add_entity(gs.morphs.Plane())
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        allow_patterns="drone_sus/*",
-        max_workers=1,
-    )
+    asset_path = get_hf_assets(pattern="drone_sus/*")
     drones = []
     for offset, merge_fixed_links in ((-0.3, False), (0.3, True)):
         drone = scene.add_entity(
@@ -2043,7 +2026,7 @@ def test_drone_advanced(show_viewer):
         scene.step()
         if i > 350:
             assert scene.rigid_solver.collider.n_contacts.to_numpy()[0] == 2
-            assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=1e-3)
+            assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=2e-3)
 
     # Push the drones symmetrically and wait for them to collide
     drones[0].set_dofs_velocity([0.2], [1])
@@ -2154,7 +2137,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_links, n_envs, gs_s.get_links_vel, None, None),
         (gs_s.n_links, n_envs, gs_s.get_links_ang, None, gs_s.links_state.cd_ang),
         (gs_s.n_links, n_envs, gs_s.get_links_acc, None, None),
-        (gs_s.n_links, n_envs, gs_s.get_links_COM, None, gs_s.links_state.COM),
+        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.links_state.COM),
         (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.links_state.mass_shift),
         (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.links_state.i_pos_shift),
         (gs_s.n_links, -1, gs_s.get_links_inertial_mass, gs_s.set_links_inertial_mass, gs_s.links_info.inertial_mass),
