@@ -91,6 +91,8 @@ class CouplerOptions(Options):
         Whether to enable coupling between FEM and MPM solvers. Defaults to True.
     fem_sph : bool, optional
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
+    hydroelastic_contact : bool, optional
+        Whether to enable hydroelastic contact. Defaults to False. Experimental
     """
 
     rigid_mpm: bool = True
@@ -101,6 +103,7 @@ class CouplerOptions(Options):
     mpm_pbd: bool = True
     fem_mpm: bool = True
     fem_sph: bool = True
+    hydroelastic_contact: bool = False
 
 
 ############################ Solvers inside simulator ############################

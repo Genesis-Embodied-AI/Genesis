@@ -465,13 +465,18 @@ class Coupler(RBC):
 
                             self.fem_solver.elements_v[f + 1, iv, i_b].vel = vel_fem_sv
 
-                # boundary condition
-                if self.sim._use_hydroelastic_contact == False:
+                    # boundary condition
                     for j in ti.static(range(3)):
                         iv = self.fem_solver.surface[i_s].tri2v[j]
                         _, self.fem_solver.elements_v[f + 1, iv, i_b].vel = self.fem_solver.boundary.impose_pos_vel(
                             self.fem_solver.elements_v[f, iv, i_b].pos, self.fem_solver.elements_v[f + 1, iv, i_b].vel
                         )
+
+    def fem_hydroelastic(self, f: ti.i32):
+        # Floor contact
+
+        # collision detection
+        self.fem_solver.floor_hydroelastic_detection(f)
 
     @ti.kernel
     def sph_rigid(self, f: ti.i32):
@@ -569,7 +574,10 @@ class Coupler(RBC):
             self.pbd_rigid(f)
 
         if self.fem_solver.is_active():
-            self.fem_surface_force(f)
+            if self.sim._use_hydroelastic_contact == False:
+                self.fem_surface_force(f)
+            else:
+                self.fem_hydroelastic(f)
 
     def couple_grad(self, f):
         if self.mpm_solver.is_active():
@@ -577,6 +585,244 @@ class Coupler(RBC):
 
         if self.fem_solver.is_active():
             self.fem_surface_force.grad(f)
+
+    @property
+    def active_solvers(self):
+        """All the active solvers managed by the scene's simulator."""
+        return self.sim.active_solvers
+
+
+@ti.func
+def tet_barycentric(p, tet_vertices):
+    """
+    Compute the barycentric coordinates of point p with respect to the tetrahedron defined by tet_vertices.
+    tet_vertices is a matrix of shape (3, 4) where each column is a vertex of the tetrahedron.
+    """
+    v0 = tet_vertices[:, 0]
+    v1 = tet_vertices[:, 1]
+    v2 = tet_vertices[:, 2]
+    v3 = tet_vertices[:, 3]
+
+    # Compute the vectors from the vertices to the point p
+    v1_p = p - v1
+    v2_p = p - v2
+    v3_p = p - v3
+
+    # Compute the volumes of the tetrahedra formed by the point and the vertices
+    vol_tet = ti.math.dot(v1 - v0, ti.math.cross(v2 - v0, v3 - v0))
+
+    # Compute the barycentric coordinates
+    b0 = -ti.math.dot(v1_p, ti.math.cross(v2 - v1, v3 - v1)) / vol_tet
+    b1 = ti.math.dot(v2_p, ti.math.cross(v3 - v2, v0 - v2)) / vol_tet
+    b2 = -ti.math.dot(v3_p, ti.math.cross(v0 - v3, v1 - v3)) / vol_tet
+    b3 = 1.0 - b0 - b1 - b2
+
+    return ti.Vector([b0, b1, b2, b3])
+
+
+@ti.data_oriented
+class HydroelasticCoupler(RBC):
+    """
+    This class handles all the coupling between different solvers.
+    """
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- Initialization -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def __init__(
+        self,
+        simulator: "Simulator",
+        options: "CouplerOptions",
+    ) -> None:
+        self.sim = simulator
+        self.options = options
+        self.rigid_solver = self.sim.rigid_solver
+        self.fem_solver = self.sim.fem_solver
+
+    def build(self) -> None:
+        self._rigid_fem = self.rigid_solver.is_active() and self.fem_solver.is_active() and self.options.rigid_fem
+
+        if self.fem_solver.is_active():
+            self.init_fem_fields()
+
+    def reset(self):
+        pass
+
+    def init_fem_fields(self):
+        fem_solver = self.fem_solver
+        self.fem_pressure = ti.field(gs.ti_float, shape=(fem_solver.n_vertices))
+        fem_pressure_np = np.concatenate([fem_entity.pressure_field_np for fem_entity in fem_solver.entities])
+        self.fem_pressure.from_numpy(fem_pressure_np)
+        self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(fem_solver._B, fem_solver.n_elements))
+        self.fem_floor_contact_pair_type = ti.types.struct(
+            active=gs.ti_int,
+            batch_idx=gs.ti_int,  # batch index
+            geom_idx=gs.ti_int,  # index of the FEM element
+            intersection_code=gs.ti_int,  # intersection code for the element
+            distance=gs.ti_vec4,  # distance vector for the element
+            k=gs.ti_float,  # contact stiffness
+            phi0=gs.ti_float,  # initial signed distance
+            fn0=gs.ti_float,  # initial normal force magnitude
+            barycentric=gs.ti_vec4,  # barycentric coordinates of the contact point
+        )
+        self.max_fem_floor_contact_pairs = fem_solver.n_surfaces * fem_solver._B
+        self.n_fem_floor_contact_pairs = ti.field(gs.ti_int, shape=())
+        self.fem_floor_contact_pairs = self.fem_floor_contact_pair_type.field(shape=(self.max_fem_floor_contact_pairs,))
+        # Lookup table for marching tetrahedra edges
+        kMarchingTetsEdgeTable_np = np.array(
+            [
+                [-1, -1, -1, -1],
+                [0, 3, 2, -1],
+                [0, 1, 4, -1],
+                [4, 3, 2, 1],
+                [1, 2, 5, -1],
+                [0, 3, 5, 1],
+                [0, 2, 5, 4],
+                [3, 5, 4, -1],
+                [3, 4, 5, -1],
+                [4, 5, 2, 0],
+                [1, 5, 3, 0],
+                [1, 5, 2, -1],
+                [1, 2, 3, 4],
+                [0, 4, 1, -1],
+                [0, 2, 3, -1],
+                [-1, -1, -1, -1],
+            ]
+        )
+        self.kMarchingTetsEdgeTable = ti.field(gs.ti_ivec4, shape=kMarchingTetsEdgeTable_np.shape[0])
+        self.kMarchingTetsEdgeTable.from_numpy(kMarchingTetsEdgeTable_np)
+
+        kTetEdges_np = np.array([[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]])
+        self.kTetEdges = ti.field(gs.ti_ivec2, shape=kTetEdges_np.shape[0])
+        self.kTetEdges.from_numpy(kTetEdges_np)
+
+    def preprocess(self, f):
+        pass
+
+    def couple(self, f):
+        if self.fem_solver.is_active():
+            self.fem_compute_pressure_gradient(f)
+            self.fem_floor_detection(f)
+
+    def couple_grad(self, f):
+        gs.raise_exception("couple_grad is not available for HydroelasticCoupler. Please use Coupler instead.")
+
+    @ti.kernel
+    def fem_compute_pressure_gradient(self, f: ti.i32):
+        fem_solver = self.fem_solver
+        for i_b, i_e in ti.ndrange(fem_solver._B, fem_solver.n_elements):
+            grad = ti.static(self.fem_pressure_gradient)
+            grad[i_b, i_e].fill(0.0)
+
+            for i in ti.static(range(4)):
+                i_v0 = fem_solver.elements_i[i_e].el2v[i]
+                i_v1 = fem_solver.elements_i[i_e].el2v[(i + 1) % 4]
+                i_v2 = fem_solver.elements_i[i_e].el2v[(i + 2) % 4]
+                i_V3 = fem_solver.elements_i[i_e].el2v[(i + 3) % 4]
+                pos_v0 = fem_solver.elements_v[f + 1, i_v0, i_b].pos
+                pos_v1 = fem_solver.elements_v[f + 1, i_v1, i_b].pos
+                pos_v2 = fem_solver.elements_v[f + 1, i_v2, i_b].pos
+                pos_v3 = fem_solver.elements_v[f + 1, i_V3, i_b].pos
+
+                e10 = pos_v0 - pos_v1
+                e12 = pos_v2 - pos_v1
+                e13 = pos_v3 - pos_v1
+
+                area_vector = e12.cross(e13)  # area vector of the triangle formed by v1, v2, v3
+                signed_volume = area_vector.dot(e10)  # signed volume of the tetrahedron formed by v0, v1, v2, v3
+                if ti.abs(signed_volume) > gs.EPS:
+                    grad_i = area_vector / signed_volume
+                    grad[i_b, i_e] += grad_i * self.fem_pressure[i_v0]
+
+    @ti.kernel
+    def fem_floor_detection(self, f: ti.i32):
+        fem_solver = self.fem_solver
+
+        # Compute contact pairs
+        self.n_fem_floor_contact_pairs[None] = 0
+        # TODO Check surface element only instead of all elements
+        for i_b, i_e in ti.ndrange(fem_solver._B, fem_solver.n_elements):
+            intersection_code = ti.int32(0)
+            distance = ti.Vector([0.0, 0.0, 0.0, 0.0])
+            for i in ti.static(range(4)):
+                i_v = fem_solver.elements_i[i_e].el2v[i]
+                pos_v = fem_solver.elements_v[f + 1, i_v, i_b].pos
+                distance[i] = pos_v.z - fem_solver.floor_height
+                if distance[i] > 0:
+                    intersection_code |= 1 << i
+
+            # check if the element intersect with the floor
+            if intersection_code != 0 and intersection_code != 15:
+                pair_idx = ti.atomic_add(self.n_fem_floor_contact_pairs[None], 1)
+                if pair_idx < self.max_fem_floor_contact_pairs:
+                    self.fem_floor_contact_pairs[pair_idx].active = 1
+                    self.fem_floor_contact_pairs[pair_idx].batch_idx = i_b
+                    self.fem_floor_contact_pairs[pair_idx].geom_idx = i_e
+                    self.fem_floor_contact_pairs[pair_idx].intersection_code = intersection_code
+                    self.fem_floor_contact_pairs[pair_idx].distance = distance
+
+        # Compute data for each contact pair
+        for i_c in range(self.n_fem_floor_contact_pairs[None]):
+            pair = self.fem_floor_contact_pairs[i_c]
+            i_b = pair.batch_idx
+            i_e = pair.geom_idx
+            intersection_code = pair.intersection_code
+            distance = pair.distance
+            intersected_edges = ti.static(self.kMarchingTetsEdgeTable)[intersection_code]
+            tet_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices
+            tet_pressures = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices
+
+            for i in ti.static(range(4)):
+                i_v = fem_solver.elements_i[i_e].el2v[i]
+                tet_vertices[:, i] = fem_solver.elements_v[f + 1, i_v, i_b].pos
+                tet_pressures[i] = self.fem_pressure[i_v]
+
+            polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 3 or 4 vertices
+            total_area = 0.0
+            total_area_weighted_centroid = ti.Vector([0.0, 0.0, 0.0])
+            for i in range(4):
+                if intersected_edges[i] >= 0:
+                    edge = ti.static(self.kTetEdges)[intersected_edges[i]]
+                    pos_v0 = tet_vertices[:, edge[0]]
+                    pos_v1 = tet_vertices[:, edge[1]]
+                    d_v0 = distance[edge[0]]
+                    d_v1 = distance[edge[1]]
+                    t = d_v0 / (d_v0 - d_v1)
+                    polygon_vertices[:, i] = pos_v0 + t * (pos_v1 - pos_v0)
+
+                    # Compute tirangle area and centroid
+                    if i >= 2:
+                        e1 = polygon_vertices[:, i - 1] - polygon_vertices[:, 0]
+                        e2 = polygon_vertices[:, i] - polygon_vertices[:, 0]
+                        area = 0.5 * e1.cross(e2).norm()
+                        total_area += area
+                        total_area_weighted_centroid += (
+                            area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
+                        )
+
+            if total_area < gs.EPS:
+                self.fem_floor_contact_pairs[i_c].active = 0
+                continue
+            centroid = total_area_weighted_centroid / total_area
+
+            # Compute barycentric coordinates
+            barycentric = tet_barycentric(centroid, tet_vertices)
+            pressure = (
+                barycentric[0] * tet_pressures[0]
+                + barycentric[1] * tet_pressures[1]
+                + barycentric[2] * tet_pressures[2]
+                + barycentric[3] * tet_pressures[3]
+            )
+            self.fem_floor_contact_pairs[i_c].barycentric = barycentric
+
+            g_soft = self.fem_pressure_gradient[i_b, i_e].z
+            g_rigid = ti.static(1.0e8)
+            g = 1.0 / (1.0 / g_soft + 1.0 / g_rigid)  # harmonic average
+            self.fem_floor_contact_pairs[i_c].k = total_area * g  # contact stiffness
+            self.fem_floor_contact_pairs[i_c].phi0 = -pressure / g
+            self.fem_floor_contact_pairs[i_c].fn0 = total_area * pressure
+            # # TODO Add dissipation
 
     @property
     def active_solvers(self):

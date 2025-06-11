@@ -23,6 +23,8 @@ class Base(Material):
         Poisson ratio, describing the material's volume change under stress. Default is 0.2.
     rho: float, optional
         Material density (kg/m^3). Default is 1000.
+    contact_stiffness: float, optional
+        Contact stiffness for contact forces. Default is 1e7.
     """
 
     def __init__(
@@ -30,7 +32,7 @@ class Base(Material):
         E=1e6,  # Young's modulus
         nu=0.2,  # Poisson's ratio
         rho=1000.0,  # density (kg/m^3)
-        contact_stiffness=1e6,  # contact stiffness for contact forces
+        contact_stiffness=1e7,  # contact stiffness for contact forces
     ):
         super().__init__()
 

@@ -19,7 +19,7 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .coupler import Coupler
+from .coupler import Coupler, HydroelasticCoupler
 from .entities import HybridEntity
 from .solvers import (
     AvatarSolver,
@@ -103,7 +103,6 @@ class Simulator(RBC):
         self._substeps_local = options.substeps_local
         self._requires_grad = options.requires_grad
         self._steps_local = options._steps_local
-        self._use_hydroelastic_contact = options.use_hydroelastic_contact
 
         self._cur_substep_global = 0
         self._gravity = np.array(options.gravity)
@@ -134,7 +133,10 @@ class Simulator(RBC):
         self._active_solvers: list[Solver] = gs.List()
 
         # coupler
-        self._coupler = Coupler(self, self.coupler_options)
+        if self.coupler_options.hydroelastic_contact is False:
+            self._coupler = Coupler(self, self.coupler_options)
+        else:
+            self._coupler = HydroelasticCoupler(self, self.coupler_options)
 
         # states
         self._queried_states = QueriedStates()

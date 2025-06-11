@@ -336,10 +336,10 @@ class FEMSolver(Solver):
     def compute_vel(self, f: ti.i32):
         for i_e, i_b in ti.ndrange(self.n_elements, self._B):
             i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
-            pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
-            pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
-            pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
-            pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
+            pos_v0 = self.elements_v[f, i_v0, i_b].pos
+            pos_v1 = self.elements_v[f, i_v1, i_b].pos
+            pos_v2 = self.elements_v[f, i_v2, i_b].pos
+            pos_v3 = self.elements_v[f, i_v3, i_b].pos
             D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
 
             V_scaled = self.elements_i[i_e].V_scaled
@@ -386,7 +386,9 @@ class FEMSolver(Solver):
     def compute_pos(self, f: ti.i32):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             dt = self.substep_dt
-            self.elements_v[f + 1, i_v, i_b].pos += dt * self.elements_v[f + 1, i_v, i_b].vel
+            self.elements_v[f + 1, i_v, i_b].pos = (
+                dt * self.elements_v[f + 1, i_v, i_b].vel + self.elements_v[f, i_v, i_b].pos
+            )
 
     @ti.kernel
     def init_pos_and_inertia(self, f: ti.i32):
@@ -395,7 +397,7 @@ class FEMSolver(Solver):
             self.elements_v_energy[i_b, i_v].inertia = (
                 self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
             )
-            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
+            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v_energy[i_b, i_v].inertia
 
     @ti.func
     def _compute_ele_J_F(self, f: ti.i32, i_e: ti.i32, i_b: ti.i32):
@@ -753,7 +755,6 @@ class FEMSolver(Solver):
             self.elements_v[f + 1, i_v, i_b].vel = (
                 self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos
             ) / self.substep_dt
-            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
