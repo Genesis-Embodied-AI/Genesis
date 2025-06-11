@@ -87,7 +87,7 @@ class Scene(RBC):
         fem_options: FEMOptions | None = None,
         sf_options: SFOptions | None = None,
         pbd_options: PBDOptions | None = None,
-        vis_options: ViewerOptions | None = None,
+        vis_options: VisOptions | None = None,
         viewer_options: ViewerOptions | None = None,
         profiling_options: ProfilingOptions | None = None,
         renderer: Renderer | None = None,
