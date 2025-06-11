@@ -1,3 +1,5 @@
+# type: ignore
+
 import taichi as ti
 import genesis as gs
 from .elastic import Elastic

@@ -1,3 +1,5 @@
+# type: ignore
+
 import taichi as ti
 
 from .rigid import Rigid

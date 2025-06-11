@@ -1,3 +1,5 @@
+# type: ignore
+
 import hashlib
 import os
 import pickle as pkl

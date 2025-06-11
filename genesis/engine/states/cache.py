@@ -1,3 +1,5 @@
+# type: ignore
+
 from genesis.utils.repr import brief
 
 

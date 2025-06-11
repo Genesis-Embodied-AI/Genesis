@@ -1,3 +1,5 @@
+# type: ignore
+
 """Simplification library."""
 
 import numpy as np

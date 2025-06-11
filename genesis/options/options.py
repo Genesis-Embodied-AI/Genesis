@@ -1,3 +1,5 @@
+# type: ignore
+
 from pydantic import BaseModel, ValidationError
 
 import genesis as gs

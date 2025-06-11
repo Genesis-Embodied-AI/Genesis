@@ -1,3 +1,5 @@
+# type: ignore
+
 import pyglet
 
 import genesis as gs

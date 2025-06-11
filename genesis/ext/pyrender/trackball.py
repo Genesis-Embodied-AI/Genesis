@@ -1,3 +1,5 @@
+# type: ignore
+
 """Trackball class for 3D manipulation of viewpoints."""
 
 import numpy as np

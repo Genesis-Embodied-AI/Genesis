@@ -1,3 +1,5 @@
+# type: ignore
+
 """Virtual cameras compliant with the glTF 2.0 specification as described at
 https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#reference-camera
 

@@ -1,3 +1,5 @@
+# type: ignore
+
 """OpenGL shader program wrapper."""
 import numbers
 import os

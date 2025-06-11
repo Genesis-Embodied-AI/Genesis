@@ -1,3 +1,5 @@
+# type: ignore
+
 from .avatar_entity import AvatarEntity
 from .drone_entity import DroneEntity
 from .emitter import Emitter

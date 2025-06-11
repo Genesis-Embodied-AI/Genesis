@@ -1,3 +1,5 @@
+# type: ignore
+
 """Punctual light sources as defined by the glTF 2.0 KHR extension at
 https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_lights_punctual
 

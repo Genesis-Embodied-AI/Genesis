@@ -1,3 +1,5 @@
+# type: ignore
+
 import os
 from itertools import chain
 

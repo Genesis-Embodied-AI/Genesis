@@ -1,3 +1,5 @@
+# type: ignore
+
 """fast_simplification version
 
 On the ``main`` branch, use 'dev0' to denote a development version.

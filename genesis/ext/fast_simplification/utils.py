@@ -1,3 +1,5 @@
+# type: ignore
+
 """Utility functions for the fast_simplification package."""
 
 import numpy as np

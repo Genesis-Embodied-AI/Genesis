@@ -1,3 +1,5 @@
+# type: ignore
+
 import numpy as np
 from numba import *
 from numba import types

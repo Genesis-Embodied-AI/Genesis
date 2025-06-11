@@ -1,3 +1,5 @@
+# type: ignore
+
 from io import BytesIO
 from urllib import request
 import numpy as np

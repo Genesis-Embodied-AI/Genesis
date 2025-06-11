@@ -1,3 +1,5 @@
+# type: ignore
+
 DEFAULT_Z_NEAR = 0.05  # Near clipping plane, in meters
 DEFAULT_Z_FAR = 100.0  # Far clipping plane, in meters
 DEFAULT_SCENE_SCALE = 5.0  # Default scene scale

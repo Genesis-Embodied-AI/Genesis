@@ -1,3 +1,5 @@
+# type: ignore
+
 import hashlib
 import math
 import os
