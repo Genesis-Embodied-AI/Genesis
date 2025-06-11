@@ -7,7 +7,6 @@ import psutil
 import pyglet
 import numpy as np
 import pytest
-from requests.exceptions import HTTPError
 from _pytest.mark import Expression, MarkMatcher
 
 # Mock tkinter module for backward compatibility because old Genesis versions require it
@@ -80,10 +79,6 @@ def pytest_xdist_auto_num_workers(config):
     )
 
 
-# def pytest_set_filtered_exceptions():
-#     return (HTTPError,)
-
-
 def pytest_addoption(parser):
     parser.addoption("--backend", action="store", default=gs.cpu, help="Default simulation backend.")
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
@@ -136,6 +131,19 @@ def adjacent_collision(request):
     if adjacent_collision is None:
         adjacent_collision = False
     return adjacent_collision
+
+
+@pytest.fixture
+def merge_fixed_links(request):
+    merge_fixed_links = None
+    for mark in request.node.iter_markers("merge_fixed_links"):
+        if mark.args:
+            if merge_fixed_links is not None:
+                pytest.fail("'merge_fixed_links' can only be specified once.")
+            (merge_fixed_links,) = mark.args
+    if merge_fixed_links is None:
+        merge_fixed_links = True
+    return merge_fixed_links
 
 
 @pytest.fixture
@@ -202,16 +210,34 @@ def initialize_genesis(request, backend, taichi_offline_cache):
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
-    return build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping)
+def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping):
+    return build_mujoco_sim(
+        xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
+    )
 
 
 @pytest.fixture
 def gs_sim(
-    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+    xml_path,
+    gs_solver,
+    gs_integrator,
+    merge_fixed_links,
+    multi_contact,
+    mujoco_compatibility,
+    adjacent_collision,
+    show_viewer,
+    mj_sim,
 ):
     return build_genesis_sim(
-        xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+        xml_path,
+        gs_solver,
+        gs_integrator,
+        merge_fixed_links,
+        multi_contact,
+        mujoco_compatibility,
+        adjacent_collision,
+        show_viewer,
+        mj_sim,
     )
 
 

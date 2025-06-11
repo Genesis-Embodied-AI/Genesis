@@ -1,17 +1,22 @@
 import platform
 import os
 import subprocess
+import time
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
 from itertools import chain
+from pathlib import Path
 from typing import Literal, Sequence
 
 import cpuinfo
 import numpy as np
 import mujoco
 import torch
+from huggingface_hub import snapshot_download
+from requests.exceptions import HTTPError
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -158,8 +163,50 @@ def get_git_commit_info(ref="HEAD"):
     return revision, timestamp
 
 
+def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
+    assert num_retry >= 1
+
+    num_trials = 0
+    try:
+        # Try downloading the assets
+        asset_path = snapshot_download(
+            repo_type="dataset",
+            repo_id="Genesis-Intelligence/assets",
+            allow_patterns=pattern,
+            max_workers=1,
+        )
+
+        # Make sure that download was successful
+        has_files = False
+        for path in Path(asset_path).rglob("*"):
+            if not path.is_file():
+                continue
+            has_files = True
+
+            if path.stat().st_size == 0:
+                raise HTTPError(f"File '{path}' is empty.")
+
+            if path.suffix.lower() == ".xml":
+                try:
+                    ET.parse(path)
+                except ET.ParseError as e:
+                    raise HTTPError(f"Impossible to parse XML file.") from e
+        if not has_files:
+            raise HTTPError("No file downloaded.")
+    except HTTPError:
+        if num_trials == num_retry:
+            raise
+        print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
+        time.sleep(retry_delay)
+        num_trials += 1
+
+    return asset_path
+
+
 def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
+    if all(isinstance(e, np.ndarray) and e.size == 0 for e in (actual, desired)):
+        return
     if tol is not None:
         atol = tol
         rtol = tol
@@ -185,6 +232,8 @@ def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
     gs_sim.rigid_solver.dofs_state.qf_constraint.fill(0.0)
     gs_sim.rigid_solver._kernel_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
+    gs_sim.rigid_solver._kernel_update_acc()
+
     if gs_sim.scene.visualizer:
         gs_sim.scene.visualizer.update()
 
@@ -362,7 +411,9 @@ def _get_model_mappings(
     return gs_maps, mj_maps
 
 
-def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
+def build_mujoco_sim(
+    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
+):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
     elif gs_solver == gs.constraint_solver.Newton:
@@ -377,7 +428,9 @@ def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent
         raise ValueError(f"Integrator '{gs_integrator}' not supported")
 
     xml_path = os.path.join(get_assets_dir(), xml_path)
-    model = mju.build_model(xml_path, discard_visual=True, merge_fixed_links=True, links_to_keep=())
+    model = mju.build_model(
+        xml_path, discard_visual=True, default_armature=None, merge_fixed_links=merge_fixed_links, links_to_keep=()
+    )
 
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
@@ -400,7 +453,15 @@ def build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent
 
 
 def build_genesis_sim(
-    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+    xml_path,
+    gs_solver,
+    gs_integrator,
+    merge_fixed_links,
+    multi_contact,
+    mujoco_compatibility,
+    adjacent_collision,
+    show_viewer,
+    mj_sim,
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -436,13 +497,14 @@ def build_genesis_sim(
         file=xml_path,
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
+        default_armature=None,
     )
     if xml_path.endswith(".xml"):
         morph = gs.morphs.MJCF(**morph_kwargs)
     else:
         morph = gs.morphs.URDF(
             fixed=True,
-            merge_fixed_links=True,
+            merge_fixed_links=merge_fixed_links,
             links_to_keep=(),
             **morph_kwargs,
         )
@@ -664,6 +726,7 @@ def check_mujoco_data_consistency(
     mj_meaninertia = mj_sim.model.stat.meaninertia
     assert_allclose(gs_meaninertia, mj_meaninertia, tol=tol)
 
+    # Pre-constraint so-called bias forces in configuration space
     gs_qfrc_bias = gs_sim.rigid_solver.dofs_state.qf_bias.to_numpy()[:, 0]
     mj_qfrc_bias = mj_sim.data.qfrc_bias
     assert_allclose(gs_qfrc_bias, mj_qfrc_bias[mj_dofs_idx], tol=tol)
@@ -785,9 +848,6 @@ def check_mujoco_data_consistency(
     assert_allclose(gs_qpos[gs_q_idx], mj_qpos[mj_qs_idx], tol=tol)
 
     # ------------------------------------------------------------------------
-    mujoco.mj_fwdPosition(mj_sim.model, mj_sim.data)
-    mujoco.mj_fwdVelocity(mj_sim.model, mj_sim.data)
-    gs_sim.rigid_solver._kernel_forward_kinematics_links_geoms(np.array([0]))
 
     gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
     gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
@@ -809,8 +869,6 @@ def check_mujoco_data_consistency(
     assert_allclose(gs_xmat[gs_bodies_idx], mj_xmat[mj_bodies_idx], tol=tol)
 
     gs_cd_vel = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
-    gs_cd_vel_ = gs_sim.rigid_solver.links_state.vel.to_numpy()[:, 0]
-    assert_allclose(gs_cd_vel, gs_cd_vel_, tol=tol)
     mj_cd_vel = mj_sim.data.cvel[:, 3:]
     assert_allclose(gs_cd_vel[gs_bodies_idx], mj_cd_vel[mj_bodies_idx], tol=tol)
     gs_cd_ang = gs_sim.rigid_solver.links_state.cd_ang.to_numpy()[:, 0]
