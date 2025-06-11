@@ -1,5 +1,6 @@
 """
 Given path to a folder, marks all .py files in that folder tree with # type: ignore, on the top line,
+followed by a blank line.
 if such marking does not already exist somewhere in the file.
 
 idempotent
@@ -39,7 +40,7 @@ def walk(target_folder: str) -> None:
         file_lines = filecontents.split("\n")
         if IGNORE_LINE in [l.strip() for l in file_lines]:
             continue
-        file_lines = [IGNORE_LINE] + file_lines
+        file_lines = [IGNORE_LINE, ""] + file_lines
         write_file(filepath, "\n".join(file_lines))
         print("updated", filepath)
 
