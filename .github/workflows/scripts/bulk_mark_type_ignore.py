@@ -34,6 +34,8 @@ def walk(target_folder: str) -> None:
         if not file.endswith(".py"):
             continue
         filecontents = read_file(filepath)
+        if filecontents.strip() == "":
+            continue
         file_lines = filecontents.split("\n")
         if IGNORE_LINE in [l.strip() for l in file_lines]:
             continue
