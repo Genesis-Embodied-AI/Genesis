@@ -1138,14 +1138,6 @@ def default_friction():
     return 1.0
 
 
-def default_dofs_damping(n=6):
-    return np.ones(n)
-
-
-def default_dofs_armature(n=6):
-    return np.full(n, 0.1)
-
-
 def default_dofs_kp(n=6):
     return np.tile(100.0, n).astype(gs.np_float)
 

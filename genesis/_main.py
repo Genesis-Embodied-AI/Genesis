@@ -144,6 +144,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         vis_options=gs.options.VisOptions(
             show_link_frame=show_link_frame,
         ),
+        show_viewer=True,
     )
 
     if filename.endswith(".urdf"):

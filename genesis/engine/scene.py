@@ -87,12 +87,12 @@ class Scene(RBC):
         fem_options: FEMOptions | None = None,
         sf_options: SFOptions | None = None,
         pbd_options: PBDOptions | None = None,
-        vis_options: ViewerOptions | None = None,
+        vis_options: VisOptions | None = None,
         viewer_options: ViewerOptions | None = None,
         profiling_options: ProfilingOptions | None = None,
         renderer: Renderer | None = None,
         show_viewer: bool | None = None,
-        show_FPS=True,  # deprecated, use profiling_options.show_FPS instead
+        show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
         # Handling of default arguments
         sim_options = sim_options or SimOptions()
