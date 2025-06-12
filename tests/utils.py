@@ -166,39 +166,42 @@ def get_git_commit_info(ref="HEAD"):
 def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
     assert num_retry >= 1
 
-    num_trials = 0
-    try:
-        # Try downloading the assets
-        asset_path = snapshot_download(
-            repo_type="dataset",
-            repo_id="Genesis-Intelligence/assets",
-            allow_patterns=pattern,
-            max_workers=1,
-        )
+    for _ in range(num_retry):
+        num_trials = 0
+        try:
+            # Try downloading the assets
+            asset_path = snapshot_download(
+                repo_type="dataset",
+                repo_id="Genesis-Intelligence/assets",
+                allow_patterns=pattern,
+                max_workers=1,
+            )
 
-        # Make sure that download was successful
-        has_files = False
-        for path in Path(asset_path).rglob("*"):
-            if not path.is_file():
-                continue
-            has_files = True
+            # Make sure that download was successful
+            has_files = False
+            for path in Path(asset_path).rglob(pattern):
+                if not path.is_file():
+                    continue
+                has_files = True
 
-            if path.stat().st_size == 0:
-                raise HTTPError(f"File '{path}' is empty.")
+                if path.stat().st_size == 0:
+                    raise HTTPError(f"File '{path}' is empty.")
 
-            if path.suffix.lower() == ".xml":
-                try:
-                    ET.parse(path)
-                except ET.ParseError as e:
-                    raise HTTPError(f"Impossible to parse XML file.") from e
-        if not has_files:
-            raise HTTPError("No file downloaded.")
-    except HTTPError:
-        if num_trials == num_retry:
-            raise
-        print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
-        time.sleep(retry_delay)
-        num_trials += 1
+                if path.suffix.lower() in (".xml", ".urdf"):
+                    try:
+                        ET.parse(path)
+                    except ET.ParseError as e:
+                        raise HTTPError(f"Impossible to parse XML file.") from e
+            if not has_files:
+                raise HTTPError("No file downloaded.")
+        except HTTPError:
+            num_trials += 1
+            if num_trials == num_retry:
+                raise
+            print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
+            time.sleep(retry_delay)
+        else:
+            break
 
     return asset_path
 
