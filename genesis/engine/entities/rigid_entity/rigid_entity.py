@@ -339,7 +339,15 @@ class RigidEntity(Entity):
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
                 # Note that Mujoco URDF parser completely ignores equality constraints.
-                l_infos, links_j_infos, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+                l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+
+                # Mujoco is not parsing actuators properties
+                for j_info_gs in chain.from_iterable(links_j_infos):
+                    for j_info_mj in chain.from_iterable(links_j_infos_mj):
+                        if j_info_mj["name"] == j_info_gs["name"]:
+                            for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
+                                j_info_mj[name] = j_info_gs[name]
+                links_j_infos = links_j_infos_mj
 
                 # Take into account 'world' body if it was added automatically for our legacy URDF parser
                 if len(links_g_infos_mj) == len(links_g_infos) + 1:
@@ -372,7 +380,8 @@ class RigidEntity(Entity):
             and links_j_infos
             and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
         ):
-            # Pick the depth fixed joint down the kinematic tree
+            # Select the deepest fixed joint down the kinematic tree
+            idx = 0
             for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
                 if l_info["parent_idx"] in (0, -1) and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0:
                     continue
@@ -400,6 +409,15 @@ class RigidEntity(Entity):
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
             links_j_infos[idx] = [j_info]
 
+            # Rename root link for clarity if relevant
+            if idx == 0:
+                l_infos[idx]["name"] = "base"
+
+            # Shift root idx for all child links
+            for l_info in l_infos[idx:]:
+                if "root_idx" in l_info and l_info["root_idx"] == idx + 1:
+                    l_info["root_idx"] = idx
+
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
             for i_l in range(idx, len(l_infos)):
@@ -407,18 +425,42 @@ class RigidEntity(Entity):
                 for j_info in links_j_infos[i_l]:
                     j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
 
-        # Remove the world link if "unless", i.e. free or fixed joint without any geometry attached
-        if not isinstance(morph, gs.morphs.URDF) or morph.merge_fixed_links:
-            if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
-                del l_infos[0], links_j_infos[0], links_g_infos[0]
-                for l_info in l_infos:
-                    l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
-                    if "root_idx" in l_info:
-                        l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+        # Remove the world link if "useless", i.e. free or fixed joint without any geometry attached
+        if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
+            del l_infos[0], links_j_infos[0], links_g_infos[0]
+            for l_info in l_infos:
+                l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
+                if "root_idx" in l_info:
+                    l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+
+        # Genesis requires links associated with free joints to be attached to the world directly
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
+            if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
+                l_info["parent_idx"] = -1
+
+        # Force recomputing inertial information based on geometry if ill-defined for some reason
+        is_inertia_invalid = False
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
+            if not all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos) and (
+                (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)
+                or (l_info.get("inertial_i") is None or np.diag(l_info["inertial_i"]) <= 0.0).any()
+            ):
+                if l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
+                    gs.logger.debug(
+                        f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
+                    )
+                l_info["inertial_i"] = None
+                l_info["inertial_mass"] = None
+                is_inertia_invalid = True
+        if is_inertia_invalid:
+            for l_info, link_j_infos in zip(l_infos, links_j_infos):
+                l_info["invweight"] = np.full((2,), fill_value=-1.0)
+                for j_info in link_j_infos:
+                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
-        for i, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
             if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
                 if l_info["parent_idx"] >= 0:
                     l_info["is_robot"] = l_infos[l_info["parent_idx"]]["is_robot"]
@@ -1944,9 +1986,10 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_accelerometer_data(self, links_idx_local=None, envs_idx=None, *, imu=False, unsafe=False):
         """
-        Returns linear acceleration of the specified entity's links. (Mimicking accelerometer)
+        Returns the accelerometer data that would be measured by a IMU rigidly attached to the specified entity's links,
+        i.e. the true linear acceleration of the links expressed at their respective origin in local frame coordinates.
 
         Parameters
         ----------
@@ -1958,10 +2001,52 @@ class RigidEntity(Entity):
         Returns
         -------
         acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
-            The linear acceleration of the specified entity's links.
+            The accelerometer data of IMUs rigidly attached of the specified entity's links.
         """
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_acc(links_idx, envs_idx, unsafe=unsafe)
+        return self._solver.get_links_acc(links_idx, envs_idx, mimick_imu=True, unsafe=unsafe)
+
+    @gs.assert_built
+    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns true linear acceleration (aka. "classical acceleration") of the specified entity's links expressed at
+        their respective origin in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear classical acceleration of the specified entity's links.
+        """
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_acc(links_idx, envs_idx, mimick_imu=False, unsafe=unsafe)
+
+    @gs.assert_built
+    def get_links_acc_ang(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns angular acceleration of the specified entity's links expressed at their respective origin in world
+        coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear classical acceleration of the specified entity's links.
+        """
+        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_acc_ang(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
@@ -1974,7 +2059,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, unsafe=False):
+    def set_pos(self, pos, envs_idx=None, *, relative=False, zero_velocity=True, unsafe=False):
         """
         Set position of the entity's base link.
 
@@ -1982,8 +2067,12 @@ class RigidEntity(Entity):
         ----------
         pos : array_like
             The position to set.
+        relative : bool, optional
+            Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
+            False.
         zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
@@ -1993,13 +2082,18 @@ class RigidEntity(Entity):
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             pos = _pos
         self._solver.set_base_links_pos(
-            pos.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
+            pos.unsqueeze(-2),
+            self._base_links_idx,
+            envs_idx,
+            relative=relative,
+            unsafe=unsafe,
+            skip_forward=zero_velocity,
         )
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, unsafe=False):
+    def set_quat(self, quat, envs_idx=None, *, relative=False, zero_velocity=True, unsafe=False):
         """
         Set quaternion of the entity's base link.
 
@@ -2007,8 +2101,12 @@ class RigidEntity(Entity):
         ----------
         quat : array_like
             The quaternion to set.
+        relative : bool, optional
+            Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
+            False.
         zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
@@ -2018,7 +2116,12 @@ class RigidEntity(Entity):
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             quat = _quat
         self._solver.set_base_links_quat(
-            quat.unsqueeze(-2), self._base_links_idx, envs_idx, unsafe=unsafe, skip_forward=zero_velocity
+            quat.unsqueeze(-2),
+            self._base_links_idx,
+            envs_idx,
+            relative=relative,
+            unsafe=unsafe,
+            skip_forward=zero_velocity,
         )
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
@@ -2102,7 +2205,10 @@ class RigidEntity(Entity):
         elif isinstance(idx_local, int):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
-            idx_global = [i + idx_global_start for i in idx_local]
+            try:
+                idx_global = [i + idx_global_start for i in idx_local]
+            except TypeError:
+                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:

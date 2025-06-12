@@ -60,7 +60,7 @@ robot_fem = scene.add_entity(
         E=E,
         nu=nu,
         rho=rho,
-        model="stable_neohooken",
+        model="stable_neohookean",
     ),
 )
 

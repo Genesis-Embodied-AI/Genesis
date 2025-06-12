@@ -21,6 +21,7 @@ except ImportError:
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
 import genesis as gs
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
 from .utils import MjSim, build_mujoco_sim, build_genesis_sim
 
@@ -133,6 +134,19 @@ def adjacent_collision(request):
 
 
 @pytest.fixture
+def merge_fixed_links(request):
+    merge_fixed_links = None
+    for mark in request.node.iter_markers("merge_fixed_links"):
+        if mark.args:
+            if merge_fixed_links is not None:
+                pytest.fail("'merge_fixed_links' can only be specified once.")
+            (merge_fixed_links,) = mark.args
+    if merge_fixed_links is None:
+        merge_fixed_links = True
+    return merge_fixed_links
+
+
+@pytest.fixture
 def multi_contact(request):
     multi_contact = None
     for mark in request.node.iter_markers("multi_contact"):
@@ -184,6 +198,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")
@@ -195,16 +210,34 @@ def initialize_genesis(request, backend, taichi_offline_cache):
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping):
-    return build_mujoco_sim(xml_path, gs_solver, gs_integrator, multi_contact, adjacent_collision, dof_damping)
+def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping):
+    return build_mujoco_sim(
+        xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
+    )
 
 
 @pytest.fixture
 def gs_sim(
-    xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+    xml_path,
+    gs_solver,
+    gs_integrator,
+    merge_fixed_links,
+    multi_contact,
+    mujoco_compatibility,
+    adjacent_collision,
+    show_viewer,
+    mj_sim,
 ):
     return build_genesis_sim(
-        xml_path, gs_solver, gs_integrator, multi_contact, mujoco_compatibility, adjacent_collision, show_viewer, mj_sim
+        xml_path,
+        gs_solver,
+        gs_integrator,
+        merge_fixed_links,
+        multi_contact,
+        mujoco_compatibility,
+        adjacent_collision,
+        show_viewer,
+        mj_sim,
     )
 
 

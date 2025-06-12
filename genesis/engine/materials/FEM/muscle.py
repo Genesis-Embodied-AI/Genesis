@@ -19,7 +19,7 @@ class Muscle(Elastic):
     model: str, optional
         Constitutive model to use for stress computation. Options are:
         - 'linear': Linear elasticity model
-        - 'stable_neohooken': A numerically stable Neo-Hookean model
+        - 'stable_neohookean': A numerically stable Neo-Hookean model
         Default is 'linear'.
     n_groups: int, optional
         Number of muscle groups. Default is 1.

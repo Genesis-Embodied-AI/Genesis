@@ -35,12 +35,10 @@ class MPR:
             v=gs.ti_vec3,
         )
         self.simplex_support = struct_support.field(
-            shape=self._solver._batch_shape((self._solver.n_geoms_, self._solver.n_geoms_, 4)),
+            shape=self._solver._batch_shape(4),
             layout=ti.Layout.SOA,
         )
-        self.simplex_size = ti.field(
-            gs.ti_int, shape=self._solver._batch_shape((self._solver.n_geoms_, self._solver.n_geoms_))
-        )
+        self.simplex_size = ti.field(gs.ti_int, shape=self._solver._batch_shape())
 
     def reset(self):
         pass
@@ -71,17 +69,17 @@ class MPR:
 
     @ti.func
     def mpr_swap(self, i, j, i_ga, i_gb, i_b):
-        self.simplex_support[i_ga, i_gb, i, i_b].v1, self.simplex_support[i_ga, i_gb, j, i_b].v1 = (
-            self.simplex_support[i_ga, i_gb, j, i_b].v1,
-            self.simplex_support[i_ga, i_gb, i, i_b].v1,
+        self.simplex_support[i, i_b].v1, self.simplex_support[j, i_b].v1 = (
+            self.simplex_support[j, i_b].v1,
+            self.simplex_support[i, i_b].v1,
         )
-        self.simplex_support[i_ga, i_gb, i, i_b].v2, self.simplex_support[i_ga, i_gb, j, i_b].v2 = (
-            self.simplex_support[i_ga, i_gb, j, i_b].v2,
-            self.simplex_support[i_ga, i_gb, i, i_b].v2,
+        self.simplex_support[i, i_b].v2, self.simplex_support[j, i_b].v2 = (
+            self.simplex_support[j, i_b].v2,
+            self.simplex_support[i, i_b].v2,
         )
-        self.simplex_support[i_ga, i_gb, i, i_b].v, self.simplex_support[i_ga, i_gb, j, i_b].v = (
-            self.simplex_support[i_ga, i_gb, j, i_b].v,
-            self.simplex_support[i_ga, i_gb, i, i_b].v,
+        self.simplex_support[i, i_b].v, self.simplex_support[j, i_b].v = (
+            self.simplex_support[j, i_b].v,
+            self.simplex_support[i, i_b].v,
         )
 
     @ti.func
@@ -145,14 +143,14 @@ class MPR:
 
     @ti.func
     def mpr_portal_dir(self, i_ga, i_gb, i_b):
-        v2v1 = self.simplex_support[i_ga, i_gb, 2, i_b].v - self.simplex_support[i_ga, i_gb, 1, i_b].v
-        v3v1 = self.simplex_support[i_ga, i_gb, 3, i_b].v - self.simplex_support[i_ga, i_gb, 1, i_b].v
+        v2v1 = self.simplex_support[2, i_b].v - self.simplex_support[1, i_b].v
+        v3v1 = self.simplex_support[3, i_b].v - self.simplex_support[1, i_b].v
         direction = v2v1.cross(v3v1).normalized()
         return direction
 
     @ti.func
     def mpr_portal_encapsules_origin(self, direction, i_ga, i_gb, i_b):
-        dot = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(direction)
+        dot = self.simplex_support[1, i_b].v.dot(direction)
         return dot > -self.CCD_EPS
 
     @ti.func
@@ -162,9 +160,9 @@ class MPR:
 
     @ti.func
     def mpr_portal_reach_tolerance(self, v, direction, i_ga, i_gb, i_b):
-        dv1 = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(direction)
-        dv2 = self.simplex_support[i_ga, i_gb, 2, i_b].v.dot(direction)
-        dv3 = self.simplex_support[i_ga, i_gb, 3, i_b].v.dot(direction)
+        dv1 = self.simplex_support[1, i_b].v.dot(direction)
+        dv2 = self.simplex_support[2, i_b].v.dot(direction)
+        dv3 = self.simplex_support[3, i_b].v.dot(direction)
         dv4 = v.dot(direction)
         dot1 = ti.min(dv4 - dv1, dv4 - dv2, dv4 - dv3)
         return dot1 < self.CCD_TOLERANCE + self.CCD_EPS * ti.max(1.0, dot1)
@@ -326,8 +324,8 @@ class MPR:
         if ti.static(self._solver._enable_mujoco_compatibility):
             for i in range(4):
                 i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
-                vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
-                b[i] = vec.dot(self.simplex_support[i_ga, i_gb, i3, i_b].v) * (1 - 2 * (((i + 1) // 2) % 2))
+                vec = self.simplex_support[i1, i_b].v.cross(self.simplex_support[i2, i_b].v)
+                b[i] = vec.dot(self.simplex_support[i3, i_b].v) * (1 - 2 * (((i + 1) // 2) % 2))
 
         sum_ = b.sum()
 
@@ -336,15 +334,15 @@ class MPR:
             b[0] = 0.0
             for i in range(1, 4):
                 i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
-                vec = self.simplex_support[i_ga, i_gb, i1, i_b].v.cross(self.simplex_support[i_ga, i_gb, i2, i_b].v)
+                vec = self.simplex_support[i1, i_b].v.cross(self.simplex_support[i2, i_b].v)
                 b[i] = vec.dot(direction)
             sum_ = b.sum()
 
         p1 = gs.ti_vec3([0.0, 0.0, 0.0])
         p2 = gs.ti_vec3([0.0, 0.0, 0.0])
         for i in range(4):
-            p1 += b[i] * self.simplex_support[i_ga, i_gb, i, i_b].v1
-            p2 += b[i] * self.simplex_support[i_ga, i_gb, i, i_b].v2
+            p1 += b[i] * self.simplex_support[i, i_b].v1
+            p2 += b[i] * self.simplex_support[i, i_b].v2
 
         return (0.5 / sum_) * (p1 + p2)
 
@@ -352,16 +350,16 @@ class MPR:
     def mpr_find_penetr_touch(self, i_ga, i_gb, i_b):
         is_col = True
         penetration = gs.ti_float(0.0)
-        normal = -self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
-        pos = (self.simplex_support[i_ga, i_gb, 1, i_b].v1 + self.simplex_support[i_ga, i_gb, 1, i_b].v2) * 0.5
+        normal = -self.simplex_support[0, i_b].v.normalized()
+        pos = (self.simplex_support[1, i_b].v1 + self.simplex_support[1, i_b].v2) * 0.5
         return is_col, normal, penetration, pos
 
     @ti.func
     def mpr_find_penetr_segment(self, i_ga, i_gb, i_b):
         is_col = True
-        penetration = self.simplex_support[i_ga, i_gb, 1, i_b].v.norm()
-        normal = -self.simplex_support[i_ga, i_gb, 1, i_b].v.normalized()
-        pos = (self.simplex_support[i_ga, i_gb, 1, i_b].v1 + self.simplex_support[i_ga, i_gb, 1, i_b].v2) * 0.5
+        penetration = self.simplex_support[1, i_b].v.norm()
+        normal = -self.simplex_support[1, i_b].v.normalized()
+        pos = (self.simplex_support[1, i_b].v1 + self.simplex_support[1, i_b].v2) * 0.5
 
         return is_col, normal, penetration, pos
 
@@ -402,13 +400,13 @@ class MPR:
                 if ti.static(self._solver._enable_mujoco_compatibility):
                     penetration, pdir = self.mpr_point_tri_depth(
                         gs.ti_vec3([0.0, 0.0, 0.0]),
-                        self.simplex_support[i_ga, i_gb, 1, i_b].v,
-                        self.simplex_support[i_ga, i_gb, 2, i_b].v,
-                        self.simplex_support[i_ga, i_gb, 3, i_b].v,
+                        self.simplex_support[1, i_b].v,
+                        self.simplex_support[2, i_b].v,
+                        self.simplex_support[3, i_b].v,
                     )
                     normal = -pdir.normalized()
                 else:
-                    penetration = direction.dot(self.simplex_support[i_ga, i_gb, 1, i_b].v)
+                    penetration = direction.dot(self.simplex_support[1, i_b].v)
                     normal = -direction
 
                 is_col = True
@@ -422,21 +420,21 @@ class MPR:
 
     @ti.func
     def mpr_expand_portal(self, v, v1, v2, i_ga, i_gb, i_b):
-        v4v0 = v.cross(self.simplex_support[i_ga, i_gb, 0, i_b].v)
-        dot = self.simplex_support[i_ga, i_gb, 1, i_b].v.dot(v4v0)
+        v4v0 = v.cross(self.simplex_support[0, i_b].v)
+        dot = self.simplex_support[1, i_b].v.dot(v4v0)
 
         i_s = gs.ti_int(0)
         if dot > 0:
-            dot = self.simplex_support[i_ga, i_gb, 2, i_b].v.dot(v4v0)
+            dot = self.simplex_support[2, i_b].v.dot(v4v0)
             i_s = 1 if dot > 0 else 3
 
         else:
-            dot = self.simplex_support[i_ga, i_gb, 3, i_b].v.dot(v4v0)
+            dot = self.simplex_support[3, i_b].v.dot(v4v0)
             i_s = 2 if dot > 0 else 1
 
-        self.simplex_support[i_ga, i_gb, i_s, i_b].v1 = v1
-        self.simplex_support[i_ga, i_gb, i_s, i_b].v2 = v2
-        self.simplex_support[i_ga, i_gb, i_s, i_b].v = v
+        self.simplex_support[i_s, i_b].v1 = v1
+        self.simplex_support[i_s, i_b].v2 = v2
+        self.simplex_support[i_s, i_b].v = v
 
     @ti.func
     def mpr_discover_portal(self, i_ga, i_gb, i_b, normal_ws):
@@ -468,7 +466,7 @@ class MPR:
         # signed distance is computed once again until to find a valid point. This procedure should be cheap.
 
         ret = 0
-        self.simplex_size[i_ga, i_gb, i_b] = 0
+        self.simplex_size[i_b] = 0
 
         # Completely different center logics depending on normal guess is provided or not
         center_a = ti.Vector.zero(gs.ti_float, 3)
@@ -512,31 +510,31 @@ class MPR:
                     center_a = center_a + dir_offset * length_a * offset_ratio
                     center_b = center_b - dir_offset * length_b * offset_ratio
 
-        self.simplex_support[i_ga, i_gb, 0, i_b].v1 = center_a
-        self.simplex_support[i_ga, i_gb, 0, i_b].v2 = center_b
-        self.simplex_support[i_ga, i_gb, 0, i_b].v = center_a - center_b
-        self.simplex_size[i_ga, i_gb, i_b] = 1
+        self.simplex_support[0, i_b].v1 = center_a
+        self.simplex_support[0, i_b].v2 = center_b
+        self.simplex_support[0, i_b].v = center_a - center_b
+        self.simplex_size[i_b] = 1
 
-        if (ti.abs(self.simplex_support[i_ga, i_gb, 0, i_b].v) < self.CCD_EPS).all():
-            self.simplex_support[i_ga, i_gb, 0, i_b].v[0] += 10.0 * self.CCD_EPS
+        if (ti.abs(self.simplex_support[0, i_b].v) < self.CCD_EPS).all():
+            self.simplex_support[0, i_b].v[0] += 10.0 * self.CCD_EPS
 
-        direction = -self.simplex_support[i_ga, i_gb, 0, i_b].v.normalized()
+        direction = -self.simplex_support[0, i_b].v.normalized()
 
         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
 
-        self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
-        self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
-        self.simplex_support[i_ga, i_gb, 1, i_b].v = v
-        self.simplex_size[i_ga, i_gb, i_b] = 2
+        self.simplex_support[1, i_b].v1 = v1
+        self.simplex_support[1, i_b].v2 = v2
+        self.simplex_support[1, i_b].v = v
+        self.simplex_size[i_b] = 2
 
         dot = v.dot(direction)
 
         if dot < self.CCD_EPS:
             ret = -1
         else:
-            direction = self.simplex_support[i_ga, i_gb, 0, i_b].v.cross(self.simplex_support[i_ga, i_gb, 1, i_b].v)
+            direction = self.simplex_support[0, i_b].v.cross(self.simplex_support[1, i_b].v)
             if direction.dot(direction) < self.CCD_EPS:
-                if (ti.abs(self.simplex_support[i_ga, i_gb, 1, i_b].v) < self.CCD_EPS).all():
+                if (ti.abs(self.simplex_support[1, i_b].v) < self.CCD_EPS).all():
                     ret = 1
                 else:
                     ret = 2
@@ -547,22 +545,22 @@ class MPR:
                 if dot < self.CCD_EPS:
                     ret = -1
                 else:
-                    self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
-                    self.simplex_support[i_ga, i_gb, 2, i_b].v2 = v2
-                    self.simplex_support[i_ga, i_gb, 2, i_b].v = v
-                    self.simplex_size[i_ga, i_gb, i_b] = 3
+                    self.simplex_support[2, i_b].v1 = v1
+                    self.simplex_support[2, i_b].v2 = v2
+                    self.simplex_support[2, i_b].v = v
+                    self.simplex_size[i_b] = 3
 
-                    va = self.simplex_support[i_ga, i_gb, 1, i_b].v - self.simplex_support[i_ga, i_gb, 0, i_b].v
-                    vb = self.simplex_support[i_ga, i_gb, 2, i_b].v - self.simplex_support[i_ga, i_gb, 0, i_b].v
+                    va = self.simplex_support[1, i_b].v - self.simplex_support[0, i_b].v
+                    vb = self.simplex_support[2, i_b].v - self.simplex_support[0, i_b].v
                     direction = va.cross(vb)
                     direction = direction.normalized()
 
-                    dot = direction.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
+                    dot = direction.dot(self.simplex_support[0, i_b].v)
                     if dot > 0:
                         self.mpr_swap(1, 2, i_ga, i_gb, i_b)
                         direction = -direction
 
-                    while self.simplex_size[i_ga, i_gb, i_b] < 4:
+                    while self.simplex_size[i_b] < 4:
                         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
                         if dot < self.CCD_EPS:
@@ -571,33 +569,33 @@ class MPR:
 
                         cont = False
 
-                        va = self.simplex_support[i_ga, i_gb, 1, i_b].v.cross(v)
-                        dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
+                        va = self.simplex_support[1, i_b].v.cross(v)
+                        dot = va.dot(self.simplex_support[0, i_b].v)
                         if dot < -self.CCD_EPS:
-                            self.simplex_support[i_ga, i_gb, 2, i_b].v1 = v1
-                            self.simplex_support[i_ga, i_gb, 2, i_b].v2 = v2
-                            self.simplex_support[i_ga, i_gb, 2, i_b].v = v
+                            self.simplex_support[2, i_b].v1 = v1
+                            self.simplex_support[2, i_b].v2 = v2
+                            self.simplex_support[2, i_b].v = v
                             cont = True
 
                         if not cont:
-                            va = v.cross(self.simplex_support[i_ga, i_gb, 2, i_b].v)
-                            dot = va.dot(self.simplex_support[i_ga, i_gb, 0, i_b].v)
+                            va = v.cross(self.simplex_support[2, i_b].v)
+                            dot = va.dot(self.simplex_support[0, i_b].v)
                             if dot < -self.CCD_EPS:
-                                self.simplex_support[i_ga, i_gb, 1, i_b].v1 = v1
-                                self.simplex_support[i_ga, i_gb, 1, i_b].v2 = v2
-                                self.simplex_support[i_ga, i_gb, 1, i_b].v = v
+                                self.simplex_support[1, i_b].v1 = v1
+                                self.simplex_support[1, i_b].v2 = v2
+                                self.simplex_support[1, i_b].v = v
                                 cont = True
 
                         if cont:
-                            va = self.simplex_support[i_ga, i_gb, 1, i_b].v - self.simplex_support[i_ga, i_gb, 0, i_b].v
-                            vb = self.simplex_support[i_ga, i_gb, 2, i_b].v - self.simplex_support[i_ga, i_gb, 0, i_b].v
+                            va = self.simplex_support[1, i_b].v - self.simplex_support[0, i_b].v
+                            vb = self.simplex_support[2, i_b].v - self.simplex_support[0, i_b].v
                             direction = va.cross(vb)
                             direction = direction.normalized()
                         else:
-                            self.simplex_support[i_ga, i_gb, 3, i_b].v1 = v1
-                            self.simplex_support[i_ga, i_gb, 3, i_b].v2 = v2
-                            self.simplex_support[i_ga, i_gb, 3, i_b].v = v
-                            self.simplex_size[i_ga, i_gb, i_b] = 4
+                            self.simplex_support[3, i_b].v1 = v1
+                            self.simplex_support[3, i_b].v2 = v2
+                            self.simplex_support[3, i_b].v = v
+                            self.simplex_size[i_b] = 4
 
         return ret
 
