@@ -275,7 +275,8 @@ class Collider:
         timer.stamp("func_update_aabbs")
         self._func_broad_phase()
         timer.stamp("func_broad_phase")
-        self._func_narrow_phase()
+        self._func_narrow_phase_convex()
+        self._func_narrow_phase_convex_specializations()
         timer.stamp("func_narrow_phase")
         if self._has_terrain:
             self._func_narrow_phase_terrain()
@@ -954,7 +955,31 @@ class Collider:
                             pass
 
     @ti.kernel
-    def _func_narrow_phase(self):
+    def _func_narrow_phase_convex_specializations(self):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(self._solver._B):
+            for i_pair in range(self.n_broad_pairs[i_b]):
+                i_ga = self.broad_collision_pairs[i_pair, i_b][0]
+                i_gb = self.broad_collision_pairs[i_pair, i_b][1]
+
+                if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+                    i_gb, i_ga = i_ga, i_gb
+
+                if (
+                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                    and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                ):
+                    self._func_plane_box_contact(i_ga, i_gb, i_b)
+
+                if ti.static(self._solver._box_box_detection):
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
+                        self._func_box_box_contact(i_ga, i_gb, i_b)
+
+    @ti.kernel
+    def _func_narrow_phase_convex(self):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
         However, parallelize over both B and collision_pairs (instead of only over B) leads to significantly slow performance for batched scene.
@@ -980,7 +1005,8 @@ class Collider:
                             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
                             and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                         ):
-                            self._func_box_box_contact(i_ga, i_gb, i_b)
+                            # _func_box_box_contact is handled by another kernel to reduce the compilation time
+                            pass
                         else:
                             self._func_mpr(i_ga, i_gb, i_b)
                     else:
@@ -1104,7 +1130,7 @@ class Collider:
                                 self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
-    def _func_plane_box_multi_contact(self, i_ga, i_gb, i_b):
+    def _func_plane_box_contact(self, i_ga, i_gb, i_b):
         ga_info = self._solver.geoms_info[i_ga]
         gb_info = self._solver.geoms_info[i_gb]
         ga_state = self._solver.geoms_state[i_ga, i_b]
@@ -1231,14 +1257,26 @@ class Collider:
             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
             and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
         ):
-            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+            # _func_plane_box_contact is handled by another kernel to reduce the compilation time
+            pass
         else:
             tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
             # Check if one geometry is partially enclosed in the other
-            overlap_ratio_a = self._func_convex_geoms_overlap_ratio(i_ga, i_gb, i_b)
-            overlap_ratio_b = self._func_convex_geoms_overlap_ratio(i_gb, i_ga, i_b)
+            geoms_is_enclosed = ti.Vector.zero(gs.ti_int, 2)
+            for j in range(2):
+                geoms_overlap_ratio = self._func_convex_geoms_overlap_ratio(
+                    i_ga if j == 0 else i_gb, i_gb if j == 0 else i_ga, i_b
+                )
+                geoms_is_enclosed[j] = geoms_overlap_ratio > self._mpr_to_sdf_overlap_ratio
 
+            # Backup state before local perturbation
+            ga_state = self._solver.geoms_state[i_ga, i_b]
+            gb_state = self._solver.geoms_state[i_gb, i_b]
+            ga_pos, ga_quat = ga_state.pos, ga_state.quat
+            gb_pos, gb_quat = gb_state.pos, gb_state.quat
+
+            # Pre-allocate some buffers
             is_col_0 = False
             penetration_0 = gs.ti_float(0.0)
             normal_0 = ti.Vector.zero(gs.ti_float, 3)
@@ -1254,11 +1292,6 @@ class Collider:
             axis_1 = ti.Vector.zero(gs.ti_float, 3)
             qrot = ti.Vector.zero(gs.ti_float, 4)
 
-            ga_state = self._solver.geoms_state[i_ga, i_b]
-            gb_state = self._solver.geoms_state[i_gb, i_b]
-            ga_pos, ga_quat = ga_state.pos, ga_state.quat
-            gb_pos, gb_quat = gb_state.pos, gb_state.quat
-
             for i_detection in range(5):
                 if multi_contact and is_col_0:
                     # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
@@ -1269,21 +1302,15 @@ class Collider:
                     self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
                 if (multi_contact and is_col_0) or (i_detection == 0):
-                    # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
-                    # Note that SDF does not take into account to direction of interest. As such, it cannot be used
-                    # reliably for anything else than the point of deepest penetration.
-                    if (i_detection == 0) and overlap_ratio_a > self._mpr_to_sdf_overlap_ratio:
-                        # FIXME: It is impossible to rely on `_func_contact_convex_convex_sdf` to get the contact
-                        # information because the compilation times skyrockets from 42s for `_func_contact_vertex_sdf`
-                        # to 2min51s on Apple Silicon M4 Max, which is not acceptable.
-                        # is_col, normal, penetration, contact_pos, i_va = self._func_contact_convex_convex_sdf(
-                        #     i_ga, i_gb, i_b, self.contact_cache[i_ga, i_gb, i_b].i_va_ws
-                        # )
-                        # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = i_va
-                        is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_ga, i_gb, i_b)
-                    elif (i_detection == 0) and overlap_ratio_b > self._mpr_to_sdf_overlap_ratio:
-                        is_col, normal, penetration, contact_pos = self._func_contact_vertex_sdf(i_gb, i_ga, i_b)
-                        normal = -normal
+                    use_sdf = ti.Vector.zero(gs.ti_int, 2)
+                    if i_detection == 0 and geoms_is_enclosed.any():
+                        # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
+                        # Note that SDF does not take into account to direction of interest. As such, it cannot be used
+                        # reliably for anything else than the point of deepest penetration.
+                        if geoms_is_enclosed[0]:
+                            use_sdf[0] = 1
+                        else:
+                            use_sdf[1] = 1
                     else:
                         if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
                             ga_info = self._solver.geoms_info[i_ga]
@@ -1329,29 +1356,37 @@ class Collider:
                                     # Note that SDF may detect different collision points depending on geometry ordering.
                                     # Because of this, it is necessary to run it twice and take the contact information
                                     # associated with the point of deepest penetration.
-                                    for i_sdf in range(2):
-                                        is_col_tmp, normal_tmp, penetration_tmp, contact_pos_tmp = (
-                                            self._func_contact_vertex_sdf(
-                                                i_ga if i_sdf == 0 else i_gb, i_gb if i_sdf == 0 else i_ga, i_b
-                                            )
-                                        )
-                                        if i_sdf == 0:
-                                            if is_col_tmp:
-                                                normal, penetration, contact_pos = (
-                                                    normal_tmp,
-                                                    penetration_tmp,
-                                                    contact_pos_tmp,
-                                                )
-                                            else:
-                                                is_col = False
-                                        else:
-                                            if is_col_tmp and (not is_col or penetration_tmp > penetration):
-                                                normal, penetration, contact_pos = (
-                                                    -normal_tmp,
-                                                    penetration_tmp,
-                                                    contact_pos_tmp,
-                                                )
-                                    is_col = True
+                                    use_sdf[0] = 1
+                                    use_sdf[1] = 1
+
+                    is_col_a = False
+                    is_col_b = False
+                    normal_a = ti.Vector.zero(gs.ti_float, 3)
+                    normal_b = ti.Vector.zero(gs.ti_float, 3)
+                    penetration_b = gs.ti_float(0.0)
+                    penetration_a = gs.ti_float(0.0)
+                    contact_pos_a = ti.Vector.zero(gs.ti_float, 3)
+                    contact_pos_b = ti.Vector.zero(gs.ti_float, 3)
+                    for i_sdf in range(2):
+                        if use_sdf[i_sdf] == 1:
+                            is_col_tmp, normal_tmp, penetration_tmp, contact_pos_tmp = self._func_contact_vertex_sdf(
+                                i_ga if i_sdf == 0 else i_gb, i_gb if i_sdf == 0 else i_ga, i_b
+                            )
+                            if i_sdf == 0:
+                                is_col_a = is_col_tmp
+                                normal_a = normal_tmp
+                                penetration_a = penetration_tmp
+                                contact_pos_a = contact_pos_tmp
+                            else:
+                                is_col_b = is_col_tmp
+                                normal_b = -normal_tmp
+                                penetration_b = penetration_tmp
+                                contact_pos_b = contact_pos_tmp
+
+                    if is_col_a and (not is_col_b or penetration_a >= penetration_b):
+                        is_col, normal, penetration, contact_pos = is_col_a, normal_a, penetration_a, contact_pos_a
+                    elif is_col_b and (not is_col_a or penetration_b > penetration_a):
+                        is_col, normal, penetration, contact_pos = is_col_b, normal_b, penetration_b, contact_pos_b
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
