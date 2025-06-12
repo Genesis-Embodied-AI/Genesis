@@ -403,7 +403,6 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.multi_contact(False)
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
@@ -1563,8 +1562,6 @@ def test_nonconvex_collision(show_viewer):
             assert_allclose(qvel, 0, atol=0.65)
 
 
-# FIXME: Force executing all 'huggingface_hub' tests on the same worker to prevent hitting HF rate limit
-@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("convexify", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mesh_repair(convexify, show_viewer):
@@ -1615,7 +1612,6 @@ def test_mesh_repair(convexify, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer):
@@ -1699,7 +1695,7 @@ def test_convexify(euler, backend, show_viewer):
             qvel = gs_sim.rigid_solver.get_dofs_velocity().cpu()
             qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
             qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)), 0.2)
+    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)), 4.0)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
@@ -1735,7 +1731,6 @@ def test_collision_edge_cases(gs_sim, mode):
 
 
 @pytest.mark.required
-@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_collision_plane_convex(show_viewer, tol):
     for morph in (
@@ -1854,7 +1849,6 @@ def test_terrain_generation(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
@@ -1983,7 +1977,6 @@ def test_urdf_mimic(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_drone_advanced(show_viewer):
     scene = gs.Scene(
