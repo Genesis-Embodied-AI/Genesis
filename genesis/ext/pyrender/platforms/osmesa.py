@@ -1,3 +1,5 @@
+# type: ignore
+
 from .base import Platform
 
 

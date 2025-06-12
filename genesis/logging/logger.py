@@ -1,3 +1,5 @@
+# type: ignore
+
 import sys
 import logging
 import threading

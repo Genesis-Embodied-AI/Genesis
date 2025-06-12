@@ -1,3 +1,5 @@
+# type: ignore
+
 """Scenes, conforming to the glTF 2.0 standards as specified in
 https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#reference-scene
 

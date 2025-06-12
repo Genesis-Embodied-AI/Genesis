@@ -1,3 +1,5 @@
+# type: ignore
+
 import genesis as gs
 
 

@@ -1,3 +1,5 @@
+# type: ignore
+
 from typing import TYPE_CHECKING
 from math import pi
 

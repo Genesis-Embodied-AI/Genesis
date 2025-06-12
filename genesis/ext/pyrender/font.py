@@ -1,3 +1,5 @@
+# type: ignore
+
 """Font texture loader and processor.
 
 Author: Matthew Matl

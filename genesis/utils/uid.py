@@ -1,3 +1,5 @@
+# type: ignore
+
 import uuid
 
 from genesis.repr_base import RBC
