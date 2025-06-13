@@ -244,6 +244,7 @@ def test_glb_parse_material(glb_file):
                 "emissive",
             )
 
+
 @pytest.mark.required
 @pytest.mark.xdist_group(name="huggingface_hub")
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
