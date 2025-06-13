@@ -162,6 +162,7 @@ def get_git_commit_info(ref="HEAD"):
     timestamp = float("nan")
     return revision, timestamp
 
+
 def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
     assert num_retry >= 1
 
@@ -203,6 +204,7 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
             break
 
     return asset_path
+
 
 def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
