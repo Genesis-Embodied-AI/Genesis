@@ -339,7 +339,15 @@ class RigidEntity(Entity):
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
                 # Note that Mujoco URDF parser completely ignores equality constraints.
-                l_infos, links_j_infos, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+                l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+
+                # Mujoco is not parsing actuators properties
+                for j_info_gs in chain.from_iterable(links_j_infos):
+                    for j_info_mj in chain.from_iterable(links_j_infos_mj):
+                        if j_info_mj["name"] == j_info_gs["name"]:
+                            for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
+                                j_info_mj[name] = j_info_gs[name]
+                links_j_infos = links_j_infos_mj
 
                 # Take into account 'world' body if it was added automatically for our legacy URDF parser
                 if len(links_g_infos_mj) == len(links_g_infos) + 1:
@@ -426,9 +434,29 @@ class RigidEntity(Entity):
                     l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
 
         # Genesis requires links associated with free joints to be attached to the world directly
-        for i_l, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
             if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
                 l_info["parent_idx"] = -1
+
+        # Force recomputing inertial information based on geometry if ill-defined for some reason
+        is_inertia_invalid = False
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
+            if not all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos) and (
+                (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)
+                or (l_info.get("inertial_i") is None or np.diag(l_info["inertial_i"]) <= 0.0).any()
+            ):
+                if l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
+                    gs.logger.debug(
+                        f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
+                    )
+                l_info["inertial_i"] = None
+                l_info["inertial_mass"] = None
+                is_inertia_invalid = True
+        if is_inertia_invalid:
+            for l_info, link_j_infos in zip(l_infos, links_j_infos):
+                l_info["invweight"] = np.full((2,), fill_value=-1.0)
+                for j_info in link_j_infos:
+                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.

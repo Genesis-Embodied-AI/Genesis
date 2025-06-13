@@ -614,12 +614,16 @@ class MJCF(FileMorph):
         Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False.
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
+    default_armature : float, optional
+        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
+        actuated. None to disable. Default to 0.1.
     """
 
     pos: Optional[tuple] = None
     euler: Optional[tuple] = None
     quat: Optional[tuple] = None
     requires_jac_and_IK: bool = True
+    default_armature: Optional[float] = 0.1
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -708,6 +712,9 @@ class URDF(FileMorph):
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
         A list of link names that should not be skipped during link merging. Defaults to [].
+    default_armature : float, optional
+        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
+        actuated. None to disable. Default to 0.1.
     """
 
     fixed: bool = False
@@ -715,6 +722,7 @@ class URDF(FileMorph):
     requires_jac_and_IK: bool = True
     merge_fixed_links: bool = True
     links_to_keep: List[str] = []
+    default_armature: Optional[float] = 0.1
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -795,6 +803,9 @@ class Drone(FileMorph):
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
         A list of link names that should not be skipped during link merging. Defaults to [].
+    default_armature : float, optional
+        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
+        actuated. None to disable. Default to 0.1.
     """
 
     model: str = "CF2X"
@@ -805,6 +816,7 @@ class Drone(FileMorph):
     propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
     merge_fixed_links: bool = True
     links_to_keep: List[str] = []
+    default_armature: Optional[float] = 0.1
 
     def __init__(self, **data):
         super().__init__(**data)

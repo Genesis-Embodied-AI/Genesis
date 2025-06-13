@@ -197,6 +197,7 @@ class MPR:
         capule_radius = self._solver.geoms_info[i_g].data[0]
         capule_halflength = 0.5 * self._solver.geoms_info[i_g].data[1]
         capule_endpoint_side = ti.math.sign(direction.dot(capsule_axis))
+        capule_endpoint_side = 1.0 if capule_endpoint_side == 0.0 else capule_endpoint_side
         capule_endpoint = capule_center + capule_halflength * capule_endpoint_side * capsule_axis
         return capule_endpoint + direction * capule_radius
 
@@ -233,12 +234,17 @@ class MPR:
         g_state = self._solver.geoms_state[i_g, i_b]
         d_box = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_state.quat))
 
+        d_box_sign = ti.math.sign(d_box)
+        d_box_sign.x = 1.0 if d_box_sign.x == 0 else d_box_sign.x
+        d_box_sign.y = 1.0 if d_box_sign.y == 0 else d_box_sign.y
+        d_box_sign.z = 1.0 if d_box_sign.z == 0 else d_box_sign.z
+
         vid = (d_box[0] > 0) * 4 + (d_box[1] > 0) * 2 + (d_box[2] > 0) * 1
         v_ = ti.Vector(
             [
-                ti.math.sign(d_box[0]) * self._solver.geoms_info[i_g].data[0] * 0.5,
-                ti.math.sign(d_box[1]) * self._solver.geoms_info[i_g].data[1] * 0.5,
-                ti.math.sign(d_box[2]) * self._solver.geoms_info[i_g].data[2] * 0.5,
+                d_box_sign[0] * self._solver.geoms_info[i_g].data[0] * 0.5,
+                d_box_sign[1] * self._solver.geoms_info[i_g].data[1] * 0.5,
+                d_box_sign[2] * self._solver.geoms_info[i_g].data[2] * 0.5,
             ],
             dt=gs.ti_float,
         )
