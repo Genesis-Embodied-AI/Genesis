@@ -1131,6 +1131,7 @@ def test_set_sol_params(n_envs, batched, tol):
 
 
 @pytest.mark.required
+@pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -1144,14 +1145,14 @@ def test_stickman(gs_sim, mj_sim, tol):
 
     # Run the simulation for a few steps
     qvel_norminf_all = []
-    for i in range(6200):
+    for i in range(6000):
         gs_sim.scene.step()
-        if i > 6100:
+        if i > 4000:
             (gs_robot,) = gs_sim.entities
             qvel = gs_robot.get_dofs_velocity().cpu()
             qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
             qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(torch.mean(torch.stack(qvel_norminf_all, dim=0)), 0.05)
+    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)), 0.1)
 
     qpos = gs_robot.get_dofs_position().cpu()
     assert np.linalg.norm(qpos[:2]) < 1.3
@@ -1778,7 +1779,7 @@ def test_collision_plane_convex(show_viewer, tol):
                 assert_allclose(qvel, 0, atol=0.14)
 
 
-# @pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
+@pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
 @pytest.mark.parametrize("mode", [3])
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])

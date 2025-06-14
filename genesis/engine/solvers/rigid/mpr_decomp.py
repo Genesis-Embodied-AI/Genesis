@@ -12,7 +12,6 @@ from .support_field_decomp import SupportField
 class MPR:
     def __init__(self, rigid_solver):
         self._solver = rigid_solver
-        self._max_contact_pairs = rigid_solver._max_collision_pairs
         self._B = rigid_solver._B
         self._para_level = rigid_solver._para_level
 
@@ -95,7 +94,7 @@ class MPR:
             t = gs.ti_float(1.0)
         Q = A + AB * t
 
-        return ((P - Q) ** 2).sum(), Q
+        return (P - Q).norm_sqr(), Q
 
     @ti.func
     def mpr_point_tri_depth(self, P, x0, B, C):
@@ -126,7 +125,7 @@ class MPR:
             and (t + s < 1.0 + self.CCD_EPS)
         ):
             pdir = x0 + d1 * s + d2 * t
-            dist = ((P - pdir) ** 2).sum()
+            dist = (P - pdir).norm_sqr()
         else:
             dist, pdir = self.mpr_point_segment_dist2(P, x0, B)
             dist2, pdir2 = self.mpr_point_segment_dist2(P, x0, C)
@@ -471,50 +470,45 @@ class MPR:
         # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
         # signed distance is computed once again until to find a valid point. This procedure should be cheap.
 
-        ret = 0
-        self.simplex_size[i_b] = 0
-
-        # Completely different center logics depending on normal guess is provided or not
-        center_a = ti.Vector.zero(gs.ti_float, 3)
-        center_b = ti.Vector.zero(gs.ti_float, 3)
-
         g_state_a = self._solver.geoms_state[i_ga, i_b]
         g_state_b = self._solver.geoms_state[i_gb, i_b]
-        if (ti.abs(normal_ws) < self.CCD_EPS).all():
-            g_info = self._solver.geoms_info[i_ga]
-            center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
-            g_info = self._solver.geoms_info[i_gb]
-            center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
-        else:
-            # Must start from the center of each bounding box
-            center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
-            center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
-            center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
-            center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
-            delta = center_a - center_b
+        g_info = self._solver.geoms_info[i_ga]
+        center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
+        g_info = self._solver.geoms_info[i_gb]
+        center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
 
-            # Skip offset if normal is almost colinear already
-            normal = delta.normalized()
-            if normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
-                # Compute the target offset
-                offset = delta.dot(normal_ws) * normal_ws - delta
-                offset_norm = offset.norm()
+        # Completely different center logics if a normal guess is provided
+        if ti.static(not self._solver._enable_mujoco_compatibility):
+            if (ti.abs(normal_ws) > self.CCD_EPS).any():
+                # Must start from the center of each bounding box
+                center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
+                center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
+                center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
+                center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
+                delta = center_a - center_b
 
-                if offset_norm > gs.EPS:
-                    # Compute the size of the bounding boxes along the target offset direction.
-                    # First, move the direction in local box frame
-                    dir_offset = offset / offset_norm
-                    dir_offset_local_a = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_a.quat))
-                    dir_offset_local_b = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_b.quat))
-                    box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
-                    box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
-                    length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
-                    length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
+                # Skip offset if normal is almost colinear already
+                normal = delta.normalized()
+                if normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
+                    # Compute the target offset
+                    offset = delta.dot(normal_ws) * normal_ws - delta
+                    offset_norm = offset.norm()
 
-                    # Shift the center of each geometry
-                    offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
-                    center_a = center_a + dir_offset * length_a * offset_ratio
-                    center_b = center_b - dir_offset * length_b * offset_ratio
+                    if offset_norm > gs.EPS:
+                        # Compute the size of the bounding boxes along the target offset direction.
+                        # First, move the direction in local box frame
+                        dir_offset = offset / offset_norm
+                        dir_offset_local_a = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_a.quat))
+                        dir_offset_local_b = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_b.quat))
+                        box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
+                        box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
+                        length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
+                        length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
+
+                        # Shift the center of each geometry
+                        offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
+                        center_a = center_a + dir_offset * length_a * offset_ratio
+                        center_b = center_b - dir_offset * length_b * offset_ratio
 
         self.simplex_support[0, i_b].v1 = center_a
         self.simplex_support[0, i_b].v2 = center_b
@@ -535,6 +529,7 @@ class MPR:
 
         dot = v.dot(direction)
 
+        ret = 0
         if dot < self.CCD_EPS:
             ret = -1
         else:
