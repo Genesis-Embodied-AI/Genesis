@@ -1539,6 +1539,346 @@ class RigidEntity(Entity):
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
 
     # ------------------------------------------------------------------------------------
+    # -------------------------------------- rrt -----------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _init_rrt_fields(self):
+        self._rrt_goal_bias = 0.1
+        self._rrt_max_nodes = 10_000
+        self._rrt_pos_tol = 5e-3, # .28 degree
+        self._rrt_max_step_size = 0.2 # NOTE: in radian (about 5.7 degrees)
+        self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
+        self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
+        self.struct_rrt_node_info = ti.types.struct(
+            configuration=ti.types.vector(self.n_qs, gs.ti_float),
+            parent_idx=gs.ti_int,
+        )
+        self._rrt_node_info = self.struct_rrt_node_info.field(shape=self._solver._batch_shape(self._rrt_max_nodes))
+        self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+        self._rrt_is_active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+        self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+        
+    def _reset_rrt_fields(self):
+        self._rrt_start_configuration.fill(0.0)
+        self._rrt_goal_configuration.fill(0.0)
+        self._rrt_node_info.parent_idx.fill(-1)
+        self._rrt_node_info.configuration.fill(0.0)
+        self._rrt_tree_size.fill(0)
+        self._rrt_is_active.fill(0)
+        self._rrt_goal_reached_node_idx.fill(-1)
+    
+    @ti.kernel
+    def _kernel_rrt_init(self, envs_idx: ti.types.ndarray()):
+        # NOTE: run IK before this
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            for i_q in range(self.n_qs):
+                # save original qpos
+                # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
+                self._rrt_start_configuration[i_q, i_b] = self._IK_qpos_orig[i_q, i_b]
+                self._rrt_goal_configuration[i_q, i_b] = self._IK_qpos_best[i_q, i_b]
+                self._rrt_node_info[0, i_b].configuration[i_q] = self._IK_qpos_orig[i_q, i_b]
+
+            self._rrt_tree_size[i_b] = 1
+            self._rrt_is_active[i_b] = 1
+
+    @ti.kernel
+    def _kernel_rrt_cleanup(self, envs_idx: ti.types.ndarray()):
+        # NOTE: run IK before this
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            for i_q in range(self.n_qs):
+                self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+    
+    @ti.kernel
+    def _kernel_rrt_step1(
+        self,
+        envs_idx: ti.types.ndarray(),
+        q_limit_lower: ti.types.ndarray(),
+        q_limit_upper: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            if not self._rrt_is_active[i_b]:
+                continue
+            random_sample = ti.Vector(
+                [
+                    q_limit_lower[i_q] + ti.random() * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                    for i_q in range(self.n_qs)
+                ]
+            )
+            if ti.random() < self._rrt_goal_bias:
+                random_sample = ti.Vector(
+                    [
+                        self._rrt_goal_configuration[i_q, i_b]
+                        for i_q in range(self.n_qs)
+                    ]
+                )
+
+            # find nearest neighbor
+            nearest_neighbor_idx = -1
+            nearest_neighbor_dist = 1e6
+            ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+            for i_n in range(self._rrt_tree_size[i_b]):
+                dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
+                if dist < nearest_neighbor_dist:
+                    nearest_neighbor_dist = dist
+                    nearest_neighbor_idx = i_n
+
+            # steer from nearest neighbor to random sample
+            nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
+            direction = random_sample - nearest_config
+            direction_magnitude = direction.norm()
+
+            # If the step size exceeds max_step_size, clip it
+            if direction_magnitude > self._rrt_max_step_size:
+                # Normalize direction and scale by max_step_size
+                direction = direction.normalized() * self._rrt_max_step_size
+            
+            steer_result = nearest_config + direction
+
+            if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
+                # add new node
+                self._rrt_tree_size[i_b] += 1
+                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
+                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
+
+                # set the steer result and collision check for i_b
+                for i_q in range(self.n_qs):
+                    self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
+                self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+
+    @ti.kernel
+    def _kernel_rrt_step2(
+        self,
+        ignore_geom_pairs: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            if not self._rrt_is_active[i_b]:
+                continue
+
+            collision_detected = False
+            for i_c in range(self._solver.collider.n_contacts[i_b]):
+                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
+                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
+
+                ignore = False
+                for i_p in range(ignore_geom_pairs.shape[0]):
+                    if ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb:
+                        ignore = True
+                        break
+                    elif ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga:
+                        ignore = True
+                        break
+                
+                if ignore:
+                    continue
+
+                if (self.geom_start <= i_ga < self.geom_end) | (self.geom_start <= i_gb < self.geom_end):
+                    # collision detected
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
+                    self._rrt_tree_size[i_b] -= 1
+                    collision_detected = True
+                    break
+
+            # check the obtained steer result is within goal configuration only if no collision
+            if not collision_detected:
+                flag = True
+                for i_q in range(self.n_qs):
+                    if all(self._solver.qpos[i_q, i_b] < self._rrt_goal_configuration[i_q, i_b] - self._rrt_pos_tol) | all(
+                        self._solver.qpos[i_q, i_b] > self._rrt_goal_configuration[i_q, i_b] + self._rrt_pos_tol
+                    ):
+                        flag = False
+                        break
+                if flag:
+                    self._rrt_is_active[i_b] = 0
+                    self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b]
+                
+    def rrt(
+        self,
+        links,
+        poss=[],
+        quats=[],
+        scene=None,
+        envs_idx=None
+    ):
+        if self._solver.n_envs > 0:
+            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+
+        link_pos_mask = []
+        link_rot_mask = []
+        n_links = len(links)
+        for i in range(n_links):
+            if poss[i] is None and quats[i] is None:
+                gs.raise_exception("At least one of `poss` or `quats` must be provided.")
+            if poss[i] is not None:
+                link_pos_mask.append(True)
+                if self._solver.n_envs > 0:
+                    if poss[i].shape[0] != len(envs_idx):
+                        print(poss.shape, len(envs_idx), poss[i].shape[0], poss[i].shape[0] == len(envs_idx))
+                        gs.raise_exception("First dimension of elements in `poss` must be equal to scene.n_envs.")
+            else:
+                link_pos_mask.append(False)
+                if self._solver.n_envs == 0:
+                    poss[i] = gu.zero_pos()
+                else:
+                    poss[i] = self._solver._batch_array(gu.zero_pos(), True)
+            if quats[i] is not None:
+                link_rot_mask.append(True)
+                if self._solver.n_envs > 0:
+                    if quats[i].shape[0] != len(envs_idx):
+                        gs.raise_exception("First dimension of elements in `quats` must be equal to scene.n_envs.")
+            else:
+                link_rot_mask.append(False)
+                if self._solver.n_envs == 0:
+                    quats[i] = gu.identity_quat()
+                else:
+                    quats[i] = self._solver._batch_array(gu.identity_quat(), True)
+
+        link_pos_mask = torch.as_tensor(link_pos_mask, dtype=gs.tc_int, device=gs.device)
+        link_rot_mask = torch.as_tensor(link_rot_mask, dtype=gs.tc_int, device=gs.device)
+        links_idx = torch.as_tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
+        poss = torch.stack(
+            [
+                self._solver._process_dim(torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
+                for pos in poss
+            ]
+        )
+        quats = torch.stack(
+            [
+                self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
+                for quat in quats
+            ]
+        )
+
+        dofs_idx = self._get_idx(None, self.n_dofs, unsafe=False)
+        n_dofs = len(dofs_idx)
+
+        if n_dofs == 0:
+            gs.raise_exception("Target dofs not provided.")
+        links_idx_by_dofs = []
+        for link in self.links:
+            for joint in link.joints:
+                if any(i in dofs_idx for i in joint.dofs_idx_local):
+                    links_idx_by_dofs.append(link.idx_local)  # converted to global later
+                    break
+
+        links_idx_by_dofs = self._get_idx(links_idx_by_dofs, self.n_links, self._link_start, unsafe=False)
+        n_links_by_dofs = len(links_idx_by_dofs)
+
+        if envs_idx is None:
+            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+
+        # get mask collision pairs
+        self._solver._kernel_detect_collision()
+        scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
+        n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
+
+        invalid_mask = torch.logical_xor(
+            torch.logical_and(
+                scene_contact_info["geom_a"] >= self.geom_start,
+                scene_contact_info["geom_a"] < self.geom_end,
+            ),
+            torch.logical_and(
+                scene_contact_info["geom_b"] >= self.geom_start,
+                scene_contact_info["geom_b"] < self.geom_end,
+            ),
+        )
+        if torch.any(invalid_mask):
+            raise Exception("tehre is collision in initial configuration!")
+
+        valid_mask = torch.logical_and(
+            torch.logical_and(
+                scene_contact_info["geom_a"] >= self.geom_start,
+                scene_contact_info["geom_a"] < self.geom_end,
+            ),
+            torch.logical_and(
+                scene_contact_info["geom_b"] >= self.geom_start,
+                scene_contact_info["geom_b"] < self.geom_end,
+            ),
+        )
+        contact_indices = torch.arange(valid_mask.shape[0], device=valid_mask.device).unsqueeze(1)
+        valid_mask = torch.logical_and(valid_mask, contact_indices < n_contacts)
+
+        max_env_collisions = int(torch.max(n_contacts).item())
+        valid_mask = valid_mask[:max_env_collisions]
+        geom_a = scene_contact_info["geom_a"][:max_env_collisions][valid_mask] # N 
+        geom_b = scene_contact_info["geom_b"][:max_env_collisions][valid_mask] # N
+        assert len(geom_a) == len(geom_b)
+
+        # NOTE: we will reduce the contacts in batch dim assuming internal geom collisions are the same for a robot
+        stacked_tensors = torch.stack((geom_a, geom_b), dim=1)
+        unique_pairs = torch.unique(stacked_tensors, dim=0) # N', 2
+
+        # NOTE: run IK to obtain the goal config
+        self._kernel_inverse_kinematics(
+            links_idx,
+            poss,
+            quats,
+            n_links,
+            dofs_idx,
+            n_dofs,
+            links_idx_by_dofs,
+            n_links_by_dofs,
+            custom_init_qpos=False,
+            init_qpos=torch.empty((0, 0), dtype=gs.tc_float),
+            max_samples=50,
+            max_solver_iters=20,
+            damping=0.01,
+            pos_tol=5e-4,  # 0.5 mm
+            rot_tol=5e-3,  # 0.28 degree
+            pos_mask_=torch.ones(3),
+            rot_mask_=torch.ones(3),
+            link_pos_mask=link_pos_mask,
+            link_rot_mask=link_rot_mask,
+            max_step_size=0.5,
+            respect_joint_limit=True,
+            envs_idx=envs_idx,
+        )
+
+        self._kernel_rrt_init(envs_idx)
+        
+        for i_n in range(self._rrt_max_nodes):
+            if self._rrt_is_active.to_torch().any():
+                self._kernel_rrt_step1(
+                    envs_idx=envs_idx,
+                    q_limit_lower=self.q_limit[0],
+                    q_limit_upper=self.q_limit[1],
+                )
+                scene.visualizer.update()
+                self._solver._kernel_detect_collision()
+                self._kernel_rrt_step2(
+                    ignore_geom_pairs=unique_pairs,
+                    envs_idx=envs_idx,
+                )
+                print(self._rrt_tree_size.to_numpy())
+
+        ts = self._rrt_tree_size.to_torch(device=gs.device)
+        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
+
+        node_info = self._rrt_node_info.to_torch(device=gs.device)
+        parents_idx = node_info["parent_idx"]
+        res = [g_n]
+        for _ in range(ts.max()):
+            g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
+            g_n[g_n == -1] = 0
+            res.append(g_n)
+            if torch.all(g_n == 0):
+                break
+
+        res_idx = torch.stack(list(reversed(res)), dim=0)
+
+        configurations = node_info["configuration"]
+        sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
+
+        self._kernel_rrt_cleanup(envs_idx)
+        return sol
+            
+
+    # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
     # ------------------------------------------------------------------------------------
 
