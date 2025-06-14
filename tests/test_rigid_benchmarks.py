@@ -25,8 +25,8 @@ BENCHMARK_NAME = "rigid_body"
 REPORT_FILE = "speed_test.txt"
 
 STEP_DT = 0.01
-NUM_WARMUP_FRAMES = 9500
-NUM_RECORD_FRAMES = 500
+DURATION_WARMUP = 45.0
+DURATION_RECORD = 15.0
 
 pytestmark = [
     pytest.mark.benchmarks,
@@ -359,12 +359,20 @@ def anymal_c(solver, n_envs):
     else:
         robot.control_dofs_position(np.zeros(12), motors_dof_idx)
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
@@ -402,12 +410,20 @@ def batched_franka(solver, n_envs):
     scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
     compile_time = time.time() - time_start
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
@@ -450,13 +466,21 @@ def random(solver, n_envs):
     dofs = torch.arange(6, 18, device=gs.device)
     robot.control_dofs_position(torch.zeros((n_envs, 12), device=gs.device), dofs)
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         robot.control_dofs_position(torch.rand((n_envs, 12), device=gs.device) * 0.1 - 0.05, dofs)
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
@@ -493,12 +517,20 @@ def cubes(solver, n_envs, n_cubes, enable_island):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
