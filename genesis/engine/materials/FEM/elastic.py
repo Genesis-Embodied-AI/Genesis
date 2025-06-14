@@ -27,6 +27,10 @@ class Elastic(Base):
         Poisson ratio, describing the material's volume change under stress. Default is 0.2.
     rho: float, optional
         Material density (kg/m^3). Default is 1000.
+    hydroelastic_modulus: float, optional
+        Hydroelastic modulus for hydroelastic contact. Default is 1e7.
+    friction_mu: float, optional
+        Friction coefficient. Default is 0.0.
     model: str, optional
         Constitutive model to use for stress computation. Options are:
         - 'linear': Linear elasticity model
@@ -39,9 +43,11 @@ class Elastic(Base):
         E=1e6,  # Young's modulus
         nu=0.2,  # Poisson's ratio
         rho=1000.0,  # density (kg/m^3)
+        hydroelastic_modulus=1e7,  # hydroelastic_modulus for hydroelastic contact
+        friction_mu=0.0,  # friction coefficient, default is 0.0
         model="linear",
     ):
-        super().__init__(E, nu, rho)
+        super().__init__(E, nu, rho, hydroelastic_modulus, friction_mu)
 
         if model == "linear":
             self.update_stress = self.update_stress_linear

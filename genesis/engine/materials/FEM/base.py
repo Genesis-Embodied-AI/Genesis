@@ -32,14 +32,16 @@ class Base(Material):
         E=1e6,  # Young's modulus
         nu=0.2,  # Poisson's ratio
         rho=1000.0,  # density (kg/m^3)
-        contact_stiffness=1e7,  # contact stiffness for contact forces
+        hydroelastic_modulus=1e7,  # hydroelastic_modulus for hydroelastic contact
+        friction_mu=0.0,  # friction coefficient, default is 0.0
     ):
         super().__init__()
 
         self._E = E
         self._nu = nu
         self._rho = rho
-        self._contact_stiffness = contact_stiffness
+        self._hydroelastic_modulus = hydroelastic_modulus
+        self._friction_mu = friction_mu
 
         # lame parameters: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
         self._mu = E / (2.0 * (1.0 + nu))
@@ -88,3 +90,13 @@ class Base(Material):
     def rho(self):
         """The rest density."""
         return self._rho
+
+    @property
+    def contact_stiffness(self):
+        """The contact stiffness."""
+        return self._hydroelastic_modulus
+
+    @property
+    def friction_mu(self):
+        """The friction coefficient."""
+        return self._friction_mu
