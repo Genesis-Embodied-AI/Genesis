@@ -46,7 +46,6 @@ class SimOptions(Options):
     gravity: tuple = (0.0, 0.0, -9.81)
     floor_height: float = 0.0
     requires_grad: bool = False
-    use_hydroelastic_contact: bool = False
 
     # not set by user
     _steps_local: Optional[int] = None
@@ -103,7 +102,38 @@ class CouplerOptions(Options):
     mpm_pbd: bool = True
     fem_mpm: bool = True
     fem_sph: bool = True
-    hydroelastic_contact: bool = False
+
+
+class SAPCouplerOptions(CouplerOptions):
+    """
+    Options configuring the inter-solver coupling for SAP.
+
+    Parameters
+    ----------
+    n_sap_iterations : int, optional
+        Number of iterations for the SAP solver. Defaults to 5.
+    n_pcg_iterations : int, optional
+        Number of iterations for the PCG solver. Defaults to 100.
+    n_linesearch_iterations : int, optional
+        Number of iterations for the line search solver. Defaults to 10.
+    sap_threshold : float, optional
+        Threshold for the SAP solver. Defaults to 1e-6.
+    pcg_threshold : float, optional
+        Threshold for the PCG solver. Defaults to 1e-6.
+    linesearch_c : float, optional
+        Line search sufficient decrease parameter. Defaults to 1e-4.
+    linesearch_tau : float, optional
+        Line search step size reduction factor. Defaults to 0.8.
+
+    """
+
+    n_sap_iterations: int = 5
+    n_pcg_iterations: int = 100
+    n_linesearch_iterations: int = 10
+    sap_threshold: float = 1e-6
+    pcg_threshold: float = 1e-6
+    linesearch_c: float = 1e-4
+    linesearch_tau: float = 0.8
 
 
 ############################ Solvers inside simulator ############################
@@ -513,7 +543,7 @@ class FEMOptions(Options):
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     damping : float, optional
-        Damping factor. Defaults to 45.0.
+        Damping factor. Defaults to 0.0.
     floor_height : float, optional
         Height of the floor in meters. If none, it will inherit from `SimOptions`. Defaults to None.
     use_implicit_solver : bool, optional

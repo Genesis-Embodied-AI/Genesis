@@ -8,6 +8,7 @@ from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
     CouplerOptions,
+    SAPCouplerOptions,
     FEMOptions,
     MPMOptions,
     PBDOptions,
@@ -19,7 +20,7 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .coupler import Coupler, HydroelasticCoupler
+from .coupler import Coupler, SAPCoupler
 from .entities import HybridEntity
 from .solvers import (
     AvatarSolver,
@@ -133,10 +134,10 @@ class Simulator(RBC):
         self._active_solvers: list[Solver] = gs.List()
 
         # coupler
-        if self.coupler_options.hydroelastic_contact is False:
-            self._coupler = Coupler(self, self.coupler_options)
+        if isinstance(self.coupler_options, SAPCouplerOptions):
+            self._coupler = SAPCoupler(self, self.coupler_options)
         else:
-            self._coupler = HydroelasticCoupler(self, self.coupler_options)
+            self._coupler = Coupler(self, self.coupler_options)
 
         # states
         self._queried_states = QueriedStates()

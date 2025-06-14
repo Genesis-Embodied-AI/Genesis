@@ -375,6 +375,7 @@ class FEMEntity(Entity):
             mat_mu=self._material.mu,
             mat_lam=self._material.lam,
             mat_rho=self._material.rho,
+            mat_friction_mu=self._material.friction_mu,
             n_surfaces=self._n_surfaces,
             v_start=self._v_start,
             el_start=self._el_start,
@@ -399,9 +400,12 @@ class FEMEntity(Entity):
         """
         init_positions = self.init_positions.cpu().numpy()
         self.pressure_field_np, _, _, _ = signed_distance(init_positions, init_positions, self._surface_tri_np)
-        self.pressure_field_np = np.abs(self.pressure_field_np)
-        max_distance = np.max(self.pressure_field_np)
-        self.pressure_field_np = self.pressure_field_np / max_distance * self.material._contact_stiffness  # normalize
+        margin = 0
+        self.pressure_field_np = np.abs(self.pressure_field_np) - margin
+        max_distance = np.max(self.pressure_field_np) + gs.EPS
+        self.pressure_field_np = (
+            self.pressure_field_np / max_distance * self.material._hydroelastic_modulus
+        )  # normalize
 
     # ------------------------------------------------------------------------------------
     # ---------------------------- checkpoint and buffer ---------------------------------
