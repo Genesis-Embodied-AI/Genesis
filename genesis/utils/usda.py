@@ -198,11 +198,6 @@ def parse_gltf_surface(shader, source_type, output_name, zipfiles):
         }, "st"
 
     elif shader_subid == "gltf_texture_lookup":
-        # offset = shader.GetInput("offset").Get()
-        # rotation = shader.GetInput("rotation").Get()
-        # scale = shader.GetInput("scale").Get()
-        # tex_coord_index = shader.GetInput("tex_coord_index").Get()
-
         texture = get_input_attribute_value(shader, "texture", "value")[0]
         if texture is not None:
             texture_image = get_texture_image(texture, zipfiles)
