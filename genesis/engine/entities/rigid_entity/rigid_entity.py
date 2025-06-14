@@ -1319,10 +1319,11 @@ class RigidEntity(Entity):
                         )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                         # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
-                        for i_error, i_dof in ti.ndrange(6, n_dofs):
-                            i_row = i_ee * 6 + i_error
-                            i_dof_ = dofs_idx[i_dof]
-                            self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
+                        for i_dof in range(n_dofs):
+                            for i_error in ti.static(range(6)):
+                                i_row = i_ee * 6 + i_error
+                                i_dof_ = dofs_idx[i_dof]
+                                self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
 
                     # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
                     lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, n_dofs, i_b)
