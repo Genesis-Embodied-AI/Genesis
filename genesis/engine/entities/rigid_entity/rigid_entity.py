@@ -1604,7 +1604,7 @@ class RigidEntity(Entity):
                 continue
             random_sample = ti.Vector(
                 [
-                    q_limit_lower[i_q] + ti.random() * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                    q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
                     for i_q in range(self.n_qs)
                 ]
             )
@@ -1635,19 +1635,19 @@ class RigidEntity(Entity):
             if direction_magnitude > self._rrt_max_step_size:
                 # Normalize direction and scale by max_step_size
                 direction = direction.normalized() * self._rrt_max_step_size
-            
             steer_result = nearest_config + direction
 
             if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
                 # add new node
-                self._rrt_tree_size[i_b] += 1
                 self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
                 self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
+                self._rrt_tree_size[i_b] += 1
 
                 # set the steer result and collision check for i_b
                 for i_q in range(self.n_qs):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+                # self._solver._func_update_geoms(i_b) # TODO: need this but need to check
 
     @ti.kernel
     def _kernel_rrt_step2(
@@ -1688,14 +1688,13 @@ class RigidEntity(Entity):
             if not collision_detected:
                 flag = True
                 for i_q in range(self.n_qs):
-                    if all(self._solver.qpos[i_q, i_b] < self._rrt_goal_configuration[i_q, i_b] - self._rrt_pos_tol) | all(
-                        self._solver.qpos[i_q, i_b] > self._rrt_goal_configuration[i_q, i_b] + self._rrt_pos_tol
-                    ):
+                    if any(self._solver.qpos[i_q, i_b] < self._rrt_goal_configuration[i_q, i_b] - self._rrt_pos_tol) | any(
+                           self._solver.qpos[i_q, i_b] > self._rrt_goal_configuration[i_q, i_b] + self._rrt_pos_tol):
                         flag = False
                         break
                 if flag:
                     self._rrt_is_active[i_b] = 0
-                    self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b]
+                    self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
                 
     def rrt(
         self,
@@ -1788,7 +1787,7 @@ class RigidEntity(Entity):
             ),
         )
         if torch.any(invalid_mask):
-            raise Exception("tehre is collision in initial configuration!")
+            raise Exception("there is collision in initial configuration!")
 
         valid_mask = torch.logical_and(
             torch.logical_and(
@@ -1848,7 +1847,8 @@ class RigidEntity(Entity):
                     q_limit_lower=self.q_limit[0],
                     q_limit_upper=self.q_limit[1],
                 )
-                scene.visualizer.update()
+                # TODO: remove this
+                # scene.visualizer.update()
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_step2(
                     ignore_geom_pairs=unique_pairs,
@@ -1861,6 +1861,9 @@ class RigidEntity(Entity):
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
         parents_idx = node_info["parent_idx"]
+        # print(parents_idx[:ts.max()])
+        for i in range(ts.max()):
+            print(i, parents_idx[i, :])
         res = [g_n]
         for _ in range(ts.max()):
             g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
@@ -1870,10 +1873,11 @@ class RigidEntity(Entity):
                 break
 
         res_idx = torch.stack(list(reversed(res)), dim=0)
+        print(res_idx)
 
         configurations = node_info["configuration"]
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
-
+        print(sol.shape)
         self._kernel_rrt_cleanup(envs_idx)
         return sol
             
