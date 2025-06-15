@@ -574,7 +574,7 @@ class FEMSolver(Solver):
 
     @ti.kernel
     def init_pcg_solve(self):
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             self.batch_pcg_active[i_b] = self.batch_active[i_b]
             if not self.batch_pcg_active[i_b]:
                 continue
@@ -589,7 +589,7 @@ class FEMSolver(Solver):
             self.pcg_state_v[i_b, i_v].p = self.pcg_state_v[i_b, i_v].z
             ti.atomic_add(self.pcg_state[i_b].rTr, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r))
             ti.atomic_add(self.pcg_state[i_b].rTz, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z))
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
@@ -599,7 +599,7 @@ class FEMSolver(Solver):
         self.compute_Ap()
 
         # compute pTAp
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state[i_b].pTAp = 0.0
@@ -609,7 +609,7 @@ class FEMSolver(Solver):
             ti.atomic_add(self.pcg_state[i_b].pTAp, self.pcg_state_v[i_b, i_v].p.dot(self.pcg_state_v[i_b, i_v].Ap))
 
         # compute alpha and update x, r, z, rTr, rTz
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
@@ -625,13 +625,13 @@ class FEMSolver(Solver):
             ti.atomic_add(self.pcg_state[i_b].rTz_new, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z))
 
         # check convergence
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
 
         # update beta, rTr, rTz
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state[i_b].beta = self.pcg_state[i_b].rTr_new / self.pcg_state[i_b].rTr
@@ -653,7 +653,7 @@ class FEMSolver(Solver):
 
     @ti.kernel
     def init_linesearch(self, f: ti.i32):
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
             if not self.batch_linesearch_active[i_b]:
                 continue
@@ -682,7 +682,7 @@ class FEMSolver(Solver):
 
     @ti.kernel
     def one_linesearch_iter(self, f: ti.i32):
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.linesearch_state[i_b].energy = 0.0
@@ -708,7 +708,7 @@ class FEMSolver(Solver):
             )
 
         # check condition
-        for i_b in ti.ndrange(self._B):
+        for i_b in range(self._B):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.batch_linesearch_active[i_b] = (
@@ -819,12 +819,12 @@ class FEMSolver(Solver):
     @ti.kernel
     def reset_grad_till_frame(self, f: ti.i32):
         # Zero out v.grad in frame 0..(f-1) for all vertices, all batch indices
-        for frame_i, vert_i, i_b in ti.ndrange((0, f), self.n_vertices_max, self._B):
+        for frame_i, vert_i, i_b in ti.ndrange(f, self.n_vertices_max, self._B):
             self.elements_v.grad[frame_i, vert_i, i_b].pos = 0
             self.elements_v.grad[frame_i, vert_i, i_b].vel = 0
 
         # Zero out elements_el.grad in frame 0..(f-1) for all elements, all batch indices
-        for frame_i, elem_i, i_b in ti.ndrange((0, f), self.n_elements_max, self._B):
+        for frame_i, elem_i, i_b in ti.ndrange(f, self.n_elements_max, self._B):
             self.elements_el.grad[frame_i, elem_i, i_b].actu = 0
 
     # ------------------------------------------------------------------------------------

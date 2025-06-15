@@ -207,7 +207,7 @@ class ContactIsland:
 
                     self.n_island[i_b] = self.n_island[i_b] + 1
 
-        if ti.static(self.solver._enable_joint_limit):
+        if self.solver._enable_joint_limit:
             ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self.solver._B):
                 for i_v in range(self.solver.n_entities):

@@ -124,6 +124,7 @@ class RigidLink(RBC):
 
         # inertial_i
         if self._inertial_i is None:
+            # FIXME: Why coef 0.4 ???
             if self._init_mesh is None:  # use sphere inertia with radius 0.1
                 self._inertial_i = 0.4 * self._inertial_mass * 0.1**2 * np.eye(3)
 
