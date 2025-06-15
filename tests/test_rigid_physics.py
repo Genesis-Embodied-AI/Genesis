@@ -1490,6 +1490,80 @@ def test_all_fixed(show_viewer):
 
 
 @pytest.mark.required
+def test_contact_forces(show_viewer, tol):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+            box_box_detection=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            res=(960, 640),
+            max_FPS=60,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
+        visualize_contact=True,
+    )
+    scene.build()
+
+    cube_weight = scene.rigid_solver._gravity.to_numpy()[2] * cube.get_mass()
+    motors_dof = np.arange(7)
+    fingers_dof = np.arange(7, 9)
+    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    franka.set_qpos(qpos)
+    scene.step()
+
+    end_effector = franka.get_link("hand")
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.135]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+    franka.control_dofs_position(qpos[:-2], motors_dof)
+
+    # hold
+    for i in range(50):
+        scene.step()
+    contact_forces = cube.get_links_net_contact_force().cpu()
+    assert_allclose(contact_forces[0], [0.0, 0.0, -cube_weight], atol=1e-5)
+
+    # grasp
+    for i in range(20):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(np.array([0.0, 0.0]), fingers_dof)
+        scene.step()
+
+    # lift
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.3]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+    for i in range(200):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(np.array([0.0, 0.0]), fingers_dof)
+        scene.step()
+    contact_forces = cube.get_links_net_contact_force().cpu()
+    assert_allclose(contact_forces[0], [0.0, 0.0, -cube_weight], atol=1e-5)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mass_mat(show_viewer, tol):
     # Create and build the scene
