@@ -303,72 +303,6 @@ class Collider:
         )
 
     @ti.func
-    def _func_convex_geoms_overlap_ratio(self, i_ga, i_gb, i_b):
-        # Check if one geom 'i_ga' is likely fully (1) or partially (2) enclosed in another geom 'i_gb'.
-        # 1. 'Broad phase': Check if bounding box 'i_ga' is fully enclosed into the other bounding box
-        # 2. 'Mid phase': Check if rotated bounding box 'i_ga' is fully enclosed into the other bounding box
-        # 3. 'Narrow phase': Check if all corners of rotated bounding box 'i_ga' are inside the other true geom
-        overlap_ratio = gs.ti_float(0.0)
-
-        # Broad phase 1
-        is_enclosed_dims = (
-            self._solver.geoms_state[i_gb, i_b].aabb_min < self._solver.geoms_state[i_ga, i_b].aabb_min
-        ) & (self._solver.geoms_state[i_ga, i_b].aabb_max < self._solver.geoms_state[i_gb, i_b].aabb_max)
-
-        # Mid phase 2
-        if is_enclosed_dims.all():
-            for i_corner in ti.static((0, 7)):
-                corner_pos = gu.ti_inv_transform_by_trans_quat(
-                    gu.ti_transform_by_trans_quat(
-                        self._solver.geoms_init_AABB[i_ga, i_corner],
-                        self._solver.geoms_state[i_ga, i_b].pos,
-                        self._solver.geoms_state[i_ga, i_b].quat,
-                    ),
-                    self._solver.geoms_state[i_gb, i_b].pos,
-                    self._solver.geoms_state[i_gb, i_b].quat,
-                )
-                if i_corner == 0:
-                    is_enclosed_dims &= self._solver.geoms_init_AABB[i_gb, i_corner] < corner_pos
-                else:
-                    is_enclosed_dims &= corner_pos < self._solver.geoms_init_AABB[i_gb, i_corner]
-
-        # Narrow phase 3
-        dists = ti.Vector.zero(gs.ti_float, 8)
-        if is_enclosed_dims.all():
-            # Check whether the bounding box 'i_ga' is fully enclosed in true geometry
-            is_enclosed = True
-            for i_corner in range(8):
-                corner_pos = gu.ti_transform_by_trans_quat(
-                    self._solver.geoms_init_AABB[i_ga, i_corner],
-                    self._solver.geoms_state[i_ga, i_b].pos,
-                    self._solver.geoms_state[i_ga, i_b].quat,
-                )
-                dists[i_corner] = self._solver.sdf.sdf_world(corner_pos, i_gb, i_b)
-                if dists[i_corner] > 0.0:
-                    is_enclosed = False
-
-            # Approximate the overlapping ratio.
-            # It is defined as the ratio between the average signed distance of all the corners of the bounding box
-            # 'i_ga' from the true convex geometry 'i_gb', and the length of the box along this specific direction.
-            if is_enclosed:
-                overlap_ratio = 1.0
-            else:
-                box_size = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
-                dist_diff = ti.Vector(
-                    [
-                        dists[4] + dists[5] + dists[6] + dists[7] - dists[0] - dists[1] - dists[2] - dists[3],
-                        dists[2] + dists[3] + dists[6] + dists[7] - dists[0] - dists[1] - dists[4] - dists[5],
-                        dists[1] + dists[3] + dists[5] + dists[7] - dists[0] - dists[2] - dists[4] - dists[6],
-                    ],
-                    dt=gs.ti_float,
-                )
-                overlap_dir = (dist_diff / box_size).normalized()
-                overlap_length = box_size.dot(ti.abs(overlap_dir))
-                overlap_ratio = ti.math.clamp(0.5 - (dists.sum() / 8) / overlap_length, 0.0, 1.0)
-
-        return overlap_ratio
-
-    @ti.func
     def _func_find_intersect_midpoint(self, i_ga, i_gb):
         # return the center of the intersecting AABB of AABBs of two geoms
         intersect_lower = ti.max(self._solver.geoms_state[i_ga].aabb_min, self._solver.geoms_state[i_gb].aabb_min)
@@ -1250,15 +1184,6 @@ class Collider:
         ):
             tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
-            # Check if one geometry is partially enclosed in the other
-            geoms_is_enclosed = ti.Vector.zero(gs.ti_int, 2)
-            if ti.static(not self._solver._enable_mujoco_compatibility):
-                for j in range(2):
-                    geoms_overlap_ratio = self._func_convex_geoms_overlap_ratio(
-                        i_ga if j == 0 else i_gb, i_gb if j == 0 else i_ga, i_b
-                    )
-                    geoms_is_enclosed[j] = geoms_overlap_ratio > self._mpr_to_sdf_overlap_ratio
-
             # Backup state before local perturbation
             ga_state = self._solver.geoms_state[i_ga, i_b]
             gb_state = self._solver.geoms_state[i_gb, i_b]
@@ -1291,74 +1216,63 @@ class Collider:
                     self._func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b)
 
                 if (multi_contact and is_col_0) or (i_detection == 0):
-                    use_sdf = ti.Vector.zero(gs.ti_int, 2)
-                    any_geom_is_enclosed = geoms_is_enclosed.any()
-                    if i_detection == 0 and any_geom_is_enclosed:
-                        # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
-                        # Note that SDF does not take into account to direction of interest. As such, it cannot be used
-                        # reliably for anything else than the point of deepest penetration.
-                        if geoms_is_enclosed[0]:
-                            use_sdf[0] = 1
-                        else:
-                            use_sdf[1] = 1
+                    try_sdf = False
+                    if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
+                        ga_info = self._solver.geoms_info[i_ga]
+                        plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
+                        plane_dir = gu.ti_transform_by_quat(plane_dir, self._solver.geoms_state[i_ga, i_b].quat)
+                        normal = -plane_dir.normalized()
+
+                        v1 = self._mpr.support_driver(normal, i_gb, i_b)
+                        penetration = normal.dot(v1 - self._solver.geoms_state[i_ga, i_b].pos)
+                        contact_pos = v1 - 0.5 * penetration * normal
+                        is_col = penetration > 0
                     else:
-                        if self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
-                            ga_info = self._solver.geoms_info[i_ga]
-                            plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
-                            plane_dir = gu.ti_transform_by_quat(plane_dir, self._solver.geoms_state[i_ga, i_b].quat)
-                            normal = -plane_dir.normalized()
+                        # Try using MPR before anything else
+                        is_mpr_updated = False
+                        is_mpr_guess_direction_available = True
+                        normal_ws = self.contact_cache[i_ga, i_gb, i_b].normal
+                        for i_mpr in range(2):
+                            if i_mpr == 1:
+                                # Try without warm-start if no contact was detected using it.
+                                # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
+                                # contact while they actually are. This helps to improve contact persistence without increasing
+                                # much the overall computational cost since the fallback should not be triggered very often.
+                                is_mpr_guess_direction_available = (ti.abs(normal_ws) > gs.EPS).any()
+                                if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
+                                    normal_ws = ti.Vector.zero(gs.ti_float, 3)
+                                    is_mpr_updated = False
 
-                            v1 = self._mpr.support_driver(normal, i_gb, i_b)
-                            penetration = normal.dot(v1 - self._solver.geoms_state[i_ga, i_b].pos)
-                            contact_pos = v1 - 0.5 * penetration * normal
-                            is_col = penetration > 0
-                        else:
-                            # Try using MPR before anything else
-                            is_mpr_updated = False
-                            is_mpr_guess_direction_available = True
-                            normal_ws = self.contact_cache[i_ga, i_gb, i_b].normal
-                            for i_mpr in range(2):
-                                if i_mpr == 1:
-                                    # Try without warm-start if no contact was detected using it.
-                                    # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
-                                    # contact while they actually are. This helps to improve contact persistence without increasing
-                                    # much the overall computational cost since the fallback should not be triggered very often.
-                                    is_mpr_guess_direction_available = (ti.abs(normal_ws) > gs.EPS).any()
-                                    if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
-                                        normal_ws = ti.Vector.zero(gs.ti_float, 3)
-                                        is_mpr_updated = False
+                            if not is_mpr_updated:
+                                is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
+                                    i_ga, i_gb, i_b, normal_ws
+                                )
+                                is_mpr_updated = True
 
-                                if not is_mpr_updated:
-                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                        i_ga, i_gb, i_b, normal_ws
-                                    )
-                                    is_mpr_updated = True
-
-                            # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
-                            # initial penetration is already quite large, because the contact information provided by MPR
-                            # may be unreliable in such a case.
-                            # Here it is assumed that generic SDF is much slower than MPR, so it is faster in average
-                            # to first make sure that the geometries are truly colliding and only after to run SDF if
-                            # necessary. This would probably not be the case anymore if it was possible to rely on
-                            # specialized SDF implementation for convex-convex collision detection in the first place.
-                            if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
-                                # Note that SDF may detect different collision points depending on geometry ordering.
-                                # Because of this, it is necessary to run it twice and take the contact information
-                                # associated with the point of deepest penetration.
-                                use_sdf[0] = 1
-                                use_sdf[1] = 1
+                        # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
+                        # initial penetration is already quite large, because the contact information provided by MPR
+                        # may be unreliable in such a case.
+                        # Here it is assumed that generic SDF is much slower than MPR, so it is faster in average
+                        # to first make sure that the geometries are truly colliding and only after to run SDF if
+                        # necessary. This would probably not be the case anymore if it was possible to rely on
+                        # specialized SDF implementation for convex-convex collision detection in the first place.
+                        if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
+                            # Note that SDF may detect different collision points depending on geometry ordering.
+                            # Because of this, it is necessary to run it twice and take the contact information
+                            # associated with the point of deepest penetration.
+                            try_sdf = True
 
                     if ti.static(not self._solver._enable_mujoco_compatibility):
-                        is_col_a = False
-                        is_col_b = False
-                        normal_a = ti.Vector.zero(gs.ti_float, 3)
-                        normal_b = ti.Vector.zero(gs.ti_float, 3)
-                        penetration_b = gs.ti_float(0.0)
-                        penetration_a = gs.ti_float(0.0)
-                        contact_pos_a = ti.Vector.zero(gs.ti_float, 3)
-                        contact_pos_b = ti.Vector.zero(gs.ti_float, 3)
-                        for i_sdf in range(2):
-                            if use_sdf[i_sdf] == 1:
+                        if try_sdf:
+                            is_col_a = False
+                            is_col_b = False
+                            normal_a = ti.Vector.zero(gs.ti_float, 3)
+                            normal_b = ti.Vector.zero(gs.ti_float, 3)
+                            penetration_b = gs.ti_float(0.0)
+                            penetration_a = gs.ti_float(0.0)
+                            contact_pos_a = ti.Vector.zero(gs.ti_float, 3)
+                            contact_pos_b = ti.Vector.zero(gs.ti_float, 3)
+                            for i_sdf in range(2):
                                 # FIXME: It is impossible to rely on `_func_contact_convex_convex_sdf` to get the contact
                                 # information because the compilation times skyrockets from 42s for `_func_contact_vertex_sdf`
                                 # to 2min51s on Apple Silicon M4 Max, which is not acceptable.
@@ -1385,17 +1299,25 @@ class Collider:
                                     penetration_b = penetration_i
                                     contact_pos_b = contact_pos_i
 
-                        prefer_sdf = any_geom_is_enclosed or (
-                            self._mc_tolerance * penetration >= self._mpr_to_sdf_overlap_ratio * tolerance
-                        )
-                        if is_col_a and (
-                            not is_col_b or penetration_a >= max(penetration_b, (not prefer_sdf) * penetration)
-                        ):
-                            is_col, normal, penetration, contact_pos = is_col_a, normal_a, penetration_a, contact_pos_a
-                        elif is_col_b and (
-                            not is_col_a or penetration_b > max(penetration_a, (not prefer_sdf) * penetration)
-                        ):
-                            is_col, normal, penetration, contact_pos = is_col_b, normal_b, penetration_b, contact_pos_b
+                            # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
+                            # Note that SDF does not take into account to direction of interest. As such, it cannot be
+                            # used reliably for anything else than the point of deepest penetration.
+                            prefer_sdf = self._mc_tolerance * penetration >= self._mpr_to_sdf_overlap_ratio * tolerance
+
+                            if is_col_a and (
+                                not is_col_b or penetration_a >= max(penetration_b, (not prefer_sdf) * penetration)
+                            ):
+                                is_col = is_col_a
+                                normal = normal_a
+                                penetration = penetration_a
+                                contact_pos = contact_pos_a
+                            elif is_col_b and (
+                                not is_col_a or penetration_b > max(penetration_a, (not prefer_sdf) * penetration)
+                            ):
+                                is_col = is_col_b
+                                normal = normal_b
+                                penetration = penetration_b
+                                contact_pos = contact_pos_b
 
                 if i_detection == 0:
                     is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
