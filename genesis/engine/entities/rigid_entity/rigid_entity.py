@@ -1543,10 +1543,11 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _init_rrt_fields(self):
-        self._rrt_goal_bias = 0.1
+        self._rrt_goal_bias = 0.05
         self._rrt_max_nodes = 10_000
         self._rrt_pos_tol = 5e-3, # .28 degree
-        self._rrt_max_step_size = 0.2 # NOTE: in radian (about 5.7 degrees)
+        # self._rrt_max_step_size = 0.25 # NOTE: in radian (about 14.3 degree)
+        self._rrt_max_step_size = 0.2 # NOTE: in radian (about 11.4 degree)
         self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
         self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
         self.struct_rrt_node_info = ti.types.struct(
@@ -1602,19 +1603,16 @@ class RigidEntity(Entity):
         for i_b in envs_idx:
             if not self._rrt_is_active[i_b]:
                 continue
-            random_sample = ti.Vector(
-                [
-                    q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
-                    for i_q in range(self.n_qs)
-                ]
-            )
+            
+            random_sample = ti.Vector([
+                q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                for i_q in range(self.n_qs)
+            ])
             if ti.random() < self._rrt_goal_bias:
-                random_sample = ti.Vector(
-                    [
-                        self._rrt_goal_configuration[i_q, i_b]
-                        for i_q in range(self.n_qs)
-                    ]
-                )
+                random_sample = ti.Vector([
+                    self._rrt_goal_configuration[i_q, i_b]
+                    for i_q in range(self.n_qs)
+                ])
 
             # find nearest neighbor
             nearest_neighbor_idx = -1
@@ -1629,13 +1627,13 @@ class RigidEntity(Entity):
             # steer from nearest neighbor to random sample
             nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
             direction = random_sample - nearest_config
-            direction_magnitude = direction.norm()
-
-            # If the step size exceeds max_step_size, clip it
-            if direction_magnitude > self._rrt_max_step_size:
-                # Normalize direction and scale by max_step_size
-                direction = direction.normalized() * self._rrt_max_step_size
-            steer_result = nearest_config + direction
+            steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
+            for i_q in range(self.n_qs):
+                direction_magnitude = direction[i_q]
+                # If the step size exceeds max_step_size, clip it
+                if direction_magnitude > self._rrt_max_step_size:
+                    direction[i_q] = self._rrt_max_step_size
+                steer_result[i_q] = nearest_config[i_q] + direction[i_q]
 
             if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
                 # add new node
@@ -1647,7 +1645,7 @@ class RigidEntity(Entity):
                 for i_q in range(self.n_qs):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
-                # self._solver._func_update_geoms(i_b) # TODO: need this but need to check
+                # self._solver._func_update_geoms(i_b) # TODO: need this but need to check (or use _kernel_forward_kinematics_links_geoms)
 
     @ti.kernel
     def _kernel_rrt_step2(
@@ -1667,20 +1665,17 @@ class RigidEntity(Entity):
 
                 ignore = False
                 for i_p in range(ignore_geom_pairs.shape[0]):
-                    if ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb:
+                    if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
+                        ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga):
                         ignore = True
                         break
-                    elif ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga:
-                        ignore = True
-                        break
-                
                 if ignore:
                     continue
 
-                if (self.geom_start <= i_ga < self.geom_end) | (self.geom_start <= i_gb < self.geom_end):
+                if (self.geom_start <= i_ga < self.geom_end) or (self.geom_start <= i_gb < self.geom_end):
                     # collision detected
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
                     self._rrt_tree_size[i_b] -= 1
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
                     collision_detected = True
                     break
 
@@ -1688,14 +1683,13 @@ class RigidEntity(Entity):
             if not collision_detected:
                 flag = True
                 for i_q in range(self.n_qs):
-                    if any(self._solver.qpos[i_q, i_b] < self._rrt_goal_configuration[i_q, i_b] - self._rrt_pos_tol) | any(
-                           self._solver.qpos[i_q, i_b] > self._rrt_goal_configuration[i_q, i_b] + self._rrt_pos_tol):
+                    if abs(self._solver.qpos[i_q, i_b] - self._rrt_goal_configuration[i_q, i_b]) > self._rrt_pos_tol[0]:
                         flag = False
                         break
                 if flag:
-                    self._rrt_is_active[i_b] = 0
                     self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
-                
+                    self._rrt_is_active[i_b] = 0
+    
     def rrt(
         self,
         links,
@@ -1772,6 +1766,7 @@ class RigidEntity(Entity):
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
         # get mask collision pairs
+        # self._solver._kernel_forward_kinematics_links_geoms(envs_idx)
         self._solver._kernel_detect_collision()
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
@@ -1840,30 +1835,42 @@ class RigidEntity(Entity):
 
         self._kernel_rrt_init(envs_idx)
         
+        # qpos_ = torch.empty(len(envs_idx), self.n_qs, device=gs.device)
         for i_n in range(self._rrt_max_nodes):
             if self._rrt_is_active.to_torch().any():
                 self._kernel_rrt_step1(
+                    # tensor=qpos_,
                     envs_idx=envs_idx,
                     q_limit_lower=self.q_limit[0],
                     q_limit_upper=self.q_limit[1],
                 )
+                # self.set_qpos(qpos_)
                 # TODO: remove this
                 # scene.visualizer.update()
+                # self._solver.dofs_state.qf_constraint.fill(0.0)
+                # self._solver._kernel_forward_dynamics()
+                # self._solver._func_constraint_force()
+                # self._solver._kernel_update_acc()
+                
+                # self._solver._kernel_forward_kinematics_links_geoms(envs_idx) # TODO: need this but need to check
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_step2(
                     ignore_geom_pairs=unique_pairs,
                     envs_idx=envs_idx,
                 )
-                print(self._rrt_tree_size.to_numpy())
+                print(i_n, self._rrt_tree_size.to_numpy(), self._rrt_is_active.to_numpy()) # TODO: remove this
+            else:
+                break
+        
+        if self._rrt_is_active.to_torch().any():
+            raise Exception("goal not reached")
 
         ts = self._rrt_tree_size.to_torch(device=gs.device)
         g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
         parents_idx = node_info["parent_idx"]
-        # print(parents_idx[:ts.max()])
-        for i in range(ts.max()):
-            print(i, parents_idx[i, :])
+        print(g_n) # TODO: remove this
         res = [g_n]
         for _ in range(ts.max()):
             g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
@@ -1873,11 +1880,11 @@ class RigidEntity(Entity):
                 break
 
         res_idx = torch.stack(list(reversed(res)), dim=0)
-        print(res_idx)
+        print(res_idx) # TODO: remove this
 
         configurations = node_info["configuration"]
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
-        print(sol.shape)
+        print(sol.shape) # TODO: remove this
         self._kernel_rrt_cleanup(envs_idx)
         return sol
             
