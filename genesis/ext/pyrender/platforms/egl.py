@@ -152,6 +152,7 @@ class EGLPlatform(Platform):
             eglChooseConfig,
             eglBindAPI,
             eglCreateContext,
+            eglMakeCurrent,
             EGLConfig,
             EGLError,
         )
