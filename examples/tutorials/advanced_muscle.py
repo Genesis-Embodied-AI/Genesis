@@ -24,7 +24,6 @@ scene = gs.Scene(
     ),
     fem_options=gs.options.FEMOptions(
         dt=dt,
-        damping=45.0,
     ),
     vis_options=gs.options.VisOptions(
         show_world_frame=False,
