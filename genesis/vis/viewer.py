@@ -140,9 +140,7 @@ class Viewer(RBC):
             self.update_following()
 
         with self.lock:
-            buffer_updates = self.context.update()
-            for buffer_id, buffer_data in buffer_updates.items():
-                self._pyrender_viewer.pending_buffer_updates[buffer_id] = buffer_data
+            self._pyrender_viewer.pending_buffer_updates |= self.context.update()
 
             # Refresh viewer by default if and if this is possible
             if auto_refresh is None:

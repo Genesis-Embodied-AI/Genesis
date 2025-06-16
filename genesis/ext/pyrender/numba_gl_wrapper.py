@@ -84,7 +84,7 @@ class GLWrapper:
             except AttributeError:
                 # OpenGL function not available, probably because the installed version does not support it (too old).
                 # Moving to the next one without raising an exception since it is not blocking at this point.
-                gs.logger.info(f"OpenGL function '{name}' not available on this machine.")
+                gs.logger.debug(f"OpenGL function '{name}' not available on this machine.")
 
         funcs = self.gl_funcs
         func_types = {}
