@@ -231,12 +231,8 @@ class RasterizerContext:
 
                 for link in links:
                     link_T = gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx])
-                    buffer_updates[
-                        self._scene.get_buffer_id(
-                            self.link_frame_nodes[link.uid],
-                            "model",
-                        )
-                    ] = link_T.transpose([0, 2, 1])
+                    node = self._scene.get_buffer_id(self.link_frame_nodes[link.uid], "model")
+                    buffer_updates[node] = link_T.transpose((0, 2, 1))
 
     def on_tool(self):
         if self.sim.tool_solver.is_active():
@@ -320,9 +316,8 @@ class RasterizerContext:
 
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
-                    buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
-                        [0, 2, 1]
-                    )
+                    node = self.rigid_nodes[geom.uid]
+                    buffer_updates[self._scene.get_buffer_id(node, "model")] = geom_T.transpose((0, 2, 1))
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
@@ -389,9 +384,8 @@ class RasterizerContext:
 
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx]
-                    buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
-                        [0, 2, 1]
-                    )
+                    node = self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")
+                    buffer_updates[node] = geom_T.transpose((0, 2, 1))
 
     def on_mpm(self):
         if self.sim.mpm_solver.is_active():
@@ -420,12 +414,7 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array(
-                                [
-                                    self.sim.mpm_solver.boundary.lower,
-                                    self.sim.mpm_solver.boundary.upper,
-                                ]
-                            ),
+                            bounds=np.array([self.sim.mpm_solver.boundary.lower, self.sim.mpm_solver.boundary.upper]),
                             wireframe=True,
                             color=(1.0, 1.0, 0.0, 1.0),
                         ),
@@ -456,12 +445,8 @@ class RasterizerContext:
                     tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
                     tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end]
 
-                    buffer_updates[
-                        self._scene.get_buffer_id(
-                            self.static_nodes[mpm_entity.uid],
-                            "model",
-                        )
-                    ] = tfs.transpose([0, 2, 1])
+                    node = self._scene.get_buffer_id(self.static_nodes[mpm_entity.uid], "model")
+                    buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                 elif mpm_entity.surface.vis_mode == "visual":
                     mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end]
@@ -490,12 +475,7 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array(
-                                [
-                                    self.sim.sph_solver.boundary.lower,
-                                    self.sim.sph_solver.boundary.upper,
-                                ]
-                            ),
+                            bounds=np.array([self.sim.sph_solver.boundary.lower, self.sim.sph_solver.boundary.upper]),
                             wireframe=True,
                             color=(0.0, 1.0, 1.0, 1.0),
                         ),
@@ -526,12 +506,8 @@ class RasterizerContext:
                     tfs = np.tile(np.eye(4), (sph_entity.n_particles, 1, 1))
                     tfs[:, :3, 3] = particles_all[sph_entity.particle_start : sph_entity.particle_end]
 
-                    buffer_updates[
-                        self._scene.get_buffer_id(
-                            self.static_nodes[sph_entity.uid],
-                            "model",
-                        )
-                    ] = tfs.transpose([0, 2, 1])
+                    node = self._scene.get_buffer_id(self.static_nodes[sph_entity.uid], "model")
+                    buffer_updates[node] = tfs.transpose((0, 2, 1))
 
     def on_pbd(self):
         if self.sim.pbd_solver.is_active():
@@ -572,12 +548,7 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array(
-                                [
-                                    self.sim.pbd_solver.boundary.lower,
-                                    self.sim.pbd_solver.boundary.upper,
-                                ]
-                            ),
+                            bounds=np.array([self.sim.pbd_solver.boundary.lower, self.sim.pbd_solver.boundary.upper]),
                             wireframe=True,
                             color=(0.0, 1.0, 1.0, 1.0),
                         ),
@@ -610,12 +581,8 @@ class RasterizerContext:
                         tfs = np.tile(np.eye(4), (pbd_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[pbd_entity.particle_start : pbd_entity.particle_end]
 
-                        buffer_updates[
-                            self._scene.get_buffer_id(
-                                self.static_nodes[pbd_entity.uid],
-                                "model",
-                            )
-                        ] = tfs.transpose([0, 2, 1])
+                        node = self._scene.get_buffer_id(self.static_nodes[pbd_entity.uid], "model")
+                        buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                     elif self.render_particle_as == "tet":
                         new_verts = mu.transform_tets_mesh_verts(
