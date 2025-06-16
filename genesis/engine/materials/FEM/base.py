@@ -34,6 +34,7 @@ class Base(Material):
         rho=1000.0,  # density (kg/m^3)
         hydroelastic_modulus=1e7,  # hydroelastic_modulus for hydroelastic contact
         friction_mu=0.0,  # friction coefficient, default is 0.0
+        hessian_staic=False,
     ):
         super().__init__()
 
@@ -42,6 +43,8 @@ class Base(Material):
         self._rho = rho
         self._hydroelastic_modulus = hydroelastic_modulus
         self._friction_mu = friction_mu
+        self.hessian_static = hessian_staic
+        self.hessian_ready = False
 
         # lame parameters: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
         self._mu = E / (2.0 * (1.0 + nu))

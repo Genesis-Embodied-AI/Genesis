@@ -403,6 +403,11 @@ class FEMEntity(Entity):
         margin = 0
         self.pressure_field_np = np.abs(self.pressure_field_np) - margin
         max_distance = np.max(self.pressure_field_np) + gs.EPS
+        if max_distance <= gs.EPS:
+            gs.raise_exception(
+                f"Pressure field max distance is too small: {max_distance}. "
+                "This might be due to a mesh having no internal vertices."
+            )
         self.pressure_field_np = (
             self.pressure_field_np / max_distance * self.material._hydroelastic_modulus
         )  # normalize

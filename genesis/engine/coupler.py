@@ -1006,7 +1006,12 @@ class SAPCoupler(RBC):
     @ti.kernel
     def compute_non_contact_gradient_diag(self, f: ti.i32, iter: int):
         fem_solver = self.fem_solver
-        dt2 = self.sim._substep_dt**2
+        dt2 = fem_solver._substep_dt**2
+        damping_alpha_dt = fem_solver._damping_alpha * fem_solver._substep_dt
+        damping_alpha_factor = damping_alpha_dt + 1.0
+        damping_beta_over_dt = fem_solver._damping_beta / fem_solver._substep_dt
+        damping_beta_factor = damping_beta_over_dt + 1.0
+
         for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
             self.gradient[i_b, i_v].fill(0.0)
             # was using position now using velocity, need to multiply dt^2
@@ -1016,7 +1021,9 @@ class SAPCoupler(RBC):
         # No need to do this for iter=0 because v=v* and A(v-v*) = 0
         if iter > 0:
             for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
-                self.gradient[i_b, i_v] = fem_solver.elements_v_info[i_v].mass_over_dt2 * self.v_diff[i_b, i_v] * dt2
+                self.gradient[i_b, i_v] = (
+                    fem_solver.elements_v_info[i_v].mass_over_dt2 * self.v_diff[i_b, i_v] * dt2 * damping_alpha_factor
+                )
 
             for i_b, i_e in ti.ndrange(fem_solver._B, fem_solver.n_elements):
                 V_dt2 = fem_solver.elements_i[i_e].V * dt2
@@ -1044,15 +1051,23 @@ class SAPCoupler(RBC):
 
                 # atomic
                 self.gradient[i_b, i_v0] += (
-                    B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]
-                ) * V_dt2
+                    (B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9])
+                    * V_dt2
+                    * damping_beta_factor
+                )
                 self.gradient[i_b, i_v1] += (
-                    B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]
-                ) * V_dt2
+                    (B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9])
+                    * V_dt2
+                    * damping_beta_factor
+                )
                 self.gradient[i_b, i_v2] += (
-                    B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]
-                ) * V_dt2
-                self.gradient[i_b, i_v3] += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_dt2
+                    (B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9])
+                    * V_dt2
+                    * damping_beta_factor
+                )
+                self.gradient[i_b, i_v3] += (
+                    (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
+                )
 
     @ti.kernel
     def compute_contact_gradient_hessian_diag_prec(self, f: ti.i32):
@@ -1183,13 +1198,20 @@ class SAPCoupler(RBC):
     @ti.func
     def compute_Ap(self):
         fem_solver = self.fem_solver
-        dt = self.sim._substep_dt
-        dt2 = dt**2
+        dt2 = fem_solver._substep_dt**2
+        damping_alpha_dt = fem_solver._damping_alpha * fem_solver._substep_dt
+        damping_alpha_factor = damping_alpha_dt + 1.0
+        damping_beta_over_dt = fem_solver._damping_beta / fem_solver._substep_dt
+        damping_beta_factor = damping_beta_over_dt + 1.0
+
         for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state_v[i_b, i_v].Ap = (
-                fem_solver.elements_v_info[i_v].mass_over_dt2 * self.pcg_state_v[i_b, i_v].p * dt2
+                fem_solver.elements_v_info[i_v].mass_over_dt2
+                * self.pcg_state_v[i_b, i_v].p
+                * dt2
+                * damping_alpha_factor
             )
 
         for i_b, i_e in ti.ndrange(fem_solver._B, fem_solver.n_elements):
@@ -1220,15 +1242,17 @@ class SAPCoupler(RBC):
 
             # atomic
             self.pcg_state_v[i_b, i_v0].Ap += (
-                B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]
-            ) * V_dt2
+                (B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
+            )
             self.pcg_state_v[i_b, i_v1].Ap += (
-                B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]
-            ) * V_dt2
+                (B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
+            )
             self.pcg_state_v[i_b, i_v2].Ap += (
-                B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]
-            ) * V_dt2
-            self.pcg_state_v[i_b, i_v3].Ap += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_dt2
+                (B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
+            )
+            self.pcg_state_v[i_b, i_v3].Ap += (
+                (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
+            )
 
         pairs = ti.static(self.fem_floor_contact_pairs)
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
@@ -1333,8 +1357,12 @@ class SAPCoupler(RBC):
     @ti.func
     def compute_total_energy(self, f, energy):
         fem_solver = self.fem_solver
-        dt = ti.static(self.sim._substep_dt)
-        dt2 = dt**2
+        dt2 = fem_solver._substep_dt**2
+        damping_alpha_dt = fem_solver._damping_alpha * fem_solver._substep_dt
+        damping_alpha_factor = damping_alpha_dt + 1.0
+        damping_beta_over_dt = fem_solver._damping_beta / fem_solver._substep_dt
+        damping_beta_factor = damping_beta_over_dt + 1.0
+
         for i_b in ti.ndrange(self._B):
             energy[i_b] = 0.0
 
@@ -1348,9 +1376,8 @@ class SAPCoupler(RBC):
                 * fem_solver.elements_v_info[i_v].mass_over_dt2
                 * self.v_diff[i_b, i_v].dot(self.v_diff[i_b, i_v])
                 * dt2
+                * damping_alpha_factor
             )
-
-        inertia = energy[0]
 
         # Elastic
         for i_b, i_e in ti.ndrange(self._B, fem_solver.n_elements):
@@ -1380,9 +1407,8 @@ class SAPCoupler(RBC):
                     + fem_solver.elements_el_hessian[i_b, i, 2, i_e] @ p9[6:9]
                 )
 
-            energy[i_b] += 0.5 * V_dt2 * p9.dot(H9_p9)
+            energy[i_b] += 0.5 * V_dt2 * p9.dot(H9_p9) * damping_beta_factor
 
-        elastic = energy[0] - inertia
         # Contact
         self.compute_contact_energy(f)
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
@@ -1391,8 +1417,6 @@ class SAPCoupler(RBC):
             if not self.batch_linesearch_active[i_b] or pair.active == 0:
                 continue
             energy[i_b] += pair.energy
-
-        contact = energy[0] - inertia - elastic
 
     @ti.kernel
     def init_linesearch(self, f: ti.i32):

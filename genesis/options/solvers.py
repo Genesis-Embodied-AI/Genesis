@@ -563,6 +563,16 @@ class FEMOptions(Options):
         Line search sufficient decrease parameter. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
     linesearch_tau : float, optional
         Line search step size reduction factor. Defaults to 0.5. Only used when `use_implicit_solver` is True.
+    damping_alpha : float, optional
+        Rayleigh Damping factor for the implicit solver. Defaults to 0.0. Only used when `use_implicit_solver` is True.
+    damping_beta : float, optional
+        Rayleigh Damping factor for the implicit solver. Defaults to 0.0. Only used when `use_implicit_solver` is True.
+
+    Note
+    ----
+    damping coefficients are used to control the damping effect in the simulation.
+    They are used in the Rayleigh Damping model, which is a common damping model in FEM simulations.
+    Might move it to material parameters in the future instead of solver options.
     """
 
     dt: Optional[float] = None
@@ -577,6 +587,8 @@ class FEMOptions(Options):
     pcg_threshold: float = 1e-6
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.5
+    damping_alpha: float = 0.0
+    damping_beta: float = 0.01
 
 
 class SFOptions(Options):
