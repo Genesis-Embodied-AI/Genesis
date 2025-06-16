@@ -1542,12 +1542,11 @@ class RigidEntity(Entity):
     # -------------------------------------- rrt -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _init_rrt_fields(self):
-        self._rrt_goal_bias = 0.05
-        self._rrt_max_nodes = 10_000
-        self._rrt_pos_tol = 5e-3, # .28 degree
-        # self._rrt_max_step_size = 0.25 # NOTE: in radian (about 14.3 degree)
-        self._rrt_max_step_size = 0.2 # NOTE: in radian (about 11.4 degree)
+    def _init_rrt_fields(self, goal_bias=0.05, max_nodes=2000, pos_tol=5e-3, max_step_size=0.1):
+        self._rrt_goal_bias = goal_bias
+        self._rrt_max_nodes = max_nodes
+        self._rrt_pos_tol = pos_tol # .28 degree
+        self._rrt_max_step_size = max_step_size # NOTE: in radian (about 5.7 degree)
         self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
         self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
         self.struct_rrt_node_info = ti.types.struct(
@@ -1569,35 +1568,43 @@ class RigidEntity(Entity):
         self._rrt_goal_reached_node_idx.fill(-1)
     
     @ti.kernel
-    def _kernel_rrt_init(self, envs_idx: ti.types.ndarray()):
+    def _kernel_rrt_init(
+        self,
+        qpos_start: ti.types.ndarray(),
+        qpos_goal: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray()
+    ):
         # NOTE: run IK before this
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             for i_q in range(self.n_qs):
                 # save original qpos
-                # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
-                self._rrt_start_configuration[i_q, i_b] = self._IK_qpos_orig[i_q, i_b]
-                self._rrt_goal_configuration[i_q, i_b] = self._IK_qpos_best[i_q, i_b]
-                self._rrt_node_info[0, i_b].configuration[i_q] = self._IK_qpos_orig[i_q, i_b]
-
+                self._rrt_start_configuration[i_q, i_b] = qpos_start[i_b_, i_q]
+                self._rrt_goal_configuration[i_q, i_b] = qpos_goal[i_b_, i_q]
+                self._rrt_node_info[0, i_b].configuration[i_q] = qpos_start[i_b_, i_q]
             self._rrt_tree_size[i_b] = 1
             self._rrt_is_active[i_b] = 1
 
     @ti.kernel
-    def _kernel_rrt_cleanup(self, envs_idx: ti.types.ndarray()):
-        # NOTE: run IK before this
+    def _kernel_rrt_cleanup(
+        self,
+        qpos_current: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray()
+    ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             for i_q in range(self.n_qs):
-                self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
+                self._solver.qpos[i_q + self._q_start, i_b] = qpos_current[i_b_, i_q]
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
     
     @ti.kernel
     def _kernel_rrt_step1(
         self,
-        envs_idx: ti.types.ndarray(),
         q_limit_lower: ti.types.ndarray(),
         q_limit_upper: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
@@ -1645,7 +1652,7 @@ class RigidEntity(Entity):
                 for i_q in range(self.n_qs):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
-                self._solver._func_update_geoms(i_b) # TODO: need this but need to check (or use _kernel_forward_kinematics_links_geoms)
+                self._solver._func_update_geoms(i_b)
 
     @ti.kernel
     def _kernel_rrt_step2(
@@ -1676,6 +1683,7 @@ class RigidEntity(Entity):
                 if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
                     # collision detected
                     self._rrt_tree_size[i_b] -= 1
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
                     self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
                     collision_detected = True
                     break
@@ -1684,108 +1692,66 @@ class RigidEntity(Entity):
             if not collision_detected:
                 flag = True
                 for i_q in range(self.n_qs):
-                    if abs(self._solver.qpos[i_q, i_b] - self._rrt_goal_configuration[i_q, i_b]) > self._rrt_pos_tol[0]:
+                    if abs(self._solver.qpos[i_q, i_b] - self._rrt_goal_configuration[i_q, i_b]) > self._rrt_pos_tol:
                         flag = False
                         break
                 if flag:
                     self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
                     self._rrt_is_active[i_b] = 0
-    
-    def rrt(
+        
+    @gs.assert_built
+    def plan_path_rrt(
         self,
-        links,
-        poss=[],
-        quats=[],
-        scene=None,
+        qpos_goal,
+        qpos_start=None,
+        resolution=0.01,
+        timeout=5.0,
+        max_retry=1,
+        smooth_path=True,
+        num_waypoints=100,
+        ignore_collision=False,
+        ignore_joint_limit=False,
         envs_idx=None
     ):
+        """
+        Plan a path from `qpos_start` to `qpos_goal`.
+        qpos_goal : array_like
+            The goal state. [B, Nq] or [1, Nq]
+        qpos_start : None | array_like, optional
+            The start state. If None, the current state of the rigid entity will be used. Defaults to None. [B, Nq] or [1, Nq]
+        """
+        import time
         if self._solver.n_envs > 0:
             envs_idx = self._solver._sanitize_envs_idx(envs_idx)
-
-        link_pos_mask = []
-        link_rot_mask = []
-        n_links = len(links)
-        for i in range(n_links):
-            if poss[i] is None and quats[i] is None:
-                gs.raise_exception("At least one of `poss` or `quats` must be provided.")
-            if poss[i] is not None:
-                link_pos_mask.append(True)
-                if self._solver.n_envs > 0:
-                    if poss[i].shape[0] != len(envs_idx):
-                        print(poss.shape, len(envs_idx), poss[i].shape[0], poss[i].shape[0] == len(envs_idx))
-                        gs.raise_exception("First dimension of elements in `poss` must be equal to scene.n_envs.")
-            else:
-                link_pos_mask.append(False)
-                if self._solver.n_envs == 0:
-                    poss[i] = gu.zero_pos()
-                else:
-                    poss[i] = self._solver._batch_array(gu.zero_pos(), True)
-            if quats[i] is not None:
-                link_rot_mask.append(True)
-                if self._solver.n_envs > 0:
-                    if quats[i].shape[0] != len(envs_idx):
-                        gs.raise_exception("First dimension of elements in `quats` must be equal to scene.n_envs.")
-            else:
-                link_rot_mask.append(False)
-                if self._solver.n_envs == 0:
-                    quats[i] = gu.identity_quat()
-                else:
-                    quats[i] = self._solver._batch_array(gu.identity_quat(), True)
-
-        link_pos_mask = torch.as_tensor(link_pos_mask, dtype=gs.tc_int, device=gs.device)
-        link_rot_mask = torch.as_tensor(link_rot_mask, dtype=gs.tc_int, device=gs.device)
-        links_idx = torch.as_tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
-        poss = torch.stack(
-            [
-                self._solver._process_dim(torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
-                for pos in poss
-            ]
-        )
-        quats = torch.stack(
-            [
-                self._solver._process_dim(torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device), envs_idx=envs_idx)
-                for quat in quats
-            ]
-        )
-
-        dofs_idx = self._get_idx(None, self.n_dofs, unsafe=False)
-        n_dofs = len(dofs_idx)
-
-        if n_dofs == 0:
-            gs.raise_exception("Target dofs not provided.")
-        links_idx_by_dofs = []
-        for link in self.links:
-            for joint in link.joints:
-                if any(i in dofs_idx for i in joint.dofs_idx_local):
-                    links_idx_by_dofs.append(link.idx_local)  # converted to global later
-                    break
-
-        links_idx_by_dofs = self._get_idx(links_idx_by_dofs, self.n_links, self._link_start, unsafe=False)
-        n_links_by_dofs = len(links_idx_by_dofs)
-
-        if envs_idx is None:
+        else:
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
-        # get mask collision pairs
-        # self._solver._kernel_forward_kinematics_links_geoms(envs_idx)
+        qpos_cur = self._solver.qpos.to_torch().t()[envs_idx]
+        if qpos_start is None:
+            qpos_start = qpos_cur.clone()
+        else:
+            if qpos_start.ndim == 1:
+                qpos_start = qpos_start.unsqueeze(0)
+            assert qpos_start.ndim == 2
+            if qpos_start.shape[0] == 1:
+                qpos_start = qpos_start.repeat(len(envs_idx), 1)
+
+        if qpos_goal.ndim == 1:
+            qpos_goal = qpos_goal.unsqueeze(0)
+        assert qpos_goal.ndim == 2
+        if qpos_goal.shape[0] == 1:
+            qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
+        
+        self._init_rrt_fields()
+        self._reset_rrt_fields()
+        self._kernel_rrt_init(qpos_start.contiguous(), qpos_goal.contiguous(), envs_idx)
+
+        self.set_qpos(qpos_start)
         self._solver._kernel_detect_collision()
         scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
         n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
 
-        invalid_mask = torch.logical_xor(
-            torch.logical_and(
-                scene_contact_info["geom_a"] >= self.geom_start,
-                scene_contact_info["geom_a"] < self.geom_end,
-            ),
-            torch.logical_and(
-                scene_contact_info["geom_b"] >= self.geom_start,
-                scene_contact_info["geom_b"] < self.geom_end,
-            ),
-        )
-        if torch.any(invalid_mask):
-            raise Exception("there is collision in initial configuration!")
-
-        valid_mask = torch.logical_and(
+        valid_mask = torch.logical_or(
             torch.logical_and(
                 scene_contact_info["geom_a"] >= self.geom_start,
                 scene_contact_info["geom_a"] < self.geom_end,
@@ -1807,53 +1773,16 @@ class RigidEntity(Entity):
         # NOTE: we will reduce the contacts in batch dim assuming internal geom collisions are the same for a robot
         stacked_tensors = torch.stack((geom_a, geom_b), dim=1)
         unique_pairs = torch.unique(stacked_tensors, dim=0) # N', 2
+        print(unique_pairs)
 
-        # NOTE: run IK to obtain the goal config
-        self._kernel_inverse_kinematics(
-            links_idx,
-            poss,
-            quats,
-            n_links,
-            dofs_idx,
-            n_dofs,
-            links_idx_by_dofs,
-            n_links_by_dofs,
-            custom_init_qpos=False,
-            init_qpos=torch.empty((0, 0), dtype=gs.tc_float),
-            max_samples=50,
-            max_solver_iters=20,
-            damping=0.01,
-            pos_tol=5e-4,  # 0.5 mm
-            rot_tol=5e-3,  # 0.28 degree
-            pos_mask_=torch.ones(3),
-            rot_mask_=torch.ones(3),
-            link_pos_mask=link_pos_mask,
-            link_rot_mask=link_rot_mask,
-            max_step_size=0.5,
-            respect_joint_limit=True,
-            envs_idx=envs_idx,
-        )
-
-        self._kernel_rrt_init(envs_idx)
-        
-        # qpos_ = torch.empty(len(envs_idx), self.n_qs, device=gs.device)
+        start = time.time()
         for i_n in range(self._rrt_max_nodes):
             if self._rrt_is_active.to_torch().any():
                 self._kernel_rrt_step1(
-                    # tensor=qpos_,
-                    envs_idx=envs_idx,
                     q_limit_lower=self.q_limit[0],
                     q_limit_upper=self.q_limit[1],
+                    envs_idx=envs_idx,
                 )
-                # self.set_qpos(qpos_)
-                # TODO: remove this
-                # scene.visualizer.update()
-                # self._solver.dofs_state.qf_constraint.fill(0.0)
-                # self._solver._kernel_forward_dynamics()
-                # self._solver._func_constraint_force()
-                # self._solver._kernel_update_acc()
-                
-                # self._solver._kernel_forward_kinematics_links_geoms(envs_idx) # TODO: need this but need to check
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_step2(
                     ignore_geom_pairs=unique_pairs,
@@ -1862,16 +1791,15 @@ class RigidEntity(Entity):
                 # print(i_n, self._rrt_tree_size.to_numpy(), self._rrt_is_active.to_numpy()) # TODO: remove this
             else:
                 break
-        
-        if self._rrt_is_active.to_torch().any():
-            raise Exception("goal not reached")
+        print(time.time() - start)
 
         ts = self._rrt_tree_size.to_torch(device=gs.device)
         g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
         parents_idx = node_info["parent_idx"]
-        print(g_n) # TODO: remove this
+        configurations = node_info["configuration"]
+
         res = [g_n]
         for _ in range(ts.max()):
             g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
@@ -1879,14 +1807,17 @@ class RigidEntity(Entity):
             res.append(g_n)
             if torch.all(g_n == 0):
                 break
-
         res_idx = torch.stack(list(reversed(res)), dim=0)
-        print(res_idx) # TODO: remove this
-
-        configurations = node_info["configuration"]
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
-        print(sol.shape) # TODO: remove this
-        self._kernel_rrt_cleanup(envs_idx)
+
+        # TODO: smooth path
+        if smooth_path:
+            pass
+
+        # TODO: interpolate to make num_waypoints
+        
+
+        self._kernel_rrt_cleanup(qpos_cur.contiguous(), envs_idx)
         return sol
             
 
