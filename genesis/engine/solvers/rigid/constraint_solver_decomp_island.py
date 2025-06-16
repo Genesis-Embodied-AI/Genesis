@@ -518,6 +518,7 @@ class ConstraintSolverIsland:
             e_info = self.entities_info[i_e]
             for i_l in range(e_info.link_start, e_info.link_end):
                 self._solver.links_state[i_l, i_b].contact_force = ti.Vector.zero(gs.ti_float, 3)
+                self.solver.links_state[i_l, i_b].contact_torque = ti.Vector.zero(gs.ti_float, 3)
 
         for i_island_col in range(self.contact_island.island_col[island, i_b].n):
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
@@ -539,6 +540,14 @@ class ConstraintSolverIsland:
             self._solver.links_state[contact_data.link_b, i_b].contact_force = (
                 self._solver.links_state[contact_data.link_b, i_b].contact_force + force
             )
+            pos_a = self._solver.links_state[contact_data.link_a, i_b].pos
+            pos_b = self._solver.links_state[contact_data.link_b, i_b].pos
+            contact_pos_a = contact_data.pos - pos_a
+            contact_pos_b = contact_data.pos - pos_b
+            torque_a = ti.math.cross(contact_pos_a, -force)
+            torque_b = ti.math.cross(contact_pos_b, force)
+            self._solver.links_state[contact_data.link_a, i_b].contact_torque += torque_a
+            self._solver.links_state[contact_data.link_b, i_b].contact_torque += torque_b
 
     @ti.func
     def _func_update_qacc(self, island, i_b):
