@@ -4702,7 +4702,6 @@ class RigidSolver(Solver):
             contact_torque = l_st.contact_torque
             internal_torque = l_st.cfrc_flat_ang
             internal_torque -= ti.math.cross(l_st.pos, internal_force)  # centrifugal force
-            print("pos: ", l_st.pos)
             force = contact_force + internal_force
             torque = contact_torque + internal_torque
             force = gu.ti_transform_by_quat(force, quat)  
