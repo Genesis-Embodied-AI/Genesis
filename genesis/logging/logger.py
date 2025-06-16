@@ -100,7 +100,6 @@ class Logger:
         # swap with timer output
         if not self._is_new_line and not self._stream.closed:
             self._stream.write("\r")
-            self._stream.flush()
         try:
             yield
         finally:
