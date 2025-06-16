@@ -317,6 +317,9 @@ class RasterizerContext:
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     node = self.rigid_nodes[geom.uid]
+                    node.mesh._bounds = None
+                    for primitive in node.mesh.primitives:
+                        primitive.poses = geom_T
                     buffer_updates[self._scene.get_buffer_id(node, "model")] = geom_T.transpose((0, 2, 1))
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
@@ -385,6 +388,9 @@ class RasterizerContext:
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx]
                     node = self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")
+                    node.mesh._bounds = None
+                    for primitive in node.mesh.primitives:
+                        primitive.poses = geom_T
                     buffer_updates[node] = geom_T.transpose((0, 2, 1))
 
     def on_mpm(self):
@@ -775,6 +781,7 @@ class RasterizerContext:
         # update variables not used in simulation
         self.visualizer.update_visual_states()
 
+        self._scene._bounds = None
         self.update_link_frame(buffer_updates)
         self.update_tool(buffer_updates)
         self.update_rigid(buffer_updates)
