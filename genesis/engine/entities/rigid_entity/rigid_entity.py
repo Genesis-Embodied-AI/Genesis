@@ -1645,7 +1645,7 @@ class RigidEntity(Entity):
                 for i_q in range(self.n_qs):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
-                # self._solver._func_update_geoms(i_b) # TODO: need this but need to check (or use _kernel_forward_kinematics_links_geoms)
+                self._solver._func_update_geoms(i_b) # TODO: need this but need to check (or use _kernel_forward_kinematics_links_geoms)
 
     @ti.kernel
     def _kernel_rrt_step2(
@@ -1672,7 +1672,8 @@ class RigidEntity(Entity):
                 if ignore:
                     continue
 
-                if (self.geom_start <= i_ga < self.geom_end) or (self.geom_start <= i_gb < self.geom_end):
+                # TODO: handle self-collision (except the case for closed gripper)
+                if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
                     # collision detected
                     self._rrt_tree_size[i_b] -= 1
                     self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
@@ -1858,7 +1859,7 @@ class RigidEntity(Entity):
                     ignore_geom_pairs=unique_pairs,
                     envs_idx=envs_idx,
                 )
-                print(i_n, self._rrt_tree_size.to_numpy(), self._rrt_is_active.to_numpy()) # TODO: remove this
+                # print(i_n, self._rrt_tree_size.to_numpy(), self._rrt_is_active.to_numpy()) # TODO: remove this
             else:
                 break
         
