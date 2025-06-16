@@ -144,7 +144,7 @@ def pyramid_sloped_terrain(terrain, slope=1, platform_size=1.0):
     return terrain
 
 
-def discrete_obstacles_terrain(terrain, max_height, min_size, max_size, num_rects, platform_size=1.0):
+def discrete_obstacles_terrain(terrain, max_height, min_size, max_size, num_rects, platform_size=1.0, pattern_scale: float = 1.0):
     """
     Generate a terrain with gaps
 
@@ -160,9 +160,9 @@ def discrete_obstacles_terrain(terrain, max_height, min_size, max_size, num_rect
     """
     # switch parameters to discrete units
     max_height = int(max_height / terrain.vertical_scale)
-    min_size = int(min_size / terrain.horizontal_scale)
-    max_size = int(max_size / terrain.horizontal_scale)
-    platform_size = int(platform_size / terrain.horizontal_scale)
+    min_size = int(min_size * pattern_scale / terrain.horizontal_scale)
+    max_size = int(max_size * pattern_scale / terrain.horizontal_scale)
+    platform_size = int(platform_size * pattern_scale / terrain.horizontal_scale)
 
     (i, j) = terrain.height_field_raw.shape
     height_range = [-max_height, -max_height // 2, max_height // 2, max_height]
@@ -184,7 +184,7 @@ def discrete_obstacles_terrain(terrain, max_height, min_size, max_size, num_rect
     return terrain
 
 
-def wave_terrain(terrain, num_waves=1, amplitude=1.0):
+def wave_terrain(terrain, num_waves=1, amplitude=1.0, pattern_scale: float = 1.0):
     """
     Generate a wavy terrain
 
@@ -195,9 +195,9 @@ def wave_terrain(terrain, num_waves=1, amplitude=1.0):
     Returns:
         terrain (SubTerrain): update terrain
     """
-    amplitude = int(0.5 * amplitude / terrain.vertical_scale)
+    amplitude = int(0.5 * amplitude * pattern_scale / terrain.vertical_scale)
     if num_waves > 0:
-        div = terrain.length / (num_waves * np.pi * 2)
+        div = (terrain.length * pattern_scale) / (num_waves * np.pi * 2)
         x = np.arange(0, terrain.width)
         y = np.arange(0, terrain.length)
         xx, yy = np.meshgrid(x, y, sparse=True)
@@ -209,7 +209,7 @@ def wave_terrain(terrain, num_waves=1, amplitude=1.0):
     return terrain
 
 
-def stairs_terrain(terrain, step_width, step_height):
+def stairs_terrain(terrain, step_width, step_height, pattern_scale: float = 1.0):
     """
     Generate a stairs
 
@@ -221,8 +221,8 @@ def stairs_terrain(terrain, step_width, step_height):
         terrain (SubTerrain): update terrain
     """
     # switch parameters to discrete units
-    step_width = int(step_width / terrain.horizontal_scale)
-    step_height = int(step_height / terrain.vertical_scale)
+    step_width = int(step_width * pattern_scale / terrain.horizontal_scale)
+    step_height = int(step_height * pattern_scale / terrain.vertical_scale)
 
     num_steps = terrain.width // step_width
     height = step_height
@@ -232,7 +232,7 @@ def stairs_terrain(terrain, step_width, step_height):
     return terrain
 
 
-def pyramid_stairs_terrain(terrain, step_width, step_height, platform_size=1.0):
+def pyramid_stairs_terrain(terrain, step_width, step_height, platform_size=1.0, pattern_scale: float = 1.0):
     """
     Generate stairs
 
@@ -245,9 +245,9 @@ def pyramid_stairs_terrain(terrain, step_width, step_height, platform_size=1.0):
         terrain (SubTerrain): update terrain
     """
     # switch parameters to discrete units
-    step_width = int(step_width / terrain.horizontal_scale)
-    step_height = int(step_height / terrain.vertical_scale)
-    platform_size = int(platform_size / terrain.horizontal_scale)
+    step_width = int(step_width * pattern_scale / terrain.horizontal_scale)
+    step_height = int(step_height * pattern_scale / terrain.vertical_scale)
+    platform_size = int(platform_size * pattern_scale / terrain.horizontal_scale)
 
     height = 0
     start_x = 0

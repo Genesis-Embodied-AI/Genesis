@@ -104,6 +104,7 @@ def parse_terrain(morph: Terrain, surface):
                             min_size=1.0,
                             max_size=5.0,
                             num_rects=20,
+                            pattern_scale=morph.pattern_scale,
                         ).height_field_raw
 
                     elif subterrain_type == "wave_terrain":
@@ -111,6 +112,7 @@ def parse_terrain(morph: Terrain, surface):
                             new_subterrain,
                             num_waves=2.0,
                             amplitude=0.1,
+                            pattern_scale=morph.pattern_scale,
                         ).height_field_raw
 
                     elif subterrain_type == "stairs_terrain":
@@ -118,6 +120,7 @@ def parse_terrain(morph: Terrain, surface):
                             new_subterrain,
                             step_width=0.75,
                             step_height=-0.1,
+                            pattern_scale=morph.pattern_scale,
                         ).height_field_raw
 
                     elif subterrain_type == "pyramid_stairs_terrain":
@@ -125,6 +128,7 @@ def parse_terrain(morph: Terrain, surface):
                             new_subterrain,
                             step_width=0.75,
                             step_height=-0.1,
+                            pattern_scale=morph.pattern_scale,
                         ).height_field_raw
 
                     elif subterrain_type == "stepping_stones_terrain":
@@ -134,6 +138,7 @@ def parse_terrain(morph: Terrain, surface):
                             stone_distance=0.25,
                             max_height=0.2,
                             platform_size=0.0,
+                            pattern_scale=morph.pattern_scale,
                         ).height_field_raw
 
                     else:
