@@ -620,7 +620,7 @@ def tet_barycentric(p, tet_vertices):
 @ti.data_oriented
 class SAPCoupler(RBC):
     """
-    This class handles all the coupling between different solvers.
+    This class handles all the coupling between different solvers using the sap solver in DRAKE
     """
 
     # ------------------------------------------------------------------------------------
@@ -649,6 +649,11 @@ class SAPCoupler(RBC):
         self._rigid_fem = self.rigid_solver.is_active() and self.fem_solver.is_active() and self.options.rigid_fem
 
         if self.fem_solver.is_active():
+            if self.fem_solver._use_implicit_solver is False:
+                gs.raise_exception(
+                    "SAPCoupler requires FEM to use implicit solver. "
+                    "Please set `use_implicit_solver=True` in FEM options."
+                )
             self.init_fem_fields()
 
         self.init_sap_fields()
@@ -955,6 +960,7 @@ class SAPCoupler(RBC):
 
             # line search
             self.linesearch(f)
+            # TODO add convergence check
 
     def init_sap_solve(self, f: ti.i32):
         self.init_v(f)
