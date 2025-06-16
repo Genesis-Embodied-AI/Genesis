@@ -4545,6 +4545,12 @@ class RigidSolver(Solver):
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_links_root_COM(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns the center of mass (COM) of the entire kinematic tree to which the specified links belong.
+
+        This corresponds to the global COM of each entity, assuming a single-rooted structure — that is, as long as no
+        two successive links are connected by a free-floating joint (ie a joint that allows all 6 degrees of freedom).
+        """
         tensor = ti_field_to_torch(self.links_state.COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
