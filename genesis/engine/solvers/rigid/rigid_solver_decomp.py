@@ -964,7 +964,7 @@ class RigidSolver(Solver):
         self.geoms_state = struct_geom_state.field(
             shape=self._batch_shape(self.n_geoms_), needs_grad=False, layout=ti.Layout.SOA
         )
-        self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=gs.np_float)
+        self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), order="F", dtype=np.float32)
 
         if self.n_geoms > 0:
             # Make sure that the constraints parameters are valid
@@ -1147,7 +1147,7 @@ class RigidSolver(Solver):
         self.vgeoms_state = struct_vgeom_state.field(
             shape=self._batch_shape(self.n_vgeoms_), needs_grad=False, layout=ti.Layout.SOA
         )
-        self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=gs.np_float)
+        self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), order="F", dtype=np.float32)
 
         if self.n_vgeoms > 0:
             vgeoms = self.vgeoms
@@ -3333,7 +3333,7 @@ class RigidSolver(Solver):
                 self.geoms_state[i_g, i_b].quat,
             )
             for i, j in ti.static(ti.ndrange(4, 4)):
-                geoms_render_T[i_g, i_b, i, j] = geom_T[i, j]
+                geoms_render_T[i_g, i_b, i, j] = ti.cast(geom_T[i, j], ti.float32)
 
     def update_geoms_render_T(self):
         self._kernel_update_geoms_render_T(self._geoms_render_T)
@@ -3347,7 +3347,7 @@ class RigidSolver(Solver):
                 self.vgeoms_state[i_g, i_b].quat,
             )
             for i, j in ti.static(ti.ndrange(4, 4)):
-                vgeoms_render_T[i_g, i_b, i, j] = geom_T[i, j]
+                vgeoms_render_T[i_g, i_b, i, j] = ti.cast(geom_T[i, j], ti.float32)
 
     def update_vgeoms_render_T(self):
         self._kernel_update_vgeoms_render_T(self._vgeoms_render_T)
@@ -4545,6 +4545,12 @@ class RigidSolver(Solver):
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_links_root_COM(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns the center of mass (COM) of the entire kinematic tree to which the specified links belong.
+
+        This corresponds to the global COM of each entity, assuming a single-rooted structure — that is, as long as no
+        two successive links are connected by a free-floating joint (ie a joint that allows all 6 degrees of freedom).
+        """
         tensor = ti_field_to_torch(self.links_state.COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
