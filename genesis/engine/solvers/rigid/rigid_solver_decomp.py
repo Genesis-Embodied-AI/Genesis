@@ -4758,7 +4758,6 @@ class RigidSolver(Solver):
     def _kernel_set_drone_rpm(
         self,
         n_propellers: ti.i32,
-        COM_link_idx: ti.i32,
         propellers_link_idxs: ti.types.ndarray(),
         propellers_rpm: ti.types.ndarray(),
         propellers_spin: ti.types.ndarray(),
@@ -4772,20 +4771,16 @@ class RigidSolver(Solver):
         This method should only be called by drone entities.
         """
         for i_b in range(self._B):
-            torque_i = gs.ti_float(0.0)
             for i_prop in range(n_propellers):
                 i_l = propellers_link_idxs[i_prop]
-                I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
 
-                force_i = propellers_rpm[i_prop, i_b] ** 2 * KF
-                torque_i += propellers_rpm[i_prop, i_b] ** 2 * KM * propellers_spin[i_prop]
+                force = ti.Vector([0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KF])
+                torque = ti.Vector([0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KM * propellers_spin[i_prop]])
+                if invert:
+                    torque = -torque
 
-                self._func_apply_link_external_force(ti.Vector([0.0, 0.0, force_i]), i_l, i_b, 1, 1)
-
-            if invert:
-                torque_i = -torque_i
-
-            self._func_apply_link_external_torque(ti.Vector([0.0, 0.0, torque_i]), COM_link_idx, i_b, 1, 1)
+                self._func_apply_link_external_force(force, i_l, i_b, 1, 1)
+                self._func_apply_link_external_torque(torque, i_l, i_b, 1, 1)
 
     @ti.kernel
     def _update_drone_propeller_vgeoms(
