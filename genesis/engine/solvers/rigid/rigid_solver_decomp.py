@@ -1695,6 +1695,13 @@ class RigidSolver(Solver):
     def clear_external_forces(self):
         self._func_clear_external_force()
 
+    def set_substep_dt(self, new_dt: float):
+        try:
+            self._substep_dt[None] = new_dt
+        except (TypeError, KeyError, AttributeError):
+            self._substep_dt = float(new_dt)
+        self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * new_dt
+
     def substep(self):
         from genesis.utils.tools import create_timer
 

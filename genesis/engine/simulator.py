@@ -247,9 +247,13 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
-
     def step(self, in_backward: bool = False):
-        if not self._rigid_only:
+
+        outer_dt = self.rigid_solver._substep_dt
+        inner_dt = outer_dt / self._substeps
+        self.rigid_solver.set_substep_dt(inner_dt)
+
+        if not self._rigid_only or in_backward:
             self.process_input(in_backward=in_backward)
 
         for _ in range(self._substeps):
@@ -261,6 +265,7 @@ class Simulator(RBC):
             self._cur_substep_global += 1
 
         self.rigid_solver.clear_external_forces()
+        self.rigid_solver.set_substep_dt(outer_dt)
 
         if self.cur_substep_local == 0 and not in_backward:
             self.save_ckpt()
