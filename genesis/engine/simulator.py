@@ -249,14 +249,14 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward: bool = False):
-        if not self._rigid_only:                       
+        if not self._rigid_only:
             self.process_input(in_backward=in_backward)
 
         for _ in range(self._substeps):
             if self._rigid_only:
-                self.rigid_solver.substep()            
+                self.rigid_solver.substep()
             else:
-                self.substep(self.cur_substep_local)  
+                self.substep(self.cur_substep_local)
 
             self._cur_substep_global += 1
 
@@ -264,7 +264,6 @@ class Simulator(RBC):
 
         if self.cur_substep_local == 0 and not in_backward:
             self.save_ckpt()
-
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
