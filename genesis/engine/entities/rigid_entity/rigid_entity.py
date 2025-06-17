@@ -1583,6 +1583,7 @@ class RigidEntity(Entity):
                 self._rrt_start_configuration[i_q, i_b] = qpos_start[i_b_, i_q]
                 self._rrt_goal_configuration[i_q, i_b] = qpos_goal[i_b_, i_q]
                 self._rrt_node_info[0, i_b].configuration[i_q] = qpos_start[i_b_, i_q]
+            self._rrt_node_info[0, i_b].parent_idx = 0
             self._rrt_tree_size[i_b] = 1
             self._rrt_is_active[i_b] = 1
 
@@ -1636,10 +1637,9 @@ class RigidEntity(Entity):
             direction = random_sample - nearest_config
             steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
             for i_q in range(self.n_qs):
-                direction_magnitude = direction[i_q]
                 # If the step size exceeds max_step_size, clip it
-                if direction_magnitude > self._rrt_max_step_size:
-                    direction[i_q] = self._rrt_max_step_size
+                if abs(direction[i_q]) > self._rrt_max_step_size:
+                    direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
                 steer_result[i_q] = nearest_config[i_q] + direction[i_q]
 
             if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
@@ -1773,8 +1773,8 @@ class RigidEntity(Entity):
         # NOTE: we will reduce the contacts in batch dim assuming internal geom collisions are the same for a robot
         stacked_tensors = torch.stack((geom_a, geom_b), dim=1)
         unique_pairs = torch.unique(stacked_tensors, dim=0) # N', 2
-        print(unique_pairs)
 
+        gs.logger.info("start rrt planning...")
         start = time.time()
         for i_n in range(self._rrt_max_nodes):
             if self._rrt_is_active.to_torch().any():
@@ -1788,10 +1788,14 @@ class RigidEntity(Entity):
                     ignore_geom_pairs=unique_pairs,
                     envs_idx=envs_idx,
                 )
-                # print(i_n, self._rrt_tree_size.to_numpy(), self._rrt_is_active.to_numpy()) # TODO: remove this
             else:
                 break
-        print(time.time() - start)
+        
+        if self._rrt_is_active.to_torch().any():
+            gs.logger.warning("rrt planning failed")
+            return None
+        
+        gs.logger.info(f"rrt planning time: {time.time() - start}")
 
         ts = self._rrt_tree_size.to_torch(device=gs.device)
         g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
@@ -1803,11 +1807,12 @@ class RigidEntity(Entity):
         res = [g_n]
         for _ in range(ts.max()):
             g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
-            g_n[g_n == -1] = 0
             res.append(g_n)
             if torch.all(g_n == 0):
                 break
         res_idx = torch.stack(list(reversed(res)), dim=0)
+        
+        print(res_idx)
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
 
         # TODO: smooth path
@@ -1820,6 +1825,350 @@ class RigidEntity(Entity):
         self._kernel_rrt_cleanup(qpos_cur.contiguous(), envs_idx)
         return sol
             
+
+    # ------------------------------------------------------------------------------------
+    # ------------------------------ rrt connect -----------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _init_rrt_connect_fields(self, goal_bias=0.05, max_nodes=2000, pos_tol=5e-3, max_step_size=0.1):
+        self._rrt_goal_bias = goal_bias
+        self._rrt_max_nodes = max_nodes
+        self._rrt_pos_tol = pos_tol # .28 degree
+        self._rrt_max_step_size = max_step_size # NOTE: in radian (about 5.7 degree)
+        self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
+        self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
+        self.struct_rrt_node_info = ti.types.struct(
+            configuration=ti.types.vector(self.n_qs, gs.ti_float),
+            parent_idx=gs.ti_int,
+            child_idx=gs.ti_int,
+        )
+        self._rrt_node_info = self.struct_rrt_node_info.field(shape=self._solver._batch_shape(self._rrt_max_nodes))
+        self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+        self._rrt_is_active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+        self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+        
+    def _reset_rrt_connect_fields(self):
+        self._rrt_start_configuration.fill(0.0)
+        self._rrt_goal_configuration.fill(0.0)
+        self._rrt_node_info.parent_idx.fill(-1)
+        self._rrt_node_info.child_idx.fill(-1)
+        self._rrt_node_info.configuration.fill(0.0)
+        self._rrt_tree_size.fill(0)
+        self._rrt_is_active.fill(0)
+        self._rrt_goal_reached_node_idx.fill(-1)
+    
+    @ti.kernel
+    def _kernel_rrt_connect_init(
+        self,
+        qpos_start: ti.types.ndarray(),
+        qpos_goal: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray()
+    ):
+        # NOTE: run IK before this
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            for i_q in range(self.n_qs):
+                # save original qpos
+                self._rrt_start_configuration[i_q, i_b] = qpos_start[i_b_, i_q]
+                self._rrt_goal_configuration[i_q, i_b] = qpos_goal[i_b_, i_q]
+                self._rrt_node_info[0, i_b].configuration[i_q] = qpos_start[i_b_, i_q]
+                self._rrt_node_info[1, i_b].configuration[i_q] = qpos_goal[i_b_, i_q]
+            self._rrt_node_info[0, i_b].parent_idx = 0
+            self._rrt_node_info[1, i_b].child_idx = 1
+            self._rrt_tree_size[i_b] = 2
+            self._rrt_is_active[i_b] = 1
+
+    @ti.kernel
+    def _kernel_rrt_connect_cleanup(
+        self,
+        qpos_current: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray()
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            for i_q in range(self.n_qs):
+                self._solver.qpos[i_q + self._q_start, i_b] = qpos_current[i_b_, i_q]
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+    
+    @ti.kernel
+    def _kernel_rrt_connect_step1(
+        self,
+        forward_pass: ti.i32,
+        q_limit_lower: ti.types.ndarray(),
+        q_limit_upper: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            if not self._rrt_is_active[i_b]:
+                continue
+            
+            random_sample = ti.Vector([
+                q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                for i_q in range(self.n_qs)
+            ])
+            if ti.random() < self._rrt_goal_bias:
+                if forward_pass:
+                    random_sample = ti.Vector([
+                        self._rrt_goal_configuration[i_q, i_b]
+                        for i_q in range(self.n_qs)
+                    ])
+                else:
+                    random_sample = ti.Vector([
+                        self._rrt_start_configuration[i_q, i_b]
+                        for i_q in range(self.n_qs)
+                    ])
+
+            # find nearest neighbor
+            nearest_neighbor_idx = -1
+            nearest_neighbor_dist = 1e6
+            ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+            for i_n in range(self._rrt_tree_size[i_b]):
+                if forward_pass:
+                    # NOTE: in forward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
+                    if self._rrt_node_info[i_n, i_b].parent_idx == -1:
+                        continue
+                else:
+                    # NOTE: in backward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
+                    if self._rrt_node_info[i_n, i_b].child_idx == -1:
+                        continue
+                dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
+                if dist < nearest_neighbor_dist:
+                    nearest_neighbor_dist = dist
+                    nearest_neighbor_idx = i_n
+            
+            # steer from nearest neighbor to random sample
+            nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
+            direction = random_sample - nearest_config
+            steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
+            for i_q in range(self.n_qs):
+                # If the step size exceeds max_step_size, clip it
+                if abs(direction[i_q]) > self._rrt_max_step_size:
+                    direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
+                steer_result[i_q] = nearest_config[i_q] + direction[i_q]
+
+            if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
+                # add new node
+                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
+                if forward_pass:
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
+                else:
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = nearest_neighbor_idx
+                self._rrt_tree_size[i_b] += 1
+
+                # set the steer result and collision check for i_b
+                for i_q in range(self.n_qs):
+                    self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
+                self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+                self._solver._func_update_geoms(i_b)
+
+    @ti.kernel
+    def _kernel_rrt_connect_step2(
+        self,
+        forward_pass: ti.i32,
+        ignore_geom_pairs: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            if not self._rrt_is_active[i_b]:
+                continue
+
+            collision_detected = False
+            for i_c in range(self._solver.collider.n_contacts[i_b]):
+                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
+                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
+
+                ignore = False
+                for i_p in range(ignore_geom_pairs.shape[0]):
+                    if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
+                        ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga):
+                        ignore = True
+                        break
+                if ignore:
+                    continue
+
+                # TODO: handle self-collision (except the case for closed gripper)
+                if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
+                    # collision detected
+                    self._rrt_tree_size[i_b] -= 1
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
+                    if forward_pass:
+                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
+                    else:
+                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = -1
+                    collision_detected = True
+                    break
+
+            # check the obtained steer result is within goal configuration only if no collision
+            if not collision_detected:
+                ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+                for i_n in range(self._rrt_tree_size[i_b]):
+                    if forward_pass:
+                        if self._rrt_node_info[i_n, i_b].child_idx == -1:
+                            continue
+                    else:
+                        if self._rrt_node_info[i_n, i_b].parent_idx == -1:
+                            continue
+                    flag = True
+                    for i_q in range(self.n_qs):
+                        if abs(self._solver.qpos[i_q, i_b] - self._rrt_node_info.configuration[i_n, i_b][i_q]) > self._rrt_max_step_size:
+                            flag = False
+                            break
+                    if flag:
+                        self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
+                        if forward_pass:
+                            self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx = i_n
+                            print("forward pass")
+                            print("goal reached", self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx, self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx)
+                        else:
+                            self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx = i_n
+                            print("backward")
+                            print("goal reached", self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx, self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx)
+                        self._rrt_is_active[i_b] = 0
+                        break
+        
+    @gs.assert_built
+    def plan_path_rrt_connect(
+        self,
+        qpos_goal,
+        qpos_start=None,
+        resolution=0.01,
+        timeout=5.0,
+        max_retry=1,
+        smooth_path=True,
+        num_waypoints=100,
+        ignore_collision=False,
+        ignore_joint_limit=False,
+        envs_idx=None
+    ):
+        """
+        Plan a path from `qpos_start` to `qpos_goal`.
+        qpos_goal : array_like
+            The goal state. [B, Nq] or [1, Nq]
+        qpos_start : None | array_like, optional
+            The start state. If None, the current state of the rigid entity will be used. Defaults to None. [B, Nq] or [1, Nq]
+        """
+        import time
+        if self._solver.n_envs > 0:
+            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+        else:
+            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+
+        qpos_cur = self._solver.qpos.to_torch().t()[envs_idx]
+        if qpos_start is None:
+            qpos_start = qpos_cur.clone()
+        else:
+            if qpos_start.ndim == 1:
+                qpos_start = qpos_start.unsqueeze(0)
+            assert qpos_start.ndim == 2
+            if qpos_start.shape[0] == 1:
+                qpos_start = qpos_start.repeat(len(envs_idx), 1)
+
+        if qpos_goal.ndim == 1:
+            qpos_goal = qpos_goal.unsqueeze(0)
+        assert qpos_goal.ndim == 2
+        if qpos_goal.shape[0] == 1:
+            qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
+        
+        self._init_rrt_connect_fields()
+        self._reset_rrt_connect_fields()
+        self._kernel_rrt_connect_init(qpos_start.contiguous(), qpos_goal.contiguous(), envs_idx)
+
+        self.set_qpos(qpos_start)
+        self._solver._kernel_detect_collision()
+        scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
+        n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
+
+        valid_mask = torch.logical_or(
+            torch.logical_and(
+                scene_contact_info["geom_a"] >= self.geom_start,
+                scene_contact_info["geom_a"] < self.geom_end,
+            ),
+            torch.logical_and(
+                scene_contact_info["geom_b"] >= self.geom_start,
+                scene_contact_info["geom_b"] < self.geom_end,
+            ),
+        )
+        contact_indices = torch.arange(valid_mask.shape[0], device=valid_mask.device).unsqueeze(1)
+        valid_mask = torch.logical_and(valid_mask, contact_indices < n_contacts)
+
+        max_env_collisions = int(torch.max(n_contacts).item())
+        valid_mask = valid_mask[:max_env_collisions]
+        geom_a = scene_contact_info["geom_a"][:max_env_collisions][valid_mask] # N 
+        geom_b = scene_contact_info["geom_b"][:max_env_collisions][valid_mask] # N
+        assert len(geom_a) == len(geom_b)
+
+        # NOTE: we will reduce the contacts in batch dim assuming internal geom collisions are the same for a robot
+        stacked_tensors = torch.stack((geom_a, geom_b), dim=1)
+        unique_pairs = torch.unique(stacked_tensors, dim=0) # N', 2
+
+        gs.logger.info("start rrt connect planning...")
+        start = time.time()
+        forward_pass = True
+        for i_n in range(self._rrt_max_nodes):
+            if self._rrt_is_active.to_torch().any():
+                self._kernel_rrt_connect_step1(
+                    forward_pass=forward_pass,
+                    q_limit_lower=self.q_limit[0],
+                    q_limit_upper=self.q_limit[1],
+                    envs_idx=envs_idx,
+                )
+                self._solver._kernel_detect_collision()
+                self._kernel_rrt_connect_step2(
+                    forward_pass=forward_pass,
+                    ignore_geom_pairs=unique_pairs,
+                    envs_idx=envs_idx,
+                )
+                forward_pass = not forward_pass
+            else:
+                break
+            
+        if self._rrt_is_active.to_torch().any():
+            gs.logger.warning("rrt connect planning failed")
+            return None
+        
+        gs.logger.info(f"rrt connect planning time: {time.time() - start}")
+
+        ts = self._rrt_tree_size.to_torch(device=gs.device)
+        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
+
+        node_info = self._rrt_node_info.to_torch(device=gs.device)
+        parents_idx = node_info["parent_idx"]
+        children_idx = node_info["child_idx"]
+        configurations = node_info["configuration"]
+
+        res = [g_n]
+        for _ in range(ts.max() // 2):
+            g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
+            res.append(g_n)
+            if torch.all(g_n == 0):
+                break
+        res_idx = torch.stack(list(reversed(res)), dim=0)
+
+        c_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
+        res = []
+        for _ in range(ts.max() // 2):
+            c_n = children_idx[c_n, torch.arange(len(envs_idx))]
+            res.append(c_n)
+            if torch.all(c_n == 1):
+                break
+        res_idx = torch.cat([res_idx, torch.stack(res, dim=0)], dim=0)
+        print(res_idx)
+        
+        sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
+
+        # TODO: smooth path
+        if smooth_path:
+            pass
+
+        # TODO: interpolate to make num_waypoints
+        
+
+        self._kernel_rrt_connect_cleanup(qpos_cur.contiguous(), envs_idx)
+        return sol
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
