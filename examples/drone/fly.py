@@ -40,13 +40,7 @@ def main():
             pos=(0.0, 0, 0.02),
         ),
     )
-    cam = scene.add_camera(
-        res=(640, 480),
-        pos=(3.5, 0.0, 2.5),
-        lookat=(0, 0, 0.5),
-        fov=30,
-        GUI=True,
-    )
+
     ########################## build ##########################
     scene.build()
 
@@ -207,12 +201,10 @@ def main():
         ],
         dtype=np.float32,
     )
-    cam.start_recording()
     for i in range(len(traj)):
         # 14468 is hover rpm
         drone.set_propellels_rpm((1 + 0.05 * traj[i]) * 14468.429183500699)
         scene.step()
-    cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
 
 if __name__ == "__main__":
