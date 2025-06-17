@@ -201,6 +201,7 @@ def main():
         ],
         dtype=np.float32,
     )
+
     for i in range(len(traj)):
         # 14468 is hover rpm
         drone.set_propellels_rpm((1 + 0.05 * traj[i]) * 14468.429183500699)

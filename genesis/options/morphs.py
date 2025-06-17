@@ -893,8 +893,6 @@ class Terrain(Morph):
         The name of the terrain to save
     from_stored : str, optional
         The path of the stored terrain to load
-    pattern_scale : float, optional
-        Lets users shrink/enlarge geometric features independently from mesh resolution. Defaults to 1.0.
     """
 
     is_free: bool = False
@@ -911,7 +909,6 @@ class Terrain(Morph):
     height_field: Any = None
     name: str = "default"  # name to store and reuse the terrain
     from_stored: Any = None
-    pattern_scale: float = 1.0
 
     def __init__(self, **data):
         super().__init__(**data)
