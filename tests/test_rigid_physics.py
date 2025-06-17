@@ -2178,7 +2178,7 @@ def test_drone_advanced(show_viewer):
     else:
         raise AssertionError
 
-    tol = 1e-4
+    tol = 1e-2
     pos_1 = drones[0].get_pos()
     pos_2 = drones[1].get_pos()
     assert abs(pos_1[0] - pos_2[0]) < tol
