@@ -347,7 +347,8 @@ def parse_link(mj, i_l, scale):
                 biasprm = mj.actuator_biasprm[i_a]
                 if gainprm[1:].any() or biasprm[0]:
                     gs.logger.warning(
-                        "(MJCF) Actuator control gain and bias parameters not supported. Using default values."
+                        "(MJCF) Actuator control gain and bias parameters not supported. "
+                        f"Using default values for joint `{j_info['name']}`"
                     )
                     actuator_kp = gu.default_dofs_kp(1)[0]
                     actuator_kv = gu.default_dofs_kv(1)[0]
@@ -355,7 +356,7 @@ def parse_link(mj, i_l, scale):
                     # Doing our best to approximate the expected behavior: g0 * p_target + b1 * p_mes + b2 * v_mes
                     gs.logger.warning(
                         "(MJCF) Actuator control gain and bias parameters cannot be reduced to a unique PD control "
-                        "position gain. Using max between gain and bias."
+                        f"position gain. Using max between gain and bias for joint `{j_info['name']}`."
                     )
                     actuator_kp = min(-gainprm[0], biasprm[1])
                     actuator_kv = biasprm[2]
