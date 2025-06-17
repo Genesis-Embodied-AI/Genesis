@@ -1692,7 +1692,7 @@ class RigidEntity(Entity):
             if not collision_detected:
                 flag = True
                 for i_q in range(self.n_qs):
-                    if abs(self._solver.qpos[i_q, i_b] - self._rrt_goal_configuration[i_q, i_b]) > self._rrt_pos_tol:
+                    if abs(self._solver.qpos[i_q + self._q_start, i_b] - self._rrt_goal_configuration[i_q, i_b]) > self._rrt_pos_tol:
                         flag = False
                         break
                 if flag:
@@ -1710,7 +1710,6 @@ class RigidEntity(Entity):
         smooth_path=True,
         num_waypoints=100,
         ignore_collision=False,
-        ignore_joint_limit=False,
         envs_idx=None
     ):
         """
@@ -1726,7 +1725,7 @@ class RigidEntity(Entity):
         else:
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
-        qpos_cur = self._solver.qpos.to_torch().t()[envs_idx]
+        qpos_cur = self.get_qpos()
         if qpos_start is None:
             qpos_start = qpos_cur.clone()
         else:
@@ -2014,7 +2013,7 @@ class RigidEntity(Entity):
                             continue
                     flag = True
                     for i_q in range(self.n_qs):
-                        if abs(self._solver.qpos[i_q, i_b] - self._rrt_node_info.configuration[i_n, i_b][i_q]) > self._rrt_max_step_size:
+                        if abs(self._solver.qpos[i_q + self._q_start, i_b] - self._rrt_node_info.configuration[i_n, i_b][i_q]) > self._rrt_max_step_size:
                             flag = False
                             break
                     if flag:
@@ -2053,7 +2052,7 @@ class RigidEntity(Entity):
         else:
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
-        qpos_cur = self._solver.qpos.to_torch().t()[envs_idx]
+        qpos_cur = self.get_qpos()
         if qpos_start is None:
             qpos_start = qpos_cur.clone()
         else:
