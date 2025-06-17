@@ -25,8 +25,8 @@ BENCHMARK_NAME = "rigid_body"
 REPORT_FILE = "speed_test.txt"
 
 STEP_DT = 0.01
-NUM_WARMUP_FRAMES = 900
-NUM_RECORD_FRAMES = 100
+DURATION_WARMUP = 45.0
+DURATION_RECORD = 15.0
 
 pytestmark = [
     pytest.mark.benchmarks,
@@ -50,12 +50,11 @@ def get_rigid_solver_options(**kwargs):
     timestamp = get_git_commit_timestamp()
 
     # Beyond this point, track performance for default options, finally !
-    # Note that "reversed" arithmetic is used to properly handle unknown timestamps (aka "nan").
-    if not (get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") <= timestamp):
-        options = {}
+    if not (get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") > timestamp):
+        options = dict()
 
     # Try to be comparable to previous official release (ie 0.2.1) as much as possible.
-    elif get_git_commit_timestamp("e46a1ffd33f681155422896c2e343e576e0a72b1") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("e46a1ffd33f681155422896c2e343e576e0a72b1"):
         # * Rename 'constraint_resolve_time' in 'constraint_timeconst'
         options = dict(
             enable_mujoco_compatibility=True,
@@ -66,7 +65,7 @@ def get_rigid_solver_options(**kwargs):
             iterations=50,
             tolerance=1e-5,
         )
-    elif get_git_commit_timestamp("b1ae77d5c838967dff6f85ee83796a4a82811061") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("b1ae77d5c838967dff6f85ee83796a4a82811061"):
         # * 'constraint_solver' now default to Newton (instead of CG)
         # * 'iterations' now default to 100 (instead of 50)
         # * 'tolerance' now default to 1e-8 (instead of 1e-5)
@@ -79,14 +78,14 @@ def get_rigid_solver_options(**kwargs):
             iterations=50,
             tolerance=1e-5,
         )
-    elif get_git_commit_timestamp("6638c6389978594637da216b72be8d7a8f2272c4") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("6638c6389978594637da216b72be8d7a8f2272c4"):
         # * 'enable_mpr_vanilla' has been renamed in 'enable_mujoco_compatibility'
         options = dict(
             enable_mujoco_compatibility=True,
             constraint_resolve_time=2 * STEP_DT,
             max_collision_pairs=100,
         )
-    elif get_git_commit_timestamp("5d04ec4c3ecba4a1e295d6a4a677c041e69092a7") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("5d04ec4c3ecba4a1e295d6a4a677c041e69092a7"):
         # * Expose option 'enable_multi_contact' (default to True)
         # * Expose 'enable_mpr_vanilla' (default to False)
         options = dict(
@@ -95,14 +94,14 @@ def get_rigid_solver_options(**kwargs):
             constraint_resolve_time=2 * STEP_DT,
             max_collision_pairs=100,
         )
-    elif get_git_commit_timestamp("6638c6389978594637da216b72be8d7a8f2272c4") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("6638c6389978594637da216b72be8d7a8f2272c4"):
         # * 'enable_self_collision' now default to True (instead of False)
         options = dict(
             enable_self_collision=False,
             constraint_resolve_time=2 * STEP_DT,
             max_collision_pairs=100,
         )
-    elif get_git_commit_timestamp("361d9500cd321b25a63a28ace7a3d94fb9e45f65") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("361d9500cd321b25a63a28ace7a3d94fb9e45f65"):
         # * 'max_collision_pairs' now default to 300 (instead of 100)
         # * 'constraint_resolve_time' now default to None (instead of 2 * DT)
         options = dict(
@@ -121,11 +120,11 @@ def get_file_morph_options(**kwargs):
     timestamp = get_git_commit_timestamp()
 
     # Beyond this point, track performance for default options, finally !
-    if not (get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") <= timestamp):
+    if not (get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") > timestamp):
         options = {}
 
     # Try to be comparable to previous official release (ie 0.2.1) as much as possible.
-    elif get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("bbab229d74e5f30e2f641ccf6b009a65f3cbec0f"):
         # * 'decimation' has been enabled back by default
         # * 'decimate_aggressiveness' now defaults to 5
         options = dict(
@@ -138,7 +137,7 @@ def get_file_morph_options(**kwargs):
                 extrude_margin=0.01,
             ),
         )
-    elif get_git_commit_timestamp("d7ea71d5490d0eba6c70a2dfe5943de62227fe68") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("d7ea71d5490d0eba6c70a2dfe5943de62227fe68"):
         # * 'decompose_error_threshold' has been split in 'decompose_object_error_threshold' (default to 0.15) and
         #   'decompose_robot_error_threshold' (default to inf)
         options = dict(
@@ -151,7 +150,7 @@ def get_file_morph_options(**kwargs):
                 extrude_margin=0.01,
             ),
         )
-    elif get_git_commit_timestamp("0e7b4be511d261d6ad25a382e5aa335468f5718b") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("0e7b4be511d261d6ad25a382e5aa335468f5718b"):
         # * 'decimate_aggressiveness' has been exposed and default to 2
         options = dict(
             decimate=False,
@@ -163,7 +162,7 @@ def get_file_morph_options(**kwargs):
                 extrude_margin=0.01,
             ),
         )
-    elif get_git_commit_timestamp("361d9500cd321b25a63a28ace7a3d94fb9e45f65") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("361d9500cd321b25a63a28ace7a3d94fb9e45f65"):
         # * 'decimate' now defaults to 'convexify'
         # * 'decimate' aggressiveness has been updated from 0 to 2 (but not exposed), it was 7 originally
         options = dict(
@@ -175,7 +174,7 @@ def get_file_morph_options(**kwargs):
                 extrude_margin=0.01,
             ),
         )
-    elif get_git_commit_timestamp("ec6e16949a65dbc62d318a734eeb7f17b0011e03") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("ec6e16949a65dbc62d318a734eeb7f17b0011e03"):
         # * 'decompose_error_threshold' default value updated to 0.15
         options = dict(
             decompose_error_threshold=float("inf"),
@@ -185,7 +184,7 @@ def get_file_morph_options(**kwargs):
                 extrude_margin=0.01,
             ),
         )
-    elif get_git_commit_timestamp("3bc64493a537b7f52fca6b5fd2dd81f764c34433") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("3bc64493a537b7f52fca6b5fd2dd81f764c34433"):
         # * Move 'decimate', 'decompose_nonconvex' options from Mesh to FileMorph morphs (parent class)
         #   Before that, decimation and convex decomposition could not be enabled at all.
         # * 'convexify' has been enabled back by default
@@ -200,7 +199,7 @@ def get_file_morph_options(**kwargs):
             ),
         )
 
-    elif get_git_commit_timestamp("8ea732b1a3b340ba7dff295fbd3527cb34b5b676") >= timestamp:
+    elif timestamp >= get_git_commit_timestamp("8ea732b1a3b340ba7dff295fbd3527cb34b5b676"):
         # * 'convexify' has been disabled by default
         # * 'decimate' has been disabled by default (it only affects Mesh morphs at that time)
         # * 'decompose_nonconvex' has been disabled by default (it only affects Mesh morphs at that time)
@@ -360,12 +359,20 @@ def anymal_c(solver, n_envs):
     else:
         robot.control_dofs_position(np.zeros(12), motors_dof_idx)
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
@@ -403,12 +410,20 @@ def batched_franka(solver, n_envs):
     scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
     compile_time = time.time() - time_start
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
@@ -451,13 +466,21 @@ def random(solver, n_envs):
     dofs = torch.arange(6, 18, device=gs.device)
     robot.control_dofs_position(torch.zeros((n_envs, 12), device=gs.device), dofs)
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         robot.control_dofs_position(torch.rand((n_envs, 12), device=gs.device) * 0.1 - 0.05, dofs)
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
@@ -494,12 +517,20 @@ def cubes(solver, n_envs, n_cubes, enable_island):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    for i in range(NUM_WARMUP_FRAMES + NUM_RECORD_FRAMES):
-        if i == NUM_WARMUP_FRAMES:
-            time_start = time.time()
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
         scene.step()
-    run_time = time.time() - time_start
-    runtime_fps = NUM_RECORD_FRAMES * n_envs / run_time
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}

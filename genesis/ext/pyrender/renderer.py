@@ -313,6 +313,43 @@ class Renderer(object):
         for i, text in enumerate(texts):
             font.render_string(text, x, int(y - i * font_pt * 1.1), scale, TextAlign.TOP_LEFT)
 
+    def read_depth_buf(self):
+        """Read and return the current viewport's color buffer.
+
+        Returns
+        -------
+        depth_im : (h, w) float32
+            The depth buffer in linear units.
+        """
+        width, height = self.viewport_width, self.viewport_height
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+        glReadBuffer(GL_FRONT)
+        depth_buf = glReadPixels(
+            0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT
+        )
+
+        depth_im = np.frombuffer(depth_buf, dtype=np.float32)
+        depth_im = depth_im.reshape((height, width))
+        depth_im = np.flip(depth_im, axis=0)
+
+        inf_inds = (depth_im == 1.0)
+        depth_im = 2.0 * depth_im - 1.0
+        z_near, z_far = self._latest_znear, self._latest_zfar
+        noninf = np.logical_not(inf_inds)
+        if z_far is None:
+            depth_im[noninf] = 2 * z_near / (1.0 - depth_im[noninf])
+        else:
+            depth_im[noninf] = ((2.0 * z_near * z_far) /
+                                (z_far + z_near - depth_im[noninf] *
+                                (z_far - z_near)))
+        depth_im[inf_inds] = 0.0
+
+        # Resize for macos if needed
+        if sys.platform == 'darwin':
+            depth_im = self._resize_image(depth_im)
+
+        return depth_im
+
     def read_color_buf(self):
         """Read and return the current viewport's color buffer.
 
@@ -774,7 +811,6 @@ class Renderer(object):
     ###########################################################################
 
     def _update_context(self, scene, flags):
-
         # Update meshes
         scene_meshes = scene.meshes
 

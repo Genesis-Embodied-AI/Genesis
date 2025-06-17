@@ -129,6 +129,7 @@ class EGLPlatform(Platform):
         _ensure_egl_loaded()
         from OpenGL.EGL import (
             EGL_SURFACE_TYPE,
+            EGL_NO_SURFACE,
             EGL_PBUFFER_BIT,
             EGL_BLUE_SIZE,
             EGL_RED_SIZE,
@@ -152,6 +153,7 @@ class EGLPlatform(Platform):
             eglChooseConfig,
             eglBindAPI,
             eglCreateContext,
+            eglMakeCurrent,
             EGLConfig,
             EGLError,
         )
@@ -230,6 +232,9 @@ class EGLPlatform(Platform):
 
                 # Create an EGL context
                 egl_context = eglCreateContext(egl_display, configs[0], EGL_NO_CONTEXT, context_attributes)
+
+                # Select EGL context
+                assert eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, egl_context)
 
                 break
             except (AssertionError, EGLError) as e:
