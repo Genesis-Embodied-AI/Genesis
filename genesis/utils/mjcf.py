@@ -4,11 +4,13 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
+import io
 
 import numpy as np
 import trimesh
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
+from wurlitzer import pipes
 
 import z3
 import mujoco
@@ -111,9 +113,20 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
             # Parse updated URDF file as a string
             data = ET.tostring(root, encoding="utf8")
-            mj = mujoco.MjModel.from_xml_string(data)
 
-            # Special treatment for URDF
+            # To capture MuJoCo warnings like
+            # WARNING: Geom with duplicate name '' encountered in URDF, creating an unnamed geom.
+            stderr_buf = io.StringIO()
+            stdout_buf = io.StringIO()
+            with pipes(stdout=stdout_buf, stderr=stderr_buf):
+                mj = mujoco.MjModel.from_xml_string(data)  # C++ code runs here
+            stderr_text = stderr_buf.getvalue()
+            stdout_text = stdout_buf.getvalue()
+            if stderr_text:
+                gs.logger.debug(f"MuJoCo warnings: {stderr_text}")
+            if stdout_text:
+                gs.logger.debug(f"MuJoCo stdout: {stdout_text}")
+
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
                 for i, link in enumerate(robot.links):
@@ -151,9 +164,10 @@ def parse_xml(morph, surface):
     # Build model from XML (either URDF or MJCF)
     mj = build_model(morph.file, not morph.visualization, morph.default_armature, merge_fixed_links, links_to_keep)
 
-    # Check if there is any tendon. Report a warning if so.
-    if mj.ntendon:
-        gs.logger.warning("(MJCF) Tendon not supported")
+    # We have another more informative warning later so we suppress this one
+    # gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for `{j_info['name']}`")
+    # if mj.ntendon:
+    #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
     links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
