@@ -8,6 +8,7 @@ import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 
 from .mpr_decomp import MPR
+from .gjk_decomp import GJK
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
@@ -38,6 +39,8 @@ class Collider:
         self._init_verts_connectivity()
         self._init_collision_fields()
         self._mpr = MPR(rigid_solver)
+        self._gjk = GJK(rigid_solver)
+        self.use_gjk = self._solver._options.use_gjk_collision
 
         # multi contact perturbation and tolerance
         if self._solver._enable_mujoco_compatibility:
@@ -871,7 +874,10 @@ class Collider:
                         and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                     )
                 ):
-                    self._func_mpr(i_ga, i_gb, i_b)
+                    if self.use_gjk:
+                        self._func_gjk(i_ga, i_gb, i_b)
+                    else:
+                        self._func_mpr(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_convex_specializations(self):
@@ -1353,6 +1359,7 @@ class Collider:
                         )
                         + contact_pos_0
                     )
+                    # @TODO: Bug? [contact_point] ---> [contact_pos]?
                     contact_point = 0.5 * (contact_point_a + contact_point_b)
 
                     # Discard contact point is repeated
@@ -1393,6 +1400,53 @@ class Collider:
                     self._solver.geoms_state[i_gb, i_b].quat = gb_quat
 
     @ti.func
+    def _func_gjk(self, i_ga, i_gb, i_b):
+        """
+        GJK-EPA algorithm for collision detection between two convex geometries.
+        (Mujoco-based implementation)
+        """
+        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+            i_gb, i_ga = i_ga, i_gb
+
+        # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
+        # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
+        # criteria to get rid of redundant contact points seems to be a better option.
+        multi_contact = (
+            self._solver._enable_multi_contact
+            # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
+            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
+            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
+            and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
+            and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
+        )
+
+        if (
+            not multi_contact
+            or self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE
+            or self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.BOX
+        ):
+            self._gjk.func_gjk_contact(i_ga, i_gb, i_b, multi_contact)
+
+            distance = self._gjk.distance[i_b]
+            penetration = -distance
+
+            if distance < 0:
+                for i in range(self._gjk.n_witness[i_b]):
+                    witness_a = self._gjk.witness[i_b, i].point_obj1
+                    witness_b = self._gjk.witness[i_b, i].point_obj2
+                    contact_pos = 0.5 * (witness_a + witness_b)
+                    # Normal should point from [i_ga] to [i_gb]
+                    normal = witness_b - witness_a
+
+                    # If the normal is zero, skip this contact
+                    normal_len = normal.norm()
+                    if normal_len == 0.0:
+                        continue
+                    normal = normal / normal_len
+
+                    self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+
+    @ti.func
     def _func_rotate_frame(self, i_g, contact_pos, qrot, i_b):
         self._solver.geoms_state[i_g, i_b].quat = gu.ti_transform_quat_by_quat(
             self._solver.geoms_state[i_g, i_b].quat, qrot
@@ -1402,6 +1456,13 @@ class Collider:
         vec = gu.ti_transform_by_quat(rel, qrot)
         vec = vec - rel
         self._solver.geoms_state[i_g, i_b].pos = self._solver.geoms_state[i_g, i_b].pos - vec
+
+    @ti.func
+    def _func_plane_sphere_contact(self, i_ga: ti.i32, i_gb: ti.i32, i_b: ti.i32):
+        """
+        Use Mujoco's plane-sphere contact detection algorithm for more stable collision detection.
+        """
+        pass
 
     @ti.func
     def _func_box_box_contact(self, i_ga: ti.i32, i_gb: ti.i32, i_b: ti.i32):

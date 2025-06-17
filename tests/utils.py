@@ -419,7 +419,7 @@ def _get_model_mappings(
 
 
 def build_mujoco_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
+    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping, native_ccd
 ):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
@@ -445,7 +445,8 @@ def build_mujoco_sim(
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    if not native_ccd:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     if multi_contact:
         model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
     else:
@@ -467,6 +468,7 @@ def build_genesis_sim(
     multi_contact,
     mujoco_compatibility,
     adjacent_collision,
+    gjk_collision,
     show_viewer,
     mj_sim,
 ):
@@ -495,6 +497,7 @@ def build_genesis_sim(
             tolerance=mj_sim.model.opt.tolerance,
             ls_iterations=mj_sim.model.opt.ls_iterations,
             ls_tolerance=mj_sim.model.opt.ls_tolerance,
+            use_gjk_collision=gjk_collision,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -562,7 +565,6 @@ def check_mujoco_model_consistency(
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    assert mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     assert not (mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_FWDINV)
 
     mj_adj_collision = bool(mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
