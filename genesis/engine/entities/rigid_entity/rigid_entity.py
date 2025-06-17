@@ -19,7 +19,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
-
+from genesis.utils.path_planing import move_padding_to_tail_vectorized
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
@@ -1811,7 +1811,7 @@ class RigidEntity(Entity):
             if torch.all(g_n == 0):
                 break
         res_idx = torch.stack(list(reversed(res)), dim=0)
-        
+        res_idx = move_padding_to_tail_vectorized(res_idx)
         print(res_idx)
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
 
@@ -2021,12 +2021,8 @@ class RigidEntity(Entity):
                         self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
                         if forward_pass:
                             self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx = i_n
-                            print("forward pass")
-                            print("goal reached", self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx, self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx)
                         else:
                             self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx = i_n
-                            print("backward")
-                            print("goal reached", self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx, self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx)
                         self._rrt_is_active[i_b] = 0
                         break
         
@@ -2156,6 +2152,8 @@ class RigidEntity(Entity):
             if torch.all(c_n == 1):
                 break
         res_idx = torch.cat([res_idx, torch.stack(res, dim=0)], dim=0)
+        res_idx = move_padding_to_tail_vectorized(res_idx)
+        res_idx = res_idx[~torch.logical_or(0 == res_idx, 1 == res_idx).all(dim=1)]
         print(res_idx)
         
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
