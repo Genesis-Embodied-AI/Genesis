@@ -572,9 +572,9 @@ class RigidSolver(Solver):
             # COM-based total forces
             cfrc_ang=gs.ti_vec3,
             cfrc_vel=gs.ti_vec3,
-            # COM-based "true" external forces (i.e. user-specified and not resulting from any kind of constraints)
-            cfrc_ext_ang=gs.ti_vec3,
-            cfrc_ext_vel=gs.ti_vec3,
+            # COM-based external forces explictly applied by the user (i.e. not resulting from any kind of constraints)
+            cfrc_applied_ang=gs.ti_vec3,
+            cfrc_applied_vel=gs.ti_vec3,
             # net force from external contacts
             contact_force=gs.ti_vec3,
             # Flag for links that converge into a static state (hibernation)
@@ -2589,11 +2589,53 @@ class RigidSolver(Solver):
                 n_awake_links = ti.atomic_add(self.n_awake_links[i_b], 1)
                 self.awake_links[n_awake_links, i_b] = i_l
 
-    def apply_links_external_force(self, force, links_idx=None, envs_idx=None, *, unsafe=False):
+    def apply_links_external_force(
+        self,
+        force,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        local: bool = False,
+        unsafe: bool = False,
+    ):
+        """
+        Apply some external linear force on a set of links.
+
+        Parameters
+        ----------
+        force : array_like
+            The force to apply.
+        links_idx : None | array_like, optional
+            The indices of the links on which to apply force. None to specify all links. Default to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame on which the linear force will be applied. "link_origin" refers to the origin of the
+            link, "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
+            the entire kinematic tree to which a link belong (see `get_links_root_COM` for details).
+        local: bool, optional
+            Whether the force is expressed in the local coordinates associated with the reference frame instead of
+            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
         force, links_idx, envs_idx = self._sanitize_2D_io_variables(
             force, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
-        self._kernel_apply_links_external_force(force, links_idx, envs_idx)
+        if self.n_envs == 0:
+            force = force.unsqueeze(0)
+
+        if ref == "root_com":
+            if local:
+                raise ValueError("'local=True' not compatible with ref='root_com'.")
+            ref = 0
+        elif ref == "link_com":
+            ref = 1
+        elif ref == "link_origin":
+            ref = 2
+        else:
+            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+
+        self._kernel_apply_links_external_force(force, links_idx, envs_idx, ref, 1 if local else 0)
 
     @ti.kernel
     def _kernel_apply_links_external_force(
@@ -2601,17 +2643,60 @@ class RigidSolver(Solver):
         force: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
+        ref: ti.template(),
+        local: ti.template(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                self.links_state[links_idx[i_l_], envs_idx[i_b_]].cfrc_ext_vel[i] -= force[i_b_, i_l_, i]
+            force_i = ti.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.ti_float)
+            self._func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local)
 
-    def apply_links_external_torque(self, torque, links_idx=None, envs_idx=None, *, unsafe=False):
+    def apply_links_external_torque(
+        self,
+        torque,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        local: bool = False,
+        unsafe=False,
+    ):
+        """
+        Apply some external torque on a set of links.
+
+        Parameters
+        ----------
+        torque : array_like
+            The torque to apply.
+        links_idx : None | array_like, optional
+            The indices of the links on which to apply torque. None to specify all links. Default to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame on which the torque will be applied. "link_origin" refers to the origin of the link,
+            "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
+            the entire kinematic tree to which a link belong (see `get_links_root_COM` for details). Note that this
+            argument has no effect unless `local=True`.
+        local: bool, optional
+            Whether the torque is expressed in the local coordinates associated with the reference frame instead of
+            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
         torque, links_idx, envs_idx = self._sanitize_2D_io_variables(
             torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
-        self._kernel_apply_links_external_torque(torque, links_idx, envs_idx)
+
+        if ref == "root_com":
+            if local:
+                raise ValueError("'local=True' not compatible with ref='root_com'.")
+            ref = 0
+        elif ref == "link_com":
+            ref = 1
+        elif ref == "link_origin":
+            ref = 2
+        else:
+            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+
+        self._kernel_apply_links_external_torque(torque, links_idx, envs_idx, ref, 1 if local else 0)
 
     @ti.kernel
     def _kernel_apply_links_external_torque(
@@ -2619,49 +2704,47 @@ class RigidSolver(Solver):
         torque: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
+        ref: ti.template(),
+        local: ti.template(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
-                self.links_state[links_idx[i_l_], envs_idx[i_b_]].cfrc_ext_ang[i] -= torque[i_b_, i_l_, i]
+            torque_i = ti.Vector([torque[i_b_, i_l_, 0], torque[i_b_, i_l_, 1], torque[i_b_, i_l_, 2]], dt=gs.ti_float)
+            self._func_apply_link_external_torque(torque_i, links_idx[i_l_], envs_idx[i_b_], ref, local)
 
     @ti.func
-    def _func_apply_external_force(self, pos, force, link_idx, batch_idx):
-        torque = (pos - self.links_state[link_idx, batch_idx].COM).cross(force)
-        self.links_state[link_idx, batch_idx].cfrc_ext_ang -= torque
-        self.links_state[link_idx, batch_idx].cfrc_ext_vel -= force
+    def _func_apply_external_force(self, pos, force, link_idx, env_idx):
+        torque = (pos - self.links_state[link_idx, env_idx].COM).cross(force)
+        self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
+        self.links_state[link_idx, env_idx].cfrc_applied_vel -= force
 
     @ti.func
-    def _func_apply_external_torque(self, torque, link_idx, batch_idx):
-        self.links_state[link_idx, batch_idx].cfrc_ext_ang -= torque
+    def _func_apply_link_external_force(self, force, link_idx, env_idx, ref: ti.template(), local: ti.template()):
+        torque = ti.Vector.zero(gs.ti_float, 3)
+        if ti.static(ref == 1):  # link's CoM
+            if ti.static(local == 1):
+                force = gu.ti_transform_by_quat(force, self.links_state[link_idx, env_idx].i_quat)
+            torque = self.links_state[link_idx, env_idx].i_pos.cross(force)
+        if ti.static(ref == 2):  # link's origin
+            if ti.static(local == 1):
+                force = gu.ti_transform_by_quat(force, self.links_state[link_idx, env_idx].quat)
+            torque = (self.links_state[link_idx, env_idx].pos - self.links_state[link_idx, env_idx].COM).cross(force)
+
+        self.links_state[link_idx, env_idx].cfrc_applied_vel -= force
+        self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
 
     @ti.func
-    def _func_apply_external_force_link_frame(self, pos, force, link_idx, batch_idx):
-        pos = gu.ti_transform_by_trans_quat(
-            pos, self.links_state[link_idx, batch_idx].pos, self.links_state[link_idx, batch_idx].quat
-        )
-        force = gu.ti_transform_by_quat(force, self.links_state[link_idx, batch_idx].quat)
-        self._func_apply_external_force(pos, force, link_idx, batch_idx)
+    def _func_apply_external_torque(self, torque, link_idx, env_idx):
+        self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
 
     @ti.func
-    def _func_apply_external_torque_link_frame(self, torque, link_idx, batch_idx):
-        torque = gu.ti_transform_by_quat(torque, self.links_state[link_idx, batch_idx].quat)
-        self._func_apply_external_torque(torque, link_idx, batch_idx)
+    def _func_apply_link_external_torque(self, torque, link_idx, env_idx, ref: ti.template(), local: ti.template()):
+        if ti.static(ref == 1 and local == 1):  # link's CoM
+            torque = gu.ti_transform_by_quat(torque, self.links_state[link_idx, env_idx].i_quat)
+        if ti.static(ref == 2 and local == 1):  # link's origin
+            torque = gu.ti_transform_by_quat(torque, self.links_state[link_idx, env_idx].quat)
 
-    @ti.func
-    def _func_apply_external_force_link_inertial_frame(self, pos, force, link_idx, batch_idx):
-        link_I = [link_idx, batch_idx] if ti.static(self._options.batch_links_info) else link_idx
-        pos = gu.ti_transform_by_trans_quat(
-            pos, self.links_info[link_I].inertial_pos, self.links_info[link_I].inertial_quat
-        )
-        force = gu.ti_transform_by_quat(force, self.links_info[link_I].inertial_quat)
-        self._func_apply_external_force_link_frame(pos, force, link_idx, batch_idx)
-
-    @ti.func
-    def _func_apply_external_torque_link_inertial_frame(self, torque, link_idx, batch_idx):
-        link_I = [link_idx, batch_idx] if ti.static(self._options.batch_links_info) else link_idx
-        torque = gu.ti_transform_by_quat(torque, self.links_info[link_I].inertial_quat)
-        self._func_apply_external_torque_link_frame(torque, link_idx, batch_idx)
+        self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
 
     @ti.func
     def _func_clear_external_force(self):
@@ -2670,13 +2753,13 @@ class RigidSolver(Solver):
             for i_b in range(self._B):
                 for i_l_ in range(self.n_awake_links[i_b]):
                     i_l = self.awake_links[i_l_, i_b]
-                    self.links_state[i_l, i_b].cfrc_ext_ang = ti.Vector.zero(gs.ti_float, 3)
-                    self.links_state[i_l, i_b].cfrc_ext_vel = ti.Vector.zero(gs.ti_float, 3)
+                    self.links_state[i_l, i_b].cfrc_applied_ang = ti.Vector.zero(gs.ti_float, 3)
+                    self.links_state[i_l, i_b].cfrc_applied_vel = ti.Vector.zero(gs.ti_float, 3)
         else:
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
             for i_l, i_b in ti.ndrange(self.n_links, self._B):
-                self.links_state[i_l, i_b].cfrc_ext_ang = ti.Vector.zero(gs.ti_float, 3)
-                self.links_state[i_l, i_b].cfrc_ext_vel = ti.Vector.zero(gs.ti_float, 3)
+                self.links_state[i_l, i_b].cfrc_applied_ang = ti.Vector.zero(gs.ti_float, 3)
+                self.links_state[i_l, i_b].cfrc_applied_vel = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.func
     def _func_torque_and_passive_force(self):
@@ -2939,8 +3022,8 @@ class RigidSolver(Solver):
                         self.links_state[i_l, i_b].cd_ang, self.links_state[i_l, i_b].cd_vel, f2_ang, f2_vel
                     )
 
-                    self.links_state[i_l, i_b].cfrc_vel = f1_vel + f2_vel + self.links_state[i_l, i_b].cfrc_ext_vel
-                    self.links_state[i_l, i_b].cfrc_ang = f1_ang + f2_ang + self.links_state[i_l, i_b].cfrc_ext_ang
+                    self.links_state[i_l, i_b].cfrc_vel = f1_vel + f2_vel + self.links_state[i_l, i_b].cfrc_applied_vel
+                    self.links_state[i_l, i_b].cfrc_ang = f1_ang + f2_ang + self.links_state[i_l, i_b].cfrc_applied_ang
 
             for i_b in range(self._B):
                 for i_e_ in range(self.n_awake_entities[i_b]):
@@ -2978,8 +3061,8 @@ class RigidSolver(Solver):
                     self.links_state[i_l, i_b].cd_ang, self.links_state[i_l, i_b].cd_vel, f2_ang, f2_vel
                 )
 
-                self.links_state[i_l, i_b].cfrc_vel = f1_vel + f2_vel + self.links_state[i_l, i_b].cfrc_ext_vel
-                self.links_state[i_l, i_b].cfrc_ang = f1_ang + f2_ang + self.links_state[i_l, i_b].cfrc_ext_ang
+                self.links_state[i_l, i_b].cfrc_vel = f1_vel + f2_vel + self.links_state[i_l, i_b].cfrc_applied_vel
+                self.links_state[i_l, i_b].cfrc_ang = f1_ang + f2_ang + self.links_state[i_l, i_b].cfrc_applied_ang
 
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_e, i_b in ti.ndrange(self.n_entities, self._B):
@@ -4452,21 +4535,21 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "entity_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
         unsafe: bool = False,
     ):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        if ref == "entity_com":
+        if ref == "root_com":
             ref = 0
         elif ref == "link_com":
             ref = 1
         elif ref == "link_origin":
             ref = 2
         else:
-            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'entity_com'.")
+            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
         self._kernel_get_links_vel(tensor, links_idx, envs_idx, ref)
         return _tensor
 
@@ -4714,7 +4797,6 @@ class RigidSolver(Solver):
     def _kernel_set_drone_rpm(
         self,
         n_propellers: ti.i32,
-        COM_link_idx: ti.i32,
         propellers_link_idxs: ti.types.ndarray(),
         propellers_rpm: ti.types.ndarray(),
         propellers_spin: ti.types.ndarray(),
@@ -4724,21 +4806,22 @@ class RigidSolver(Solver):
     ):
         """
         Set the RPM of propellers of a drone entity.
-        Should only be called by drone entities.
+
+        This method should only be called by drone entities.
         """
-        for b in range(self._B):
-            torque = 0.0
-            for i in range(n_propellers):
-                force_i = propellers_rpm[i, b] ** 2 * KF
-                torque += propellers_rpm[i, b] ** 2 * KM * propellers_spin[i]
-                self._func_apply_external_force_link_inertial_frame(
-                    ti.Vector([0.0, 0.0, 0.0]), ti.Vector([0.0, 0.0, force_i]), propellers_link_idxs[i], b
+        for i_b in range(self._B):
+            for i_prop in range(n_propellers):
+                i_l = propellers_link_idxs[i_prop]
+
+                force = ti.Vector([0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KF], dt=gs.ti_float)
+                torque = ti.Vector(
+                    [0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KM * propellers_spin[i_prop]], dt=gs.ti_float
                 )
+                if invert:
+                    torque = -torque
 
-            if invert:
-                torque = -torque
-
-            self._func_apply_external_torque_link_inertial_frame(ti.Vector([0.0, 0.0, torque]), COM_link_idx, b)
+                self._func_apply_link_external_force(force, i_l, i_b, 1, 1)
+                self._func_apply_link_external_torque(torque, i_l, i_b, 1, 1)
 
     @ti.kernel
     def _update_drone_propeller_vgeoms(
@@ -4754,7 +4837,7 @@ class RigidSolver(Solver):
         for i, b in ti.ndrange(n_propellers, self._B):
             rad = propellers_revs[i, b] * propellers_spin[i] * self._substep_dt * np.pi / 30
             self.vgeoms_state[propellers_vgeom_idxs[i], b].quat = gu.ti_transform_quat_by_quat(
-                gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad])),
+                gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad], dt=gs.ti_float)),
                 self.vgeoms_state[propellers_vgeom_idxs[i], b].quat,
             )
 
