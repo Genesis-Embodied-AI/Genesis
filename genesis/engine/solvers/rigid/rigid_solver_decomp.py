@@ -2599,6 +2599,25 @@ class RigidSolver(Solver):
         local: bool = False,
         unsafe: bool = False,
     ):
+        """
+        Apply some external linear force on a set of links.
+
+        Parameters
+        ----------
+        force : array_like
+            The force to apply.
+        links_idx : None | array_like, optional
+            The indices of the links on which to apply force. None to specify all links. Default to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame on which the linear force will be applied. "link_origin" refers to the origin of the
+            link, "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
+            the entire kinematic tree to which a link belong (see `get_links_root_COM` for details).
+        local: bool, optional
+            Whether the force is expressed in the local coordinates associated with the reference frame instead of
+            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
         force, links_idx, envs_idx = self._sanitize_2D_io_variables(
             force, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
@@ -2642,6 +2661,26 @@ class RigidSolver(Solver):
         local: bool = False,
         unsafe=False,
     ):
+        """
+        Apply some external torque on a set of links.
+
+        Parameters
+        ----------
+        torque : array_like
+            The torque to apply.
+        links_idx : None | array_like, optional
+            The indices of the links on which to apply torque. None to specify all links. Default to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame on which the torque will be applied. "link_origin" refers to the origin of the link,
+            "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
+            the entire kinematic tree to which a link belong (see `get_links_root_COM` for details). Note that this
+            argument has no effect unless `local=True`.
+        local: bool, optional
+            Whether the torque is expressed in the local coordinates associated with the reference frame instead of
+            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
         torque, links_idx, envs_idx = self._sanitize_2D_io_variables(
             torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
@@ -4774,8 +4813,10 @@ class RigidSolver(Solver):
             for i_prop in range(n_propellers):
                 i_l = propellers_link_idxs[i_prop]
 
-                force = ti.Vector([0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KF])
-                torque = ti.Vector([0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KM * propellers_spin[i_prop]])
+                force = ti.Vector([0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KF], dt=gs.ti_float)
+                torque = ti.Vector(
+                    [0.0, 0.0, propellers_rpm[i_prop, i_b] ** 2 * KM * propellers_spin[i_prop]], dt=gs.ti_float
+                )
                 if invert:
                     torque = -torque
 
@@ -4796,7 +4837,7 @@ class RigidSolver(Solver):
         for i, b in ti.ndrange(n_propellers, self._B):
             rad = propellers_revs[i, b] * propellers_spin[i] * self._substep_dt * np.pi / 30
             self.vgeoms_state[propellers_vgeom_idxs[i], b].quat = gu.ti_transform_quat_by_quat(
-                gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad])),
+                gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad], dt=gs.ti_float)),
                 self.vgeoms_state[propellers_vgeom_idxs[i], b].quat,
             )
 
