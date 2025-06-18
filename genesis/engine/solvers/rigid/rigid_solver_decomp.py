@@ -1706,6 +1706,12 @@ class RigidSolver(Solver):
         self._func_constraint_force()
         timer.stamp("constraint_force")
 
+        # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
+        # would not corresponds to anyting physical. There is no other way than doing this right before integration,
+        # because the acceleration at the end of the step is unknown for now as it may change discontinuous between
+        # before and after integration under the effect of external forces and constraints. This means that
+        # acceleration data will be shifted one timestep in the past, but there isn't really any way around.
+        self._kernel_update_acc()
         self._kernel_step_2()
         timer.stamp("kernel_step_2")
 
