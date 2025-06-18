@@ -408,6 +408,13 @@ class FEMEntity(Entity):
                 f"Pressure field max distance is too small: {max_distance}. "
                 "This might be due to a mesh having no internal vertices."
             )
+        n_internal_vertices = self.n_vertices - self._n_surface_vertices
+        if n_internal_vertices < self.n_surface_vertices:
+            gs.logger.warning(
+                f"Entity {self.uid} has {n_internal_vertices} internal vertices "
+                f"and {self._n_surface_vertices} surface vertices. "
+                "This might lead to unstable hydroelastic contact."
+            )
         self.pressure_field_np = (
             self.pressure_field_np / max_distance * self.material._hydroelastic_modulus
         )  # normalize

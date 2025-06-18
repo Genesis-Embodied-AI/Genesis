@@ -403,6 +403,7 @@ class FEMSolver(Solver):
             self.elements_v_energy[i_b, i_v].inertia = (
                 self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
             )
+            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v_energy[i_b, i_v].inertia
 
     @ti.func
@@ -759,7 +760,6 @@ class FEMSolver(Solver):
             self.linesearch_state[i_b].prev_energy += 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff)
             self.linesearch_state_v[i_b, i_v].x_prev = self.elements_v[f + 1, i_v, i_b].pos
             self.linesearch_state[i_b].m += -self.pcg_state_v[i_b, i_v].x.dot(self.elements_v_energy[i_b, i_v].force)
-
         # Elastic
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
             if not self.batch_linesearch_active[i_b]:
