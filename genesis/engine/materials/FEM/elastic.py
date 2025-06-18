@@ -54,13 +54,13 @@ class Elastic(Base):
             self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_linear
             self.compute_energy_gradient = self.compute_energy_gradient_linear
             self.compute_energy = self.compute_energy_linear
-            self.hessian_static = True
-        elif model == "stable_neohookean" or model == "stable_neohooken":
+            self.hessian_invariant = True
+        elif model in ("stable_neohookean", "stable_neohooken"):
             self.update_stress = self.update_stress_stable_neohookean
             self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_stable_neohookean
             self.compute_energy_gradient = self.compute_energy_gradient_stable_neohookean
             self.compute_energy = self.compute_energy_stable_neohookean
-            self.hessian_static = False
+            self.hessian_invariant = False
             if model == "stable_neohooken":
                 gs.logger.warning("The 'stable_neohooken' model is deprecated. Use 'stable_neohookean' instead.")
         else:
@@ -185,8 +185,7 @@ class Elastic(Base):
         -------
         This implementation assumes small deformations and linear stress-strain relationship.
         It is adapted from the HOBAKv1 implementation for linear elasticity:
-        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
-
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/LINEAR.cpp
         """
         I = ti.Matrix.identity(dt=gs.ti_float, n=3)
         eps = 0.5 * (F + F.transpose()) - I
@@ -226,8 +225,7 @@ class Elastic(Base):
         -------
         This implementation assumes small deformations and linear stress-strain relationship.
         It is adapted from the HOBAKv1 implementation for linear elasticity:
-        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
-
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/LINEAR.cpp
         """
         I = ti.Matrix.identity(dt=gs.ti_float, n=3)
         eps = 0.5 * (F + F.transpose()) - I
@@ -313,7 +311,7 @@ class Elastic(Base):
         Notes
         -------
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
-        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/SNH.cpp
         """
         raise NotImplementedError("Gradient computation is not implemented for stable_neohookean model.")
 
@@ -345,7 +343,7 @@ class Elastic(Base):
         Notes
         -------
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
-        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/SNH.cpp
         """
         _lambda = lam + mu
         _alpha = 1.0 + mu / _lambda

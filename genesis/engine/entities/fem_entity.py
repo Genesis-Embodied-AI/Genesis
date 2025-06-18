@@ -390,6 +390,7 @@ class FEMEntity(Entity):
     def compute_pressure_field(self):
         """
         Compute the pressure field for the FEM entity based on its tetrahedral elements.
+
         For hydroelastic contact: https://drake.mit.edu/doxygen_cxx/group__hydroelastic__user__guide.html
 
         Notes
@@ -399,21 +400,13 @@ class FEMEntity(Entity):
         Drake's implementation of margin seems buggy.
         """
         init_positions = self.init_positions.cpu().numpy()
-        self.pressure_field_np, _, _, _ = signed_distance(init_positions, init_positions, self._surface_tri_np)
-        margin = 0
-        self.pressure_field_np = np.abs(self.pressure_field_np) - margin
-        max_distance = np.max(self.pressure_field_np) + gs.EPS
-        if max_distance <= gs.EPS:
+        self.pressure_field_np, *_ = signed_distance(init_positions, init_positions, self._surface_tri_np)
+        self.pressure_field_np = np.abs(self.pressure_field_np)
+        max_distance = np.max(self.pressure_field_np)
+        if max_distance < gs.EPS:
             gs.raise_exception(
                 f"Pressure field max distance is too small: {max_distance}. "
                 "This might be due to a mesh having no internal vertices."
-            )
-        n_internal_vertices = self.n_vertices - self._n_surface_vertices
-        if n_internal_vertices < self.n_surface_vertices:
-            gs.logger.warning(
-                f"Entity {self.uid} has {n_internal_vertices} internal vertices "
-                f"and {self._n_surface_vertices} surface vertices. "
-                "This might lead to unstable hydroelastic contact."
             )
         self.pressure_field_np = (
             self.pressure_field_np / max_distance * self.material._hydroelastic_modulus
