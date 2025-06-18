@@ -978,24 +978,36 @@ class Collider:
                                         )
 
                                         if is_col:
-                                            # 1. Project the contact point on both geometries
-                                            # 2. Revert the effect of small rotation
-                                            # 3. Update contact point
-                                            contact_point_a = (
-                                                gu.ti_transform_by_quat(
-                                                    (contact_pos - 0.5 * penetration * normal) - contact_pos_i,
-                                                    gu.ti_inv_quat(qrot),
+                                            if ti.static(not self._solver._enable_mujoco_compatibility):
+                                                # 1. Project the contact point on both geometries
+                                                # 2. Revert the effect of small rotation
+                                                # 3. Update contact point
+                                                contact_point_a = (
+                                                    gu.ti_transform_by_quat(
+                                                        (contact_pos - 0.5 * penetration * normal) - contact_pos_i,
+                                                        gu.ti_inv_quat(qrot),
+                                                    )
+                                                    + contact_pos_i
                                                 )
-                                                + contact_pos_i
-                                            )
-                                            contact_point_b = (
-                                                gu.ti_transform_by_quat(
-                                                    (contact_pos + 0.5 * penetration * normal) - contact_pos_i,
-                                                    qrot,
+                                                contact_point_b = (
+                                                    gu.ti_transform_by_quat(
+                                                        (contact_pos + 0.5 * penetration * normal) - contact_pos_i,
+                                                        qrot,
+                                                    )
+                                                    + contact_pos_i
                                                 )
-                                                + contact_pos_i
-                                            )
-                                            contact_point = 0.5 * (contact_point_a + contact_point_b)
+                                                contact_pos = 0.5 * (contact_point_a + contact_point_b)
+
+                                                # First-order correction of the normal direction
+                                                twist_rotvec = ti.math.clamp(
+                                                    normal.cross(normal_i),
+                                                    -self._mc_perturbation,
+                                                    self._mc_perturbation,
+                                                )
+                                                normal += twist_rotvec.cross(normal)
+
+                                                # Make sure that the penetration is still positive
+                                                penetration = normal.dot(contact_point_b - contact_point_a)
 
                                             # Discard contact point is repeated
                                             repeated = False
@@ -1007,17 +1019,6 @@ class Collider:
                                                         repeated = True
 
                                             if not repeated:
-                                                if ti.static(not self._solver._enable_mujoco_compatibility):
-                                                    # First-order correction of the normal direction
-                                                    twist_rotvec = ti.math.clamp(
-                                                        normal.cross(normal_i),
-                                                        -self._mc_perturbation,
-                                                        self._mc_perturbation,
-                                                    )
-                                                    normal += twist_rotvec.cross(normal)
-
-                                                    # Make sure that the penetration is still positive
-                                                    penetration = normal.dot(contact_point_b - contact_point_a)
                                                 if penetration > -tolerance:
                                                     penetration = ti.max(penetration, 0.0)
                                                     self._func_add_contact(
@@ -1336,24 +1337,42 @@ class Collider:
                         self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    # 1. Project the contact point on both geometries
-                    # 2. Revert the effect of small rotation
-                    # 3. Update contact point
-                    contact_point_a = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.ti_inv_quat(qrot),
+                    if ti.static(not self._solver._enable_mujoco_compatibility):
+                        # 1. Project the contact point on both geometries
+                        # 2. Revert the effect of small rotation
+                        # 3. Update contact point
+                        contact_point_a = (
+                            gu.ti_transform_by_quat(
+                                (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                                gu.ti_inv_quat(qrot),
+                            )
+                            + contact_pos_0
                         )
-                        + contact_pos_0
-                    )
-                    contact_point_b = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
+                        contact_point_b = (
+                            gu.ti_transform_by_quat(
+                                (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                                qrot,
+                            )
+                            + contact_pos_0
                         )
-                        + contact_pos_0
-                    )
-                    contact_point = 0.5 * (contact_point_a + contact_point_b)
+                        contact_pos = 0.5 * (contact_point_a + contact_point_b)
+
+                        # First-order correction of the normal direction.
+                        # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                        # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                        # the mininal rotation that makes the corrected twisted normal as closed as possible to the
+                        # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                        # Rodrigues' rotation formula.
+                        twist_rotvec = ti.math.clamp(
+                            normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
+                        )
+                        normal += twist_rotvec.cross(normal)
+
+                        # Make sure that the penetration is still positive before adding contact point.
+                        # Note that adding some negative tolerance improves physical stability by encouraging persistent
+                        # contact points and thefore more continuous contact forces, without changing the mean-field
+                        # dynamics since zero-penetration contact points should not induce any force.
+                        penetration = normal.dot(contact_point_b - contact_point_a)
 
                     # Discard contact point is repeated
                     repeated = False
@@ -1365,23 +1384,6 @@ class Collider:
                                 repeated = True
 
                     if not repeated:
-                        if ti.static(not self._solver._enable_mujoco_compatibility):
-                            # First-order correction of the normal direction.
-                            # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                            # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                            # the mininal rotation that makes the corrected twisted normal as closed as possible to the
-                            # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
-                            # Rodrigues' rotation formula.
-                            twist_rotvec = ti.math.clamp(
-                                normal.cross(normal_0), -self._mc_perturbation, self._mc_perturbation
-                            )
-                            normal += twist_rotvec.cross(normal)
-
-                            # Make sure that the penetration is still positive before adding contact point.
-                            # Note that adding some negative tolerance improves physical stability by encouraging persistent
-                            # contact points and thefore more continuous contact forces, without changing the mean-field
-                            # dynamics since zero-penetration contact points should not induce any force.
-                            penetration = normal.dot(contact_point_b - contact_point_a)
                         if penetration > -tolerance:
                             penetration = ti.max(penetration, 0.0)
                             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
