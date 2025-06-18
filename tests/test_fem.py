@@ -203,7 +203,7 @@ def fem_material_linear():
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
+def test_sphere_fall_implicit(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
