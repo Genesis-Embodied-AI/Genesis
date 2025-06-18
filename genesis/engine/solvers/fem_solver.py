@@ -158,7 +158,7 @@ class FEMSolver(Solver):
         )
 
         pcg_state_v = ti.types.struct(
-            diag=gs.ti_mat3,  # diagonal of the hessian
+            diag3x3=gs.ti_mat3,  # diagonal 3-by-3 block of the hessian
             prec=gs.ti_mat3,  # preconditioner
             x=gs.ti_vec3,  # solution vector
             r=gs.ti_vec3,  # residual vector
@@ -465,7 +465,7 @@ class FEMSolver(Solver):
                         )
 
     @ti.func
-    def compute_ele_energy(self, f: ti.i32):
+    def _func_compute_ele_energy(self, f: ti.i32):
         """
         Compute the energy for each element in the batch. Should only be used in linesearch.
         """
@@ -501,16 +501,14 @@ class FEMSolver(Solver):
                         self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
                     )
                 St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i in ti.static(range(3)):
-                    for j in ti.static(range(4)):
-                        St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
+                for i, j in ti.static(ti.ndrange(3, 4)):
+                    St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
 
                 H_St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i in ti.static(range(3)):
-                    for j in ti.static(range(3)):
-                        H_St_x_diff[i * 3 : i * 3 + 3] += (
-                            self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
-                        )
+                for i, j in ti.static(ti.ndrange(3, 3)):
+                    H_St_x_diff[i * 3 : i * 3 + 3] += (
+                        self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
+                    )
 
                 self.elements_el_energy[i_b, i_e].energy += 0.5 * damping_beta_over_dt * St_x_diff.dot(H_St_x_diff)
 
@@ -528,9 +526,11 @@ class FEMSolver(Solver):
                 (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia)
                 + (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos) * damping_alpha_dt
             )
-            self.pcg_state_v[i_b, i_v].diag = ti.Matrix.zero(gs.ti_float, 3, 3)
+            self.pcg_state_v[i_b, i_v].diag3x3 = ti.Matrix.zero(gs.ti_float, 3, 3)
             for i in ti.static(range(3)):
-                self.pcg_state_v[i_b, i_v].diag[i, i] = self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor
+                self.pcg_state_v[i_b, i_v].diag3x3[i, i] = (
+                    self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor
+                )
 
         # elastic
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
@@ -557,48 +557,44 @@ class FEMSolver(Solver):
                         self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
                     )
                 St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i in ti.static(range(3)):
-                    for j in ti.static(range(4)):
-                        St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
+                for i, j in ti.static(ti.ndrange(3, 4)):
+                    St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
 
                 H_St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i in ti.static(range(3)):
-                    for j in ti.static(range(3)):
-                        H_St_x_diff[i * 3 : i * 3 + 3] += (
-                            self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
-                        )
+                for i, j in ti.static(ti.ndrange(3, 3)):
+                    H_St_x_diff[i * 3 : i * 3 + 3] += (
+                        self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
+                    )
                 S_H_St_x_diff = ti.Vector.zero(gs.ti_float, 12)
-                for i in ti.static(range(4)):
-                    for j in ti.static(range(3)):
-                        S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
+                for i, j in ti.static(ti.ndrange(4, 3)):
+                    S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
 
                 for i in ti.static(range(4)):
                     self.elements_v_energy[i_b, i_v[0]].force += (
                         -damping_beta_over_dt * S_H_St_x_diff[i * 3 : i * 3 + 3]
                     )
 
-            # diagonal of hessian
-            for i in ti.static(range(3)):
-                for j in ti.static(range(3)):
-                    self.pcg_state_v[i_b, i_v[0]].diag += (
-                        V * damping_beta_factor * S[0, i] * S[0, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                    )
-                    self.pcg_state_v[i_b, i_v[1]].diag += (
-                        V * damping_beta_factor * S[1, i] * S[1, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                    )
-                    self.pcg_state_v[i_b, i_v[2]].diag += (
-                        V * damping_beta_factor * S[2, i] * S[2, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                    )
-                    self.pcg_state_v[i_b, i_v[3]].diag += (
-                        V * damping_beta_factor * S[3, i] * S[3, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                    )
+            # diagonal 3-by-3 block of hessian
+            for i, j in ti.static(ti.ndrange(3, 3)):
+                self.pcg_state_v[i_b, i_v[0]].diag3x3 += (
+                    V * damping_beta_factor * S[0, i] * S[0, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                )
+                self.pcg_state_v[i_b, i_v[1]].diag3x3 += (
+                    V * damping_beta_factor * S[1, i] * S[1, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                )
+                self.pcg_state_v[i_b, i_v[2]].diag3x3 += (
+                    V * damping_beta_factor * S[2, i] * S[2, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                )
+                self.pcg_state_v[i_b, i_v[3]].diag3x3 += (
+                    V * damping_beta_factor * S[3, i] * S[3, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                )
 
         # inverse
         for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_active[i_b]:
                 continue
-            # Use 3-by-3 inverse for preconditioner
-            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag.inverse()
+            # Use 3-by-3 diagonal block inverse for preconditioner
+            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag3x3.inverse()
 
             # Other options for preconditioner:
             # Uncomment one of the following lines to test different preconditioners
@@ -606,9 +602,9 @@ class FEMSolver(Solver):
             # self.pcg_state[i_v, i_b].prec = ti.Matrix.identity(gs.ti_float, 3)
 
             # Use diagonal for preconditioner
-            # self.pcg_state[i_v, i_b].prec = ti.Matrix([[1 / self.pcg_state[i_v, i_b].diag[0, 0], 0, 0],
-            #                                            [0, 1 / self.pcg_state[i_v, i_b].diag[1, 1], 0],
-            #                                            [0, 0, 1 / self.pcg_state[i_v, i_b].diag[2, 2]]])
+            # self.pcg_state[i_v, i_b].prec = ti.Matrix([[1 / self.pcg_state[i_v, i_b].diag3x3[0, 0], 0, 0],
+            #                                            [0, 1 / self.pcg_state[i_v, i_b].diag3x3[1, 1], 0],
+            #                                            [0, 0, 1 / self.pcg_state[i_v, i_b].diag3x3[2, 2]]])
 
     @ti.func
     def compute_Ap(self):
@@ -759,7 +755,7 @@ class FEMSolver(Solver):
             diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
             self.linesearch_state[i_b].prev_energy += 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff)
             self.linesearch_state_v[i_b, i_v].x_prev = self.elements_v[f + 1, i_v, i_b].pos
-            self.linesearch_state[i_b].m += -self.pcg_state_v[i_b, i_v].x.dot(self.elements_v_energy[i_b, i_v].force)
+            self.linesearch_state[i_b].m -= self.pcg_state_v[i_b, i_v].x.dot(self.elements_v_energy[i_b, i_v].force)
         # Elastic
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
             if not self.batch_linesearch_active[i_b]:
@@ -792,7 +788,7 @@ class FEMSolver(Solver):
                 )
 
         # compute elastic energy
-        self.compute_ele_energy(f)
+        self._func_compute_ele_energy(f)
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
             if not self.batch_linesearch_active[i_b]:
                 continue
@@ -828,9 +824,9 @@ class FEMSolver(Solver):
             # compute element energy and gradient
             self.compute_ele_hessian_gradient(f)
 
-            # If the hessian is static, we only need to compute it once
+            # If the hessian is invariant, we only need to compute it once
             for mat_idx in self._mats_idx:
-                if self._mats[mat_idx].hessian_static:
+                if self._mats[mat_idx].hessian_invariant:
                     self._mats[mat_idx].hessian_ready = True
 
             # accumulate vertex force and preconditioner
@@ -1030,7 +1026,7 @@ class FEMSolver(Solver):
             self.elements_v_info[i_global].mass = 0
             self.elements_v_info[i_global].mass_over_dt2 = 0
 
-        one_over_dt2 = 1.0 / (ti.static(self.substep_dt) ** 2)
+        one_over_dt2 = 1.0 / (self.substep_dt**2)
         n_elems_local = elems.shape[0]
         for i_e in range(n_elems_local):
             i_global = i_e + el_start

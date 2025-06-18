@@ -754,7 +754,7 @@ class SAPCoupler(RBC):
         )
 
         pcg_state_v = ti.types.struct(
-            diag=gs.ti_mat3,  # diagonal of the hessian
+            diag3x3=gs.ti_mat3,  # diagonal 3-by-3 block of the hessian
             prec=gs.ti_mat3,  # preconditioner
             x=gs.ti_vec3,  # solution vector
             r=gs.ti_vec3,  # residual vector
@@ -944,7 +944,7 @@ class SAPCoupler(RBC):
             self.fem_floor_contact_pairs[i_c].k = rigid_k  # contact stiffness
             self.fem_floor_contact_pairs[i_c].phi0 = rigid_phi0
             self.fem_floor_contact_pairs[i_c].fn0 = rigid_fn0
-            self.fem_floor_contact_pairs[i_c].taud = ti.static(self.sim._substep_dt) * 1.0 / ti.math.pi
+            self.fem_floor_contact_pairs[i_c].taud = self.sim._substep_dt * 1.0 / ti.math.pi
 
     def sap_solve(self, f):
         self.init_sap_solve(f)
@@ -977,8 +977,8 @@ class SAPCoupler(RBC):
     @ti.kernel
     def compute_fem_floor_regularization(self, f: ti.i32):
         pairs = ti.static(self.fem_floor_contact_pairs)
-        time_step = ti.static(self.sim._substep_dt)
-        dt2_inv = 1.0 / (time_step * time_step)
+        time_step = self.sim._substep_dt
+        dt2_inv = 1.0 / (time_step**2)
         fem_solver = self.fem_solver
 
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
@@ -1021,7 +1021,7 @@ class SAPCoupler(RBC):
         for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
             self.gradient[i_b, i_v].fill(0.0)
             # was using position now using velocity, need to multiply dt^2
-            self.pcg_state_v[i_b, i_v].diag = fem_solver.pcg_state_v[i_b, i_v].diag * dt2
+            self.pcg_state_v[i_b, i_v].diag3x3 = fem_solver.pcg_state_v[i_b, i_v].diag3x3 * dt2
             self.v_diff[i_b, i_v] = self.v[i_b, i_v] - fem_solver.elements_v[f + 1, i_v, i_b].vel
 
         # No need to do this for iter=0 because v=v* and A(v-v*) = 0
@@ -1136,12 +1136,12 @@ class SAPCoupler(RBC):
             for i in ti.static(range(4)):
                 i_v = fem_solver.elements_i[i_e].el2v[i]
                 self.gradient[i_b, i_v] -= pairs[i_c].barycentric[i] * gamma
-                self.pcg_state_v[i_b, i_v].diag += pairs[i_c].barycentric[i] ** 2 * pairs[i_c].G
+                self.pcg_state_v[i_b, i_v].diag3x3 += pairs[i_c].barycentric[i] ** 2 * pairs[i_c].G
 
         for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
             if not self.batch_active[i_b]:
                 continue
-            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag.inverse()
+            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag3x3.inverse()
 
     @ti.func
     def compute_contact_energy(self, f: ti.i32):
