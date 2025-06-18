@@ -62,7 +62,7 @@ dependencies = [
     #          Fix OMPL DLL search directory.
     "ompl>=1.7.0; platform_system != 'Windows'",
     # To capture MuJoCo warnings written to stderr
-    "wurlitzer",
+    "wurlitzer; platform_system != 'Windows'",
 ]
 
 [tool.setuptools.packages.find]
