@@ -1370,6 +1370,8 @@ class SAPCoupler(RBC):
         damping_beta_factor = damping_beta_over_dt + 1.0
 
         for i_b in ti.ndrange(self._B):
+            if not self.batch_linesearch_active[i_b]:
+                continue
             energy[i_b] = 0.0
 
         # Inertia

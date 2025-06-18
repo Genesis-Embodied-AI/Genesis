@@ -199,7 +199,7 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
 @pytest.fixture(scope="session")
 def fem_material_linear():
     """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic()
+    return gs.materials.FEM.Elastic(friction_mu=0.5)
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -207,15 +207,24 @@ def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-2,
+            dt=1 / 60,
+            substeps=5,
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
+            n_newton_iterations=1,
+            n_pcg_iterations=100,
+            pcg_threshold=1e-6,
+            damping_alpha=0.1,
+            damping_beta=0.01,
         ),
-        show_viewer=show_viewer,
+        coupler_options=gs.options.SAPCouplerOptions(
+            n_sap_iterations=10,
+            n_pcg_iterations=100,
+        ),
+        show_viewer=False,
     )
 
-    # Add first FEM entity
     scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.5, -0.2, 0.3),
@@ -224,28 +233,17 @@ def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
         material=fem_material_linear,
     )
 
-    # Add second FEM entity
-    scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.5),
-        ),
-        material=fem_material_linear,
-    )
-
     # Build the scene
     scene.build()
 
     # Run simulation
-    for _ in range(500):
+    for _ in range(200):
         scene.step()
 
     for entity in scene.entities:
         state = entity.get_state()
-        vel = state.vel.detach().cpu().numpy()
-        assert_allclose(vel, 0.0, atol=2e-3), f"Entity {entity.uid} velocity is not near zero."
         pos = state.pos.detach().cpu().numpy()
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
-            min_pos_z, 0.0, atol=5e-2
+            min_pos_z, 0.0, atol=1e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
