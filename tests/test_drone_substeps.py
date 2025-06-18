@@ -5,13 +5,13 @@ from .utils import assert_allclose
 
 
 def test_drone_hover_same_with_and_without_substeps():
-    TOL = 1e-2
+    TOL = 1e-7
     base_rpm = 15000
     scene_ref = gs.Scene(show_viewer=True, sim_options=gs.options.SimOptions(dt=0.002, substeps=1))
     drone_ref = scene_ref.add_entity(morph=gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 1.0)))
     scene_ref.build()
 
-    for _ in range(500):
+    for _ in range(2500):
         drone_ref.set_propellels_rpm([base_rpm, base_rpm, base_rpm, base_rpm])
         scene_ref.step()
 
