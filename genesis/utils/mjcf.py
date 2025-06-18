@@ -1,6 +1,6 @@
 import os
 import xml.etree.ElementTree as ET
-from contextlib import redirect_stderr
+import contextlib
 from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
@@ -10,7 +10,15 @@ import numpy as np
 import trimesh
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
-from wurlitzer import pipes
+
+if os.name != "nt":  # POSIX → keep current behaviour
+    from wurlitzer import pipes
+else:  # Windows → provide a dummy replacement
+
+    @contextlib.contextmanager
+    def pipes(stdout=True, stderr=True):  # signature matches wurlitzer.pipes
+        yield io.StringIO(), io.StringIO()
+
 
 import z3
 import mujoco
