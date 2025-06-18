@@ -1692,15 +1692,8 @@ class RigidSolver(Solver):
         self._func_compute_qacc()
 
     @ti.kernel
-    def clear_external_forces(self):
+    def _kernel_clear_external_force(self):
         self._func_clear_external_force()
-
-    def set_substep_dt(self, new_dt: float):
-        try:
-            self._substep_dt[None] = new_dt
-        except (TypeError, KeyError, AttributeError):
-            self._substep_dt = float(new_dt)
-        self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * new_dt
 
     def substep(self):
         from genesis.utils.tools import create_timer
@@ -1712,13 +1705,6 @@ class RigidSolver(Solver):
         # constraint force
         self._func_constraint_force()
         timer.stamp("constraint_force")
-
-        # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
-        # would not corresponds to anyting physical. There is no other way than doing this right before integration,
-        # because the acceleration at the end of the step is unknown for now as it may change discontinuous between
-        # before and after integration under the effect of external forces and constraints. This means that
-        # acceleration data will be shifted one timestep in the past, but there isn't really any way around.
-        self._kernel_update_acc()
 
         self._kernel_step_2()
         timer.stamp("kernel_step_2")
