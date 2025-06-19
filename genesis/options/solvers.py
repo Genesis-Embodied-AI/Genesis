@@ -568,9 +568,9 @@ class FEMOptions(Options):
     linesearch_tau : float, optional
         Line search step size reduction factor. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_alpha : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 0.0. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_beta : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 0.0. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
 
     Note
     ----
@@ -592,8 +592,8 @@ class FEMOptions(Options):
     pcg_threshold: float = 1e-6
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.5
-    damping_alpha: float = 0.0
-    damping_beta: float = 0.0
+    damping_alpha: float = 0.5
+    damping_beta: float = 1e-4
 
 
 class SFOptions(Options):

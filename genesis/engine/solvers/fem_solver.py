@@ -404,7 +404,6 @@ class FEMSolver(Solver):
                 self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
             )
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
-            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v_energy[i_b, i_v].inertia
 
     @ti.func
     def _compute_ele_J_F(self, f: ti.i32, i_e: ti.i32, i_b: ti.i32):
@@ -568,25 +567,16 @@ class FEMSolver(Solver):
                 S_H_St_x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i, j in ti.static(ti.ndrange(4, 3)):
                     S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
-
+                # print("S_H_St_x_diff", S_H_St_x_diff)
                 for i in ti.static(range(4)):
-                    self.elements_v_energy[i_b, i_v[0]].force += (
-                        -damping_beta_over_dt * S_H_St_x_diff[i * 3 : i * 3 + 3]
+                    self.elements_v_energy[i_b, i_v[i]].force += (
+                        -damping_beta_over_dt * V * S_H_St_x_diff[i * 3 : i * 3 + 3]
                     )
 
             # diagonal 3-by-3 block of hessian
-            for i, j in ti.static(ti.ndrange(3, 3)):
-                self.pcg_state_v[i_b, i_v[0]].diag3x3 += (
-                    V * damping_beta_factor * S[0, i] * S[0, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                )
-                self.pcg_state_v[i_b, i_v[1]].diag3x3 += (
-                    V * damping_beta_factor * S[1, i] * S[1, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                )
-                self.pcg_state_v[i_b, i_v[2]].diag3x3 += (
-                    V * damping_beta_factor * S[2, i] * S[2, j] * self.elements_el_hessian[i_b, i, j, i_e]
-                )
-                self.pcg_state_v[i_b, i_v[3]].diag3x3 += (
-                    V * damping_beta_factor * S[3, i] * S[3, j] * self.elements_el_hessian[i_b, i, j, i_e]
+            for k, i, j in ti.static(ti.ndrange(4, 3, 3)):
+                self.pcg_state_v[i_b, i_v[k]].diag3x3 += (
+                    V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
                 )
 
         # inverse
