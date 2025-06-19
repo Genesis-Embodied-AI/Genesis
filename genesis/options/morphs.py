@@ -914,22 +914,19 @@ class Terrain(Morph):
     subterrain_parameters: dict[str, dict] | None = None
 
     def __init__(self, **data):
-        user = data.get("subterrain_parameters", {}) or {}
+        custom_params = data.get("subterrain_parameters") or {}
+        keys = set(self.default_params) | set(custom_params)
+        effective_params = {}
 
-        keys = set(self.default_params) | set(user)
+        for key in keys:
+            default_value = self.default_params.get(key, {})
+            custom_value = custom_params.get(key, {})
+            effective_params[key] = default_value | custom_value
 
-        merged = {
-            k: {
-                **self.default_params.get(k, {}),
-                **user.get(k, {}),
-            }
-            for k in keys
-        }
-
-        data["subterrain_parameters"] = merged
+        data["subterrain_parameters"] = effective_params
         super().__init__(**data)
 
-        self._subterrain_parameters = merged
+        self._subterrain_parameters = effective_params
 
         supported_subterrain_types = [
             "flat_terrain",
