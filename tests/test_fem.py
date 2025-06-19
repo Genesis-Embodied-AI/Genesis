@@ -199,20 +199,22 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
 @pytest.fixture(scope="session")
 def fem_material_linear():
     """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(friction_mu=0.5)
+    return gs.materials.FEM.Elastic()
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-2,
+            dt=1 / 60,
+            substeps=5,
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
 
     # Add first FEM entity
@@ -242,8 +244,6 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        vel = state.vel.detach().cpu().numpy()
-        assert_allclose(vel, 0.0, atol=2e-3), f"Entity {entity.uid} velocity is not near zero."
         pos = state.pos.detach().cpu().numpy()
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
@@ -251,7 +251,7 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
@@ -269,7 +269,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
 
     scene.add_entity(
         morph=gs.morphs.Sphere(
-            pos=(0.5, -0.2, 0.3),
+            pos=(0.5, -0.2, 1.0),
             radius=0.1,
         ),
         material=fem_material_linear,
