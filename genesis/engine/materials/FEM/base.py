@@ -57,6 +57,13 @@ class Base(Material):
         # will be set when added to solver
         self._idx = None
 
+    def build(self, fem_solver):
+        pass
+
+    @ti.func
+    def pre_compute(self, J, F, i_e, i_b):
+        pass
+
     @ti.func
     def update_stress(self, mu, lam, J, F, actu, m_dir):
         raise NotImplementedError
@@ -66,7 +73,7 @@ class Base(Material):
         raise NotImplementedError
 
     @ti.func
-    def compute_energy(self, mu, lam, J, F, actu, m_dir):
+    def compute_energy(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         raise NotImplementedError
 
     @property
