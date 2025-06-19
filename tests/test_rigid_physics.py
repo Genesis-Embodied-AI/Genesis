@@ -2127,20 +2127,17 @@ def test_urdf_mimic(show_viewer, tol):
 def test_drone_hover_same_with_and_without_substeps(show_viewer, tol):
     base_rpm = 15000
     scene_ref = gs.Scene(
-        show_viewer=show_viewer, 
-        sim_options=gs.options.SimOptions(
-            dt=0.002, 
-            substeps=1
-        )
+        show_viewer=show_viewer,
+        sim_options=gs.options.SimOptions(dt=0.002, substeps=1),
     )
     drone_ref = scene_ref.add_entity(
         morph=gs.morphs.Drone(
-            file="urdf/drones/cf2x.urdf", 
-            pos=(0, 0, 1.0)
+            file="urdf/drones/cf2x.urdf",
+            pos=(0, 0, 1.0),
         )
     )
     scene_ref.build()
-    
+
     for _ in range(2500):
         drone_ref.set_propellels_rpm([base_rpm, base_rpm, base_rpm, base_rpm])
         scene_ref.step()
@@ -2148,17 +2145,14 @@ def test_drone_hover_same_with_and_without_substeps(show_viewer, tol):
     pos_ref = drone_ref.get_dofs_position()
 
     scene_test = gs.Scene(
-        show_viewer=show_viewer, 
+        show_viewer=show_viewer,
         sim_options=gs.options.SimOptions(
-            dt=0.01, 
-            substeps=5
-        )
+            dt=0.01,
+            substeps=5,
+        ),
     )
     drone_test = scene_test.add_entity(
-        morph=gs.morphs.Drone(
-            file="urdf/drones/cf2x.urdf", 
-            pos=(0, 0, 1.0)
-        )
+        morph=gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 1.0)),
     )
     scene_test.build()
 
