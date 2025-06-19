@@ -217,8 +217,9 @@ def parse_glb_material(glb, material_index, surface):
         if material.emissiveFactor is not None:
             emissive_factor = np.array(material.emissiveFactor, dtype=np.float32)
 
-        if emissive_factor is not None and np.any(emissive_factor > 0.0):  # Make sure to check emissive
-            emissive_texture = mu.create_texture(emissive_image, emissive_factor, "srgb")
+        emissive_texture = mu.create_texture(emissive_image, emissive_factor, "srgb")
+        if emissive_texture.is_black():       # Make sure to check emissive
+            emissive_texture = None
 
     # TODO: Parse them!
     for extension_name, extension_material in material.extensions.items():

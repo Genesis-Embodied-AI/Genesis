@@ -144,10 +144,11 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_assets(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
@@ -171,10 +172,11 @@ def test_glb_parse_geometry(glb_file):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/chopper.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/chopper.glb"])
 def test_glb_parse_material(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_assets(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,

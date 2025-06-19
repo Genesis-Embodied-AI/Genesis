@@ -32,6 +32,9 @@ class Texture(Options):
     def apply_cutoff(self, cutoff):
         raise NotImplementedError
 
+    def is_black(self):
+        raise NotImplementedError
+
 
 class ColorTexture(Texture):
     """
@@ -67,6 +70,8 @@ class ColorTexture(Texture):
             return
         self.color = tuple(1.0 if c >= cutoff else 0.0 for c in self.color)
 
+    def is_black(self):
+        return all(c == 0.0 for c in self.color)
 
 class ImageTexture(Texture):
     """
@@ -194,3 +199,6 @@ class ImageTexture(Texture):
         if cutoff is None or self.image_array is None:  # Cutoff does not apply on image file.
             return
         self.image_array = np.where(self.image_array >= 255.0 * cutoff, 255, 0).astype(np.uint8)
+
+    def is_black(self):
+        return np.max(self.image_array) == 0 or all(c == 0.0 for c in self.image_color) 
