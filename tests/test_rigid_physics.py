@@ -2128,13 +2128,16 @@ def test_drone_hover_same_with_and_without_substeps(show_viewer, tol):
     base_rpm = 15000
     scene_ref = gs.Scene(
         show_viewer=show_viewer,
-        sim_options=gs.options.SimOptions(dt=0.002, substeps=1),
+        sim_options=gs.options.SimOptions(
+            dt=0.002,
+            substeps=1,
+        ),
     )
     drone_ref = scene_ref.add_entity(
         morph=gs.morphs.Drone(
             file="urdf/drones/cf2x.urdf",
             pos=(0, 0, 1.0),
-        )
+        ),
     )
     scene_ref.build()
 
