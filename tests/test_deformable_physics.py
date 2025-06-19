@@ -108,7 +108,7 @@ def test_deformable_parallel(show_viewer):
             upper_bound=(0.33, 0.33, 1.0),
         ),
         fem_options=gs.options.FEMOptions(
-            damping=0.0,
+            damping=45.0,
         ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(0.5, -0.1, -0.05),
