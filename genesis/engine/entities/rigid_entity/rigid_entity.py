@@ -332,7 +332,6 @@ class RigidEntity(Entity):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
             morph_ = copy(morph)
             morph_.visualization = False

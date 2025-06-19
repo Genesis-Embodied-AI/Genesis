@@ -60,9 +60,7 @@ dependencies = [
     # Motion Planning library
     # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
     #          Fix OMPL DLL search directory.
-    "ompl>=1.7.0; platform_system != 'Windows'",
-    # To capture MuJoCo warnings written to stderr
-    "wurlitzer; platform_system != 'Windows'",
+    "ompl>=1.7.0; platform_system != 'Windows'"
 ]
 
 [tool.setuptools.packages.find]

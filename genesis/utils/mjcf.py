@@ -11,15 +11,6 @@ import trimesh
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
-if os.name != "nt":  # POSIX → keep current behaviour
-    from wurlitzer import pipes
-else:  # Windows → provide a dummy replacement
-
-    @contextlib.contextmanager
-    def pipes(stdout=True, stderr=True):  # signature matches wurlitzer.pipes
-        yield io.StringIO(), io.StringIO()
-
-
 import z3
 import mujoco
 import genesis as gs
@@ -121,20 +112,8 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
             # Parse updated URDF file as a string
             data = ET.tostring(root, encoding="utf8")
-
-            # To capture MuJoCo warnings like
-            # WARNING: Geom with duplicate name '' encountered in URDF, creating an unnamed geom.
-            stderr_buf = io.StringIO()
-            stdout_buf = io.StringIO()
-            with pipes(stdout=stdout_buf, stderr=stderr_buf):
-                mj = mujoco.MjModel.from_xml_string(data)  # C++ code runs here
-            stderr_text = stderr_buf.getvalue()
-            stdout_text = stdout_buf.getvalue()
-            if stderr_text:
-                gs.logger.debug(f"MuJoCo warnings: {stderr_text}")
-            if stdout_text:
-                gs.logger.debug(f"MuJoCo stdout: {stdout_text}")
-
+            mj = mujoco.MjModel.from_xml_string(data)
+            # Special treatment for URDF
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
                 for i, link in enumerate(robot.links):
