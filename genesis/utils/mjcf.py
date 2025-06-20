@@ -1,9 +1,10 @@
 import os
 import xml.etree.ElementTree as ET
-from contextlib import redirect_stderr
+import contextlib
 from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
+import io
 
 import numpy as np
 import trimesh
@@ -112,7 +113,6 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             # Parse updated URDF file as a string
             data = ET.tostring(root, encoding="utf8")
             mj = mujoco.MjModel.from_xml_string(data)
-
             # Special treatment for URDF
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
@@ -151,9 +151,10 @@ def parse_xml(morph, surface):
     # Build model from XML (either URDF or MJCF)
     mj = build_model(morph.file, not morph.visualization, morph.default_armature, merge_fixed_links, links_to_keep)
 
-    # Check if there is any tendon. Report a warning if so.
-    if mj.ntendon:
-        gs.logger.warning("(MJCF) Tendon not supported")
+    # We have another more informative warning later so we suppress this one
+    # gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for `{j_info['name']}`")
+    # if mj.ntendon:
+    #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
     links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
@@ -333,7 +334,8 @@ def parse_link(mj, i_l, scale):
                 biasprm = mj.actuator_biasprm[i_a]
                 if gainprm[1:].any() or biasprm[0]:
                     gs.logger.warning(
-                        "(MJCF) Actuator control gain and bias parameters not supported. Using default values."
+                        "(MJCF) Actuator control gain and bias parameters not supported. "
+                        f"Using default values for joint `{j_info['name']}`"
                     )
                     actuator_kp = gu.default_dofs_kp(1)[0]
                     actuator_kv = gu.default_dofs_kv(1)[0]
@@ -341,7 +343,7 @@ def parse_link(mj, i_l, scale):
                     # Doing our best to approximate the expected behavior: g0 * p_target + b1 * p_mes + b2 * v_mes
                     gs.logger.warning(
                         "(MJCF) Actuator control gain and bias parameters cannot be reduced to a unique PD control "
-                        "position gain. Using max between gain and bias."
+                        f"position gain. Using max between gain and bias for joint `{j_info['name']}`."
                     )
                     actuator_kp = min(-gainprm[0], biasprm[1])
                     actuator_kv = biasprm[2]

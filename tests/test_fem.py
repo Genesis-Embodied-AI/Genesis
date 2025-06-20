@@ -26,7 +26,7 @@ def test_multiple_fem_entities(fem_material, show_viewer):
             gravity=(0.0, 0.0, 0.0),
         ),
         fem_options=gs.options.FEMOptions(
-            damping=45.0,
+            damping=0.0,
         ),
         show_viewer=show_viewer,
     )
