@@ -486,7 +486,7 @@ class FEMSolver(Solver):
                     )
 
             # add linearized damping energy
-            if self._damping_beta > 0.0:
+            if self._damping_beta > gs.EPS:
                 damping_beta_over_dt = self._damping_beta / self._substep_dt
                 i_v = self.elements_i[i_e].el2v
                 S = ti.Matrix.zero(gs.ti_float, 4, 3)
@@ -549,7 +549,7 @@ class FEMSolver(Solver):
             S[:3, :] = B
             S[3, :] = -B[0, :] - B[1, :] - B[2, :]
 
-            if self._damping_beta > 0.0:
+            if self._damping_beta > gs.EPS:
                 x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i in ti.static(range(4)):
                     x_diff[i * 3 : i * 3 + 3] = (
@@ -1013,8 +1013,8 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
-            self.elements_v_info[i_global].mass = 0
-            self.elements_v_info[i_global].mass_over_dt2 = 0
+            self.elements_v_info[i_global].mass = 0.0
+            self.elements_v_info[i_global].mass_over_dt2 = 0.0
 
         one_over_dt2 = 1.0 / (self.substep_dt**2)
         n_elems_local = elems.shape[0]

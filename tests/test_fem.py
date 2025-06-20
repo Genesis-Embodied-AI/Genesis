@@ -201,8 +201,6 @@ def fem_material_linear():
     """Fixture for common FEM linear material properties"""
     return gs.materials.FEM.Elastic()
 
-
-@pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
@@ -251,7 +249,6 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
 
 
-@pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
