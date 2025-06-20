@@ -91,6 +91,9 @@ jobs:
       - name: Install Genesis
         run: |
           pip install -e '.[dev,render,usd]'
+          if [[ "${{ matrix.PYTHON_VERSION }}" == '3.10' ]] ; then
+            pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit
+          fi
 
       - name: Run unit tests
         run: |

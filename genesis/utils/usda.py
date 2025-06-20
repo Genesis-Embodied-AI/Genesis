@@ -272,7 +272,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
         except subprocess.TimeoutExpired:
             gs.logger.warning(f"Timeout. Terminate baking for USD file {path}.")
         except (subprocess.CalledProcessError, OSError) as e:
-            gs.logger.warning(f"Baking process failed: {e}. (Note that USD baking may not support python 3.10 now.)")
+            gs.logger.warning(f"Baking process failed: {e}. (Note that USD baking may only support Python 3.10 now.)")
 
         if os.path.exists(baked_path):
             baked_folder = os.path.dirname(path)

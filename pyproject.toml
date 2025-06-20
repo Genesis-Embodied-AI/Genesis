@@ -144,6 +144,4 @@ render = [
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core",
-    # For usd mdl materials baking
-    "omniverse-kit",    # "--extra-index-url=https://pypi.nvidia.com"
 ]
