@@ -19,7 +19,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
-from genesis.utils.path_planing import move_padding_to_tail_vectorized
+from genesis.utils.path_planing import move_padding_to_tail, align_weypoints_length
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
@@ -1624,7 +1624,7 @@ class RigidEntity(Entity):
 
             # find nearest neighbor
             nearest_neighbor_idx = -1
-            nearest_neighbor_dist = 1e6
+            nearest_neighbor_dist = gs.ti_float(1e30) 
             ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
             for i_n in range(self._rrt_tree_size[i_b]):
                 dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
@@ -1653,6 +1653,32 @@ class RigidEntity(Entity):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
                 self._solver._func_update_geoms(i_b)
+    
+    @ti.func
+    def _func_check_collision(
+        self,
+        ignore_geom_pairs: ti.types.ndarray(),
+        i_b: ti.int32,
+    ):
+        collision_detected = False
+        for i_c in range(self._solver.collider.n_contacts[i_b]):
+            i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
+            i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
+
+            ignore = False
+            for i_p in range(ignore_geom_pairs.shape[0]):
+                if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
+                    ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga):
+                    ignore = True
+                    break
+            if ignore:
+                continue
+
+            # TODO: handle self-collision (except the case for closed gripper)
+            if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
+                collision_detected = True
+                break
+        return collision_detected
 
     @ti.kernel
     def _kernel_rrt_step2(
@@ -1665,31 +1691,13 @@ class RigidEntity(Entity):
             if not self._rrt_is_active[i_b]:
                 continue
 
-            collision_detected = False
-            for i_c in range(self._solver.collider.n_contacts[i_b]):
-                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
-                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
-
-                ignore = False
-                for i_p in range(ignore_geom_pairs.shape[0]):
-                    if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
-                        ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga):
-                        ignore = True
-                        break
-                if ignore:
-                    continue
-
-                # TODO: handle self-collision (except the case for closed gripper)
-                if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
-                    # collision detected
-                    self._rrt_tree_size[i_b] -= 1
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
-                    collision_detected = True
-                    break
-
-            # check the obtained steer result is within goal configuration only if no collision
-            if not collision_detected:
+            collision_detected = self._func_check_collision(ignore_geom_pairs, i_b)
+            if collision_detected:
+                self._rrt_tree_size[i_b] -= 1
+                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
+                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
+            else:
+                # check the obtained steer result is within goal configuration only if no collision
                 flag = True
                 for i_q in range(self.n_qs):
                     if abs(self._solver.qpos[i_q + self._q_start, i_b] - self._rrt_goal_configuration[i_q, i_b]) > self._rrt_pos_tol:
@@ -1710,7 +1718,8 @@ class RigidEntity(Entity):
         smooth_path=True,
         num_waypoints=100,
         ignore_collision=False,
-        envs_idx=None
+        envs_idx=None,
+        obj=None
     ):
         """
         Plan a path from `qpos_start` to `qpos_goal`.
@@ -1792,10 +1801,10 @@ class RigidEntity(Entity):
         
         if self._rrt_is_active.to_torch().any():
             gs.logger.warning("rrt planning failed")
-            return None
+            print(self._rrt_is_active.to_torch().sum())
         
         gs.logger.info(f"rrt planning time: {time.time() - start}")
-
+        start = time.time()
         ts = self._rrt_tree_size.to_torch(device=gs.device)
         g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
 
@@ -1810,9 +1819,16 @@ class RigidEntity(Entity):
             if torch.all(g_n == 0):
                 break
         res_idx = torch.stack(list(reversed(res)), dim=0)
-        res_idx = move_padding_to_tail_vectorized(res_idx)
-        print(res_idx)
+        # res_idx = move_padding_to_tail(res_idx)
+        # print(res_idx)
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
+
+        s = time.time()
+        sol = align_weypoints_length(sol, res_idx > 0, num_waypoints)
+        print("interp time:", time.time() - s)
+        sol = self.shortcut_path(torch.ones_like(sol[...,0]), sol, iterations=50, ignore_geom_pairs=unique_pairs, envs_idx=envs_idx)
+
+        gs.logger.info(f"path post-processing time: {time.time() - start}")
 
         # TODO: smooth path
         if smooth_path:
@@ -1922,7 +1938,7 @@ class RigidEntity(Entity):
 
             # find nearest neighbor
             nearest_neighbor_idx = -1
-            nearest_neighbor_dist = 1e6
+            nearest_neighbor_dist = gs.ti_float(1e30) 
             ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
             for i_n in range(self._rrt_tree_size[i_b]):
                 if forward_pass:
@@ -1975,40 +1991,24 @@ class RigidEntity(Entity):
             if not self._rrt_is_active[i_b]:
                 continue
 
-            collision_detected = False
-            for i_c in range(self._solver.collider.n_contacts[i_b]):
-                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
-                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
-
-                ignore = False
-                for i_p in range(ignore_geom_pairs.shape[0]):
-                    if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
-                        ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga):
-                        ignore = True
-                        break
-                if ignore:
-                    continue
-
-                # TODO: handle self-collision (except the case for closed gripper)
-                if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
-                    # collision detected
-                    self._rrt_tree_size[i_b] -= 1
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
-                    if forward_pass:
-                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
-                    else:
-                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = -1
-                    collision_detected = True
-                    break
-
-            # check the obtained steer result is within goal configuration only if no collision
-            if not collision_detected:
+            collision_detected = self._func_check_collision(ignore_geom_pairs, i_b)
+            if collision_detected:
+                self._rrt_tree_size[i_b] -= 1
+                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
+                if forward_pass:
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
+                else:
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = -1
+            else:
+                # check the obtained steer result is within goal configuration only if no collision
                 ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
                 for i_n in range(self._rrt_tree_size[i_b]):
                     if forward_pass:
+                        # NOTE: in forward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
                         if self._rrt_node_info[i_n, i_b].child_idx == -1:
                             continue
                     else:
+                        # NOTE: in backward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
                         if self._rrt_node_info[i_n, i_b].parent_idx == -1:
                             continue
                     flag = True
@@ -2019,9 +2019,9 @@ class RigidEntity(Entity):
                     if flag:
                         self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
                         if forward_pass:
-                            self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].child_idx = i_n
+                            self._rrt_node_info[self._rrt_goal_reached_node_idx[i_b], i_b].child_idx = i_n
                         else:
-                            self._rrt_node_info[self._rrt_tree_size[i_b] - 1, i_b].parent_idx = i_n
+                            self._rrt_node_info[self._rrt_goal_reached_node_idx[i_b], i_b].parent_idx = i_n
                         self._rrt_is_active[i_b] = 0
                         break
         
@@ -2123,7 +2123,8 @@ class RigidEntity(Entity):
             
         if self._rrt_is_active.to_torch().any():
             gs.logger.warning("rrt connect planning failed")
-            return None
+            print(self._rrt_is_active.to_torch().sum())
+            # return None
         
         gs.logger.info(f"rrt connect planning time: {time.time() - start}")
 
@@ -2151,11 +2152,12 @@ class RigidEntity(Entity):
             if torch.all(c_n == 1):
                 break
         res_idx = torch.cat([res_idx, torch.stack(res, dim=0)], dim=0)
-        res_idx = move_padding_to_tail_vectorized(res_idx)
+        # res_idx = move_padding_to_tail(res_idx)
         res_idx = res_idx[~torch.logical_or(0 == res_idx, 1 == res_idx).all(dim=1)]
-        print(res_idx)
         
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
+        
+        sol = align_weypoints_length(sol, res_idx > 1, num_waypoints)
 
         # TODO: smooth path
         if smooth_path:
@@ -2166,6 +2168,91 @@ class RigidEntity(Entity):
 
         self._kernel_rrt_connect_cleanup(qpos_cur.contiguous(), envs_idx)
         return sol
+    
+    # ------------------------------------------------------------------------------------
+    # -------------------------------path planing utils-----------------------------------
+    # ------------------------------------------------------------------------------------
+    @ti.kernel
+    def interpolate_path(
+        self,
+        tensor: ti.types.ndarray(),     # [B, N, Dof]
+        path: ti.types.ndarray(),       # [B, N, Dof]
+        sample_ind: ti.types.ndarray(), # [B, 2]
+        mask: ti.types.ndarray(),       # [B]
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(path.shape[0]):
+            if not mask[i_b]:
+                continue
+            num_samples = sample_ind[i_b, 1] - sample_ind[i_b, 0]
+            for i_q in range(self.n_qs):
+                start = path[i_b, sample_ind[i_b, 0], i_q]
+                end = path[i_b, sample_ind[i_b, 1], i_q] 
+                step = (end - start) / num_samples
+                for i_s in range(num_samples):
+                    tensor[i_b, sample_ind[i_b, 0] + i_s, i_q] = start + step * i_s
+
+    def check_collision(self, path, ignore_geom_pairs=None, envs_idx=None):
+        path = path.transpose(1,0) # N, B, Dof
+        res = torch.zeros(path.shape[1], dtype=gs.tc_int, device=gs.device)
+        for qpos in path:
+            self.set_qpos(qpos, envs_idx=envs_idx)
+            self._solver._kernel_detect_collision()
+            self._kernel_check_collision(res, ignore_geom_pairs, envs_idx)
+        return res
+    
+    @ti.kernel
+    def _kernel_check_collision(
+        self,
+        tensor: ti.types.ndarray(),
+        ignore_geom_pairs: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
+    ):
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in envs_idx:
+            collision_detected = False
+            for i_c in range(self._solver.collider.n_contacts[i_b]):
+                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
+                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
+
+                ignore = False
+                for i_p in range(ignore_geom_pairs.shape[0]):
+                    if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
+                        ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga):
+                        ignore = True
+                        break
+                if ignore:
+                    continue
+
+                # TODO: handle self-collision (except the case for closed gripper)
+                if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
+                    # collision detected
+                    collision_detected = True
+                    break
+            tensor[i_b] = tensor[i_b] or collision_detected
+            
+    def shortcut_path(self, path_mask, path, iterations=50, ignore_geom_pairs=None, envs_idx=None):
+        """
+        path_mask: torch.Tensor
+            node mask [N,B] for the obtained path
+        path: torch.Tensor
+            the [N,B,Dof] tensor
+        iterations: int
+            the number of refine iterations
+        """
+        path_mask = path_mask.t()  # B, N
+        path = path.transpose(1,0) # B, N, Dof
+        for i in range(iterations):
+            ind = torch.multinomial(path_mask, 2).sort()[0] # B, 2
+            ind_mask = (ind[:,1] - ind[:,0]) > 1
+            tmp_path = path.clone().contiguous()
+            self.interpolate_path(tmp_path, path.contiguous(), ind.contiguous(), ind_mask)
+            collision_mask = self.check_collision(tmp_path, ignore_geom_pairs, envs_idx) # B
+            print(collision_mask)
+            path[~collision_mask] = tmp_path[~collision_mask]
+            if i == 10:
+                break
+        return path.transpose(1,0)
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
