@@ -90,7 +90,7 @@ jobs:
 
       - name: Install Genesis
         run: |
-          pip install -e '.[dev,render]'
+          pip install -e '.[dev,render,usd]'
 
       - name: Run unit tests
         run: |

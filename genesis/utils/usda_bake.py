@@ -1,5 +1,6 @@
 import os
 import argparse
+import logging
 
 os.environ["OMNI_KIT_ACCEPT_EULA"] = "yes"
 BAKE_EXT = "usd"
@@ -94,26 +95,9 @@ if __name__ == "__main__":
     parser.add_argument("--usd_material_paths", type=str, nargs="+", required=True)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--log_level", type=str, default="warning")
-
     args = parser.parse_args()
-    bake_usd_material(args.usd_file, args.usd_material_paths, args.device, args.log_level)
 
-    # setting_names = [
-    #     "/app/asyncRendering",
-    #     "/renderer/enabled",
-    #     "/renderer/active",
-    #     "/exts/omni/mdl/neuraylib/tests/renderer",
-    #     "/omni.kit.plugin/syncUsdLoads",
-    #     "/rtx/hydra/materialSyncLoads",
-    #     "/rtx/materialDb/syncLoads",
-    #     "/rtx/pathtracing/spp",
-    #     "/rtx-transient/resourcemanager/texturestreaming/async",
-    # ]
-    # settings = carb.settings.get_settings()
-    # for name in setting_names:
-    #     print(f"Render Setting {name}: {settings.get(name)}")
-    # print(rtxNeurayLib, rtxNeurayLibHandle)
-    # print(shader.GetName(), dbScopeName)
-    # print(stage)
-    # print(prim_path)
-    # print(mdl_entity.getMdlModule())
+    log_level = logging.getLevelName(
+        min(max(logging.getLevelName(args.log_level.upper()), logging.INFO), logging.ERROR)
+    ).lower()
+    bake_usd_material(args.usd_file, args.usd_material_paths, args.device, log_level)

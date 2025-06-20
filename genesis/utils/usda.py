@@ -87,10 +87,11 @@ def parse_preview_surface(shader, output_name, zipfiles):
 
         # parse emissive
         emissive_texture, emissive_uvname = parse_component("emissiveColor", "srgb")
-        if emissive_texture.is_black():
-            emissive_texture = None
-        if emissive_uvname is not None and uvname is None:
-            uvname = emissive_uvname
+        if emissive_uvname is not None:
+            if emissive_texture.is_black():
+                emissive_texture = None
+            if uvname is None:
+                uvname = emissive_uvname
 
         # parse mertalic
         use_specular = get_input_attribute_value(shader, "useSpecularWorkflow", "value")[0]
@@ -153,123 +154,6 @@ def parse_preview_surface(shader, output_name, zipfiles):
     elif shader_id.startswith("UsdPrimvarReader"):
         primvar_name = get_input_attribute_value(shader, "varname", "value")[0]
         return primvar_name
-
-
-# def parse_gltf_surface(shader, source_type, output_name, zipfiles):
-#     shader_subid = shader.GetSourceAssetSubIdentifier(source_type)
-#     if shader_subid == "gltf_material":
-#         # Parse color
-#         color_factor = get_input_attribute_value(shader, "base_color_factor", "value")[0]  # Gf.Vec3f(1.0, 1.0, 1.0)
-#         color_texture_shader, color_texture_output = get_input_attribute_value(
-#             shader, "base_color_texture", "attribute"
-#         )
-#         if color_texture_shader is not None:
-#             color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output, zipfiles)
-#         else:
-#             color_image = None
-#         color_texture = mu.create_texture(color_image, color_factor, "srgb")
-
-#         # parse opacity
-#         opacity_factor = get_input_attribute_value(shader, "base_alpha", "value")[0]
-#         opacity_texture = mu.create_texture(None, opacity_factor, "linear")
-#         alpha_cutoff = get_input_attribute_value(shader, "alpha_cutoff", "value")[0]
-#         alpha_mode = get_input_attribute_value(shader, "alpha_mode", "value")[0]
-#         alpha_cutoff = mu.adjust_alpha_cutoff(alpha_cutoff, alpha_mode)
-#         opacity_texture.apply_cutoff(alpha_cutoff)
-
-#         # parse roughness and metaillic
-#         metallic_factor = get_input_attribute_value(shader, "metallic_factor", "value")[0]
-#         roughness_factor = get_input_attribute_value(shader, "roughness_factor", "value")[0]
-#         combined_texture_shader, combined_texture_output = get_input_attribute_value(
-#             shader, "metallic_roughness_texture", "attribute"
-#         )
-#         if combined_texture_shader is not None:
-#             combined_image = parse_gltf_surface(combined_texture_shader, source_type, combined_texture_output, zipfiles)
-#             roughness_image = combined_image[:, :, 1]
-#             metallic_image = combined_image[:, :, 2]
-#         else:
-#             roughness_image, metallic_image = None, None
-#         metallic_texture = mu.create_texture(metallic_image, metallic_factor, "linear")
-#         roughness_texture = mu.create_texture(roughness_image, roughness_factor, "linear")
-
-#         # parse emissive
-#         emissive_strength = get_input_attribute_value(shader, "emissive_strength", "value")[0]
-#         emissive_texture = mu.create_texture(None, emissive_strength, "srgb") if emissive_strength else None
-
-#         occlusion_texture_shader, occlusion_texture_output = get_input_attribute_value(
-#             shader, "occlusion_texture", "attribute"
-#         )
-#         if occlusion_texture_shader is not None:
-#             occlusion_image = parse_gltf_surface(
-#                 occlusion_texture_shader, source_type, occlusion_texture_output, zipfiles
-#             )
-
-#         return {
-#             "color_texture": color_texture,
-#             "opacity_texture": opacity_texture,
-#             "roughness_texture": roughness_texture,
-#             "metallic_texture": metallic_texture,
-#             "emissive_texture": emissive_texture,
-#         }, "st"
-
-#     elif shader_subid == "gltf_texture_lookup":
-#         texture = get_input_attribute_value(shader, "texture", "value")[0]
-#         if texture is not None:
-#             texture_image = get_texture_image(texture, zipfiles)
-#         else:
-#             texture_image = None
-#         return texture_image
-
-#     else:
-#         raise Exception(f"Fail to parse gltf Shader {shader_subid}.")
-
-
-# def parse_omni_surface(shader, source_type, output_name, zipfiles):
-
-#     def parse_component(component_name, component_encode, adjust=None):
-#         component_usetex = get_input_attribute_value(shader, f"Is{component_name}Tex", "value")[0] == 1
-#         if component_usetex:
-#             component_tex_name = f"{component_name}_Tex"
-#             component_tex = get_input_attribute_value(shader, component_tex_name, "value")[0]
-#             if component_tex is not None:
-#                 component_image = get_texture_image(component_tex, zipfiles)
-#                 if adjust is not None:
-#                     component_image = (adjust(component_image / 255.0) * 255.0).astype(np.uint8)
-#             component_cs = shader.GetInput(component_tex_name).GetAttr().GetColorSpace()
-#             component_overencode = cs_encode[component_cs]
-#             if component_overencode is not None:
-#                 component_encode = component_overencode
-#             component_factor = None
-#         else:
-#             component_color_name = f"{component_name}_Color"
-#             component_factor = get_input_attribute_value(shader, component_color_name, "value")[0]
-#             if adjust is not None and component_factor is not None:
-#                 component_factor = tuple([adjust(c) for c in component_factor])
-#             component_image = None
-
-#         component_texture = mu.create_texture(component_image, component_factor, component_encode)
-#         return component_texture
-
-#     color_texture = parse_component("BaseColor", "srgb")
-#     opacity_texture = color_texture.check_dim(3) if color_texture else None
-#     emissive_intensity = get_input_attribute_value(shader, "EmissiveIntensity", "value")[0]
-#     emissive_texture = (
-#         parse_component("Emissive", "srgb", lambda x: x * emissive_intensity) if emissive_intensity else None
-#     )
-#     if emissive_texture is not None:
-#         emissive_texture.check_dim(3)
-#     metallic_texture = parse_component("Metallic", "linear")
-#     normal_texture = parse_component("Normal", "linear")
-#     roughness_texture = parse_component("Gloss", "linear", lambda x: (2 / (x + 2)) ** (1.0 / 4.0))
-
-#     return {
-#         "color_texture": color_texture,
-#         "opacity_texture": opacity_texture,
-#         "roughness_texture": roughness_texture,
-#         "metallic_texture": metallic_texture,
-#         "emissive_texture": emissive_texture,
-#         "normal_texture": normal_texture,
-#     }, "st"
 
 
 def parse_usd_material(material, surface, zipfiles):
@@ -494,7 +378,12 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
             mesh_info, first_created = mesh_infos.get(group_idx)
             if first_created:
                 mesh_info.set_property(
-                    surface=material, metadata={"path": path, "name": material_id if group_by_material else mesh_id}
+                    surface=material,
+                    metadata={
+                        "path": path,
+                        "name": material_id if group_by_material else mesh_id,
+                        "baked": material_id in baked_materials,
+                    }
                 )
             mesh_info.append(points, triangles, normals, uvs)
 
