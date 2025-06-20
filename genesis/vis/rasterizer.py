@@ -64,6 +64,8 @@ class Rasterizer(RBC):
                     camera_node=self._camera_nodes[camera.uid],
                     env_separate_rigid=self._context.env_separate_rigid,
                     ret_depth=depth,
+                    plane_reflection=rgb and self._context.plane_reflection,
+                    shadow=rgb and self._context.shadow,
                     normal=normal,
                     seg=False,
                 )
@@ -75,6 +77,8 @@ class Rasterizer(RBC):
                     camera_node=self._camera_nodes[camera.uid],
                     env_separate_rigid=self._context.env_separate_rigid,
                     ret_depth=False,
+                    plane_reflection=False,
+                    shadow=False,
                     normal=False,
                     seg=True,
                 )

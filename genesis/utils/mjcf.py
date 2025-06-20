@@ -144,7 +144,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
 def parse_xml(morph, surface):
     # Always merge fixed links unless explicitly asked not to do so
     merge_fixed_links, links_to_keep = False, ()
-    if isinstance(morph, gs.morphs.URDF):
+    if isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
         merge_fixed_links = morph.merge_fixed_links
         links_to_keep = morph.links_to_keep
 

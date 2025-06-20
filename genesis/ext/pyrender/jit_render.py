@@ -832,14 +832,14 @@ class JITRenderer:
 
     def update_buffer(self, buffer_updates):
         updates = np.zeros((len(buffer_updates), 3), dtype=np.int64)
-        flattened_list = []
+        buffers = []
         for idx, (id, data) in enumerate(buffer_updates.items()):
-            flattened = data.astype(np.float32, order="C", copy=False).reshape((-1,))
-            flattened_list.append(flattened)
+            buffer = data.astype(np.float32, order="C", copy=False)
+            buffers.append(buffer)
 
             updates[idx, 0] = id
-            updates[idx, 1] = 4 * len(flattened)
-            updates[idx, 2] = flattened.ctypes.data
+            updates[idx, 1] = 4 * buffer.size
+            updates[idx, 2] = buffer.ctypes.data
 
         if self._update_buffer is None:
             self.gen_func_ptr()
