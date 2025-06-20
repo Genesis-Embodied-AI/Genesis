@@ -1758,7 +1758,7 @@ def test_mesh_repair(convexify, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
+@pytest.mark.parametrize("euler", [(90, 0, 90), (76, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer):
     OBJ_OFFSET_X = 0.0  # 0.02
