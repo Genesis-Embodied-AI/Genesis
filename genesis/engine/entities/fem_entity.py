@@ -410,9 +410,7 @@ class FEMEntity(Entity):
                 f"Pressure field max distance is too small: {max_distance}. "
                 "This might be due to a mesh having no internal vertices."
             )
-        self.pressure_field_np = (
-            unsigned_distance / max_distance * self.material._hydroelastic_modulus
-        )  # normalize
+        self.pressure_field_np = unsigned_distance / max_distance * self.material._hydroelastic_modulus  # normalize
 
     # ------------------------------------------------------------------------------------
     # ---------------------------- checkpoint and buffer ---------------------------------

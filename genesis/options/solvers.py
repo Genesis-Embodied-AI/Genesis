@@ -106,7 +106,7 @@ class CouplerOptions(Options):
 
 class SAPCouplerOptions(CouplerOptions):
     """
-    Options configuring the inter-solver coupling for SAP.
+    Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
 
     Parameters
     ----------

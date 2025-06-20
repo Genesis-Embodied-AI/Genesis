@@ -201,6 +201,7 @@ def fem_material_linear():
     """Fixture for common FEM linear material properties"""
     return gs.materials.FEM.Elastic()
 
+
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(

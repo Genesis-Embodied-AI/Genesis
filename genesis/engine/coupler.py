@@ -620,7 +620,13 @@ def tet_barycentric(p, tet_vertices):
 @ti.data_oriented
 class SAPCoupler(RBC):
     """
-    This class handles all the coupling between different solvers using the sap solver in DRAKE
+    This class handles all the coupling between different solvers using the
+    Semi-Analytic Primal (SAP) contact solver used in Drake.
+
+    Note
+    ----
+    Paper reference: https://arxiv.org/abs/2110.10107
+    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
     """
 
     # ------------------------------------------------------------------------------------
