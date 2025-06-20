@@ -5,8 +5,10 @@ import logging
 os.environ["OMNI_KIT_ACCEPT_EULA"] = "yes"
 BAKE_EXT = "usd"
 
+
 def omni_bootstrap(device=0, log_level="warning"):
     import omni.kit_app
+
     app = omni.kit_app.KitApp()
     kit_dir = os.path.dirname(os.path.abspath(os.path.realpath(omni.kit_app.__file__)))
     kit_path = os.path.join(kit_dir, "apps", "omni.app.empty.kit")
@@ -14,7 +16,7 @@ def omni_bootstrap(device=0, log_level="warning"):
         kit_path,
         f"--/app/window/hideUi=True",
         f"--/app/tokens/exe-path={kit_dir}",
-        f"--/app/enableStdoutOutput=False",     # Disable print outs (print_and_log) on extension startup information
+        f"--/app/enableStdoutOutput=False",  # Disable print outs (print_and_log) on extension startup information
         f"--/app/runLoops/present/rateLimitFrequency=60",
         f"--/app/vulkan=True",
         f"--/app/asyncRendering=False",
@@ -22,7 +24,7 @@ def omni_bootstrap(device=0, log_level="warning"):
         f"--/app/python/logSysStdOutput=False",
         f"--/app/settings/fabricDefaultStageFrameHistoryCount=3",
         f"--/omni/log/level={log_level}",
-        f"--/log/file=",        # Empty string means no log file
+        f"--/log/file=",  # Empty string means no log file
         f"--/log/level={log_level}",
         f"--/renderer/activeGpu={device}",
         f"--/renderer/enabled=rtx",
@@ -30,16 +32,23 @@ def omni_bootstrap(device=0, log_level="warning"):
         f"--/renderer/multiGpu/maxGpuCount=1",  # Avoids unnecessary GPU context initialization
         f"--no-window",
         f"--portable",
-        "--enable", "omni.usd",
-        "--enable", "omni.kit.material.library",
-        "--enable", "omni.kit.viewport.utility",
-        "--enable", "omni.kit.viewport.rtx",
-        "--enable", "omni.replicator.core",
-        "--enable", "omni.mdl.distill_and_bake",
+        "--enable",
+        "omni.usd",
+        "--enable",
+        "omni.kit.material.library",
+        "--enable",
+        "omni.kit.viewport.utility",
+        "--enable",
+        "omni.kit.viewport.rtx",
+        "--enable",
+        "omni.replicator.core",
+        "--enable",
+        "omni.mdl.distill_and_bake",
     ]
     app.startup(app_args)
-    app.update()    # important
+    app.update()  # important
     return app
+
 
 def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error"):
     # sys.stdout = open(os.devnull, "w")
@@ -47,6 +56,7 @@ def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error")
 
     # bootstrap
     import time
+
     start_time = time.time()
     app = omni_bootstrap(device, log_level)
     logs.append(f"\tBootstrap: {time.time() - start_time}, App status: {app.is_running()}.")
@@ -64,8 +74,8 @@ def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error")
     # create render product
     start_time = time.time()
     stage = omni.usd.get_context().get_stage()
-    render_prod_path = omni.replicator.core.create.render_product('/OmniverseKit_Persp', resolution=(600, 600))
-    app.update()    # important
+    render_prod_path = omni.replicator.core.create.render_product("/OmniverseKit_Persp", resolution=(600, 600))
+    app.update()  # important
     logs.append(f"\tCreate render product: {time.time() - start_time}s, {render_prod_path}.")
 
     # distill the material
@@ -88,6 +98,7 @@ def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error")
 
     # close omniverse app
     app.shutdown()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

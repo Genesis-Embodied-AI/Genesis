@@ -161,9 +161,7 @@ class Raytracer:
                 color=map(lambda x: x * light_intensity, light["color"]),
             )
             light_surface.update_texture()
-            self.lights.append(
-                SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface)
-            )
+            self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
 
         LuisaRenderPy.init(
             context_path=LRP_PATH,

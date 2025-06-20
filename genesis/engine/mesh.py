@@ -352,6 +352,7 @@ class Mesh(RBC):
 
             elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
                 import genesis.utils.usda as usda_utils
+
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
 
             elif isinstance(morph, gs.options.morphs.MeshSet):

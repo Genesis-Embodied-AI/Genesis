@@ -168,7 +168,7 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
 
     for _ in range(num_retry):
         num_trials = 0
-        
+
         if local_dir is not None:
             os.makedirs(local_dir, exist_ok=True)
 

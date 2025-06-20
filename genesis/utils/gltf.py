@@ -218,7 +218,7 @@ def parse_glb_material(glb, material_index, surface):
             emissive_factor = np.array(material.emissiveFactor, dtype=np.float32)
 
         emissive_texture = mu.create_texture(emissive_image, emissive_factor, "srgb")
-        if emissive_texture.is_black():       # Make sure to check emissive
+        if emissive_texture.is_black():  # Make sure to check emissive
             emissive_texture = None
 
     # TODO: Parse them!

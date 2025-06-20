@@ -28,6 +28,7 @@ cs_encode = {
 
 yup_rotation = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
 
+
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
 
@@ -123,7 +124,7 @@ def parse_preview_surface(shader, output_name, zipfiles):
             "emissive_texture": emissive_texture,
             "normal_texture": normal_texture,
             "ior": ior,
-        }, uvname if uvname else "st"
+        }, (uvname if uvname else "st")
 
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
@@ -192,10 +193,12 @@ def parse_usd_material(material, surface, zipfiles):
         )
 
     if require_bake:
-        candidates_str = "\n".join([
-            f"\tShader at {shader_path} with implement {shader_impl} and ID {shader_id}."
-            for shader_path, shader_id, shader_impl in material_candidates
-        ])
+        candidates_str = "\n".join(
+            [
+                f"\tShader at {shader_path} with implement {shader_impl} and ID {shader_id}."
+                for shader_path, shader_id, shader_impl in material_candidates
+            ]
+        )
         gs.logger.warning(f"Material require baking:\n{candidates_str}")
     return material_surface, uv_name, require_bake
 
@@ -232,7 +235,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 materials[material_id] = (material, uv_name)
                 if not find_bake_cache and require_bake:
                     baked_materials[material_id] = material_usd.GetPath()
-    
+
     if baked_materials:
         baked_material_paths = list(map(str, baked_materials.values()))
         baker_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usda_bake.py")
@@ -240,13 +243,18 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
         try:
             if gs.device.type == "cpu":
                 raise OSError("USD baking does not support backend CPU.")
-            
+
             commands = [
-                "python", baker_file,
-                "--usd_file", path,
-                "--usd_material_paths", *baked_material_paths,
-                "--device", str(gs.device.index),
-                "--log_level", logging.getLevelName(gs.logger.level).lower(),
+                "python",
+                baker_file,
+                "--usd_file",
+                path,
+                "--usd_material_paths",
+                *baked_material_paths,
+                "--device",
+                str(gs.device.index),
+                "--log_level",
+                logging.getLevelName(gs.logger.level).lower(),
             ]
 
             # Each material is estimated to bake at most 4s, and boostrap and initialization for 10s.
@@ -274,7 +282,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 baked_material_usd = UsdShade.Material(stage.GetPrimAtPath(baked_material_path))
                 baked_material, uv_name, require_bake = parse_usd_material(baked_material_usd, surface, zipfiles)
                 materials[baked_material_id] = (baked_material, uv_name)
-            
+
             if not bake_cache:
                 os.remove(baked_path)
                 for file in os.listdir(baked_folder):
@@ -383,7 +391,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                         "path": path,
                         "name": material_id if group_by_material else mesh_id,
                         "baked": material_id in baked_materials,
-                    }
+                    },
                 )
             mesh_info.append(points, triangles, normals, uvs)
 
