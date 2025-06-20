@@ -53,7 +53,7 @@ def parse_terrain(morph: Terrain, surface):
             subterrain_rows = int(morph.subterrain_size[0] / morph.horizontal_scale)
             subterrain_cols = int(morph.subterrain_size[1] / morph.horizontal_scale)
             heightfield = np.zeros(
-                np.array(morph.n_subterrains) * np.array([subterrain_rows, subterrain_cols]), dtype=np.int16
+                np.array(morph.n_subterrains) * np.array([subterrain_rows, subterrain_cols]), dtype=np.float32
             )
 
             for i in range(morph.n_subterrains[0]):
@@ -71,7 +71,7 @@ def parse_terrain(morph: Terrain, surface):
                         saved_state = np.random.get_state()
                         np.random.seed(0)
                     if subterrain_type == "flat_terrain":
-                        subterrain_height_field = np.zeros((subterrain_rows, subterrain_cols), dtype=np.int16)
+                        subterrain_height_field = np.zeros((subterrain_rows, subterrain_cols), dtype=np.float32)
 
                     elif subterrain_type == "fractal_terrain":
                         subterrain_height_field = fractal_terrain(
@@ -193,7 +193,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
     """
     width = terrain.width
     length = terrain.length
-    height = np.zeros((width, length))
+    height = np.zeros((width, length), dtype=np.float32)
     for level in range(1, levels + 1):
         step = 2 ** (levels - level)
         for y in range(0, width, step):
@@ -207,7 +207,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(np.int16)
+    terrain.height_field_raw = height.astype(np.float32)
     return terrain
 
 

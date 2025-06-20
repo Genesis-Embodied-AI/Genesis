@@ -2016,13 +2016,13 @@ def test_terrain_size(show_viewer, tol):
             subterrain_size=(12.0, 12.0),
             horizontal_scale=0.25,
             subterrain_types="wave_terrain",
-            subterrain_parameters={"wave_terrain": {"amplitude": 2.0}},
+            subterrain_parameters={"wave_terrain": {"amplitude": 0.2}},
         )
     )
 
     height_test = terrain_test.geoms[0].metadata["height_field"]
 
-    assert_allclose((height_ref * 2), height_test, tol=tol)
+    assert_allclose((height_ref * 2.0), height_test, tol=tol)
 
 
 @pytest.mark.required
