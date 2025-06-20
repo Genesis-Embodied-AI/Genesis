@@ -923,18 +923,18 @@ class Terrain(Morph):
 
     def __init__(self, **data):
         custom_params = data.get("subterrain_parameters") or {}
-        keys = set(self.default_params) | set(custom_params)
-        effective_params = {}
+        terrain_types = set(self.default_params) | set(custom_params)
+        overwritten_params = {}
 
-        for key in keys:
-            default_value = self.default_params.get(key, {})
-            custom_value = custom_params.get(key, {})
-            effective_params[key] = default_value | custom_value
+        for terrain_type in terrain_types:
+            default_value = self.default_params.get(terrain_type, {})
+            custom_value = custom_params.get(terrain_type, {})
+            overwritten_params[terrain_type] = default_value | custom_value
 
-        data["subterrain_parameters"] = effective_params
+        data["subterrain_parameters"] = overwritten_params
         super().__init__(**data)
 
-        self._subterrain_parameters = effective_params
+        self._subterrain_parameters = overwritten_params
 
         supported_subterrain_types = [
             "flat_terrain",

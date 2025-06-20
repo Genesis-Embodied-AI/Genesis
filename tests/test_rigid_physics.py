@@ -2022,7 +2022,7 @@ def test_terrain_size(show_viewer, tol):
 
     height_test = terrain_test.geoms[0].metadata["height_field"]
 
-    assert_allclose((height_ref * 2).all(), height_test.all(), tol=tol)
+    assert_allclose((height_ref * 2), height_test, tol=tol)
 
 
 @pytest.mark.required
