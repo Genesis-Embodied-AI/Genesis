@@ -2,7 +2,7 @@ import numpy as np
 import taichi as ti
 import torch
 
-from igl import signed_distance
+import igl
 
 import genesis as gs
 import genesis.utils.element as eu
@@ -13,6 +13,7 @@ from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor
 
 from .base_entity import Entity
+from genesis.engine.coupler import SAPCoupler
 
 
 @ti.data_oriented
@@ -84,7 +85,8 @@ class FEMEntity(Entity):
         unique_el = all_el[unique_idcs]
         self._surface_el_np = unique_el[cnt == 1].astype(gs.np_int)
 
-        self.compute_pressure_field()
+        if isinstance(self.sim.coupler, SAPCoupler):
+            self.compute_pressure_field()
 
         self.init_tgt_vars()
         self.init_ckpt()
@@ -400,16 +402,16 @@ class FEMEntity(Entity):
         Drake's implementation of margin seems buggy.
         """
         init_positions = self.init_positions.cpu().numpy()
-        self.pressure_field_np, *_ = signed_distance(init_positions, init_positions, self._surface_tri_np)
-        self.pressure_field_np = np.abs(self.pressure_field_np)
-        max_distance = np.max(self.pressure_field_np)
+        signed_distance, *_ = igl.signed_distance(init_positions, init_positions, self._surface_tri_np)
+        unsigned_distance = np.abs(signed_distance)
+        max_distance = np.max(unsigned_distance)
         if max_distance < gs.EPS:
             gs.raise_exception(
                 f"Pressure field max distance is too small: {max_distance}. "
                 "This might be due to a mesh having no internal vertices."
             )
         self.pressure_field_np = (
-            self.pressure_field_np / max_distance * self.material._hydroelastic_modulus
+            unsigned_distance / max_distance * self.material._hydroelastic_modulus
         )  # normalize
 
     # ------------------------------------------------------------------------------------
