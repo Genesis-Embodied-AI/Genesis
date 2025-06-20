@@ -45,28 +45,76 @@ def raise_exception_from(msg="Something went wrong.", cause=None):
 
 
 class redirect_libc_stderr:
+    """
+    Context-manager that temporarily redirects C / C++ std::cerr
+    (i.e. the C `stderr` file descriptor 2) to a given Python
+    file-like object’s fd.
+
+    Works on macOS, Linux (glibc / musl), and Windows (MSVCRT /
+    Universal CRT ≥ VS2015).
+    """
+
     def __init__(self, fd):
-        self.fd = fd
-        self.stderr_fileno = None
+        self.fd = fd  # Target destination
+        self.stderr_fileno = None  # Usually 2
         self.original_stderr_fileno = None
 
+    # --------------------------------------------------
+    # Enter: duplicate stderr → tmp, dup2(target) → stderr
+    # --------------------------------------------------
     def __enter__(self):
-        # TODO: Add Linux and Windows support
-        if sys.platform == "darwin":
-            libc = ctypes.CDLL(None)
-            self.stderr_fileno = sys.stderr.fileno()
-            self.original_stderr_fileno = os.dup(self.stderr_fileno)
-            sys.stderr.flush()
-            libc.fflush(None)
-            libc.dup2(self.fd.fileno(), self.stderr_fileno)
+        self.stderr_fileno = sys.stderr.fileno()
+        # Keep a copy so we can restore later
+        self.original_stderr_fileno = os.dup(self.stderr_fileno)
+        sys.stderr.flush()  # Flush Python buffers first
 
+        if os.name == "posix":  # macOS, Linux, *BSD, …
+            libc = ctypes.CDLL(None)
+            libc.fflush(None)  # Flush all C stdio streams
+            libc.dup2(self.fd.fileno(), self.stderr_fileno)
+        elif os.name == "nt":  # Windows
+            msvcrt = ctypes.CDLL("msvcrt")
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+            msvcrt.fflush(None)  # Flush CRT buffers
+            # Duplicate: _dup2(new_fd, old_fd)
+            msvcrt._dup2(self.fd.fileno(), self.stderr_fileno)
+
+            # Tell the OS so child APIs that use GetStdHandle( … )
+            # see the new handle as well.
+            STDERR_HANDLE = -12  # (DWORD) -12 == STD_ERROR_HANDLE
+            new_os_handle = msvcrt._get_osfhandle(self.fd.fileno())
+            kernel32.SetStdHandle(STDERR_HANDLE, new_os_handle)
+        else:
+            gs.logger.warning(f"Unsupported platform for redirecting libc stderr: {sys.platform}")
+
+        return self  # Optional, enables `as` clause
+
+    # --------------------------------------------------
+    # Exit: restore previous stderr, close the temp copy
+    # --------------------------------------------------
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.stderr_fileno is not None:
+        if self.stderr_fileno is None:
+            return
+
+        if os.name == "posix":
             libc = ctypes.CDLL(None)
             sys.stderr.flush()
             libc.fflush(None)
             libc.dup2(self.original_stderr_fileno, self.stderr_fileno)
-            os.close(self.original_stderr_fileno)
+        elif os.name == "nt":
+            msvcrt = ctypes.CDLL("msvcrt")
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+            sys.stderr.flush()
+            msvcrt.fflush(None)
+            msvcrt._dup2(self.original_stderr_fileno, self.stderr_fileno)
+
+            STDERR_HANDLE = -12
+            orig_os_handle = msvcrt._get_osfhandle(self.original_stderr_fileno)
+            kernel32.SetStdHandle(STDERR_HANDLE, orig_os_handle)
+
+        os.close(self.original_stderr_fileno)
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
