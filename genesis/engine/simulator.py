@@ -263,6 +263,9 @@ class Simulator(RBC):
                 if self.cur_substep_local == 0 and not in_backward:
                     self.save_ckpt()
 
+        if self.rigid_solver.is_active():
+            self.rigid_solver._kernel_clear_external_force()
+
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
 
