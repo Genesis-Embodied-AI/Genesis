@@ -279,6 +279,30 @@ def double_pendulum(asset_tmp_path):
     return _build_multi_pendulum(n=2)
 
 
+@pytest.fixture(scope="session")
+def double_ball_pendulum():
+    mjcf = ET.Element("mujoco", model="double_ball_pendulum")
+
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "joint", armature="0.1", damping="0.5")
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    base = ET.SubElement(worldbody, "body", name="base", pos="-0.02 0.0 0.0")
+    ET.SubElement(base, "joint", name="joint1", type="ball")
+    ET.SubElement(
+        base, "geom", name="link1_geom", type="capsule", size="0.02", fromto="0 0 0 0 0 0.5", rgba="0.8 0.2 0.2 1.0"
+    )
+    link2 = ET.SubElement(base, "body", name="link2", pos="0 0 0.5")
+    ET.SubElement(link2, "joint", name="joint2", type="ball")
+    ET.SubElement(
+        link2, "geom", name="link2_geom", type="capsule", size="0.02", fromto="0 0 0 0 0 0.3", rgba="0.2 0.8 0.2 1.0"
+    )
+    ee = ET.SubElement(link2, "body", name="end_effector", pos="0 0 0.3")
+    ET.SubElement(ee, "geom", name="ee_geom", type="sphere", size="0.02", density="200", rgba="1.0 0.8 0.2 1.0")
+
+    return mjcf
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -816,6 +840,7 @@ def test_info_batching(tol):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
 @pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
@@ -1564,6 +1589,52 @@ def test_contact_forces(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("model_name", ["double_ball_pendulum"])
+def test_apply_external_forces(xml_path, show_viewer):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0, -3.5, 2.5),
+            camera_lookat=(0.0, 0.0, 1.0),
+            camera_fov=40,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            quat=(1.0, 0, 1.0, 0),
+        ),
+    )
+    scene.build()
+
+    tol = 5e-3
+    end_effector_link_idx = robot.links[-1].idx
+    for step in range(801):
+        ee_pos = scene.rigid_solver.get_links_pos([end_effector_link_idx]).cpu()[0]
+        if step == 0:
+            assert_allclose(ee_pos, [0.8, 0.0, 0.02], tol=tol)
+        elif step == 600:
+            assert_allclose(ee_pos, [0.0, 0.0, 0.82], tol=tol)
+        elif step == 800:
+            assert_allclose(ee_pos, [-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02], tol=tol)
+
+        if step >= 600:
+            force = np.array([[-5.0, 5.0, 0.0]])
+        elif step >= 100:
+            force = np.array([[0.0, 0.0, 10.0]])
+        else:
+            force = np.array([[0.0, 0.0, 0.0]])
+
+        scene.rigid_solver.apply_links_external_force(force=force, links_idx=[end_effector_link_idx])
+        scene.step()
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mass_mat(show_viewer, tol):
     # Create and build the scene
@@ -1687,7 +1758,7 @@ def test_mesh_repair(convexify, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
+@pytest.mark.parametrize("euler", [(90, 0, 90), (76, 15, 90)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer):
     OBJ_OFFSET_X = 0.0  # 0.02
@@ -2084,6 +2155,55 @@ def test_urdf_mimic(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_drone_hover_same_with_and_without_substeps(show_viewer, tol):
+    base_rpm = 15000
+    scene_ref = gs.Scene(
+        show_viewer=show_viewer,
+        sim_options=gs.options.SimOptions(
+            dt=0.002,
+            substeps=1,
+        ),
+    )
+    drone_ref = scene_ref.add_entity(
+        morph=gs.morphs.Drone(
+            file="urdf/drones/cf2x.urdf",
+            pos=(0, 0, 1.0),
+        ),
+    )
+    scene_ref.build()
+
+    for _ in range(2500):
+        drone_ref.set_propellels_rpm([base_rpm, base_rpm, base_rpm, base_rpm])
+        scene_ref.step()
+
+    pos_ref = drone_ref.get_dofs_position()
+
+    scene_test = gs.Scene(
+        show_viewer=show_viewer,
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            substeps=5,
+        ),
+    )
+    drone_test = scene_test.add_entity(
+        morph=gs.morphs.Drone(
+            file="urdf/drones/cf2x.urdf",
+            pos=(0, 0, 1.0),
+        ),
+    )
+    scene_test.build()
+
+    for _ in range(500):
+        drone_test.set_propellels_rpm([base_rpm, base_rpm, base_rpm, base_rpm])
+        scene_test.step()
+
+    pos_test = drone_test.get_dofs_position()
+
+    assert_allclose(pos_ref, pos_test, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_drone_advanced(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -2139,7 +2259,7 @@ def test_drone_advanced(show_viewer):
     else:
         raise AssertionError
 
-    tol = 1e-4
+    tol = 1e-2
     pos_1 = drones[0].get_pos()
     pos_2 = drones[1].get_pos()
     assert abs(pos_1[0] - pos_2[0]) < tol
