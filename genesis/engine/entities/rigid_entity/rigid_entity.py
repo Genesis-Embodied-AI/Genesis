@@ -1578,7 +1578,7 @@ class RigidEntity(Entity):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            for i_q in range(self.n_qs):
+            for i_q in ti.static(range(self.n_qs)):
                 # save original qpos
                 self._rrt_start_configuration[i_q, i_b] = qpos_start[i_b_, i_q]
                 self._rrt_goal_configuration[i_q, i_b] = qpos_goal[i_b_, i_q]
@@ -1596,7 +1596,7 @@ class RigidEntity(Entity):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            for i_q in range(self.n_qs):
+            for i_q in ti.static(range(self.n_qs)):
                 self._solver.qpos[i_q + self._q_start, i_b] = qpos_current[i_b_, i_q]
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
     
@@ -1614,12 +1614,12 @@ class RigidEntity(Entity):
             
             random_sample = ti.Vector([
                 q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
-                for i_q in range(self.n_qs)
+                for i_q in ti.static(range(self.n_qs))
             ])
             if ti.random() < self._rrt_goal_bias:
                 random_sample = ti.Vector([
                     self._rrt_goal_configuration[i_q, i_b]
-                    for i_q in range(self.n_qs)
+                    for i_q in ti.static(range(self.n_qs))
                 ])
 
             # find nearest neighbor
@@ -1636,7 +1636,7 @@ class RigidEntity(Entity):
             nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
             direction = random_sample - nearest_config
             steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
-            for i_q in range(self.n_qs):
+            for i_q in ti.static(range(self.n_qs)):
                 # If the step size exceeds max_step_size, clip it
                 if abs(direction[i_q]) > self._rrt_max_step_size:
                     direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
@@ -1649,7 +1649,7 @@ class RigidEntity(Entity):
                 self._rrt_tree_size[i_b] += 1
 
                 # set the steer result and collision check for i_b
-                for i_q in range(self.n_qs):
+                for i_q in ti.static(range(self.n_qs)):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
                 self._solver._func_update_geoms(i_b)
@@ -1883,7 +1883,7 @@ class RigidEntity(Entity):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            for i_q in range(self.n_qs):
+            for i_q in ti.static(range(self.n_qs)):
                 # save original qpos
                 self._rrt_start_configuration[i_q, i_b] = qpos_start[i_b_, i_q]
                 self._rrt_goal_configuration[i_q, i_b] = qpos_goal[i_b_, i_q]
@@ -1903,7 +1903,7 @@ class RigidEntity(Entity):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            for i_q in range(self.n_qs):
+            for i_q in ti.static(range(self.n_qs)):
                 self._solver.qpos[i_q + self._q_start, i_b] = qpos_current[i_b_, i_q]
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
     
@@ -1922,18 +1922,18 @@ class RigidEntity(Entity):
             
             random_sample = ti.Vector([
                 q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
-                for i_q in range(self.n_qs)
+                for i_q in ti.static(range(self.n_qs))
             ])
             if ti.random() < self._rrt_goal_bias:
                 if forward_pass:
                     random_sample = ti.Vector([
                         self._rrt_goal_configuration[i_q, i_b]
-                        for i_q in range(self.n_qs)
+                        for i_q in ti.static(range(self.n_qs))
                     ])
                 else:
                     random_sample = ti.Vector([
                         self._rrt_start_configuration[i_q, i_b]
-                        for i_q in range(self.n_qs)
+                        for i_q in ti.static(range(self.n_qs))
                     ])
 
             # find nearest neighbor
@@ -1958,7 +1958,7 @@ class RigidEntity(Entity):
             nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
             direction = random_sample - nearest_config
             steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
-            for i_q in range(self.n_qs):
+            for i_q in ti.static(range(self.n_qs)):
                 # If the step size exceeds max_step_size, clip it
                 if abs(direction[i_q]) > self._rrt_max_step_size:
                     direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
@@ -1974,7 +1974,7 @@ class RigidEntity(Entity):
                 self._rrt_tree_size[i_b] += 1
 
                 # set the steer result and collision check for i_b
-                for i_q in range(self.n_qs):
+                for i_q in ti.static(range(self.n_qs)):
                     self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
                 self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
                 self._solver._func_update_geoms(i_b)
