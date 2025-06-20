@@ -1,3 +1,5 @@
+# type: ignore
+
 import enum
 
 import taichi as ti

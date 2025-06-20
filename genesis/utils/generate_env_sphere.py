@@ -1,3 +1,5 @@
+# type: ignore
+
 import trimesh
 import numpy as np
 from PIL import Image

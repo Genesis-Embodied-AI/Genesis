@@ -1,3 +1,5 @@
+# type: ignore
+
 from .camera import Camera, PerspectiveCamera, OrthographicCamera, IntrinsicsCamera
 from .light import Light, PointLight, DirectionalLight, SpotLight
 from .sampler import Sampler

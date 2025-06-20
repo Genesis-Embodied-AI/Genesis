@@ -1,3 +1,5 @@
+# type: ignore
+
 """A pyglet-based interactive 3D scene viewer."""
 
 import copy

@@ -1,3 +1,5 @@
+# type: ignore
+
 from typing import Literal, TYPE_CHECKING
 
 import numpy as np

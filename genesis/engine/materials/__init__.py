@@ -1,3 +1,5 @@
+# type: ignore
+
 from . import FEM, MPM, PBD, SF, SPH
 from .avatar import Avatar
 from .hybrid import Hybrid

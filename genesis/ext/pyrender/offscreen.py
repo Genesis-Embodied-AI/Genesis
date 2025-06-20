@@ -1,3 +1,5 @@
+# type: ignore
+
 """Wrapper for offscreen rendering.
 
 Author: Matthew Matl

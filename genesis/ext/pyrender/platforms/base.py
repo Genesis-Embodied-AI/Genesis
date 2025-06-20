@@ -1,3 +1,5 @@
+# type: ignore
+
 import abc
 from abc import ABCMeta
 

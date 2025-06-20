@@ -1,3 +1,5 @@
+# type: ignore
+
 import genesis as gs
 from genesis.repr_base import RBC
 

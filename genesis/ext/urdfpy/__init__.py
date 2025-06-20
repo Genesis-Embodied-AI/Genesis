@@ -1,3 +1,5 @@
+# type: ignore
+
 from .urdf import (
     URDFType,
     Box,

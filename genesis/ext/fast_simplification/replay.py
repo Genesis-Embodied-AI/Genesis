@@ -1,3 +1,5 @@
+# type: ignore
+
 import numpy as np
 
 from . import _replay

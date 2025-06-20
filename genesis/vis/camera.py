@@ -1,3 +1,5 @@
+# type: ignore
+
 import inspect
 import os
 import time

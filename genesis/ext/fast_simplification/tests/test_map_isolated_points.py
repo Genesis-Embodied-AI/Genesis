@@ -1,3 +1,5 @@
+# type: ignore
+
 import numpy as np
 
 from fast_simplification import _map_isolated_points as map_isolated_points

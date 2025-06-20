@@ -1,3 +1,5 @@
+# type: ignore
+
 """Utilities for URDF parsing."""
 
 import os
