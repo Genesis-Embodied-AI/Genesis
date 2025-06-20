@@ -46,9 +46,9 @@ def _sanitize_sol_params(
         gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
     if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():
         gs.logger.warning(
-            "Constraint solver time constant was increased to avoid numerical instability (from "
-            f"`{timeconst.min():0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep to avoid "
-            "altering the original value."
+            "Constraint solver time constant should be greater than 2*subste_dt. timeconst is changed from "
+            f"`{timeconst.min():0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
+            "increase timeconst to avoid altering the original value."
         )
     timeconst[:] = timeconst.clip(min_timeconst)
     dampratio[:] = dampratio.clip(0.0)
@@ -327,13 +327,11 @@ class RigidSolver(Solver):
         links_invweight: ti.types.ndarray(),
         dofs_invweight: ti.types.ndarray(),
     ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.links_info):
             for j in ti.static(range(2)):
                 if self.links_info[I].invweight[j] < gs.EPS:
                     self.links_info[I].invweight[j] = links_invweight[I[0], j]
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.dofs_info):
             if self.dofs_info[I].invweight < gs.EPS:
                 self.dofs_info[I].invweight = dofs_invweight[I[0]]
@@ -481,7 +479,6 @@ class RigidSolver(Solver):
         dofs_kv: ti.types.ndarray(),
         dofs_force_range: ti.types.ndarray(),
     ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.dofs_info):
             i = I[0]  # batching (if any) will be the second dim
 
@@ -693,7 +690,6 @@ class RigidSolver(Solver):
         links_inertial_mass: ti.types.ndarray(),
         links_entity_idx: ti.types.ndarray(),
     ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.links_info):
             i = I[0]
 
@@ -725,7 +721,6 @@ class RigidSolver(Solver):
                 for j2 in ti.static(range(3)):
                     self.links_info[I].inertial_i[j1, j2] = links_inertial_i[i, j1, j2]
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_links, self._B):
             I = [i, b] if ti.static(self._options.batch_links_info) else i
 
@@ -762,7 +757,6 @@ class RigidSolver(Solver):
         joints_dof_end: ti.types.ndarray(),
         joints_pos: ti.types.ndarray(),
     ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for I in ti.grouped(self.joints_info):
             i = I[0]
 
@@ -1789,7 +1783,6 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             self._func_forward_kinematics(i_b)
             self._func_COM_links(i_b)
