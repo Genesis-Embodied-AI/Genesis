@@ -287,3 +287,49 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         assert_allclose(
             min_pos_z, 0.0, atol=1e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear_corotated():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated")
+
+
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
+    """Test adding multiple FEM entities to the scene"""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=5,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.5, -0.2, 1.0),
+            radius=0.1,
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    # Build the scene
+    scene.build()
+
+    # Run simulation
+    for _ in range(200):
+        scene.step()
+
+    for entity in scene.entities:
+        state = entity.get_state()
+        pos = state.pos.detach().cpu().numpy()
+        min_pos_z = np.min(pos[..., 2])
+        assert_allclose(
+            min_pos_z, 0.0, atol=1e-3
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
