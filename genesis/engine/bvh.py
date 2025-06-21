@@ -164,12 +164,18 @@ class LBVH(RBC):
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
 
-    @ti.kernel
     def build(self):
         """
         Build the BVH from the axis-aligned bounding boxes (AABBs).
         """
+        self.compute_aabb_centers_and_scales()
+        self.compute_morton_codes()
+        self.radix_sort_morton_codes()
+        self.build_radix_tree()
+        self.compute_bounds()
 
+    @ti.kernel
+    def compute_aabb_centers_and_scales(self):
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
             self.aabb_centers[i_b, i_a] = (self.aabbs[i_b, i_a].min + self.aabbs[i_b, i_a].max) / 2
 
@@ -186,12 +192,7 @@ class LBVH(RBC):
             for i in ti.static(range(3)):
                 self.scale[i_b][i] = ti.select(scale[i] > 1e-7, 1.0 / scale[i], 1)
 
-        self.compute_morton_codes()
-        self.radix_sort_morton_codes()
-        self.build_radix_tree()
-        self.compute_bounds()
-
-    @ti.func
+    @ti.kernel
     def compute_morton_codes(self):
         """
         Compute the Morton codes for each AABB.
@@ -223,38 +224,44 @@ class LBVH(RBC):
         v = (v * ti.u32(0x00000005)) & ti.u32(0x49249249)
         return v
 
-    @ti.func
     def radix_sort_morton_codes(self):
         """
         Radix sort the morton codes, using 8 bits at a time.
         """
-        for i in ti.static(range(8)):
-            # Clear histogram
-            for i_b, j in ti.ndrange(self.n_batches, 256):
-                self.hist[i_b, j] = 0
+        for i in range(8):
+            self._kernel_radix_sort_morton_codes_one_round(i)
 
-            # Fill histogram
-            for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
+    @ti.kernel
+    def _kernel_radix_sort_morton_codes_one_round(self, i: int):
+        # Clear histogram
+        for i_b, j in ti.ndrange(self.n_batches, 256):
+            self.hist[i_b, j] = 0
+
+        # Fill histogram
+        for i_b in range(self.n_batches):
+            # This is now sequential
+            # TODO Parallelize, need to use groups to handle data to remain stable, could be not worth it
+            for i_a in range(self.n_aabbs):
                 code = (self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF
                 self.offset[i_b, i_a] = ti.atomic_add(self.hist[i_b, ti.i32(code)], 1)
 
-            # Compute prefix sum
-            for i_b in ti.ndrange(self.n_batches):
-                self.prefix_sum[i_b, 0] = 0
-                for j in range(1, 256):  # sequential prefix sum
-                    self.prefix_sum[i_b, j] = self.prefix_sum[i_b, j - 1] + self.hist[i_b, j - 1]
+        # Compute prefix sum
+        for i_b in ti.ndrange(self.n_batches):
+            self.prefix_sum[i_b, 0] = 0
+            for j in range(1, 256):  # sequential prefix sum
+                self.prefix_sum[i_b, j] = self.prefix_sum[i_b, j - 1] + self.hist[i_b, j - 1]
 
-            # Reorder morton codes
-            for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
-                code = (self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF
-                idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, ti.i32(code)])
-                self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
+        # Reorder morton codes
+        for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
+            code = (self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF
+            idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, ti.i32(code)])
+            self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
 
-            # Swap the temporary and original morton codes
-            for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
-                self.morton_codes[i_b, i_a] = self.tmp_morton_codes[i_b, i_a]
+        # Swap the temporary and original morton codes
+        for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
+            self.morton_codes[i_b, i_a] = self.tmp_morton_codes[i_b, i_a]
 
-    @ti.func
+    @ti.kernel
     def build_radix_tree(self):
         """
         Build the radix tree from the sorted morton codes.
@@ -321,7 +328,7 @@ class LBVH(RBC):
                     break
         return result
 
-    @ti.func
+    @ti.kernel
     def compute_bounds(self):
         """
         Compute the bounds of the BVH nodes.

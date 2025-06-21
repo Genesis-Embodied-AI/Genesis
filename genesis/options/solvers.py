@@ -36,6 +36,8 @@ class SimOptions(Options):
         Height of the floor in meters. Defaults to 0.0.
     requires_grad : bool, optional
         Whether to enable differentiable mode. Defaults to False.
+    use_hydroelastic_contact : bool, optional
+        Whether to use hydroelastic contact. Defaults to False.
     """
 
     dt: float = 1e-2
@@ -88,6 +90,8 @@ class CouplerOptions(Options):
         Whether to enable coupling between FEM and MPM solvers. Defaults to True.
     fem_sph : bool, optional
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
+    hydroelastic_contact : bool, optional
+        Whether to enable hydroelastic contact. Defaults to False. Experimental
     """
 
     rigid_mpm: bool = True
@@ -98,6 +102,42 @@ class CouplerOptions(Options):
     mpm_pbd: bool = True
     fem_mpm: bool = True
     fem_sph: bool = True
+
+
+class SAPCouplerOptions(CouplerOptions):
+    """
+    Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
+
+    Parameters
+    ----------
+    n_sap_iterations : int, optional
+        Number of iterations for the SAP solver. Defaults to 5.
+    n_pcg_iterations : int, optional
+        Number of iterations for the Preconditioned Conjugate Gradient solver. Defaults to 100.
+    n_linesearch_iterations : int, optional
+        Number of iterations for the line search solver. Defaults to 10.
+    sap_threshold : float, optional
+        Threshold for the SAP solver. Defaults to 1e-6.
+    pcg_threshold : float, optional
+        Threshold for the Preconditioned Conjugate Gradient solver. Defaults to 1e-6.
+    linesearch_c : float, optional
+        Line search sufficient decrease parameter. Defaults to 1e-4.
+    linesearch_tau : float, optional
+        Line search step size reduction factor. Defaults to 0.8.
+
+    Note
+    ----
+    Paper reference: https://arxiv.org/abs/2110.10107
+    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
+    """
+
+    n_sap_iterations: int = 5
+    n_pcg_iterations: int = 100
+    n_linesearch_iterations: int = 10
+    sap_threshold: float = 1e-6
+    pcg_threshold: float = 1e-6
+    linesearch_c: float = 1e-4
+    linesearch_tau: float = 0.8
 
 
 ############################ Solvers inside simulator ############################
@@ -527,6 +567,17 @@ class FEMOptions(Options):
         Line search sufficient decrease parameter. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
     linesearch_tau : float, optional
         Line search step size reduction factor. Defaults to 0.5. Only used when `use_implicit_solver` is True.
+    damping_alpha : float, optional
+        Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
+    damping_beta : float, optional
+        Rayleigh Damping factor for the implicit solver. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
+
+    Note
+    ----
+    - Damping coefficients are used to control the damping effect in the simulation.
+    They are used in the Rayleigh Damping model, which is a common damping model in FEM simulations.
+    Reference: https://doc.comsol.com/5.5/doc/com.comsol.help.sme/sme_ug_modeling.05.083.html
+    - TODO Move it to material parameters in the future instead of solver options.
     """
 
     dt: Optional[float] = None
@@ -541,6 +592,8 @@ class FEMOptions(Options):
     pcg_threshold: float = 1e-6
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.5
+    damping_alpha: float = 0.5
+    damping_beta: float = 1e-4
 
 
 class SFOptions(Options):

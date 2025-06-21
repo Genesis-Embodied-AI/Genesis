@@ -2,6 +2,8 @@ import numpy as np
 import taichi as ti
 import torch
 
+import igl
+
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
@@ -11,6 +13,7 @@ from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor
 
 from .base_entity import Entity
+from genesis.engine.coupler import SAPCoupler
 
 
 @ti.data_oriented
@@ -81,6 +84,9 @@ class FEMEntity(Entity):
         )
         unique_el = all_el[unique_idcs]
         self._surface_el_np = unique_el[cnt == 1].astype(gs.np_int)
+
+        if isinstance(self.sim.coupler, SAPCoupler):
+            self.compute_pressure_field()
 
         self.init_tgt_vars()
         self.init_ckpt()
@@ -371,6 +377,7 @@ class FEMEntity(Entity):
             mat_mu=self._material.mu,
             mat_lam=self._material.lam,
             mat_rho=self._material.rho,
+            mat_friction_mu=self._material.friction_mu,
             n_surfaces=self._n_surfaces,
             v_start=self._v_start,
             el_start=self._el_start,
@@ -381,6 +388,29 @@ class FEMEntity(Entity):
             tri2el=self._surface_el_np,
         )
         self.active = True
+
+    def compute_pressure_field(self):
+        """
+        Compute the pressure field for the FEM entity based on its tetrahedral elements.
+
+        For hydroelastic contact: https://drake.mit.edu/doxygen_cxx/group__hydroelastic__user__guide.html
+
+        Notes
+        -----
+        https://github.com/RobotLocomotion/drake/blob/master/geometry/proximity/make_mesh_field.cc
+        TODO: Add margin support
+        Drake's implementation of margin seems buggy.
+        """
+        init_positions = self.init_positions.cpu().numpy()
+        signed_distance, *_ = igl.signed_distance(init_positions, init_positions, self._surface_tri_np)
+        unsigned_distance = np.abs(signed_distance)
+        max_distance = np.max(unsigned_distance)
+        if max_distance < gs.EPS:
+            gs.raise_exception(
+                f"Pressure field max distance is too small: {max_distance}. "
+                "This might be due to a mesh having no internal vertices."
+            )
+        self.pressure_field_np = unsigned_distance / max_distance * self.material._hydroelastic_modulus  # normalize
 
     # ------------------------------------------------------------------------------------
     # ---------------------------- checkpoint and buffer ---------------------------------
