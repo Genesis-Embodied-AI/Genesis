@@ -1,23 +1,24 @@
-import genesis as gs
-from . import mesh as mu
-from .usda_bake import BAKE_EXT
+import io
+import os
+import shutil
+import subprocess
+import logging
+
+from PIL import Image
+import numpy as np
+import trimesh
 
 try:
     from pxr import Usd, UsdGeom, UsdShade
 except ImportError as e:
-    gs.raise_exception(
-        f"Failed to import USD related libs. {e.__class__.__name__}: {e}."
-        "Please make sure that installing Genesis with [usd] option."
+    gs.raise_exception_from(
+        "Failed to import USD related libs. Please make sure that installing Genesis with [usd] option.", e
     )
 
-from PIL import Image
-import subprocess
-import numpy as np
-import trimesh
-import io
-import os
-import shutil
-import logging
+
+import genesis as gs
+from . import mesh as mu
+from .usda_bake import BAKE_EXT
 
 cs_encode = {
     "raw": "linear",
@@ -44,11 +45,10 @@ def get_input_attribute_value(shader, input_name, input_type=None):
 
 def get_texture_image(image_path, zipfiles):
     if zipfiles is not None:
-        try:
-            return np.array(Image.open(io.BytesIO(zipfiles.GetFile(image_path.path))))
-        except:
-            pass
-    return np.array(Image.open(image_path.resolvedPath))
+        image_data = zipfiles.GetFile(image_path.path)
+        if image_data is not None:
+            return np.asarray(Image.open(io.BytesIO(image_data)))
+    return np.asarray(Image.open(image_path.resolvedPath))
 
 
 def parse_preview_surface(shader, output_name, zipfiles):
@@ -88,11 +88,10 @@ def parse_preview_surface(shader, output_name, zipfiles):
 
         # parse emissive
         emissive_texture, emissive_uvname = parse_component("emissiveColor", "srgb")
-        if emissive_uvname is not None:
-            if emissive_texture.is_black():
-                emissive_texture = None
-            if uvname is None:
-                uvname = emissive_uvname
+        if emissive_texture is not None and emissive_texture.is_black():
+            emissive_texture = None
+        if emissive_uvname is not None and uvname is None:
+            uvname = emissive_uvname
 
         # parse mertalic
         use_specular = get_input_attribute_value(shader, "useSpecularWorkflow", "value")[0]
@@ -116,6 +115,8 @@ def parse_preview_surface(shader, output_name, zipfiles):
         # parse ior
         ior = get_input_attribute_value(shader, "ior", "value")[0]
 
+        if uvname is None:
+            uvname = "st"
         return {
             "color_texture": color_texture,
             "opacity_texture": opacity_texture,
@@ -124,7 +125,7 @@ def parse_preview_surface(shader, output_name, zipfiles):
             "emissive_texture": emissive_texture,
             "normal_texture": normal_texture,
             "ior": ior,
-        }, (uvname if uvname else "st")
+        }, uvname
 
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
@@ -206,12 +207,12 @@ def parse_usd_material(material, surface, zipfiles):
 def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
     zipfiles = Usd.ZipFile.Open(path) if path.endswith(".usdz") else None
 
-    find_bake_cache = False
+    is_bake_cache_found = False
     baked_path = f"{os.path.splitext(path)[0]}_baked.{BAKE_EXT}"
     if bake_cache:
         if os.path.exists(baked_path):
             path = baked_path
-            find_bake_cache = True
+            is_bake_cache_found = True
 
     stage = Usd.Stage.Open(path)
     scale *= UsdGeom.GetStageMetersPerUnit(stage)
@@ -233,7 +234,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
             if material_pack is None:
                 material, uv_name, require_bake = parse_usd_material(material_usd, surface, zipfiles)
                 materials[material_id] = (material, uv_name)
-                if not find_bake_cache and require_bake:
+                if not is_bake_cache_found and require_bake:
                     baked_materials[material_id] = material_usd.GetPath()
 
     if baked_materials:

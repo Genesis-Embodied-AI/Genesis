@@ -202,4 +202,4 @@ class ImageTexture(Texture):
         self.image_array = np.where(self.image_array >= 255.0 * cutoff, 255, 0).astype(np.uint8)
 
     def is_black(self):
-        return np.max(self.image_array) == 0 or all(c == 0.0 for c in self.image_color)
+        return all(c == 0.0 for c in self.image_color) or np.max(self.image_array) == 0
