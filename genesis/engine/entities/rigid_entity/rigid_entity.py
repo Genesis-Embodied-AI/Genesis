@@ -1401,6 +1401,7 @@ class RigidEntity(Entity):
                         self._IK_qpos_best[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
                     for i_error in range(n_error_dims):
                         self._IK_err_pose_best[i_error, i_b] = self._IK_err_pose[i_error, i_b]
+                    break
 
                 else:
                     # copy to _IK_qpos if this sample is better
