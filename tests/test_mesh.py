@@ -305,7 +305,6 @@ def test_usd_parse(usd_filename):
 def test_usd_bake(usd_file):
     asset_path = get_hf_assets(
         num_retry=1,
-        local_dir="tmp",  # If not using local dir, the symbol link of snapshot download will cause errors.
         pattern=os.path.join(os.path.dirname(usd_file), "*"),
     )
     usd_file = os.path.join(asset_path, usd_file)

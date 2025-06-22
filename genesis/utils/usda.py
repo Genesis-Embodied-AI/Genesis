@@ -9,7 +9,7 @@ import numpy as np
 import trimesh
 
 try:
-    from pxr import Usd, UsdGeom, UsdShade
+    from pxr import Usd, UsdGeom, UsdShade, Sdf
 except ImportError as e:
     gs.raise_exception_from(
         "Failed to import USD related libs. Please make sure that installing Genesis with [usd] option.", e
@@ -204,6 +204,35 @@ def parse_usd_material(material, surface, zipfiles):
     return material_surface, uv_name, require_bake
 
 
+def replace_asset_symlinks(stage):
+    asset_paths = set()
+
+    for prim in stage.TraverseAll():
+        for attr in prim.GetAttributes():
+            value = attr.Get()
+            if isinstance(value, Sdf.AssetPath):
+                asset_paths.add(value.resolvedPath)
+            elif isinstance(value, list):
+                for v in value:
+                    if isinstance(v, Sdf.AssetPath):
+                        asset_paths.add(v.resolvedPath)
+
+    for asset_path in asset_paths:
+        if not os.path.islink(asset_path):
+            return
+
+        real_path = os.path.realpath(asset_path)
+        path_ext = os.path.splitext(asset_path)[1]
+        real_path_ext = os.path.splitext(real_path)[1]
+        if path_ext.lower() == real_path_ext.lower():
+            return
+
+        os.unlink(asset_path)
+        if os.path.isfile(real_path):
+            shutil.copy2(real_path, asset_path)
+            gs.logger.warning(f"Replace symlink {asset_path} with real file {real_path}.")
+
+
 def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
     zipfiles = Usd.ZipFile.Open(path) if path.endswith(".usdz") else None
 
@@ -244,6 +273,8 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
         try:
             if gs.device.type == "cpu":
                 raise OSError("USD baking does not support backend CPU.")
+
+            replace_asset_symlinks(stage)
 
             commands = [
                 "python",

@@ -163,14 +163,11 @@ def get_git_commit_info(ref="HEAD"):
     return revision, timestamp
 
 
-def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True, local_dir=None):
+def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
     assert num_retry >= 1
 
     for _ in range(num_retry):
         num_trials = 0
-
-        if local_dir is not None:
-            os.makedirs(local_dir, exist_ok=True)
 
         try:
             # Try downloading the assets
@@ -178,7 +175,6 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
                 repo_type="dataset",
                 repo_id="Genesis-Intelligence/assets",
                 allow_patterns=pattern,
-                local_dir=local_dir,
                 max_workers=1,
             )
 
