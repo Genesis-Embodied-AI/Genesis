@@ -18,10 +18,11 @@ def make_step(scene, cam, franka, df):
     ]
     # #force
 
-def pp(object_name, object_euler, object_scale, grasp_pos, coup_friction=0.1):
-    default_video_path = f"data/videos/grasp_{object_name}_pp_{coup_friction}.mp4"
-    default_outfile_path = f"data/csv/grasp_{object_name}_pp_{coup_friction}.csv"
+def steel(object_name, object_euler, object_scale, grasp_pos, coup_friction=0.1):
+    default_video_path = f"data/videos/grasp_{object_name}_steel_{coup_friction}.mp4"
+    default_outfile_path = f"data/csv/grasp_{object_name}_steel_{coup_friction}.csv"
     object_path = f"data/objects/{object_name}/poisson/textured.obj"
+    print(f"object_path: {object_path}")
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--video", default=default_video_path)
     parser.add_argument("-o", "--outfile", default=default_outfile_path)
@@ -72,12 +73,9 @@ def pp(object_name, object_euler, object_scale, grasp_pos, coup_friction=0.1):
         gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
     )
     chips_can = scene.add_entity(
-        material=gs.materials.MPM.ElastoPlastic( #PP
-            E=2.0e6,
-            nu=0.42,
-            rho=900,
-            use_von_mises=True,
-            von_mises_yield_stress=33000,
+        material=gs.materials.Rigid( #steel
+            rho=7860,
+            coup_friction=1e-4,
         ),
         morph=gs.morphs.Mesh(
             file=object_path,
