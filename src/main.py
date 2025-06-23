@@ -18,8 +18,10 @@ for i, item in enumerate(object_data_list[:5]): # 最初の5つのエントリ�
     print("-" * 20)
 """
 
-for object_data in object_data_list[1:2]:
-    gs.init(backend=gs.cpu)
+gs.init(backend=gs.cpu)
+
+for object_data in object_data_list[1:10]:
+    
     if object_data['skip']:
         print(f"Skipping object ID: {object_data['id']}")
         continue
@@ -29,6 +31,7 @@ for object_data in object_data_list[1:2]:
         object_scale=object_data['object_scale'],
         grasp_pos=object_data['franka_pos']
     )
+    """
     pp(
         object_name=object_data['id'],
         object_euler=object_data['object_euler'],
@@ -41,3 +44,4 @@ for object_data in object_data_list[1:2]:
         object_scale=object_data['object_scale'],
         grasp_pos=object_data['franka_pos']
     )
+    """
