@@ -74,9 +74,11 @@ def load_object_sheet(filepath):
             # 6列目: 数字 (object scale) - スラッシュ区切りの場合があるため対応
             object_scale_str = row[5].strip()
             if '/' in object_scale_str:
-                object_scale = [float(x.strip()) for x in object_scale_str.split('/') if x.strip()]
-                if len(object_scale) == 1:
-                    object_scale = object_scale[0] # 要素が1つの場合は単一の数値として保持
+                # スラッシュ区切りの場合、最初の値のみを採用
+                try:
+                    object_scale = float(object_scale_str.split('/')[0].strip())
+                except ValueError:
+                    object_scale = None # 数値に変換できない場合はNone
             else:
                 try:
                     object_scale = float(object_scale_str)

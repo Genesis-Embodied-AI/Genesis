@@ -18,10 +18,9 @@ def make_step(scene, cam, franka, df):
     ]
     # #force
 
-def rubber(object_name, object_euler, object_scale, grasp_pos, coup_friction=0.1):
+def rubber(object_name, object_euler, object_scale, grasp_pos, object_path, coup_friction=0.1):
     default_video_path = f"data/videos/rubber/grasp_{object_name}_rubber_{coup_friction}.mp4"
     default_outfile_path = f"data/csv/rubber/grasp_{object_name}_rubber_{coup_friction}.csv"
-    object_path = f"data/objects/{object_name}/poisson/textured.obj"
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--video", default=default_video_path)
     parser.add_argument("-o", "--outfile", default=default_outfile_path)
