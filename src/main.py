@@ -22,13 +22,13 @@ for i, item in enumerate(object_data_list[:5]): # 最初の5つのエントリ�
 gs.init(backend=gs.cpu)
 coup_friction_list = [0.1, 1.0, 5.0]
 
-for object_data in object_data_list[0:1]:
+for object_data in object_data_list:
     
     if object_data['skip']:
         print(f"Skipping object ID: {object_data['id']}")
         continue
     #for i in range(len(coup_friction_list)):
-    for i in range(2):
+    for i in range(1):
         coup_friction = coup_friction_list[i]
         print(f"Processing object ID: {object_data['id']} with coup_friction: {coup_friction}")
         aluminium(

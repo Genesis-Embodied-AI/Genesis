@@ -19,8 +19,8 @@ def make_step(scene, cam, franka, df):
     # #force
 
 def aluminium(object_name, object_euler, object_scale, grasp_pos, coup_friction=0.1):
-    default_video_path = f"data/videos/grasp_{object_name}_aluminium_{coup_friction}.mp4"
-    default_outfile_path = f"data/csv/grasp_{object_name}_aluminium_{coup_friction}.csv"
+    default_video_path = f"data/videos/aluminium/grasp_{object_name}_aluminium_{coup_friction}.mp4"
+    default_outfile_path = f"data/csv/aluminium/grasp_{object_name}_aluminium_{coup_friction}.csv"
     object_path = f"data/objects/{object_name}/poisson/textured.obj"
     print(f"object_path: {object_path}")
     parser = argparse.ArgumentParser()
