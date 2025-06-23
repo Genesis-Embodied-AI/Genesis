@@ -372,7 +372,7 @@ def convert_heightfield_to_trimesh(height_field_raw, horizontal_scale, vertical_
         yy += (move_y + move_corners * (move_y == 0)) * horizontal_scale
 
     # create triangle mesh vertices and triangles from the heightfield grid
-    vertices = np.zeros((num_rows * num_cols, 3), dtype=gs.np_float)
+    vertices = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
     vertices[:, 0] = xx.flatten()
     vertices[:, 1] = yy.flatten()
     vertices[:, 2] = hf.flatten() * vertical_scale
