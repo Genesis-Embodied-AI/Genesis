@@ -1,3 +1,4 @@
+import sys
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -896,7 +897,10 @@ class Collider:
                         self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
                         and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                     ):
-                        self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                        if ti.static(sys.platform != "darwin"):
+                            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                        else:
+                            self._func_mpr(i_ga, i_gb, i_b)
 
                 if ti.static(self._solver._box_box_detection):
                     if (
@@ -1054,7 +1058,7 @@ class Collider:
         plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
         normal = -plane_dir.normalized()
 
-        v1 = self._mpr.support_driver(normal, i_gb, i_b)
+        v1, _ = self._mpr.support_box(normal, i_gb, i_b)
         penetration = normal.dot(v1 - ga_state.pos)
 
         if penetration > 0.0:
@@ -1173,23 +1177,26 @@ class Collider:
         if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
             i_ga, i_gb = i_gb, i_ga
 
-        # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
-        # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
-        # criteria to get rid of redundant contact points seems to be a better option.
-        multi_contact = (
-            self._solver._enable_multi_contact
-            # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
-            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
-            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
-            and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
-            and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
-        )
-
         if (
-            not multi_contact
-            or self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE
-            or self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.BOX
+            self._solver._enable_multi_contact
+            and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
         ):
+            if ti.static(sys.platform == "darwin"):
+                self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+        else:
+            # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
+            # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
+            # criteria to get rid of redundant contact points seems to be a better option.
+            multi_contact = (
+                self._solver._enable_multi_contact
+                # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
+                and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
+                and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
+                and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
+                and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
+            )
+
             tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
             # Backup state before local perturbation
