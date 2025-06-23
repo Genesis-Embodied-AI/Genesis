@@ -1,3 +1,5 @@
+# type: ignore
+
 """Material properties, conforming to the glTF 2.0 standards as specified in
 https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#reference-material
 and

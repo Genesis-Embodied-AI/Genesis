@@ -1,3 +1,5 @@
+# type: ignore
+
 import os
 from typing import Any, List, Optional, Tuple, Sequence, Union
 

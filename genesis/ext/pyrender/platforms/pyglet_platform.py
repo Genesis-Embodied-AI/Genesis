@@ -1,3 +1,5 @@
+# type: ignore
+
 from ..constants import TARGET_OPEN_GL_MAJOR, TARGET_OPEN_GL_MINOR, MIN_OPEN_GL_MAJOR, MIN_OPEN_GL_MINOR
 from .base import Platform
 

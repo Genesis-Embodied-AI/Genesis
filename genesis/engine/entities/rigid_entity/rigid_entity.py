@@ -1,3 +1,5 @@
+# type: ignore
+
 import math
 from copy import copy
 from itertools import chain

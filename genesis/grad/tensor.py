@@ -1,3 +1,5 @@
+# type: ignore
+
 import torch
 
 import genesis as gs

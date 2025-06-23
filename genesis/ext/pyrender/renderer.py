@@ -1,3 +1,5 @@
+# type: ignore
+
 """PBR renderer for Python.
 
 Author: Matthew Matl

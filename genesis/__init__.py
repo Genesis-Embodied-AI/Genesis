@@ -1,3 +1,5 @@
+# type: ignore
+
 # import taichi while suppressing its output
 import os
 import sys

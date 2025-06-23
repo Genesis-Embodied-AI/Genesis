@@ -1,3 +1,5 @@
+# type: ignore
+
 import os
 import threading
 import importlib

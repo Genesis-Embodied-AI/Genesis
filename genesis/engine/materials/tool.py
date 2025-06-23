@@ -1,3 +1,5 @@
+# type: ignore
+
 import taichi as ti
 
 from .base import Material

@@ -1,3 +1,5 @@
+# type: ignore
+
 import sys
 from functools import wraps
 

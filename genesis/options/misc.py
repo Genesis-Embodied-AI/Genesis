@@ -1,3 +1,5 @@
+# type: ignore
+
 from .options import Options
 
 

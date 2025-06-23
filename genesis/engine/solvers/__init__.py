@@ -1,3 +1,5 @@
+# type: ignore
+
 from .tool_solver import ToolSolver
 from .rigid.rigid_solver_decomp import RigidSolver
 from .avatar_solver import AvatarSolver
