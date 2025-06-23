@@ -44,10 +44,11 @@ def _sanitize_sol_params(
     if (timeconst < gs.EPS).any():
         # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
         gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
-    if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():
+    invalid_mask = (timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)
+    if invalid_mask.any():
         gs.logger.warning(
-            "Constraint solver time constant should be greater than 2*subste_dt. timeconst is changed from "
-            f"`{timeconst.min():0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
+            "Constraint solver time constant should be greater than 2*substep_dt. timeconst is changed from "
+            f"`{min(timeconst[invalid_mask]):0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
             "increase timeconst to avoid altering the original value."
         )
     timeconst[:] = timeconst.clip(min_timeconst)
@@ -1310,7 +1311,6 @@ class RigidSolver(Solver):
         equalities_eq_type: ti.types.ndarray(),
         equalities_sol_params: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_equalities, self._B):
             self.equalities_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
@@ -3404,7 +3404,7 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_update_geoms_render_T(self, geoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
             geom_T = gu.ti_trans_quat_to_T(
                 self.geoms_state[i_g, i_b].pos + self.envs_offset[i_b],
@@ -3418,7 +3418,7 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_update_vgeoms_render_T(self, vgeoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_g, i_b in ti.ndrange(self.n_vgeoms, self._B):
             geom_T = gu.ti_trans_quat_to_T(
                 self.vgeoms_state[i_g, i_b].pos + self.envs_offset[i_b],
