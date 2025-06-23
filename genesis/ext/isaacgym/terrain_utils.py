@@ -8,7 +8,7 @@
 
 import numpy as np
 from scipy import interpolate
-
+import genesis as gs
 
 def fractal_terrain(terrain, levels=8, scale=1.0):
     """
@@ -21,7 +21,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
     """
     width = terrain.width
     length = terrain.length
-    height = np.zeros((width, length), dtype=np.float32)
+    height = np.zeros((width, length), dtype=gs.np_float)
     for level in range(1, levels + 1):
         step = 2 ** (levels - level)
         for y in range(0, width, step):
@@ -35,7 +35,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(np.float32)
+    terrain.height_field_raw = height.astype(gs.np_float)
     return terrain
 
 
@@ -83,7 +83,7 @@ def random_uniform_terrain(
     y_upsampled = np.linspace(0, terrain.length * terrain.horizontal_scale, terrain.length)
     z_upsampled = np.rint(f((y_upsampled, x_upsampled)))
 
-    terrain.height_field_raw += z_upsampled.astype(np.float32)
+    terrain.height_field_raw += z_upsampled.astype(gs.np_float)
     return terrain
 
 
@@ -372,7 +372,7 @@ def convert_heightfield_to_trimesh(height_field_raw, horizontal_scale, vertical_
         yy += (move_y + move_corners * (move_y == 0)) * horizontal_scale
 
     # create triangle mesh vertices and triangles from the heightfield grid
-    vertices = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
+    vertices = np.zeros((num_rows * num_cols, 3), dtype=gs.np_float)
     vertices[:, 0] = xx.flatten()
     vertices[:, 1] = yy.flatten()
     vertices[:, 2] = hf.flatten() * vertical_scale
@@ -401,4 +401,4 @@ class SubTerrain:
         self.horizontal_scale = horizontal_scale
         self.width = width
         self.length = length
-        self.height_field_raw = np.zeros((self.width, self.length), dtype=np.float32)
+        self.height_field_raw = np.zeros((self.width, self.length), dtype=gs.np_float)
