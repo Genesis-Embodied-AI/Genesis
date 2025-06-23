@@ -5,7 +5,8 @@ import pandas as pd
 def make_step(scene, cam, franka, df):
     """フランカを目標位置に移動させるステップ関数"""
     scene.step()
-    cam.render()
+    if scene.t % 20 == 0:
+        cam.render()
     links_force_torque = franka.get_links_force_torque([9, 10]) # 手先のlocal_indexは9, 10
     links_force_torque = [x.item() for x in links_force_torque[0]] + [x.item() for x in links_force_torque[1]]
     df.loc[len(df)] = [
@@ -17,16 +18,19 @@ def make_step(scene, cam, franka, df):
     ]
     # #force
 
-def pp():
+def pp(object_name, object_euler, object_scale, grasp_pos):
+    default_video_path = f"data/videos/grasp_{object_name}_pp.mp4"
+    default_outfile_path = f"data/csv/grasp_{object_name}_pp.csv"
+    object_path = f"data/objects/{object_name}/poisson/textured.obj"
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--video", default="data/videos/grasp_can_pp.mp4")
-    parser.add_argument("-o", "--outfile", default="data/csv/grasp_can_pp.csv")
+    parser.add_argument("-v", "--video", default=default_video_path)
+    parser.add_argument("-o", "--outfile", default=default_outfile_path)
     args = parser.parse_args()
     df = pd.DataFrame(columns=["step", "left_fx", "left_fy", "left_fz", "left_tx", "left_ty", "left_tz",
                            "right_fx", "right_fy", "right_fz", "right_tx", "right_ty", "right_tz"])
     ########################## init ##########################
     # gs.init(backend=gs.cpu, debug=True, logging_level="error")
-    gs.init(backend=gs.cpu)
+    #gs.init(backend=gs.cpu)
     ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(3, -1, 1.5),
@@ -76,10 +80,10 @@ def pp():
             von_mises_yield_stress=33000,
         ),
         morph=gs.morphs.Mesh(
-            file="data/objects/002_master_chef_can/poisson/textured.obj",
-            scale=0.6, #record
+            file=object_path,
+            scale=object_scale, #record
             pos=(0.45, 0.45, 0.0),
-            euler=(0, 0, 0), #record
+            euler=object_euler, #record
         ),
     )
     franka = scene.add_entity(
@@ -104,9 +108,11 @@ def pp():
     )
     end_effector = franka.get_link("hand")
     # move to pre-grasp pose
-    x = 0.45
-    y = 0.45
-    z = 0.6
+    dz = 0.0004
+    z_steps = 1200
+    x = grasp_pos[0]
+    y = grasp_pos[1]
+    z = grasp_pos[2] + dz * z_steps  # 初期位置を調整
     qpos = franka.inverse_kinematics(
         link=end_effector,
         pos=np.array([x, y, z]),
@@ -118,9 +124,9 @@ def pp():
     cam.start_recording()
     #=================この中を調整========================
     # reach
-    for i in range(1190):
+    for i in range(z_steps):
         #record optimized moments
-        z -= 0.0004
+        z -= dz
         qpos = franka.inverse_kinematics(
             link=end_effector,
             pos=np.array([x, y, z]),
@@ -142,8 +148,8 @@ def pp():
         franka.control_dofs_force(np.array([-0.01*i, -0.01*i]), fingers_dof)
         make_step(scene, cam, franka, df)
     
-    for i in range(1200):
-        z += 0.0004
+    for i in range(z_steps):
+        z += dz
         qpos = franka.inverse_kinematics(
             link=end_effector,
             pos=np.array([x, y, z]),
@@ -162,7 +168,7 @@ def pp():
         franka.control_dofs_position(np.array([0.0004*i, 0.0004*i]), fingers_dof)
         make_step(scene, cam, franka, df)
     # ---- 追加: 録画終了・保存 -------------------------------
-    cam.stop_recording(save_to_filename=args.video, fps=1000)
+    cam.stop_recording(save_to_filename=args.video, fps=1000/20)
     print(f"saved -> {args.video}")
     df.to_csv(args.outfile, index=False)
     print(f"saved -> {args.outfile}")
