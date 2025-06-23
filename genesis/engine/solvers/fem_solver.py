@@ -1,3 +1,5 @@
+# pylint: disable=no-value-for-parameter
+
 import taichi as ti
 import torch
 
@@ -268,6 +270,22 @@ class FEMSolver(Solver):
     def init_ckpt(self):
         self._ckpt = dict()
 
+    def init_constraints(self):
+        vertex_constraint_info = ti.types.struct(
+            is_constrained=ti.u1,   # boolean flag indicating if vertex is constrained
+            target_pos=gs.ti_vec3,  # target position for the constraint
+            stiffness=gs.ti_float,  # constraint stiffness (for soft constraints)
+            constraint_type=ti.u1,  # 0: hard constraint, 1: soft constraint
+        )
+
+        self.vertex_constraints = vertex_constraint_info.field(
+            shape=(self.n_vertices),
+            needs_grad=False,
+            layout=ti.Layout.SOA,
+        )
+
+        self._kernel_remove_all_constraints()
+
     def reset_grad(self):
         self.elements_v.grad.fill(0)
         self.elements_el.grad.fill(0)
@@ -290,6 +308,7 @@ class FEMSolver(Solver):
             self.init_element_fields()
             self.init_surface_fields()
             self.init_ckpt()
+            self.init_constraints()
 
             for entity in self._entities:
                 entity._add_to_solver()
@@ -375,6 +394,10 @@ class FEMSolver(Solver):
             dt = self.substep_dt
             for k in ti.static(range(3)):
                 force_scaled = ti.Vector([H_scaled[j, k] for j in range(3)])
+
+                # store so forces can be read out
+                self.elements_v_energy[i_b, verts[k]].force = force_scaled
+
                 dv = dt * force_scaled / mass_scaled
                 self.elements_v[f + 1, verts[k], i_b].vel += dv
                 self.elements_v[f + 1, verts[3], i_b].vel -= dv
@@ -611,7 +634,6 @@ class FEMSolver(Solver):
                 S_H_St_x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i, j in ti.static(ti.ndrange(4, 3)):
                     S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
-                # print("S_H_St_x_diff", S_H_St_x_diff)
                 for i in ti.static(range(4)):
                     self.elements_v_energy[i_b, i_v[i]].force += (
                         -damping_beta_over_dt * V * S_H_St_x_diff[i * 3 : i * 3 + 3]
@@ -903,6 +925,7 @@ class FEMSolver(Solver):
                 self.init_pos_and_vel(f)
                 self.compute_vel(f)
                 self.apply_uniform_force(f)
+                self.apply_soft_constraints(f)
 
     def substep_pre_coupling_grad(self, f):
         if self.is_active():
@@ -915,6 +938,8 @@ class FEMSolver(Solver):
     def substep_post_coupling(self, f):
         if self.is_active():
             self.compute_pos(f)
+            if not self._use_implicit_solver:
+                self.apply_hard_constraints(f)
 
     def substep_post_coupling_grad(self, f):
         if self.is_active():
@@ -1033,6 +1058,18 @@ class FEMSolver(Solver):
         indices = self.surface_render_f.indices
 
         return vertices, indices
+    
+    def get_forces(self):
+        """
+        Get forces on all vertices.
+        
+        Returns:
+            np.ndarray:  (B, n_vertices, 3) where B is batch size
+        """
+        if not self.is_active():
+            return None
+
+        return self.elements_v_energy.force.to_numpy()
 
     @ti.kernel
     def _kernel_add_elements(
@@ -1317,3 +1354,120 @@ class FEMSolver(Solver):
     @property
     def vol_scale(self):
         return self._vol_scale
+   
+
+    # ------------------------------------------------------------------------------------
+    # -------------------------------- vertex constraints --------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def set_vertex_constraints(self, vertex_indices, target_positions, constraint_type="hard", stiffness=1e6):
+        """
+        Set vertex constraints for specified vertices.
+        
+        Parameters
+        ----------
+            vertex_indices : array_like
+                List of vertex indices to constrain
+            target_positions : array_like, shape (len(vertex_indices), 3)
+                List of target positions [x, y, z] for each vertex
+            constraint_type: str
+                A "hard" constraint directly set position and zero velocity.
+                A "soft" constraint uses a spring force to pull the vertex towards the target position.
+            stiffness : None | float, optional
+                Fixed position by default. Specify a spring stiffness for a soft constraint. (TODO: what's a reasonable range?)
+        """
+        if self._use_implicit_solver:
+            gs.logger.warning("Vertex constraints are not supported when using implicit solver. Constraint addition ignored.")
+            return
+ 
+        constraint_type_int = 0 if constraint_type == "hard" else 1
+        
+        vertex_indices_np = np.array(vertex_indices, dtype=np.int32)
+        target_positions_np = np.array(target_positions, dtype=np.float32)
+        
+        self._kernel_set_vertex_constraints(vertex_indices_np, target_positions_np, constraint_type_int, stiffness)
+
+    def update_constraint_targets(self, vertex_indices, new_target_positions):
+        """Update target positions for existing constraints."""
+        if not isinstance(vertex_indices, (list, tuple)):
+            vertex_indices = [vertex_indices]
+        if not isinstance(new_target_positions[0], (list, tuple)):
+            new_target_positions = [new_target_positions]
+            
+        vertex_indices_np = np.array(vertex_indices, dtype=np.int32)
+        new_target_positions_np = np.array(new_target_positions, dtype=np.float32)
+        
+        self._kernel_update_constraint_targets(vertex_indices_np, new_target_positions_np)
+
+    def remove_vertex_constraints(self, vertex_indices=None):
+        """Remove constraints from specified vertices, or all if None."""
+        if vertex_indices is None:
+            self._kernel_remove_all_constraints()
+        else:
+            if not isinstance(vertex_indices, (list, tuple)):
+                vertex_indices = [vertex_indices]
+            vertex_indices_np = np.array(vertex_indices, dtype=np.int32)
+            self._kernel_remove_specific_constraints(vertex_indices_np)
+    
+    @ti.kernel
+    def apply_hard_constraints(self, f: ti.i32):
+        """Apply hard constraints by directly overriding positions and velocities."""
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].constraint_type == 0:
+                self.elements_v[f + 1, i_v, i_b].pos = self.vertex_constraints[i_v].target_pos
+                self.elements_v[f + 1, i_v, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+    @ti.kernel
+    def apply_soft_constraints(self, f: ti.i32):
+        """Apply soft constraints as spring forces for explicit solver."""
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].constraint_type == 1:
+                pos_error = self.elements_v[f, i_v, i_b].pos - self.vertex_constraints[i_v].target_pos
+                spring_force = -self.vertex_constraints[i_v].stiffness * pos_error
+                
+                dt = self.substep_dt
+                mass = self.elements_v_info[i_v].mass
+                if mass > gs.EPS:
+                    dv = dt * spring_force / mass
+                    self.elements_v[f + 1, i_v, i_b].vel += dv
+
+    @ti.kernel
+    def _kernel_set_vertex_constraints(
+        self,
+        vertex_indices: ti.types.ndarray(),
+        target_positions: ti.types.ndarray(),
+        constraint_type: ti.i32,
+        stiffness: ti.f32,
+    ):
+        for i in range(vertex_indices.shape[0]):
+            v_idx = vertex_indices[i]
+            if 0 <= v_idx < self.n_vertices:
+                self.vertex_constraints[v_idx].is_constrained = 1
+                self.vertex_constraints[v_idx].constraint_type = constraint_type
+                self.vertex_constraints[v_idx].stiffness = stiffness
+                for j in ti.static(range(3)):
+                    self.vertex_constraints[v_idx].target_pos[j] = target_positions[i, j]
+
+    @ti.kernel
+    def _kernel_update_constraint_targets(
+        self,
+        vertex_indices: ti.types.ndarray(),
+        new_target_positions: ti.types.ndarray(),
+    ):
+        for i in range(vertex_indices.shape[0]):
+            v_idx = vertex_indices[i]
+            if 0 <= v_idx < self.n_vertices and self.vertex_constraints[v_idx].is_constrained:
+                for j in ti.static(range(3)):
+                    self.vertex_constraints[v_idx].target_pos[j] = new_target_positions[i, j]
+
+    @ti.kernel
+    def _kernel_remove_specific_constraints(self, vertex_indices: ti.types.ndarray()):
+        for i in range(vertex_indices.shape[0]):
+            v_idx = vertex_indices[i]
+            if 0 <= v_idx < self.n_vertices:
+                self.vertex_constraints[v_idx].is_constrained = 0
+
+    @ti.kernel
+    def _kernel_remove_all_constraints(self):
+        for i_v in range(self.n_vertices):
+            self.vertex_constraints[i_v].is_constrained = 0
