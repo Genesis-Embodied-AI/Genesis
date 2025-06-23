@@ -154,6 +154,7 @@ def parse_terrain(morph: Terrain, surface):
             heightfield,
             horizontal_scale=morph.horizontal_scale,
             vertical_scale=morph.vertical_scale,
+            uv_scale=morph.uv_scale,
         )
 
         terrain_dir = os.path.join(get_assets_dir(), f"terrain/{morph.name}")
@@ -169,7 +170,7 @@ def parse_terrain(morph: Terrain, surface):
             }
             pickle.dump(info, f)
 
-    vmesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=surface)
+    vmesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=surface, metadata={})
     mesh = gs.Mesh.from_trimesh(
         mesh=tmesh,
         surface=gs.surfaces.Collision(),
@@ -211,7 +212,9 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
     return terrain
 
 
-def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale, vertical_scale, slope_threshold=None):
+def convert_heightfield_to_watertight_trimesh(
+    height_field_raw, horizontal_scale, vertical_scale, slope_threshold=None, uv_scale=1.0
+):
     """
     Adapted from Issac Gym's `convert_heightfield_to_trimesh` function.
     Convert a heightfield array to a triangle mesh represented by vertices and triangles.
@@ -266,6 +269,9 @@ def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale
     vertices_top[:, 0] = xx.flatten()
     vertices_top[:, 1] = yy.flatten()
     vertices_top[:, 2] = hf.flatten() * vertical_scale
+    uv_top = np.zeros((num_rows * num_cols, 2), dtype=np.float32)
+    uv_top[:, 0] = (xx.flatten() - xx.min()) / (xx.max() - xx.min()) * uv_scale
+    uv_top[:, 1] = (yy.flatten() - yy.min()) / (yy.max() - yy.min()) * uv_scale
     triangles_top = -np.ones((2 * (num_rows - 1) * (num_cols - 1), 3), dtype=np.uint32)
     for i in range(num_rows - 1):
         ind0 = np.arange(0, num_cols - 1) + i * num_cols
@@ -346,15 +352,18 @@ def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale
         [triangles_top, triangles_bottom, triangles_side_0, triangles_side_1, triangles_side_2, triangles_side_3],
         axis=0,
     )
-
+    uvs = np.concatenate(
+        [uv_top, uv_top],
+        axis=0,
+    )
+    visual = trimesh.visual.TextureVisuals(uv=uvs)
     # This a uniformly-distributed full mesh, which gives faster sdf generation
-    sdf_mesh = trimesh.Trimesh(vertices, triangles, process=False)
+    sdf_mesh = trimesh.Trimesh(vertices, triangles, process=False, visual=visual)
 
     # This is the mesh used for non-sdf purposes.
     # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
-    mesh = trimesh.Trimesh(
-        *fast_simplification.simplify(sdf_mesh.vertices, sdf_mesh.faces, target_count=0, lossless=True)
-    )
+
+    mesh = sdf_mesh.copy()
 
     return mesh, sdf_mesh
 
