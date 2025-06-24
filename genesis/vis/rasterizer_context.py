@@ -689,14 +689,25 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_debug_arrow(self, pos, vec=(0, 0, 1), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
+    def draw_debug_arrow(self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         length = np.linalg.norm(vec)
         if length > 0:
             mesh = mu.create_arrow(length=length, radius=radius, body_color=color, head_color=color)
-            pose = np.eye(4)
-            pose[:3, 3] = tensor_to_array(pos)
-            pose[:3, :3] = gu.z_to_R(tensor_to_array(vec))
-            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose[None])
+
+            pose = np.zeros((1, 4, 4), dtype=np.float32)
+            rot_x, rot_y, rot_z = pose[0, :3, :3].T
+            pose[0, 3, 3] = 1.0
+            pose[0, :3, 3] = tensor_to_array(pos)
+            rot_z[:] = tensor_to_array(vec)
+            if abs(rot_z[1]) < 0.5:
+                rot_x[:] = (-rot_z[0] * rot_z[1], 1.0 - rot_z[1] ** 2, -rot_z[2] * rot_z[1])
+                rot_y[:] = np.cross(rot_z, rot_x)
+            else:
+                rot_y[:] = (-rot_z[0] * rot_z[2], -rot_z[1] * rot_z[2], 1.0 - rot_z[2] ** 2)
+                rot_x[:] = np.cross(rot_y, rot_z)
+            pose[0, :3, :3] /= np.linalg.norm(pose[0, :3, :3], axis=0)
+
+            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose)
             if persistent:
                 self.add_external_node(node)
             else:

@@ -2,11 +2,13 @@ import hashlib
 import math
 import os
 import pickle as pkl
-from scipy.spatial.transform import Rotation as R
+from functools import lru_cache
+
 
 import numpy as np
 import trimesh
 from PIL import Image
+from scipy.spatial.transform import Rotation as R
 
 import coacd
 import igl
@@ -541,33 +543,6 @@ def create_frame(
     return trimesh.util.concatenate([origin, x, y, z])
 
 
-def create_arrow(
-    length=1.0,
-    radius=0.02,
-    l_ratio=0.25,
-    r_ratio=1.5,
-    body_color=(1.0, 1.0, 1.0, 1.0),
-    head_color=(1.0, 1.0, 1.0, 1.0),
-    sections=12,
-):
-    r_head = radius * r_ratio
-    r_body = radius
-
-    l_head = length * l_ratio
-    l_body = length - l_head
-
-    offset_body = np.array([0, 0, l_body / 2])
-    offset_head = np.array([0, 0, l_body])
-
-    body = trimesh.creation.cylinder(r_body, l_body, sections=sections)
-    body.vertices += offset_body
-    body.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(body_color, [len(body.vertices), 1]))
-    head = trimesh.creation.cone(r_head, l_head, sections=sections)
-    head.vertices += offset_head
-    head.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(head_color, [len(head.vertices), 1]).astype(float))
-    return trimesh.util.concatenate([body, head])
-
-
 def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=12):
     start = np.array(start)
     end = np.array(end)
@@ -691,12 +666,6 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
-    mesh = trimesh.creation.icosphere(radius=radius, subdivisions=subdivisions)
-    mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
-    return mesh
-
-
 def create_tets_mesh(n_tets=1, halfsize=1.0, quats=None, randomize_halfsize=True):
     """
     Create artistic tet-based mesh for rendering particles as tets.
@@ -786,9 +755,97 @@ def transform_tets_mesh_verts(vertices, positions, zs=None):
     return vertices + np.array(np.tile(positions, [1, vert_per_tet]).reshape(-1, 3))
 
 
+@lru_cache(maxsize=32)
+def _create_unit_cylinder_impl(sections):
+    mesh = trimesh.creation.cylinder(radius=1.0, height=1.0, sections=sections)
+    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
+    for data in (vertices, faces, face_normals):
+        data.flags.writeable = False
+    return vertices, faces, face_normals
+
+
 def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
-    mesh = trimesh.creation.cylinder(radius=radius, height=height, sections=sections)
-    mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
+    vertices, faces, face_normals = _create_unit_cylinder_impl(sections=sections)
+    vertices = vertices * (radius, radius, height)
+    visual = trimesh.visual.ColorVisuals()
+    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
+    mesh._cache.id_set()
+    mesh._cache.cache["face_normals"] = face_normals
+    return mesh
+
+
+@lru_cache(maxsize=32)
+def _create_unit_cone_impl(sections):
+    mesh = trimesh.creation.cone(radius=1.0, height=1.0, sections=sections)
+    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
+    for data in (vertices, faces, face_normals):
+        data.flags.writeable = False
+    return vertices, faces, face_normals
+
+
+def create_cone(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
+    vertices, faces, face_normals = _create_unit_cone_impl(sections=sections)
+    vertices = vertices * (radius, radius, height)
+    face_normals = face_normals / (radius, radius, height)
+    face_normals /= np.linalg.norm(face_normals, axis=-1, keepdims=True)
+    visual = trimesh.visual.ColorVisuals()
+    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
+    mesh._cache.id_set()
+    mesh._cache.cache["face_normals"] = face_normals
+    return mesh
+
+
+@lru_cache(maxsize=32)
+def _create_unit_sphere_impl(subdivisions):
+    mesh = trimesh.creation.icosphere(radius=1.0, subdivisions=subdivisions)
+    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
+    for data in (vertices, faces, face_normals):
+        data.flags.writeable = False
+    return vertices, faces, face_normals
+
+
+def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
+    vertices, faces, face_normals = _create_unit_sphere_impl(subdivisions=subdivisions)
+    vertices = vertices * radius
+    visual = trimesh.visual.ColorVisuals()
+    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
+    mesh._cache.id_set()
+    mesh._cache.cache["face_normals"] = face_normals
+    return mesh
+
+
+def create_arrow(
+    length=1.0,
+    radius=0.02,
+    l_ratio=0.25,
+    r_ratio=1.5,
+    body_color=(1.0, 1.0, 1.0, 1.0),
+    head_color=(1.0, 1.0, 1.0, 1.0),
+    sections=12,
+):
+    r_head = radius * r_ratio
+    r_body = radius
+    l_head = length * l_ratio
+    l_body = length - l_head
+
+    head = create_cone(r_head, l_head, sections=sections, color=head_color)
+    body = create_cylinder(r_body, l_body, sections=sections, color=body_color)
+    face_normals = np.vstack((body._cache["face_normals"], head._cache["face_normals"]))
+    face_normals.flags.writeable = False
+    head._data["vertices"] += np.array([0.0, 0.0, l_body])
+    body._data["vertices"] += np.array([0.0, 0.0, l_body / 2])
+
+    vertices = np.vstack((body.vertices, head.vertices))
+    faces = np.vstack((body.faces, head.faces + len(body.vertices)))
+    visual = trimesh.visual.ColorVisuals()
+    visual._data["vertex_colors"] = np.vstack((body.visual.vertex_colors, head.visual.vertex_colors))
+
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
+    mesh._cache.id_set()
+    mesh._cache.cache["face_normals"] = face_normals
     return mesh
 
 

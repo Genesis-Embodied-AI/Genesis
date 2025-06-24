@@ -386,7 +386,7 @@ class Collider:
 
                 p_0 = gu.ti_transform_by_trans_quat(self._solver.verts_info[i_v0].init_pos, ga_state.pos, ga_state.quat)
                 p_1 = gu.ti_transform_by_trans_quat(self._solver.verts_info[i_v1].init_pos, ga_state.pos, ga_state.quat)
-                vec_01 = gu.ti_normalize(p_1 - p_0)
+                vec_01 = (p_1 - p_0).normalized(gs.EPS)
 
                 sdf_grad_0_b = self._solver.sdf.sdf_grad_world(p_0, i_gb, i_b)
                 sdf_grad_1_b = self._solver.sdf.sdf_grad_world(p_1, i_gb, i_b)
@@ -483,7 +483,7 @@ class Collider:
 
                 p_0 = pos_v_closest
                 p_1 = gu.ti_transform_by_trans_quat(self._solver.verts_info[i_neighbor].init_pos, ga_pos, ga_quat)
-                vec_01 = gu.ti_normalize(p_1 - p_0)
+                vec_01 = (p_1 - p_0).normalized(gs.EPS)
 
                 sdf_grad_0_b = self._solver.sdf.sdf_grad_world(p_0, i_gb, i_b)
                 sdf_grad_1_b = self._solver.sdf.sdf_grad_world(p_1, i_gb, i_b)

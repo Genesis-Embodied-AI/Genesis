@@ -85,7 +85,7 @@ class SDF:
         Only considers region outside of cube.
         """
         center = (self.geoms_info[geom_idx].sdf_res - 1) / 2.0
-        proxy_sdf_grad = gu.ti_normalize(pos_sdf - center)
+        proxy_sdf_grad = (pos_sdf - center).normalized(gs.EPS)
         return proxy_sdf_grad
 
     @ti.func
@@ -204,7 +204,7 @@ class SDF:
 
     @ti.func
     def sdf_normal_world(self, pos_world, geom_idx, batch_idx):
-        return gu.ti_normalize(self.sdf_grad_world(pos_world, geom_idx, batch_idx))
+        return self.sdf_grad_world(pos_world, geom_idx, batch_idx).normalized(gs.EPS)
 
     @ti.func
     def sdf_grad_world(self, pos_world, geom_idx, batch_idx):
@@ -212,7 +212,7 @@ class SDF:
 
         grad_world = ti.Vector.zero(gs.ti_float, 3)
         if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.SPHERE:
-            grad_world = gu.ti_normalize(pos_world - g_state.pos)
+            grad_world = (pos_world - g_state.pos).normalized(gs.EPS)
 
         else:
             pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
