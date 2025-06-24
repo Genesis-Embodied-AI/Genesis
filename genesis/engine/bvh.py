@@ -163,6 +163,7 @@ class LBVH(RBC):
         self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
+        self.filter = self.dummy_filter  # Default filter function
 
     def build(self):
         """
@@ -173,6 +174,38 @@ class LBVH(RBC):
         self.radix_sort_morton_codes()
         self.build_radix_tree()
         self.compute_bounds()
+
+    def register_fem_tet_filter(self, fem_solver):
+        """
+        Register a filter function for FEM tetrahedralized vertices.
+
+        This function is used to filter out AABBs that do not meet certain criteria during the query phase.
+        """
+        self.fem_solver = fem_solver
+        self.filter = self.fem_tet_filter
+
+    @ti.func
+    def dummy_filter(self, i_b, i_a, i_q):
+        """
+        Default filter function that always returns False.
+        This function can be overridden by registering a custom filter.
+        """
+        return False
+
+    @ti.func
+    def fem_tet_filter(self, i_b, i_a, i_q):
+        """
+        Filter function for FEM tets. Filter out tet that share vertices
+        """
+        result = False
+        if i_a <= i_q:
+            result = True
+        i_av = self.fem_solver.elements_i[i_a].el2v
+        i_qv = self.fem_solver.elements_i[i_q].el2v
+        for i, j in ti.static(ti.ndrange(4, 4)):
+            if i_av[i] == i_qv[j]:
+                result = True
+        return result
 
     @ti.kernel
     def compute_aabb_centers_and_scales(self):
@@ -376,12 +409,14 @@ class LBVH(RBC):
                 if aabbs[i_b, i_q].intersects(node.bound):
                     # If it's a leaf node, add the AABB index to the query results
                     if node.left == -1 and node.right == -1:
+                        code = self.morton_codes[i_b, node_idx - (self.n_aabbs - 1)]
+                        i_a = ti.i32(code & ti.u64(0xFFFFFFFF))
+                        # Check if the filter condition is met
+                        if self.filter(i_b, i_a, i_q) == True:
+                            continue
                         idx = ti.atomic_add(self.query_result_count[None], 1)
                         if idx < self.max_n_query_results:
-                            code = self.morton_codes[i_b, node_idx - (self.n_aabbs - 1)]
-                            self.query_result[idx] = gs.ti_ivec3(
-                                i_b, ti.i32(code & ti.u64(0xFFFFFFFF)), i_q
-                            )  # Store the AABB index
+                            self.query_result[idx] = gs.ti_ivec3(i_b, i_a, i_q)  # Store the AABB index
                     else:
                         # Push children onto the stack
                         if node.right != -1:

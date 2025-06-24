@@ -5,6 +5,7 @@ import taichi as ti
 import genesis as gs
 from genesis.options.solvers import CouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.engine.bvh import AABB, LBVH
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -702,14 +703,20 @@ class SAPCoupler(RBC):
         self.fem_self_contact_pair_type = ti.types.struct(
             active=gs.ti_int,  # whether the contact pair is active
             batch_idx=gs.ti_int,  # batch index
-            geom_idx=gs.ti_int,  # index of the FEM element
-            intersection_code=gs.ti_int,  # intersection code for the element
-            distance=gs.ti_vec4,  # distance vector for the element
+            normal=gs.ti_vec3,  # contact plane normal
+            x=gs.ti_vec3,  # a point on the contact plane
+            geom_idx0=gs.ti_int,  # index of the FEM element0
+            intersection_code0=gs.ti_int,  # intersection code for element0
+            distance0=gs.ti_vec4,  # distance vector for element0
+            geom_idx1=gs.ti_int,  # index of the FEM element1
+            intersection_code1=gs.ti_int,  # intersection code for element1
+            distance1=gs.ti_vec4,  # distance vector for element1
             k=gs.ti_float,  # contact stiffness
             phi0=gs.ti_float,  # initial signed distance
             fn0=gs.ti_float,  # initial normal force magnitude
             taud=gs.ti_float,  # dissipation time scale
-            barycentric=gs.ti_vec4,  # barycentric coordinates of the contact point
+            barycentric0=gs.ti_vec4,  # barycentric coordinates of the contact point in tet 0
+            barycentric1=gs.ti_vec4,  # barycentric coordinates of the contact point in tet 1
             Rn=gs.ti_float,  # Regularitaion for normal
             Rt=gs.ti_float,  # Regularitaion for tangential
             vn_hat=gs.ti_float,  # Stablization for normal velocity
@@ -721,7 +728,12 @@ class SAPCoupler(RBC):
         )
         self.max_fem_self_contact_pairs = fem_solver.n_surfaces * fem_solver._B * 8
         self.n_fem_self_contact_pairs = ti.field(gs.ti_int, shape=())
-        self.fem_self_contact_pairs = self.fem_floor_contact_pair_type.field(shape=(self.max_fem_self_contact_pairs,))
+        self.fem_self_contact_pairs = self.fem_self_contact_pair_type.field(shape=(self.max_fem_self_contact_pairs,))
+        # TODO change to surface element only instead of all elements
+        self.fem_aabb = AABB(fem_solver._B, fem_solver.n_elements)
+        self.fem_bvh = LBVH(self.fem_aabb, max_n_query_result_per_aabb=32)
+        self.fem_bvh.register_fem_tet_filter(fem_solver)
+
         # Lookup table for marching tetrahedra edges
         kMarchingTetsEdgeTable_np = np.array(
             [
@@ -842,6 +854,8 @@ class SAPCoupler(RBC):
             self.has_contact = self.has_contact or self.has_fem_floor_contact
 
             self.fem_self_detection(f)
+            self.has_fem_self_contact = self.n_fem_self_contact_pairs[None] > 0
+            self.has_contact = self.has_contact or self.has_fem_self_contact
 
         if self.has_contact:
             self.sap_solve(f)
@@ -977,103 +991,213 @@ class SAPCoupler(RBC):
             self.fem_floor_contact_pairs[i_c].k = rigid_k  # contact stiffness
             self.fem_floor_contact_pairs[i_c].phi0 = rigid_phi0
             self.fem_floor_contact_pairs[i_c].fn0 = rigid_fn0
-            self.fem_floor_contact_pairs[i_c].taud = self.sim._substep_dt * 1.0 / ti.math.pi
+            self.fem_floor_contact_pairs[i_c].taud = 0.1  # Drake uses 100ms as default
+
+    def fem_self_detection(self, f: ti.i32):
+        self.coupute_fem_aabb(f + 1)
+        self.fem_bvh.build()
+        self.fem_bvh.query(self.fem_aabb.aabbs)
+        print("BVH query done, found", self.fem_bvh.query_result_count[None], "pairs")
+        print(self.fem_bvh.max_n_query_results, "max query results")
+        # self.compute_fem_self_pair_candidates(f + 1)
+        # print(self.n_fem_self_contact_pairs[None], "self contact pairs found")
+        # print(self.max_fem_self_contact_pairs, "max self contact pairs")
+        # self.compute_fem_self_pairs(f + 1)
+        # active = self.fem_self_contact_pairs.active.to_numpy()
+        # print(np.sum(active[:self.n_fem_self_contact_pairs[None]]), "self contact pairs are active")
 
     @ti.kernel
-    def fem_self_detection(self, f: ti.i32):
+    def coupute_fem_aabb(self, f: ti.i32):
         fem_solver = self.fem_solver
-
-        # Compute contact pairs
-        self.n_fem_floor_contact_pairs[None] = 0
-        # TODO Check surface element only instead of all elements
+        aabbs = ti.static(self.fem_aabb.aabbs)
         for i_b, i_e in ti.ndrange(fem_solver._B, fem_solver.n_elements):
-            intersection_code = ti.int32(0)
-            distance = ti.Vector([0.0, 0.0, 0.0, 0.0])
-            for i in ti.static(range(4)):
-                i_v = fem_solver.elements_i[i_e].el2v[i]
-                pos_v = fem_solver.elements_v[f + 1, i_v, i_b].pos
-                distance[i] = pos_v.z - fem_solver.floor_height
-                if distance[i] > 0:
-                    intersection_code |= 1 << i
-
-            # check if the element intersect with the floor
-            if intersection_code != 0 and intersection_code != 15:
-                pair_idx = ti.atomic_add(self.n_fem_floor_contact_pairs[None], 1)
-                if pair_idx < self.max_fem_floor_contact_pairs:
-                    self.fem_floor_contact_pairs[pair_idx].batch_idx = i_b
-                    self.fem_floor_contact_pairs[pair_idx].geom_idx = i_e
-                    self.fem_floor_contact_pairs[pair_idx].intersection_code = intersection_code
-                    self.fem_floor_contact_pairs[pair_idx].distance = distance
-
-        # Compute data for each contact pair
-        for i_c in range(self.n_fem_floor_contact_pairs[None]):
-            pair = self.fem_floor_contact_pairs[i_c]
-            self.fem_floor_contact_pairs[i_c].active = 1  # mark the contact pair as active
-            i_b = pair.batch_idx
-            i_e = pair.geom_idx
-            intersection_code = pair.intersection_code
-            distance = pair.distance
-            intersected_edges = ti.static(self.kMarchingTetsEdgeTable)[intersection_code]
-            tet_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices
-            tet_pressures = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices
+            aabbs[i_b, i_e].min.fill(np.inf)
+            aabbs[i_b, i_e].max.fill(-np.inf)
+            i_v = fem_solver.elements_i[i_e].el2v
 
             for i in ti.static(range(4)):
-                i_v = fem_solver.elements_i[i_e].el2v[i]
-                tet_vertices[:, i] = fem_solver.elements_v[f + 1, i_v, i_b].pos
-                tet_pressures[i] = self.fem_pressure[i_v]
+                pos_v = fem_solver.elements_v[f, i_v[i], i_b].pos
+                aabbs[i_b, i_e].min = ti.min(aabbs[i_b, i_e].min, pos_v)
+                aabbs[i_b, i_e].max = ti.max(aabbs[i_b, i_e].max, pos_v)
 
-            polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 3 or 4 vertices
+    @ti.kernel
+    def compute_fem_self_pair_candidates(self, f: ti.i32):
+        fem_solver = self.fem_solver
+        pairs = ti.static(self.fem_self_contact_pairs)
+        self.n_fem_self_contact_pairs[None] = 0
+        print(self.fem_bvh.query_result_count[None])
+        for i_r in ti.ndrange(self.fem_bvh.query_result_count[None]):
+            i_b, i_a, i_q = self.fem_bvh.query_result[i_r]
+            i_v0 = fem_solver.elements_i[i_a].el2v[0]
+            i_v1 = fem_solver.elements_i[i_q].el2v[0]
+            x0 = fem_solver.elements_v[f, i_v0, i_b].pos
+            x1 = fem_solver.elements_v[f, i_v1, i_b].pos
+            p0 = self.fem_pressure[i_v0]
+            p1 = self.fem_pressure[i_v1]
+            g0 = self.fem_pressure_gradient[i_b, i_a]
+            g1 = self.fem_pressure_gradient[i_b, i_q]
+            g0_norm = g0.norm()
+            g1_norm = g1.norm()
+            if g0_norm < gs.EPS or g1_norm < gs.EPS:
+                continue
+            # Calculate the isosurface, i.e. equal pressure plane defined by x and normal
+            # Solve for p0 + g0.dot(x - x0) = p1 + g1.dot(x - x1)
+            normal = g0 - g1
+            magnitude = normal.norm()
+            if magnitude < gs.EPS:
+                continue
+            normal /= magnitude
+            b = p1 - p0 - g1.dot(x1) + g0.dot(x0)
+            x = b / magnitude * normal
+            # Check that the normal is pointing along g0 and against g1, some allowance as used in Drake
+            threshold = ti.static(np.cos(np.pi * 5.0 / 8.0))
+            if normal.dot(g0) < threshold * g0_norm or normal.dot(g1) > -threshold * g1_norm:
+                continue
+
+            intersection_code0 = ti.int32(0)
+            distance0 = ti.Vector([0.0, 0.0, 0.0, 0.0])
+            intersection_code1 = ti.int32(0)
+            distance1 = ti.Vector([0.0, 0.0, 0.0, 0.0])
+            for i in ti.static(range(4)):
+                i_v = fem_solver.elements_i[i_a].el2v[i]
+                pos_v = fem_solver.elements_v[f, i_v, i_b].pos
+                distance0[i] = (pos_v - x).dot(normal)  # signed distance
+                if distance0[i] > 0:
+                    intersection_code0 |= 1 << i
+            for i in ti.static(range(4)):
+                i_v = fem_solver.elements_i[i_q].el2v[i]
+                pos_v = fem_solver.elements_v[f, i_v, i_b].pos
+                distance1[i] = (pos_v - x).dot(normal)
+                if distance1[i] > 0:
+                    intersection_code1 |= 1 << i
+            if (
+                intersection_code0 == 0
+                or intersection_code1 == 0
+                or intersection_code0 == 15
+                or intersection_code1 == 15
+            ):
+                continue
+            pair_idx = ti.atomic_add(self.n_fem_self_contact_pairs[None], 1)
+            if pair_idx < self.max_fem_self_contact_pairs:
+                pairs[pair_idx].batch_idx = i_b
+                pairs[pair_idx].normal = normal
+                pairs[pair_idx].x = x
+                pairs[pair_idx].geom_idx0 = i_a
+                pairs[pair_idx].intersection_code0 = intersection_code0
+                pairs[pair_idx].distance0 = distance0
+                pairs[pair_idx].geom_idx1 = i_q
+                pairs[pair_idx].intersection_code1 = intersection_code1
+                pairs[pair_idx].distance1 = distance1
+
+    @ti.kernel
+    def compute_fem_self_pairs(self, f: ti.i32):
+        """
+        Computes the FEM self contact pairs and their properties.
+        Intersection code reference:
+        https://github.com/RobotLocomotion/drake/blob/8c3a249184ed09f0faab3c678536d66d732809ce/geometry/proximity/field_intersection.cc#L87
+        """
+        fem_solver = self.fem_solver
+        pairs = ti.static(self.fem_self_contact_pairs)
+
+        for i_c in range(self.n_fem_self_contact_pairs[None]):
+            pairs[i_c].active = 0  # mark the contact pair as inactive
+            i_b = pairs[i_c].batch_idx
+            i_e0 = pairs[i_c].geom_idx0
+            intersection_code0 = pairs[i_c].intersection_code0
+            distance0 = pairs[i_c].distance0
+            intersected_edges0 = ti.static(self.kMarchingTetsEdgeTable)[intersection_code0]
+            tet_vertices0 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 0
+            tet_vertices1 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 1
+
+            for i in ti.static(range(4)):
+                i_v = fem_solver.elements_i[i_e0].el2v[i]
+                tet_vertices0[:, i] = fem_solver.elements_v[f, i_v, i_b].pos
+
+            polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 8)  # maximum 8 vertices
+            polygon_n_vertices = 0
+            clipped_vertices = ti.Matrix.zero(gs.ti_float, 3, 8)  # maximum 8 vertices
+            clipped_n_vertices = 0
+            for i in range(4):
+                if intersected_edges0[i] >= 0:
+                    edge = ti.static(self.kTetEdges)[intersected_edges0[i]]
+                    pos_v0 = tet_vertices0[:, edge[0]]
+                    pos_v1 = tet_vertices0[:, edge[1]]
+                    d_v0 = distance0[edge[0]]
+                    d_v1 = distance0[edge[1]]
+                    t = d_v0 / (d_v0 - d_v1)
+                    polygon_vertices[:, polygon_n_vertices] = pos_v0 + t * (pos_v1 - pos_v0)
+                    polygon_n_vertices += 1
+            # Intersects the polygon with the four halfspaces of the four triangles
+            # of the tetrahedral element1.
+            for face in range(4):
+                clipped_n_vertices = 0
+                x = tet_vertices1[:, (face + 1) % 4]
+                normal = (tet_vertices1[:, (face + 2) % 4] - x).cross(tet_vertices1[:, (face + 3) % 4] - x)
+                normal /= normal.norm()
+
+                distances = ti.Vector([0.0, 0.0, 0.0, 0.0])
+                for i in range(polygon_n_vertices):
+                    distances[i] = (polygon_vertices[:, i] - x).dot(normal)
+
+                for i in range(polygon_n_vertices):
+                    j = (i + 1) % polygon_n_vertices
+                    if distances[i] <= 0.0:
+                        clipped_vertices[:, clipped_n_vertices] = polygon_vertices[:, i]
+                        clipped_n_vertices += 1
+                        if distances[j] > 0.0:
+                            wa = distances[j] / (distances[j] - distances[i])
+                            wb = 1.0 - wa
+                            clipped_vertices[:, clipped_n_vertices] = (
+                                wa * polygon_vertices[:, i] + wb * polygon_vertices[:, j]
+                            )
+                            clipped_n_vertices += 1
+                    elif distances[j] <= 0.0:
+                        wa = distances[j] / (distances[j] - distances[i])
+                        wb = 1.0 - wa
+                        clipped_vertices[:, clipped_n_vertices] = (
+                            wa * polygon_vertices[:, i] + wb * polygon_vertices[:, j]
+                        )
+                        clipped_n_vertices += 1
+                polygon_n_vertices = clipped_n_vertices
+                polygon_vertices = clipped_vertices
+
+                if polygon_n_vertices < 3:
+                    # If the polygon has less than 3 vertices, it is not a valid contact
+                    break
+
+            if polygon_n_vertices < 3:
+                continue
+
+            # compute centroid and area of the polygon
             total_area = gs.EPS  # avoid division by zero
             total_area_weighted_centroid = ti.Vector([0.0, 0.0, 0.0])
-            for i in range(4):
-                if intersected_edges[i] >= 0:
-                    edge = ti.static(self.kTetEdges)[intersected_edges[i]]
-                    pos_v0 = tet_vertices[:, edge[0]]
-                    pos_v1 = tet_vertices[:, edge[1]]
-                    d_v0 = distance[edge[0]]
-                    d_v1 = distance[edge[1]]
-                    t = d_v0 / (d_v0 - d_v1)
-                    polygon_vertices[:, i] = pos_v0 + t * (pos_v1 - pos_v0)
+            for i in range(2, polygon_n_vertices):
+                e1 = polygon_vertices[:, i - 1] - polygon_vertices[:, 0]
+                e2 = polygon_vertices[:, i] - polygon_vertices[:, 0]
+                area = 0.5 * e1.cross(e2).norm()
+                total_area += area
+                total_area_weighted_centroid += (
+                    area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
+                )
 
-                    # Compute tirangle area and centroid
-                    if i >= 2:
-                        e1 = polygon_vertices[:, i - 1] - polygon_vertices[:, 0]
-                        e2 = polygon_vertices[:, i] - polygon_vertices[:, 0]
-                        area = 0.5 * e1.cross(e2).norm()
-                        total_area += area
-                        total_area_weighted_centroid += (
-                            area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
-                        )
-
+            if total_area < gs.EPS:
+                continue
             centroid = total_area_weighted_centroid / total_area
-
-            # Compute barycentric coordinates
-            barycentric = tet_barycentric(centroid, tet_vertices)
-            pressure = (
-                barycentric[0] * tet_pressures[0]
-                + barycentric[1] * tet_pressures[1]
-                + barycentric[2] * tet_pressures[2]
-                + barycentric[3] * tet_pressures[3]
-            )
-            self.fem_floor_contact_pairs[i_c].barycentric = barycentric
+            barycentric0 = tet_barycentric(centroid, tet_vertices0)
+            barycentric1 = tet_barycentric(centroid, tet_vertices1)
+            pairs[i_c].barycentric0 = barycentric0
+            pairs[i_c].barycentric1 = barycentric1
 
             C = ti.static(1.0e8)
-            deformable_g = C
-            rigid_g = self.fem_pressure_gradient[i_b, i_e].z
-            # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
-            if total_area < gs.EPS or rigid_g < gs.EPS:
-                self.fem_floor_contact_pairs[i_c].active = 0
-                continue
-            g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
             deformable_k = total_area * C
-            rigid_k = total_area * g
-            rigid_phi0 = -pressure / g
-            rigid_fn0 = total_area * pressure
+            deformable_phi0 = 0
+            deformable_fn0 = -deformable_k * deformable_phi0
             # TODO custom dissipation
-            self.fem_floor_contact_pairs[i_c].k = rigid_k  # contact stiffness
-            self.fem_floor_contact_pairs[i_c].phi0 = rigid_phi0
-            self.fem_floor_contact_pairs[i_c].fn0 = rigid_fn0
-            self.fem_floor_contact_pairs[i_c].taud = self.sim._substep_dt * 1.0 / ti.math.pi
+            pairs[i_c].k = deformable_k  # contact stiffness
+            pairs[i_c].phi0 = deformable_phi0
+            pairs[i_c].fn0 = deformable_fn0
+            pairs[i_c].taud = 0.1  # Drake uses 100ms as default
+            pairs[i_c].active = 1  # mark the contact pair as active
 
     def sap_solve(self, f):
         self.init_sap_solve(f)

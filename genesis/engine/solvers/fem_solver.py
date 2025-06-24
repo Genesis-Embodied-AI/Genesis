@@ -265,6 +265,42 @@ class FEMSolver(Solver):
             layout=ti.Layout.SOA,
         )
 
+    def compute_surface_info(self):
+        self.vertices_on_surface = ti.field(dtype=ti.u1, shape=(self.n_vertices))
+        self.elements_on_surface = ti.field(dtype=ti.u1, shape=(self.n_elements))
+        self.compute_surface_vertices()
+        self.compute_surface_elements()
+        self.vertices_on_surface_np = self.vertices_on_surface.to_numpy()
+        self.elements_on_surface_np = self.elements_on_surface.to_numpy()
+        self.surface_elements_np = np.where(self.elements_on_surface_np)[0].flatten()
+        self.surface_elements = ti.field(
+            dtype=ti.i32,
+            shape=(self.surface_elements_np.shape[0]),
+            needs_grad=False,
+        )
+        self.surface_elements.from_numpy(self.surface_elements_np)
+
+    @ti.kernel
+    def compute_surface_vertices(self):
+        for i_v in range(self.n_vertices):
+            self.vertices_on_surface[i_v] = 0
+
+        for i_s in range(self.n_surfaces):
+            tri2v = self.surface[i_s].tri2v
+            for i in ti.static(range(3)):
+                self.vertices_on_surface[tri2v[i]] = 1
+
+    @ti.kernel
+    def compute_surface_elements(self):
+        for i_e in range(self.n_elements):
+            i_v = self.elements_i[i_e].el2v
+            self.elements_on_surface[i_e] = (
+                self.vertices_on_surface[i_v[0]]
+                or self.vertices_on_surface[i_v[1]]
+                or self.vertices_on_surface[i_v[2]]
+                or self.vertices_on_surface[i_v[3]]
+            )
+
     def init_ckpt(self):
         self._ckpt = dict()
 
@@ -295,6 +331,8 @@ class FEMSolver(Solver):
 
         for mat in self._mats:
             mat.build(self)
+
+        self.compute_surface_info()
 
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
@@ -402,11 +440,7 @@ class FEMSolver(Solver):
     @ti.kernel
     def precompute_material_data(self, f: ti.i32):
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
-            if not self.batch_active[i_b]:
-                continue
-
             J, F = self._compute_ele_J_F(f, i_e, i_b)  # use last time step's pos to compute
-
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
                     self._mats[mat_idx].pre_compute(
@@ -562,6 +596,7 @@ class FEMSolver(Solver):
             gradient = self.elements_el_energy[i_b, i_e].gradient
             force = -V * gradient @ B.transpose()
             i_v = self.elements_i[i_e].el2v
+
             # atomic
             self.elements_v_energy[i_b, i_v[0]].force += force[:, 0]
             self.elements_v_energy[i_b, i_v[1]].force += force[:, 1]
@@ -1295,3 +1330,7 @@ class FEMSolver(Solver):
     @property
     def vol_scale(self):
         return self._vol_scale
+
+    @property
+    def n_surface_elements(self):
+        return self.surface_elements_np.shape[0]
