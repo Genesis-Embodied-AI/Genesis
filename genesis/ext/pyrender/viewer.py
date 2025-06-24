@@ -64,6 +64,10 @@ from .trackball import Trackball
 
 pyglet.options["shadow_window"] = False
 
+# Used for type checking:
+from pyglet.event import EVENT_HANDLE_STATE
+from genesis.vis.rasterizer_context import RasterizerContext
+
 
 MODULE_DIR = os.path.dirname(__file__)
 
@@ -201,7 +205,7 @@ class Viewer(pyglet.window.Window):
 
     def __init__(
         self,
-        context,
+        context: RasterizerContext,
         viewport_size=None,
         render_flags=None,
         viewer_flags=None,
@@ -213,6 +217,14 @@ class Viewer(pyglet.window.Window):
         env_separate_rigid=False,
         **kwargs,
     ):
+
+        # Note: context.scene is genesis.engine.scene.Scene
+        # Note: context._scene is genesis.ext.pyrender.scene.Scene
+
+        # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
+        from .viewer_interaction import ViewerInteraction
+        self.viewer_interaction = ViewerInteraction(context.scene, log_events=True)   
+
         #######################################################################
         # Save attributes and flags
         #######################################################################
@@ -750,10 +762,14 @@ class Viewer(pyglet.window.Window):
         self._renderer.viewport_height = self._viewport_size[1]
         self.on_draw()
 
-    def on_mouse_press(self, x, y, buttons, modifiers):
+    def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
+        """The mouse was moved with no buttons held down."""
+        self.viewer_interaction.on_mouse_motion(x, y, dx, dy)
+
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record an initial mouse press."""
         self._trackball.set_state(Trackball.STATE_ROTATE)
-        if buttons == pyglet.window.mouse.LEFT:
+        if button == pyglet.window.mouse.LEFT:
             ctrl = modifiers & pyglet.window.key.MOD_CTRL
             shift = modifiers & pyglet.window.key.MOD_SHIFT
             alt = modifiers & pyglet.window.key.MOD_ALT
@@ -761,23 +777,26 @@ class Viewer(pyglet.window.Window):
                 self._trackball.set_state(Trackball.STATE_ZOOM)
             elif alt or shift:
                 self._trackball.set_state(Trackball.STATE_PAN)
-        elif buttons == pyglet.window.mouse.MIDDLE:
+        elif button == pyglet.window.mouse.MIDDLE:
             self._trackball.set_state(Trackball.STATE_PAN)
-        elif buttons == pyglet.window.mouse.RIGHT:
+        elif button == pyglet.window.mouse.RIGHT:
             self._trackball.set_state(Trackball.STATE_ZOOM)
 
         self._trackball.down(np.array([x, y]))
 
         # Stop animating while using the mouse
         self.viewer_flags["mouse_pressed"] = True
+        self.viewer_interaction.on_mouse_press(x, y, button, modifiers)
 
-    def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
-        """Record a mouse drag."""
+    def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
+        """The mouse was moved with one or more buttons held down."""
         self._trackball.drag(np.array([x, y]))
+        self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
 
-    def on_mouse_release(self, x, y, button, modifiers):
+    def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a mouse release."""
         self.viewer_flags["mouse_pressed"] = False
+        self.viewer_interaction.on_mouse_release(x, y, button, modifiers)
 
     def on_mouse_scroll(self, x, y, dx, dy):
         """Record a mouse scroll."""
@@ -798,7 +817,7 @@ class Viewer(pyglet.window.Window):
             c.xmag = xmag
             c.ymag = ymag
 
-    def on_key_press(self, symbol, modifiers):
+    def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
         # First, check for registered key callbacks
         if symbol in self.registered_keys:
@@ -955,6 +974,12 @@ class Viewer(pyglet.window.Window):
 
         if self._message_text is not None:
             self._message_opac = 1.0 + self._ticks_till_fade
+
+        self.viewer_interaction.on_key_press(symbol, modifiers)
+
+    def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
+        """Record a key release."""
+        self.viewer_interaction.on_key_release(symbol, modifiers)
 
     @staticmethod
     def _time_event(dt, self):
