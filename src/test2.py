@@ -16,7 +16,7 @@ def make_step(scene, cam, franka, df, photo_path):
     if t % 250 == 0:
         rgb, _, _, _ = cam.render(rgb=True)
 
-        filepath = photo_path + f"_{t:06d}.png"
+        filepath = photo_path + f"_{t:05d}.png"
         iio.imwrite(filepath, rgb)
     dofs = franka.get_dofs_position()
     dofs = [x.item() for x in dofs]
