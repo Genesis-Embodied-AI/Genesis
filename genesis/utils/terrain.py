@@ -364,6 +364,9 @@ def convert_heightfield_to_watertight_trimesh(
 
     sdf_mesh = trimesh.Trimesh(vertices, triangles, process=False, visual=visual)
 
+    # This is the mesh used for non-sdf purposes.
+    # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
+
     v_simp, f_simp = fast_simplification.simplify(
         sdf_mesh.vertices,
         sdf_mesh.faces,
@@ -378,9 +381,6 @@ def convert_heightfield_to_watertight_trimesh(
             idx_map[i] = np.argmin(dists)
 
         uv_simp = uvs[idx_map]
-
-        # This is the mesh used for non-sdf purposes.
-        # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
 
         mesh = trimesh.Trimesh(
             v_simp,
