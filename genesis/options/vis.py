@@ -41,6 +41,7 @@ class ViewerOptions(Options):
     camera_lookat: tuple = (0.0, 0.0, 0.5)
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
+    use_viewer_interaction: bool = False
 
 
 class VisOptions(Options):

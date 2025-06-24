@@ -36,6 +36,7 @@ class Viewer(RBC):
         self._camera_init_lookat = options.camera_lookat
         self._camera_up = options.camera_up
         self._camera_fov = options.camera_fov
+        self._use_viewer_interaction = options.use_viewer_interaction
 
         self._pyrender_viewer = None
         self.context = context
@@ -82,6 +83,7 @@ class Viewer(RBC):
                         shadow=self.context.shadow,
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
+                        use_viewer_interaction=self._use_viewer_interaction,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,

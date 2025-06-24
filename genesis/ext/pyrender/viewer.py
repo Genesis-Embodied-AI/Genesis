@@ -215,15 +215,20 @@ class Viewer(pyglet.window.Window):
         shadow=False,
         plane_reflection=False,
         env_separate_rigid=False,
+        use_viewer_interaction=False,
         **kwargs,
     ):
 
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
-
+        # 
         # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
-        from .viewer_interaction import ViewerInteraction
-        self.viewer_interaction = ViewerInteraction(context.scene, log_events=True)   
+        from .viewer_interaction import ViewerInteraction, ViewerInteractionBase
+        self.viewer_interaction = (
+            ViewerInteraction(context.scene, log_events=True)
+            if use_viewer_interaction
+            else ViewerInteractionBase()
+        )
 
         #######################################################################
         # Save attributes and flags
