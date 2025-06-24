@@ -1,11 +1,15 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import numpy.typing as npt
+import torch
+
 import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.styles import colors, formats
+from genesis.utils.misc import ti_field_to_torch
 
 from .mpr_decomp import MPR
 
@@ -169,6 +173,7 @@ class Collider:
             gs.ti_int, shape=self._solver._B
         )  # total number of contacts, including hibernated contacts
         self.n_contacts_hibernated = ti.field(gs.ti_int, shape=self._solver._B)
+        self._contacts_info_cache = {}
 
         # contact caching for warmstart collision detection
         struct_contact_cache = ti.types.struct(
@@ -215,6 +220,7 @@ class Collider:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(envs_idx)
+        self._contacts_info_cache = {}
 
     @ti.kernel
     def _kernel_reset(
@@ -274,6 +280,7 @@ class Collider:
     def detection(self) -> None:
         from genesis.utils.tools import create_timer
 
+        self._contacts_info_cache = {}
         timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs()
         timer.stamp("func_update_aabbs")
@@ -2002,3 +2009,108 @@ class Collider:
                         tmp2 = r @ self.box_points[i, i_b]
                         contact_pos = tmp2 + pos1
                         self._func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b)
+
+    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
+        # Early return if already pre-computed
+        contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
+        if contacts_info is not None:
+            return contacts_info
+
+        # Find out how much dynamic memory must be allocated
+        n_contacts = ti_field_to_torch(self.n_contacts) if to_torch else self.n_contacts.to_numpy()
+        n_envs = len(n_contacts)
+        n_contacts_max = n_contacts.max()
+        if as_tensor:
+            out_size = n_contacts_max * n_envs
+        else:
+            out_size = n_contacts.sum()
+
+        # Allocate output buffer
+        if to_torch:
+            iout = torch.full((out_size, 4), -1, dtype=gs.tc_int, device=gs.device)
+            fout = torch.empty((out_size, 10), dtype=gs.tc_float, device=gs.device)
+        else:
+            iout = np.full((out_size, 4), -1, dtype=gs.np_int)
+            fout = np.empty((out_size, 10), dtype=gs.np_float)
+
+        # Copy contact data
+        self._kernel_get_contacts(as_tensor, iout, fout)
+
+        # Return structured view (no copy)
+        if as_tensor:
+            if self._solver.n_envs > 0:
+                iout = iout.reshape((n_contacts_max, n_envs, -1))
+                fout = fout.reshape((n_contacts_max, n_envs, -1))
+            iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
+            fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
+            values = (*iout_chunks, *fout_chunks)
+        else:
+            # Split smallest dimension first, then largest dimension
+            if self._solver.n_envs == 0:
+                iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
+                fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
+                values = (*iout_chunks, *fout_chunks)
+            elif n_contacts_max >= n_envs:
+                if to_torch:
+                    iout_chunks = torch.split(iout, n_contacts)
+                    fout_chunks = torch.split(fout, n_contacts)
+                else:
+                    iout_chunks = np.split(iout, n_contacts)
+                    fout_chunks = np.split(fout, n_contacts)
+                iout_chunks = ((out[..., 0], out[..., 1], out[..., 2], out[..., 3]) for out in iout_chunks)
+                fout_chunks = ((out[..., 0], out[..., 1:4], out[..., 4:7], out[..., 7:]) for out in fout_chunks)
+                values = (*iout_chunks, *fout_chunks)
+            else:
+                iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
+                fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
+                if self._solver.n_envs == 1:
+                    if to_torch:
+                        iout_chunks = (torch.split(out, n_contacts) for out in iout_chunks)
+                        fout_chunks = (torch.split(out, n_contacts) for out in fout_chunks)
+                    else:
+                        iout_chunks = (np.split(out, n_contacts) for out in iout_chunks)
+                        fout_chunks = (np.split(out, n_contacts) for out in fout_chunks)
+                    values = (*zip(*iout_chunks), *zip(*fout_chunks))
+                else:
+                    values = (*iout_chunks, *fout_chunks)
+
+        contacts_info = dict(
+            zip(
+                ("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"),
+                values if self._solver.n_envs == 0 else (value.swapaxes(0, 1) for value in values),
+            )
+        )
+
+        # Cache contact information before returning
+        self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
+
+        return contacts_info
+
+    @ti.kernel
+    def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):
+        n_contacts_max = gs.ti_int(0)
+        for n_contacts in self.n_contacts:
+            if n_contacts > n_contacts_max:
+                n_contacts_max = n_contacts
+
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(self._solver._B):
+            i_c_start = gs.ti_int(0)
+            if ti.static(is_padded):
+                for j in range(i_b - 1):
+                    i_c_start = i_c_start + self.n_contacts[j]
+            else:
+                i_c_start = (i_b - 1) * n_contacts_max
+
+            for i_c_ in range(self.n_contacts[i_b]):
+                i_c = i_c_start + i_c_
+
+                iout[i_c, 0] = self.contact_data[i_b, i_c].link_a
+                iout[i_c, 1] = self.contact_data[i_b, i_c].link_b
+                iout[i_c, 2] = self.contact_data[i_b, i_c].geom_a
+                iout[i_c, 3] = self.contact_data[i_b, i_c].geom_b
+                fout[i_c, 0] = self.contact_data[i_b, i_c].penetration
+                for j in ti.static(range(3)):
+                    fout[i_c, 1 + j] = self.contact_data[i_b, i_c].pos[j]
+                    fout[i_c, 4 + j] = self.contact_data[i_b, i_c].normal[j]
+                    fout[i_c, 7 + j] = self.contact_data[i_b, i_c].force[j]
