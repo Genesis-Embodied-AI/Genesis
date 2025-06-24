@@ -111,8 +111,8 @@ def steel(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_
     chips_can = scene.add_entity(
         material=gs.materials.Rigid( #steel
             rho=7860,
-            coup_friction=1e-4,
-            friction=1e-4,
+            coup_friction=1e-2,
+            friction=1e-2,
         ),
         morph=gs.morphs.Mesh(
             file=object_path,
