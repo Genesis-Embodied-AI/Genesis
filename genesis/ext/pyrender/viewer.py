@@ -218,18 +218,6 @@ class Viewer(pyglet.window.Window):
         use_viewer_interaction=False,
         **kwargs,
     ):
-
-        # Note: context.scene is genesis.engine.scene.Scene
-        # Note: context._scene is genesis.ext.pyrender.scene.Scene
-        # 
-        # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
-        from .viewer_interaction import ViewerInteraction, ViewerInteractionBase
-        self.viewer_interaction = (
-            ViewerInteraction(context.scene, log_events=True)
-            if use_viewer_interaction
-            else ViewerInteractionBase()
-        )
-
         #######################################################################
         # Save attributes and flags
         #######################################################################
@@ -392,6 +380,19 @@ class Viewer(pyglet.window.Window):
         self.scene.add_node(self._camera_node)
         self.scene.main_camera_node = self._camera_node
         self._reset_view()
+
+        # Setup mouse interaction
+
+        # Note: context.scene is genesis.engine.scene.Scene
+        # Note: context._scene is genesis.ext.pyrender.scene.Scene
+        #
+        # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
+        from .viewer_interaction import ViewerInteraction, ViewerInteractionBase
+        self.viewer_interaction = (
+            ViewerInteraction(self._camera_node, context.scene)
+            if use_viewer_interaction
+            else ViewerInteractionBase()
+        )
 
         #######################################################################
         # Initialize OpenGL context and renderer
@@ -769,7 +770,7 @@ class Viewer(pyglet.window.Window):
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with no buttons held down."""
-        self.viewer_interaction.on_mouse_motion(x, y, dx, dy)
+        return self.viewer_interaction.on_mouse_motion(x, y, dx, dy)
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record an initial mouse press."""
@@ -791,17 +792,17 @@ class Viewer(pyglet.window.Window):
 
         # Stop animating while using the mouse
         self.viewer_flags["mouse_pressed"] = True
-        self.viewer_interaction.on_mouse_press(x, y, button, modifiers)
+        return self.viewer_interaction.on_mouse_press(x, y, button, modifiers)
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with one or more buttons held down."""
         self._trackball.drag(np.array([x, y]))
-        self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
+        return self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
 
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a mouse release."""
         self.viewer_flags["mouse_pressed"] = False
-        self.viewer_interaction.on_mouse_release(x, y, button, modifiers)
+        return self.viewer_interaction.on_mouse_release(x, y, button, modifiers)
 
     def on_mouse_scroll(self, x, y, dx, dy):
         """Record a mouse scroll."""
@@ -839,7 +840,7 @@ class Viewer(pyglet.window.Window):
                 if len(tup) == 3:
                     kwargs = tup[2]
             callback(self, *args, **kwargs)
-            return
+            return self.viewer_interaction.on_key_press(symbol, modifiers)
 
         # Otherwise, use default key functions
 
@@ -980,11 +981,11 @@ class Viewer(pyglet.window.Window):
         if self._message_text is not None:
             self._message_opac = 1.0 + self._ticks_till_fade
 
-        self.viewer_interaction.on_key_press(symbol, modifiers)
+        return self.viewer_interaction.on_key_press(symbol, modifiers)
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key release."""
-        self.viewer_interaction.on_key_release(symbol, modifiers)
+        return self.viewer_interaction.on_key_release(symbol, modifiers)
 
     @staticmethod
     def _time_event(dt, self):
