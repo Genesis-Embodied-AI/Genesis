@@ -7,9 +7,9 @@ import genesis as gs
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
+from genesis.utils.misc import ti_field_to_torch
 
 from .base_solver import Solver
-import numpy as np
 
 
 @ti.data_oriented
@@ -1064,12 +1064,12 @@ class FEMSolver(Solver):
         Get forces on all vertices.
         
         Returns:
-            np.ndarray:  (B, n_vertices, 3) where B is batch size
+            torch.Tensor : shape (B, n_vertices, 3) where B is batch size
         """
         if not self.is_active():
             return None
 
-        return self.elements_v_energy.force.to_numpy()
+        return ti_field_to_torch(self.elements_v_energy.force)
 
     @ti.kernel
     def _kernel_add_elements(
@@ -1360,7 +1360,7 @@ class FEMSolver(Solver):
     # -------------------------------- vertex constraints --------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_vertex_constraints(self, vertex_indices, target_positions, constraint_type="hard", stiffness=1e6):
+    def set_vertex_constraints(self, vertex_indices, target_positions, constraint_type="hard", stiffness=None):
         """
         Set vertex constraints for specified vertices.
         
@@ -1374,40 +1374,33 @@ class FEMSolver(Solver):
                 A "hard" constraint directly set position and zero velocity.
                 A "soft" constraint uses a spring force to pull the vertex towards the target position.
             stiffness : None | float, optional
-                Fixed position by default. Specify a spring stiffness for a soft constraint. (TODO: what's a reasonable range?)
+                Specify a spring stiffness for a soft constraint. (TODO: what's a reasonable range?)
         """
         if self._use_implicit_solver:
-            gs.logger.warning("Vertex constraints are not supported when using implicit solver. Constraint addition ignored.")
+            gs.logger.warning("Ignoring vertex constraint; unsupported with FEM implicit solver.")
             return
  
         constraint_type_int = 0 if constraint_type == "hard" else 1
+        vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device)
+        target_positions = torch.as_tensor(target_positions, dtype=gs.tc_float, device=gs.device)
+        stiffness = stiffness or 0.0
         
-        vertex_indices_np = np.array(vertex_indices, dtype=np.int32)
-        target_positions_np = np.array(target_positions, dtype=np.float32)
-        
-        self._kernel_set_vertex_constraints(vertex_indices_np, target_positions_np, constraint_type_int, stiffness)
+        self._kernel_set_vertex_constraints(vertex_indices, target_positions, constraint_type_int, stiffness)
 
     def update_constraint_targets(self, vertex_indices, new_target_positions):
         """Update target positions for existing constraints."""
-        if not isinstance(vertex_indices, (list, tuple)):
-            vertex_indices = [vertex_indices]
-        if not isinstance(new_target_positions[0], (list, tuple)):
-            new_target_positions = [new_target_positions]
-            
-        vertex_indices_np = np.array(vertex_indices, dtype=np.int32)
-        new_target_positions_np = np.array(new_target_positions, dtype=np.float32)
+        vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device)
+        new_target_positions = torch.as_tensor(new_target_positions, dtype=gs.tc_float, device=gs.device)
         
-        self._kernel_update_constraint_targets(vertex_indices_np, new_target_positions_np)
+        self._kernel_update_constraint_targets(vertex_indices, new_target_positions)
 
     def remove_vertex_constraints(self, vertex_indices=None):
         """Remove constraints from specified vertices, or all if None."""
         if vertex_indices is None:
             self._kernel_remove_all_constraints()
         else:
-            if not isinstance(vertex_indices, (list, tuple)):
-                vertex_indices = [vertex_indices]
-            vertex_indices_np = np.array(vertex_indices, dtype=np.int32)
-            self._kernel_remove_specific_constraints(vertex_indices_np)
+            vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device)
+            self._kernel_remove_specific_constraints(vertex_indices)
     
     @ti.kernel
     def apply_hard_constraints(self, f: ti.i32):
@@ -1436,13 +1429,14 @@ class FEMSolver(Solver):
         self,
         vertex_indices: ti.types.ndarray(),
         target_positions: ti.types.ndarray(),
-        constraint_type: ti.i32,
+        constraint_type: ti.u1,
         stiffness: ti.f32,
     ):
+        one: ti.u1 = 1
         for i in range(vertex_indices.shape[0]):
             v_idx = vertex_indices[i]
             if 0 <= v_idx < self.n_vertices:
-                self.vertex_constraints[v_idx].is_constrained = 1
+                self.vertex_constraints[v_idx].is_constrained = one
                 self.vertex_constraints[v_idx].constraint_type = constraint_type
                 self.vertex_constraints[v_idx].stiffness = stiffness
                 for j in ti.static(range(3)):
