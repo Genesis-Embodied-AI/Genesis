@@ -145,17 +145,16 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
     )
     end_effector = franka.get_link("hand")
     # move to pre-grasp pose
-    dz = 0.0004
-    z_steps = 1200
-    x = grasp_pos[0]
-    y = grasp_pos[1]
-    z = grasp_pos[2] + dz * z_steps  # 初期位置を調整
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([x, y, z]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    qpos[-2:] = 0.04
+    dz = 0.0001
+    x = 0.45
+    y = 0.45
+    z = 0.5
+    z_steps = int((z - grasp_pos[2]) // dz)
+    dx = (x - grasp_pos[0]) / z_steps
+    dy = (y - grasp_pos[1]) / z_steps
+    print("x,y,z: ", x, y, z)
+    qpos = qpos_init.copy()
+    print("qpos: ", qpos)
     franka.set_dofs_position(qpos[:-2], motors_dof)
     franka.set_dofs_position(qpos[-2:], fingers_dof)
     cam.start_recording()
@@ -163,6 +162,8 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
     # reach
     for i in range(z_steps):
         #record optimized moments
+        x -= dx
+        y -= dy
         z -= dz
         qpos = franka.inverse_kinematics(
             link=end_effector,
@@ -172,7 +173,7 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
         qpos[-2:] = 0.04
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(qpos[-2:], fingers_dof)
-        make_step(scene, cam, franka, df)
+        make_step(scene, cam, franka, df, base_photo_name)
     print("x, y, z: ", x, y, z)
     # grasp
     for i in range(300):
@@ -182,8 +183,8 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
             quat=np.array([0, 1, 0, 0]),
         )
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-0.01*i, -0.01*i]), fingers_dof)
-        make_step(scene, cam, franka, df)
+        franka.control_dofs_force(np.array([-0.1*i, -0.1*i]), fingers_dof)
+        make_step(scene, cam, franka, df, base_photo_name)
     
     for i in range(z_steps):
         z += dz
@@ -193,17 +194,28 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
             quat = np.array([0, 1, 0, 0]),
         )
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-3, -3]), fingers_dof)
-        make_step(scene, cam, franka, df)
-    
+        franka.control_dofs_force(np.array([-30, -30]), fingers_dof)
+        make_step(scene, cam, franka, df, base_photo_name)
+    for i in range(3000):
+        qpos[-3] -= 0.0002
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-30, -30]), fingers_dof)
+        make_step(scene, cam, franka, df, base_photo_name)
+    for i in range(3000):
+        qpos[0] += 0.0002
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-30, -30]), fingers_dof)
+        make_step(scene, cam, franka, df, base_photo_name)
     for i in range(300):
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-3+0.01*i, -3+0.01*i]), fingers_dof)
-        make_step(scene, cam, franka, df)
+        franka.control_dofs_force(np.array([-30+0.1*i, -30+0.1*i]), fingers_dof)
+        make_step(scene, cam, franka, df, base_photo_name)
     for i in range(100):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(np.array([0.0004*i, 0.0004*i]), fingers_dof)
-        make_step(scene, cam, franka, df)
+        make_step(scene, cam, franka, df, base_photo_name)
+    
+
     # ---- 追加: 録画終了・保存 -------------------------------
     cam.stop_recording(save_to_filename=args.video, fps=1000/20)
     print(f"saved -> {args.video}")
