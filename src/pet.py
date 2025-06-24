@@ -66,7 +66,7 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
                            "right_fx", "right_fy", "right_fz", "right_tx", "right_ty", "right_tz",
                            "dof_0", "dof_1", "dof_2", "dof_3", "dof_4", "dof_5", "dof_6", "dof_7", "dof_8"])
     ########################## init ##########################
-    # gs.init(backend=gs.cpu, debug=True, logging_level="error")
+    gs.init(backend=gs.cpu, debug=True, logging_level="error")
     #gs.init(backend=gs.cpu)
     ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
@@ -209,4 +209,5 @@ def pet(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_in
     print(f"saved -> {args.video}")
     df.to_csv(args.outfile, index=False)
     print(f"saved -> {args.outfile}")
+    gs.destroy()
     # --------------------------------------------------------
