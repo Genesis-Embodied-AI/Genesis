@@ -63,7 +63,7 @@ dependencies = [
     "torchvision>=0.22.0",
     "torchaudio>=2.7.0",
     "pandas>=2.2.3",
-    "openai>=1.90.0",
+    "openai==1.91.0",
 ]
 
 [tool.setuptools.packages.find]

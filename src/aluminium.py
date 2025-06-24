@@ -3,7 +3,7 @@ import numpy as np
 import genesis as gs
 import pandas as pd
 import os
-
+import torch
 import imageio.v3 as iio
 """https://pypi.org/project/imageio/"""
 
@@ -66,8 +66,12 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
                            "right_fx", "right_fy", "right_fz", "right_tx", "right_ty", "right_tz",
                            "dof_0", "dof_1", "dof_2", "dof_3", "dof_4", "dof_5", "dof_6", "dof_7", "dof_8"])
     ########################## init ##########################
-    gs.init(backend=gs.cpu, debug=True, logging_level="error")
-    #gs.init(backend=gs.cpu)
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        gs.init(backend=gs.gpu)
+    else:
+        device = torch.device("cpu")
+        gs.init(backend=gs.cpu, debug=True)
     ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(3, -1, 1.5),
@@ -111,8 +115,8 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
     chips_can = scene.add_entity(
         material=gs.materials.Rigid( #Aluminium
             rho=2700,
-            coup_friction=1e-2,
-            friction=1e-2,
+            coup_friction=coup_friction,
+            friction=coup_friction,
         ),
         morph=gs.morphs.Mesh(
             file=object_path,
@@ -132,14 +136,14 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
     fingers_dof = np.arange(7, 9)
     # Optional: set control gains
     franka.set_dofs_kp(
-        np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
+        torch.tensor([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100], device=device),
     )
     franka.set_dofs_kv(
-        np.array([450, 450, 350, 350, 200, 200, 200, 10, 10]),
+        torch.tensor([450, 450, 350, 350, 200, 200, 200, 10, 10], device=device),
     )
     franka.set_dofs_force_range(
-        np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
-        np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
+        torch.tensor([-87, -87, -87, -87, -12, -12, -12, -100, -100], device=device),
+        torch.tensor([87, 87, 87, 87, 12, 12, 12, 100, 100], device=device),
     )
     end_effector = franka.get_link("hand")
     # move to pre-grasp pose
@@ -151,7 +155,7 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
     dx = (x - grasp_pos[0]) / z_steps
     dy = (y - grasp_pos[1]) / z_steps
     print("x,y,z: ", x, y, z)
-    qpos = qpos_init.copy()
+    qpos = qpos_init.clone().to(device)
     print("qpos: ", qpos)
     franka.set_dofs_position(qpos[:-2], motors_dof)
     franka.set_dofs_position(qpos[-2:], fingers_dof)
@@ -165,8 +169,8 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
         z -= dz
         qpos = franka.inverse_kinematics(
             link=end_effector,
-            pos=np.array([x, y, z]),
-            quat=np.array([0, 1, 0, 0]),
+            pos=torch.tensor([x, y, z], device=device),
+            quat=torch.tensor([0, 1, 0, 0], device=device),
         )
         qpos[-2:] = 0.04
         franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -177,40 +181,40 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
     for i in range(300):
         qpos = franka.inverse_kinematics(
             link=end_effector,
-            pos=np.array([x, y, z]),
-            quat=np.array([0, 1, 0, 0]),
+            pos=torch.tensor([x, y, z], device=device),
+            quat=torch.tensor([0, 1, 0, 0], device=device),
         )
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-0.1*i, -0.1*i]), fingers_dof)
+        franka.control_dofs_force(torch.tensor([-0.1*i, -0.1*i], device=device), fingers_dof)
         make_step(scene, cam, franka, df, base_photo_name)
     
     for i in range(z_steps):
         z += dz
         qpos = franka.inverse_kinematics(
             link=end_effector,
-            pos=np.array([x, y, z]),
-            quat = np.array([0, 1, 0, 0]),
+            pos=torch.tensor([x, y, z], device=device),
+            quat=torch.tensor([0, 1, 0, 0], device=device),
         )
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-30, -30]), fingers_dof)
+        franka.control_dofs_force(torch.tensor([-50, -50], device=device), fingers_dof)
         make_step(scene, cam, franka, df, base_photo_name)
     for i in range(3000):
         qpos[-3] -= 0.0002
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-30, -30]), fingers_dof)
+        franka.control_dofs_force(torch.tensor([-50, -50], device=device), fingers_dof)
         make_step(scene, cam, franka, df, base_photo_name)
     for i in range(3000):
         qpos[0] += 0.0002
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-30, -30]), fingers_dof)
+        franka.control_dofs_force(torch.tensor([-50, -50], device=device), fingers_dof)
         make_step(scene, cam, franka, df, base_photo_name)
     for i in range(300):
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-30+0.1*i, -30+0.1*i]), fingers_dof)
+        franka.control_dofs_force(torch.tensor([-50+0.1*i, -50+0.1*i], device=device), fingers_dof)
         make_step(scene, cam, franka, df, base_photo_name)
     for i in range(100):
         franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_position(np.array([0.0004*i, 0.0004*i]), fingers_dof)
+        franka.control_dofs_position(torch.tensor([0.0004*i, 0.0004*i], device=device), fingers_dof)
         make_step(scene, cam, franka, df, base_photo_name)
     
 

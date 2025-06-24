@@ -700,8 +700,12 @@ class RigidEntity(Entity):
 
         # Add collision geometries
         for g_info in cg_infos:
-            friction = g_info.get("friction", self.material.friction)
+            friction = self.material.friction
             if friction is None:
+                friction = g_info.get("friction", self.material.friction)
+            print("Using friction:", friction)
+            if friction is None:
+                print("Using default friction")
                 friction = gu.default_friction()
             pos = g_info.get("pos", gu.zero_pos())
             quat = g_info.get("quat", gu.identity_quat())

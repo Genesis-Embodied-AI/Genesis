@@ -20,6 +20,13 @@ user_prompt = """
 The following images are extracted from a video. Tell me what is happening in these images.
 You should focus on the end-effector and the object being manipulated.
 If the end-effector never touches the object, do not mention the object.
+If the end-effector touches the object, carefully describe the interaction, such as grasping, pinching, and pushing.
+Do not mention the shape or color of the object; simply refer to it as "the object".
+If the end-effector is touching the object, explain the level of deformation using the following scale:
+'none', 'slight', 'moderate', 'heavy', or 'extreme'.
+Also, if the end-effector is grasping the object, describe whether the grasp seems stable or unstable.
+Output only the analysis of the images. Do not include any other information. Only use alphabetical characters, spaces, commas, and periods.
+Output in approximately 15 words.
 """
 
 # --- 関数定義 ---
@@ -86,29 +93,26 @@ def analyze_image_with_openai(base64_images: list[str | None]):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "content": user_prompt},
+                        {"type": "text", "text": user_prompt},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_images[0]}"
-                            }
+                            "image_url": {"url": f"data:image/png;base64,{base64_images[0]}"},
                         },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{base64_images[1]}"}
+                            "image_url": {"url": f"data:image/png;base64,{base64_images[1]}"},
                         },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{base64_images[2]}"}
+                            "image_url": {"url": f"data:image/png;base64,{base64_images[2]}"},
                         },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{base64_images[3]}"}
+                            "image_url": {"url": f"data:image/png;base64,{base64_images[3]}"},
                         }
                     ]
                 }
             ],
-            max_tokens=1000
         )
         return response.choices[0].message.content
 
