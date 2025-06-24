@@ -9,21 +9,7 @@ def make_step(scene, cam, franka):
     """フランカを目標位置に移動させるステップ関数"""
     scene.step()
     cam.render()
-    scene.clear_debug_objects()
-    links_force_torque = franka.get_links_force_torque([9, 10]) # 手先のlocal_indexは9, 10
-    print(links_force_torque)
-    #force
-    scale = 0.1
-    scene.draw_debug_arrow(
-        pos=franka.get_link("left_finger").get_pos().tolist(),
-        vec=(links_force_torque[0][:3]*scale).tolist(),
-        color=(1, 0, 0),
-    )
-    scene.draw_debug_arrow(
-        pos=franka.get_link("right_finger").get_pos().tolist(),
-        vec=(links_force_torque[1][:3]*scale).tolist(),
-        color=(1, 0, 0),
-    )
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
@@ -31,7 +17,7 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
     ########################## create a scene ##########################
 
