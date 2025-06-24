@@ -2,11 +2,24 @@ import argparse
 import numpy as np
 import genesis as gs
 import pandas as pd
-def make_step(scene, cam, franka, df):
+import os
+
+import imageio.v3 as iio
+"""https://pypi.org/project/imageio/"""
+
+def make_step(scene, cam, franka, df, photo_path):
     """フランカを目標位置に移動させるステップ関数"""
     scene.step()
-    if scene.t % 20 == 0:
+    t = int(scene.t) - 1
+    if t % 20 == 0:
         cam.render()
+    if t % 250 == 0:
+        rgb, _, _, _ = cam.render(rgb=True)
+
+        filepath = photo_path + f"_{t:06d}.png"
+        iio.imwrite(filepath, rgb)
+    dofs = franka.get_dofs_position()
+    dofs = [x.item() for x in dofs]
     links_force_torque = franka.get_links_force_torque([9, 10]) # 手先のlocal_indexは9, 10
     links_force_torque = [x.item() for x in links_force_torque[0]] + [x.item() for x in links_force_torque[1]]
     df.loc[len(df)] = [
@@ -15,18 +28,43 @@ def make_step(scene, cam, franka, df):
         links_force_torque[3], links_force_torque[4], links_force_torque[5],
         links_force_torque[6], links_force_torque[7], links_force_torque[8],
         links_force_torque[9], links_force_torque[10], links_force_torque[11],
+        dofs[0], dofs[1], dofs[2], dofs[3], dofs[4], dofs[5], dofs[6], dofs[7], dofs[8]
     ]
     # #force
 
-def rubber(object_name, object_euler, object_scale, grasp_pos, object_path, coup_friction=0.1):
-    default_video_path = f"data/videos/rubber/grasp_{object_name}_rubber_{coup_friction}.mp4"
-    default_outfile_path = f"data/csv/rubber/grasp_{object_name}_rubber_{coup_friction}.csv"
+def rubber(object_name, object_euler, object_scale, grasp_pos, object_path, qpos_init, coup_friction=0.1):
+    video_object_path = f"data/videos/{object_name}"
+    outfile_object_path = f"data/csv/{object_name}"
+    photo_object_path = f"data/photos/{object_name}"
+    photo_material_path = f"{photo_object_path}/rubber"
+    if coup_friction == 0.1:
+        photo_friction_path = f"{photo_material_path}/010"
+    elif coup_friction == 1.0:
+        photo_friction_path = f"{photo_material_path}/100"
+    elif coup_friction == 5.0:
+        photo_friction_path = f"{photo_material_path}/500"
+    else:
+        raise ValueError("coup_friction must be 0.1, 1.0, or 5.0")
+    if not os.path.exists(video_object_path):
+        os.makedirs(video_object_path)
+    if not os.path.exists(outfile_object_path):
+        os.makedirs(outfile_object_path)
+    if not os.path.exists(photo_object_path):
+        os.makedirs(photo_object_path)
+    if not os.path.exists(photo_material_path):
+        os.makedirs(photo_material_path)
+    if not os.path.exists(photo_friction_path):
+        os.makedirs(photo_friction_path)
+    default_video_path = f"{video_object_path}/{object_name}_rubber_{coup_friction}.mp4"
+    default_outfile_path = f"{outfile_object_path}/{object_name}_rubber_{coup_friction}.csv"
+    base_photo_name = f"{photo_friction_path}/{object_name}_rubber_{coup_friction}"
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--video", default=default_video_path)
     parser.add_argument("-o", "--outfile", default=default_outfile_path)
     args = parser.parse_args()
     df = pd.DataFrame(columns=["step", "left_fx", "left_fy", "left_fz", "left_tx", "left_ty", "left_tz",
-                           "right_fx", "right_fy", "right_fz", "right_tx", "right_ty", "right_tz"])
+                           "right_fx", "right_fy", "right_fz", "right_tx", "right_ty", "right_tz",
+                           "dof_0", "dof_1", "dof_2", "dof_3", "dof_4", "dof_5", "dof_6", "dof_7", "dof_8"])
     ########################## init ##########################
     # gs.init(backend=gs.cpu, debug=True, logging_level="error")
     #gs.init(backend=gs.cpu)
