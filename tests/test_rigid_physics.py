@@ -10,9 +10,9 @@ import numpy as np
 
 import mujoco
 import genesis as gs
+from genesis.utils.path_planing import RRTConnect_OMPL
 
 from .utils import (
-    RRTConnect_OMPL,
     get_hf_assets,
     assert_allclose,
     build_mujoco_sim,
