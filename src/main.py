@@ -3,6 +3,7 @@ from pet import pet
 from pp import pp
 from rubber import rubber
 from aluminium import aluminium
+import os
 #from test2 import test2
 
 import genesis as gs
@@ -23,15 +24,17 @@ for i, item in enumerate(object_data_list[:5]): # 最初の5つのエントリ�
 """
 
 #gs.init(backend=gs.cpu, logging_level="error")
-coup_friction_list = [0.5, 1.0, 5.0]
+coup_friction_list = [0.5, 1.5, 2.5]
+# coup_friction_list = [0.5, 1.0, 5.0]
 tsdf_list = ["001_chips_can", "023_wine_glass", "029_plate", "033_spatula"]
 google16k_list = ["003_cracker_box", "022_windex_bottle", "028_skillet_lid", "029_plate", "030_fork", "031_spoon", "032_knife", "035_power_drill", "036_wood_block", "037_scissors", "038_padlock", "040_large_marker", "042_adjustable_wrench", "043_phillips_screwdriver", "044_flat_screwdriver", "048_hammers", "049_small_clamp", "050_miduim_clamp", "051_large_clamp", "052_exstra_large_clamp", "053_mini_soccer_ball", "054_softtball", "055_baseball", "056_tennis_ball", "057_racquet_ball", "058_golf_ball", "059_chain"]
 
 qpos_init = torch.tensor([-2.0894, -0.2523,  2.8358, -1.5729,  0.0775,  1.8133,  1.5222,  0.0400, 0.0400])
 
-for object_data in object_data_list[:1]: 
-    
-    
+for object_data in object_data_list[50:]:
+    if os.path.exists(f"data/videos/{object_data['id']}/{object_data['id']}_aluminium_2.5.mp4"):
+        print(f"skipping {object_data['id']}")
+        continue
     if object_data['skip']:
         #print(f"Skipping object ID: {object_data['id']}")
         continue

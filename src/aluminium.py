@@ -39,12 +39,12 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
     photo_material_path = f"{photo_object_path}/aluminium"
     if coup_friction == 0.5:
         photo_friction_path = f"{photo_material_path}/050"
-    elif coup_friction == 1.0:
-        photo_friction_path = f"{photo_material_path}/100"
-    elif coup_friction == 5.0:
-        photo_friction_path = f"{photo_material_path}/500"
+    elif coup_friction == 1.5:
+        photo_friction_path = f"{photo_material_path}/150"
+    elif coup_friction == 2.5:
+        photo_friction_path = f"{photo_material_path}/250"
     else:
-        raise ValueError("coup_friction must be 0.5, 1.0, or 5.0")
+        raise ValueError("coup_friction must be 0.5, 1.5, or 2.5")
     if not os.path.exists(video_object_path):
         os.makedirs(video_object_path)
     if not os.path.exists(outfile_object_path):
@@ -134,8 +134,8 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
 
     ########################## build ##########################
     scene.build()
-    motors_dof = torch.arange(7, dtype=gs.tc_int, device=device)
-    fingers_dof = torch.arange(7, 9, dtype=gs.tc_int, device=device)
+    motors_dof = torch.arange(7, dtype=gs.tc_int, device=gs.device)
+    fingers_dof = torch.arange(7, 9, dtype=gs.tc_int, device=gs.device)
     # Optional: set control gains
     franka.set_dofs_kp(
         torch.tensor([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100], device=gs.device),
@@ -244,7 +244,7 @@ def aluminium(object_name, object_euler, object_scale, grasp_pos, object_path, q
     
 
     # ---- 追加: 録画終了・保存 -------------------------------
-    cam.stop_recording(save_to_filename=args.video, fps=1000/250)
+    cam.stop_recording(save_to_filename=args.video, fps=1000/500)
     print(f"saved -> {args.video}")
     df.to_csv(args.outfile, index=False)
     print(f"saved -> {args.outfile}")
