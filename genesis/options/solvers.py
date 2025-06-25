@@ -140,43 +140,6 @@ class SAPCouplerOptions(CouplerOptions):
     linesearch_tau: float = 0.8
 
 
-class IPCCouplerOptions(CouplerOptions):
-    """
-    TODO change the doc and field for IPC
-    Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
-
-    Parameters
-    ----------
-    n_sap_iterations : int, optional
-        Number of iterations for the SAP solver. Defaults to 5.
-    n_pcg_iterations : int, optional
-        Number of iterations for the Preconditioned Conjugate Gradient solver. Defaults to 100.
-    n_linesearch_iterations : int, optional
-        Number of iterations for the line search solver. Defaults to 10.
-    sap_threshold : float, optional
-        Threshold for the SAP solver. Defaults to 1e-6.
-    pcg_threshold : float, optional
-        Threshold for the Preconditioned Conjugate Gradient solver. Defaults to 1e-6.
-    linesearch_c : float, optional
-        Line search sufficient decrease parameter. Defaults to 1e-4.
-    linesearch_tau : float, optional
-        Line search step size reduction factor. Defaults to 0.8.
-
-    Note
-    ----
-    Paper reference: https://arxiv.org/abs/2110.10107
-    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
-    """
-
-    n_sap_iterations: int = 5
-    n_pcg_iterations: int = 100
-    n_linesearch_iterations: int = 10
-    sap_threshold: float = 1e-6
-    pcg_threshold: float = 1e-6
-    linesearch_c: float = 1e-4
-    linesearch_tau: float = 0.8
-
-
 ############################ Solvers inside simulator ############################
 """
 Parameters in these solver-specific options will override SimOptions if available.
