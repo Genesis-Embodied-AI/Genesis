@@ -78,24 +78,6 @@ class PathPlanner(ABC):
     def _q_start(self):
         """Starting generalized coordinates."""
         return self._entity._q_start
-
-    def validate_input_qpos(self, qpos_goal, qpos_start, *, check_joint_limits=True):
-        if qpos_start is None:
-            qpos_start = self._entity.get_qpos()
-        qpos_start = tensor_to_array(qpos_start)
-        qpos_goal = tensor_to_array(qpos_goal)
-
-        if qpos_start.shape != (self.n_qs,) or qpos_goal.shape != (self.n_qs,):
-            gs.raise_exception("Invalid shape for `qpos_start` or `qpos_goal`.")
-
-        if check_joint_limits:
-            # NOTE: process joint limit
-            if (qpos_start < self.default_q_limit[0]).any() or (qpos_start > self.default_q_limit[1]).any():
-                gs.logger.warning("`qpos_start` exceeds joint limit.")
-
-            if (qpos_goal < self.default_q_limit[0]).any() or (qpos_goal > self.default_q_limit[1]).any():
-                gs.logger.warning("`qpos_goal` exceeds joint limit.")
-        return qpos_goal, qpos_start
     
     def validate_input_qpos_batch(self, qpos_goal, qpos_start, envs_idx, *, check_joint_limits=True):
         if qpos_start is None:
@@ -112,16 +94,18 @@ class PathPlanner(ABC):
         assert qpos_goal.ndim == 2
         if qpos_goal.shape[0] == 1:
             qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
+        else:
+            assert qpos_goal.shape[0] == len(envs_idx), f"Batch size mismatch: {qpos_goal.shape=} {len(envs_idx)=}"
 
         if qpos_start.shape[1] != self.n_qs or qpos_goal.shape[1] != self.n_qs:
             gs.raise_exception("Invalid shape for `qpos_start` or `qpos_goal`.")
         
         if check_joint_limits:
             # NOTE: process joint limit
-            if (qpos_start < self.default_q_limit[0]).any() or (qpos_start > self.default_q_limit[1]).any():
+            if (qpos_start.cpu().numpy() < self.default_q_limit[0]).any() or (qpos_start.cpu().numpy() > self.default_q_limit[1]).any():
                 gs.logger.warning("`qpos_start` exceeds joint limit.")
 
-            if (qpos_goal < self.default_q_limit[0]).any() or (qpos_goal > self.default_q_limit[1]).any():
+            if (qpos_goal.cpu().numpy() < self.default_q_limit[0]).any() or (qpos_goal.cpu().numpy() > self.default_q_limit[1]).any():
                 gs.logger.warning("`qpos_goal` exceeds joint limit.")
         return qpos_goal, qpos_start
         
@@ -413,9 +397,8 @@ class RRT(PathPlanner):
         self,
         qpos_goal,
         qpos_start=None,
+        *,
         resolution=0.01,
-        timeout=5.0,
-        max_retry=1,
         smooth_path=True,
         num_waypoints=100,
         envs_idx=None,
@@ -434,20 +417,7 @@ class RRT(PathPlanner):
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
         qpos_cur = self._entity.get_qpos()
-        if qpos_start is None:
-            qpos_start = qpos_cur.clone()
-        else:
-            if qpos_start.ndim == 1:
-                qpos_start = qpos_start.unsqueeze(0)
-            assert qpos_start.ndim == 2
-            if qpos_start.shape[0] == 1:
-                qpos_start = qpos_start.repeat(len(envs_idx), 1)
-
-        if qpos_goal.ndim == 1:
-            qpos_goal = qpos_goal.unsqueeze(0)
-        assert qpos_goal.ndim == 2
-        if qpos_goal.shape[0] == 1:
-            qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
+        qpos_goal, qpos_start = self.validate_input_qpos_batch(qpos_goal, qpos_start, envs_idx)
         
         self._init_rrt_fields()
         self._reset_rrt_fields()
@@ -740,22 +710,7 @@ class RRTConnect(PathPlanner):
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
         qpos_cur = self._entity.get_qpos()
-        if qpos_start is None:
-            qpos_start = qpos_cur.clone()
-        else:
-            if qpos_start.ndim == 1:
-                qpos_start = qpos_start.unsqueeze(0)
-            assert qpos_start.ndim == 2
-            if qpos_start.shape[0] == 1:
-                qpos_start = qpos_start.repeat(len(envs_idx), 1)
-
-        if qpos_goal.ndim == 1:
-            qpos_goal = qpos_goal.unsqueeze(0)
-        assert qpos_goal.ndim == 2
-        if qpos_goal.shape[0] == 1:
-            qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
-        else:
-            assert qpos_goal.shape[0] == len(envs_idx), f"Batch size mismatch: {qpos_goal.shape=} {len(envs_idx)=}"
+        qpos_goal, qpos_start = self.validate_input_qpos_batch(qpos_goal, qpos_start, envs_idx)
         
         self._init_rrt_connect_fields()
         self._reset_rrt_connect_fields()
