@@ -343,27 +343,26 @@ class RRT(PathPlanner):
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
-            if not self._rrt_is_active[i_b]:
-                continue
+            if self._rrt_is_active[i_b]:
 
-            collision_detected = self._func_check_collision(ignore_geom_pairs, i_b)
-            if collision_detected:
-                self._rrt_tree_size[i_b] -= 1
-                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
-                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
-            else:
-                # check the obtained steer result is within goal configuration only if no collision
-                flag = True
-                for i_q in range(self.n_qs):
-                    if (
-                        abs(self._solver.qpos[i_q + self._q_start, i_b] - self._rrt_goal_configuration[i_q, i_b])
-                        > self._rrt_pos_tol
-                    ):
-                        flag = False
-                        break
-                if flag:
-                    self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
-                    self._rrt_is_active[i_b] = 0
+                is_collision_detected = self._func_check_collision(ignore_geom_pairs, i_b)
+                if is_collision_detected:
+                    self._rrt_tree_size[i_b] -= 1
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
+                else:
+                    # check the obtained steer result is within goal configuration only if no collision
+                    is_valid = True
+                    for i_q in range(self.n_qs):
+                        if (
+                            abs(self._solver.qpos[i_q + self._q_start, i_b] - self._rrt_goal_configuration[i_q, i_b])
+                            > self._rrt_pos_tol
+                        ):
+                            is_valid = False
+                            break
+                    if is_valid:
+                        self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
+                        self._rrt_is_active[i_b] = 0
 
     def plan(
         self,
@@ -542,67 +541,65 @@ class RRTConnect(PathPlanner):
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
-            if not self._rrt_is_active[i_b]:
-                continue
+            if self._rrt_is_active[i_b]:
+                random_sample = ti.Vector(
+                    [
+                        q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                        for i_q in range(self.n_qs)
+                    ]
+                )
+                if ti.random() < self._rrt_goal_bias:
+                    if forward_pass:
+                        random_sample = ti.Vector(
+                            [self._rrt_goal_configuration[i_q, i_b] for i_q in range(self.n_qs)]
+                        )
+                    else:
+                        random_sample = ti.Vector(
+                            [self._rrt_start_configuration[i_q, i_b] for i_q in range(self.n_qs)]
+                        )
 
-            random_sample = ti.Vector(
-                [
-                    q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
-                    for i_q in ti.static(range(self.n_qs))
-                ]
-            )
-            if ti.random() < self._rrt_goal_bias:
-                if forward_pass:
-                    random_sample = ti.Vector(
-                        [self._rrt_goal_configuration[i_q, i_b] for i_q in ti.static(range(self.n_qs))]
-                    )
-                else:
-                    random_sample = ti.Vector(
-                        [self._rrt_start_configuration[i_q, i_b] for i_q in ti.static(range(self.n_qs))]
-                    )
+                # find nearest neighbor
+                nearest_neighbor_idx = -1
+                nearest_neighbor_dist = gs.ti_float(1e30)
+                ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+                for i_n in range(self._rrt_tree_size[i_b]):
+                    if forward_pass:
+                        # NOTE: in forward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
+                        if self._rrt_node_info[i_n, i_b].parent_idx == -1:
+                            continue
+                    else:
+                        # NOTE: in backward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
+                        if self._rrt_node_info[i_n, i_b].child_idx == -1:
+                            continue
+                    dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
+                    if dist < nearest_neighbor_dist:
+                        nearest_neighbor_dist = dist
+                        nearest_neighbor_idx = i_n
 
-            # find nearest neighbor
-            nearest_neighbor_idx = -1
-            nearest_neighbor_dist = gs.ti_float(1e30)
-            ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-            for i_n in range(self._rrt_tree_size[i_b]):
-                if forward_pass:
-                    # NOTE: in forward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
-                    if self._rrt_node_info[i_n, i_b].parent_idx == -1:
-                        continue
-                else:
-                    # NOTE: in backward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
-                    if self._rrt_node_info[i_n, i_b].child_idx == -1:
-                        continue
-                dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
-                if dist < nearest_neighbor_dist:
-                    nearest_neighbor_dist = dist
-                    nearest_neighbor_idx = i_n
+                # steer from nearest neighbor to random sample
+                nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
+                direction = random_sample - nearest_config
+                steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
+                for i_q in range(self.n_qs):
+                    # If the step size exceeds max_step_size, clip it
+                    if ti.abs(direction[i_q]) > self._rrt_max_step_size:
+                        direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
+                    steer_result[i_q] = nearest_config[i_q] + direction[i_q]
 
-            # steer from nearest neighbor to random sample
-            nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
-            direction = random_sample - nearest_config
-            steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
-            for i_q in ti.static(range(self.n_qs)):
-                # If the step size exceeds max_step_size, clip it
-                if abs(direction[i_q]) > self._rrt_max_step_size:
-                    direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
-                steer_result[i_q] = nearest_config[i_q] + direction[i_q]
+                if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
+                    # add new node
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
+                    if forward_pass:
+                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
+                    else:
+                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = nearest_neighbor_idx
+                    self._rrt_tree_size[i_b] += 1
 
-            if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
-                # add new node
-                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
-                if forward_pass:
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
-                else:
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = nearest_neighbor_idx
-                self._rrt_tree_size[i_b] += 1
-
-                # set the steer result and collision check for i_b
-                for i_q in ti.static(range(self.n_qs)):
-                    self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
-                self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
-                self._solver._func_update_geoms(i_b)
+                    # set the steer result and collision check for i_b
+                    for i_q in range(self.n_qs):
+                        self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
+                    self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
+                    self._solver._func_update_geoms(i_b)
 
     @ti.kernel
     def _kernel_rrt_connect_step2(
@@ -613,48 +610,46 @@ class RRTConnect(PathPlanner):
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
-            if not self._rrt_is_active[i_b]:
-                continue
-
-            collision_detected = self._func_check_collision(ignore_geom_pairs, i_b)
-            if collision_detected:
-                self._rrt_tree_size[i_b] -= 1
-                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
-                if forward_pass:
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
-                else:
-                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = -1
-            else:
-                # check the obtained steer result is within goal configuration only if no collision
-                ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-                for i_n in range(self._rrt_tree_size[i_b]):
+            if self._rrt_is_active[i_b]:
+                is_collision_detected = self._func_check_collision(ignore_geom_pairs, i_b)
+                if is_collision_detected:
+                    self._rrt_tree_size[i_b] -= 1
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = 0.0
                     if forward_pass:
-                        # NOTE: in forward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
-                        if self._rrt_node_info[i_n, i_b].child_idx == -1:
-                            continue
+                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
                     else:
-                        # NOTE: in backward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
-                        if self._rrt_node_info[i_n, i_b].parent_idx == -1:
-                            continue
-                    flag = True
-                    for i_q in range(self.n_qs):
-                        if (
-                            abs(
-                                self._solver.qpos[i_q + self._q_start, i_b]
-                                - self._rrt_node_info.configuration[i_n, i_b][i_q]
-                            )
-                            > self._rrt_max_step_size
-                        ):
-                            flag = False
-                            break
-                    if flag:
-                        self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
+                        self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = -1
+                else:
+                    # check the obtained steer result is within goal configuration only if no collision
+                    ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+                    for i_n in range(self._rrt_tree_size[i_b]):
                         if forward_pass:
-                            self._rrt_node_info[self._rrt_goal_reached_node_idx[i_b], i_b].child_idx = i_n
+                            # NOTE: in forward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
+                            if self._rrt_node_info[i_n, i_b].child_idx == -1:
+                                continue
                         else:
-                            self._rrt_node_info[self._rrt_goal_reached_node_idx[i_b], i_b].parent_idx = i_n
-                        self._rrt_is_active[i_b] = 0
-                        break
+                            # NOTE: in backward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
+                            if self._rrt_node_info[i_n, i_b].parent_idx == -1:
+                                continue
+                        is_valid = True
+                        for i_q in range(self.n_qs):
+                            if (
+                                abs(
+                                    self._solver.qpos[i_q + self._q_start, i_b]
+                                    - self._rrt_node_info.configuration[i_n, i_b][i_q]
+                                )
+                                > self._rrt_max_step_size
+                            ):
+                                is_valid = False
+                                break
+                        if is_valid:
+                            self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
+                            if forward_pass:
+                                self._rrt_node_info[self._rrt_goal_reached_node_idx[i_b], i_b].child_idx = i_n
+                            else:
+                                self._rrt_node_info[self._rrt_goal_reached_node_idx[i_b], i_b].parent_idx = i_n
+                            self._rrt_is_active[i_b] = 0
+                            break
 
     def plan(
         self,
