@@ -383,11 +383,12 @@ class Viewer(pyglet.window.Window):
 
         # Setup mouse interaction
 
+        # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
+        from genesis.ext.pyrender.interaction.viewer_interaction import ViewerInteraction
+        from genesis.ext.pyrender.interaction.viewer_interaction_base import ViewerInteractionBase
+
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
-        #
-        # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
-        from .viewer_interaction import ViewerInteraction, ViewerInteractionBase
         self.viewer_interaction = (
             ViewerInteraction(self._camera_node, context.scene)
             if use_viewer_interaction
