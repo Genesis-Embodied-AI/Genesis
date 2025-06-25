@@ -19,7 +19,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
-from genesis.utils.path_planing import move_padding_to_tail, align_weypoints_length
+from genesis.utils.path_planing import align_weypoints_length, rrt_connect_valid_mask, rrt_valid_mask
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
@@ -1800,17 +1800,16 @@ class RigidEntity(Entity):
                 break
         
         if self._rrt_is_active.to_torch().any():
-            gs.logger.warning("rrt planning failed")
-            print(self._rrt_is_active.to_torch().sum())
+            gs.logger.warning(f"rrt planning failed in {self._rrt_is_active.to_torch().sum()} envs")
         
         gs.logger.info(f"rrt planning time: {time.time() - start}")
         start = time.time()
-        ts = self._rrt_tree_size.to_torch(device=gs.device)
-        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
+        ts = self._rrt_tree_size.to_torch(device=gs.device)[envs_idx]
+        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)[envs_idx] # B
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
-        parents_idx = node_info["parent_idx"]
-        configurations = node_info["configuration"]
+        parents_idx = node_info["parent_idx"][:, envs_idx]
+        configurations = node_info["configuration"][:, envs_idx]
 
         res = [g_n]
         for _ in range(ts.max()):
@@ -1819,23 +1818,16 @@ class RigidEntity(Entity):
             if torch.all(g_n == 0):
                 break
         res_idx = torch.stack(list(reversed(res)), dim=0)
-        # res_idx = move_padding_to_tail(res_idx)
-        # print(res_idx)
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
 
-        s = time.time()
-        sol = align_weypoints_length(sol, res_idx > 0, num_waypoints)
-        print("interp time:", time.time() - s)
-        sol = self.shortcut_path(torch.ones_like(sol[...,0]), sol, iterations=50, ignore_geom_pairs=unique_pairs, envs_idx=envs_idx)
+        sol = align_weypoints_length(sol, rrt_valid_mask(res_idx), len(res_idx))
+        sol = self.shortcut_path(
+            torch.ones_like(sol[...,0]), sol, iterations=10, ignore_geom_pairs=unique_pairs, envs_idx=envs_idx
+        )
 
+        # interpolate to make num_waypoints
+        sol = align_weypoints_length(sol, torch.ones_like(sol[...,0]).bool(), num_waypoints)
         gs.logger.info(f"path post-processing time: {time.time() - start}")
-
-        # TODO: smooth path
-        if smooth_path:
-            pass
-
-        # TODO: interpolate to make num_waypoints
-        
 
         self._kernel_rrt_cleanup(qpos_cur.contiguous(), envs_idx)
         return sol
@@ -2036,7 +2028,6 @@ class RigidEntity(Entity):
         smooth_path=True,
         num_waypoints=100,
         ignore_collision=False,
-        ignore_joint_limit=False,
         envs_idx=None
     ):
         """
@@ -2067,6 +2058,8 @@ class RigidEntity(Entity):
         assert qpos_goal.ndim == 2
         if qpos_goal.shape[0] == 1:
             qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
+        else:
+            assert qpos_goal.shape[0] == len(envs_idx), f"Batch size mismatch: {qpos_goal.shape=} {len(envs_idx)=}"
         
         self._init_rrt_connect_fields()
         self._reset_rrt_connect_fields()
@@ -2122,20 +2115,18 @@ class RigidEntity(Entity):
                 break
             
         if self._rrt_is_active.to_torch().any():
-            gs.logger.warning("rrt connect planning failed")
-            print(self._rrt_is_active.to_torch().sum())
-            # return None
-        
-        gs.logger.info(f"rrt connect planning time: {time.time() - start}")
+            gs.logger.warning(f"rrt connect planning failed in {self._rrt_is_active.to_torch().sum()} envs")
 
-        ts = self._rrt_tree_size.to_torch(device=gs.device)
-        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
+        gs.logger.info(f"rrt connect planning time: {time.time() - start}")
+        start = time.time()
+
+        ts = self._rrt_tree_size.to_torch(device=gs.device)[envs_idx]
+        g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)[envs_idx] # B
 
         node_info = self._rrt_node_info.to_torch(device=gs.device)
-        parents_idx = node_info["parent_idx"]
-        children_idx = node_info["child_idx"]
-        configurations = node_info["configuration"]
-
+        parents_idx = node_info["parent_idx"][:, envs_idx]
+        children_idx = node_info["child_idx"][:, envs_idx]
+        configurations = node_info["configuration"][:, envs_idx]
         res = [g_n]
         for _ in range(ts.max() // 2):
             g_n = parents_idx[g_n, torch.arange(len(envs_idx))]
@@ -2144,7 +2135,7 @@ class RigidEntity(Entity):
                 break
         res_idx = torch.stack(list(reversed(res)), dim=0)
 
-        c_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device) # B
+        c_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)[envs_idx] # B
         res = []
         for _ in range(ts.max() // 2):
             c_n = children_idx[c_n, torch.arange(len(envs_idx))]
@@ -2152,19 +2143,18 @@ class RigidEntity(Entity):
             if torch.all(c_n == 1):
                 break
         res_idx = torch.cat([res_idx, torch.stack(res, dim=0)], dim=0)
-        # res_idx = move_padding_to_tail(res_idx)
-        res_idx = res_idx[~torch.logical_or(0 == res_idx, 1 == res_idx).all(dim=1)]
-        
+
         sol = configurations[res_idx, torch.arange(len(envs_idx))] # N, B, DoF
-        
-        sol = align_weypoints_length(sol, res_idx > 1, num_waypoints)
+        mask = rrt_connect_valid_mask(res_idx)
+        sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
 
-        # TODO: smooth path
-        if smooth_path:
-            pass
+        sol = self.shortcut_path(
+            torch.ones_like(sol[...,0]), sol, iterations=10, ignore_geom_pairs=unique_pairs, envs_idx=envs_idx
+        )
 
-        # TODO: interpolate to make num_waypoints
-        
+        # interpolate to make num_waypoints
+        sol = align_weypoints_length(sol, torch.ones_like(sol[...,0]).bool(), num_waypoints)
+        gs.logger.info(f"path post-processing time: {time.time() - start}")
 
         self._kernel_rrt_connect_cleanup(qpos_cur.contiguous(), envs_idx)
         return sol
@@ -2248,7 +2238,6 @@ class RigidEntity(Entity):
             tmp_path = path.clone().contiguous()
             self.interpolate_path(tmp_path, path.contiguous(), ind.contiguous(), ind_mask)
             collision_mask = self.check_collision(tmp_path, ignore_geom_pairs, envs_idx) # B
-            print(collision_mask)
             path[~collision_mask] = tmp_path[~collision_mask]
             if i == 10:
                 break

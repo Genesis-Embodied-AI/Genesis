@@ -3,6 +3,7 @@ from typing import Literal
 import numpy as np
 import taichi as ti
 import torch
+import torch.nn.functional as F
 import math
 import time
 import genesis as gs
@@ -12,9 +13,23 @@ try:
     from ompl import geometric as og
     from ompl import util as ou
     IS_OMPL_AVAILABLE = True
+
+    __all__ = [
+        "RRTConnect_OMPL",
+        "RRT_OMPL",
+        "PRM_OMPL",
+        "EST_OMPL",
+        "FMT_OMPL",
+        "BITstar_OMPL",
+        "ABITstar_OMPL"
+    ]
+
 except ImportError:
     IS_OMPL_AVAILABLE = False
     
+    __all__ = []
+
+
 
 @ti.data_oriented
 class PathPlanner(ABC):
@@ -25,16 +40,41 @@ class PathPlanner(ABC):
         self._entity = entity
         self._solver = entity._solver
 
-        # properties
-        self.n_geoms = entity.n_geoms
-        self.geom_start = entity.geom_start
-        self.geom_end = entity.geom_end
-        self.n_dofs = entity.n_dofs
-        self.n_qs = entity.n_qs
-        self._q_start = entity._q_start
-        self.q_limit = entity.q_limit
+    @property
+    def default_q_limit(self):
+        return self._entity.q_limit
 
-    def validate_input_qpos(self, qpos_goal, qpos_start):
+    @property
+    def n_geoms(self):
+        """Number of geometries."""
+        return self._entity.n_geoms
+
+    @property
+    def geom_start(self):
+        """Starting geometry."""
+        return self._entity.geom_start
+
+    @property
+    def geom_end(self):
+        """Ending geometry."""
+        return self._entity.geom_end
+
+    @property
+    def n_dofs(self):
+        """Number of degrees of freedom."""
+        return self._entity.n_dofs
+
+    @property
+    def n_qs(self):
+        """Number of generalized coordinates."""
+        return self._entity.n_qs
+
+    @property
+    def _q_start(self):
+        """Starting generalized coordinates."""
+        return self._entity._q_start
+
+    def validate_input_qpos(self, qpos_goal, qpos_start, *, check_joint_limits=True):
         if qpos_start is None:
             qpos_start = self._entity.get_qpos()
         qpos_start = tensor_to_array(qpos_start)
@@ -43,15 +83,16 @@ class PathPlanner(ABC):
         if qpos_start.shape != (self.n_qs,) or qpos_goal.shape != (self.n_qs,):
             gs.raise_exception("Invalid shape for `qpos_start` or `qpos_goal`.")
 
-        # NOTE: process joint limit
-        if (qpos_start < self.q_limit[0]).any() or (qpos_start > self.q_limit[1]).any():
-            gs.raise_exception_from("`qpos_start` exceeds joint limit.")
+        if check_joint_limits:
+            # NOTE: process joint limit
+            if (qpos_start < self.default_q_limit[0]).any() or (qpos_start > self.default_q_limit[1]).any():
+                gs.raise_exception_from("`qpos_start` exceeds joint limit.")
 
-        if (qpos_goal < self.q_limit[0]).any() or (qpos_goal > self.q_limit[1]).any():
-            gs.raise_exception_from("`qpos_goal` exceeds joint limit.")
+            if (qpos_goal < self.default_q_limit[0]).any() or (qpos_goal > self.default_q_limit[1]).any():
+                gs.raise_exception_from("`qpos_goal` exceeds joint limit.")
         return qpos_goal, qpos_start
     
-    def validate_input_qpos_batch(self, qpos_goal, qpos_start, envs_idx):
+    def validate_input_qpos_batch(self, qpos_goal, qpos_start, envs_idx, *, check_joint_limits=True):
         if qpos_start is None:
             qpos_start = self._entity.get_qpos()
         else:
@@ -70,16 +111,13 @@ class PathPlanner(ABC):
         if qpos_start.shape[1] != self.n_qs or qpos_goal.shape[1] != self.n_qs:
             gs.raise_exception("Invalid shape for `qpos_start` or `qpos_goal`.")
         
-        # NOTE: process joint limit
-        if (qpos_start < self.q_limit[0]).any() or (qpos_start > self.q_limit[1]).any():
-            gs.raise_exception_from(
-                "`qpos_start` exceeds joint limit. Relaxing joint limit to contain `qpos_start` for planning."
-            )
+        if check_joint_limits:
+            # NOTE: process joint limit
+            if (qpos_start < self.default_q_limit[0]).any() or (qpos_start > self.default_q_limit[1]).any():
+                gs.raise_exception_from("`qpos_start` exceeds joint limit.")
 
-        if (qpos_goal < self.q_limit[0]).any() or (qpos_goal > self.q_limit[1]).any():
-            gs.raise_exception_from(
-                "`qpos_goal` exceeds joint limit. Relaxing joint limit to contain `qpos_goal` for planning."
-            )
+            if (qpos_goal < self.default_q_limit[0]).any() or (qpos_goal > self.default_q_limit[1]).any():
+                gs.raise_exception_from("`qpos_goal` exceeds joint limit.")
         return qpos_goal, qpos_start
         
     @abstractmethod
@@ -246,8 +284,8 @@ class OMPL(PathPlanner):
         bounds = ob.RealVectorBounds(self.n_qs)
 
         for i_q in range(self.n_qs):
-            bounds.setLow(i_q, self.q_limit[0][i_q])
-            bounds.setHigh(i_q, self.q_limit[1][i_q])
+            bounds.setLow(i_q, self.default_q_limit[0][i_q])
+            bounds.setHigh(i_q, self.default_q_limit[1][i_q])
         self.space.setBounds(bounds)
         self.ss = og.SimpleSetup(self.space)
 
@@ -468,10 +506,10 @@ class ABITstar_OMPL(OMPL):
 # ------------------------------------------------------------------------------------
 
 def align_weypoints_length(
-        path: torch.Tensor, # [N, B, Dof]
-        mask: torch.Tensor, # [N, B, ]
-        num_points: int
-    ) -> torch.Tensor:
+    path: torch.Tensor, # [N, B, Dof]
+    mask: torch.Tensor, # [N, B, ]
+    num_points: int
+) -> torch.Tensor:
     """
     Aligns each waypoints length to the given num_points.
 
@@ -486,7 +524,7 @@ def align_weypoints_length(
     
     Returns
     -------
-        A new 2D PyTorch tensor
+        A new 2D PyTorch tensor [num_points, B, Dof]
     """
     res = torch.zeros(path.shape[1], num_points, path.shape[-1], device=gs.device)
     for i_b in range(path.shape[1]):
@@ -496,48 +534,35 @@ def align_weypoints_length(
     return res.transpose(1,0)
 
 
-def move_padding_to_tail(tensor: torch.Tensor) -> torch.Tensor:
+def rrt_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
     """
-    Moves leading zero-padding to the tail for each column in a 2D tensor.
-    The tail is padded with the last value of the original column.
+    Returns valid mask of the rrt connect result node indicies
 
     Parameters
     ----------
     tensor: torch.Tensor
-        A 2D PyTorch tensor of shape [N, B] with integer types.
-
-    Returns 
-    -------
-        A new 2D PyTorch tensor with the padding transformed.
+        path tensor in [N, B]
     """
-    n_dim, b_dim = tensor.shape
-    non_zero_mask = (tensor != 0)
+    mask = tensor > 0
+    mask_float = mask.float().T.unsqueeze(1)
+    kernel = torch.ones(1, 1, 3, device=tensor.device)
+    dilated_mask_float = F.conv1d(mask_float, kernel, padding='same')
+    dilated_mask = (dilated_mask_float > 0).squeeze(1).T
+    return dilated_mask
 
-    # Find the index of the first non-zero element in each column.
-    # .argmax() finds the first 'True' (or 1) along dimension 0.
-    first_nonzero_indices = non_zero_mask.int().argmax(dim=0)
 
-    # Handle the edge case of all-zero columns. For these columns, argmax
-    # returns 0, which is incorrect for our logic. We find these columns
-    # and set their first non-zero index to N, effectively treating them
-    # as having no content and full padding.
-    is_all_zero_column = ~non_zero_mask.any(dim=0)
-    first_nonzero_indices[is_all_zero_column] = n_dim
+def rrt_connect_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Returns valid mask of the rrt connect result node indicies
 
-    content_len = n_dim - first_nonzero_indices # [B]
-
-    arange_n = torch.arange(n_dim, device=tensor.device).unsqueeze(1)
-    is_padding_part = arange_n >= content_len # [N, B]
-    # The index for all padding values is the last row (N-1).
-    last_row_index = torch.full((1, b_dim), n_dim - 1, device=tensor.device)
-    # Create the indices for the content part of each column.
-    # This effectively "rolls" the data up by `first_nonzero_indices`.
-    content_indices = arange_n + first_nonzero_indices # [N, B]
-
-    # Use the `is_padding_part` mask to choose the final indices.
-    # If it's a content part, use the rolled `content_indices`.
-    # If it's a padding part, use the `last_row_index`.
-    final_indices = torch.where(is_padding_part, last_row_index, content_indices)
-    result_tensor = torch.gather(tensor, 0, final_indices)
-
-    return result_tensor
+    Parameters
+    ----------
+    tensor: torch.Tensor
+        path tensor in [N, B]
+    """
+    mask = tensor > 1
+    mask_float = mask.float().T.unsqueeze(1)
+    kernel = torch.ones(1, 1, 3, device=tensor.device)
+    dilated_mask_float = F.conv1d(mask_float, kernel, padding='same')
+    dilated_mask = (dilated_mask_float > 0).squeeze(1).T
+    return dilated_mask
