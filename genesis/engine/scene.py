@@ -2,6 +2,9 @@ import os
 
 import numpy as np
 import torch
+import pickle
+import time
+import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -1056,6 +1059,54 @@ class Scene(RBC):
 
         self._backward_ready = False
         self._forward_ready = False
+
+    def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
+        """Gather *all* Taichi fields in the scene and its active solvers."""
+        arrays: dict[str, np.ndarray] = {}
+
+        # 1) scene-owned fields
+        scene_prefix = f"{self.__class__.__name__}."
+        for name, field in self.__dict__.items():
+            if isinstance(field, ti.Field):
+                arrays[scene_prefix + name] = field.to_numpy()
+
+        # 2) solver-owned fields
+        for solver in self.active_solvers:
+            arrays.update(solver.dump_ckpt_to_numpy())
+
+        return arrays
+
+    def save_checkpoint(self, path: str | os.PathLike) -> None:
+        """Write one pickle file containing the full physics state."""
+        state = {
+            "timestamp": time.time(),
+            "step_index": self.t,
+            "arrays": self.dump_ckpt_to_numpy(),
+        }
+        with open(path, "wb") as f:
+            pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load_checkpoint(self, path: str | os.PathLike) -> None:
+        """Restore a snapshot produced by `save_checkpoint`."""
+        with open(path, "rb") as f:
+            state = pickle.load(f)
+
+        arrays = state["arrays"]
+
+        # scene-owned fields
+        scene_prefix = f"{self.__class__.__name__}."
+        for name, field in self.__dict__.items():
+            if isinstance(field, ti.Field):
+                key = scene_prefix + name
+                if key in arrays:
+                    field.from_numpy(arrays[key])
+
+        # solver-owned fields
+        for solver in self.active_solvers:
+            solver.load_ckpt_from_numpy(arrays)
+
+        # restore step counter (optional)
+        self._t = state.get("step_index", self._t)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

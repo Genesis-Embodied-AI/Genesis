@@ -1,44 +1,44 @@
+"""
+Lightweight disk-I/O for physics checkpoints.
+Writes ONE pickle file instead of many .npz archives.
+"""
+
 from __future__ import annotations
+import pickle
 from pathlib import Path
-import pickle, numpy as np
-import genesis as gs
+from typing import Union
+import numpy as np  # noqa: F401  (imported for type hints)
+
+PathLike = Union[str, Path]
 
 
-def save_ckpt(sim: gs.Simulator, path: str | Path, tag: str = "0") -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+# ---------------------------------------------------------------------------
 
-    arrays = {}
+
+def _gather_arrays(sim) -> dict[str, np.ndarray]:
+    arrays: dict[str, np.ndarray] = {}
     for solver in sim.active_solvers:
         arrays.update(solver.dump_ckpt_to_numpy())
-
-    np.savez_compressed(path.with_suffix(".npz"), **arrays)
-
-    with open(path.with_suffix(".meta"), "wb") as f:
-        pickle.dump(dict(dt=sim.dt, substeps=sim.substeps, tag=tag, gravity=sim.gravity), f)
-
-    gs.logger.info(f"[ckpt] wrote {len(arrays)} arrays -> {path}.npz")
+    return arrays
 
 
-def load_ckpt(sim: gs.Simulator, path: str | Path, tag: str = "0") -> None:
-    path = Path(path)
-    with np.load(path.with_suffix(".npz"), allow_pickle=True) as nz:
-        arrays = dict(nz)
+# ---------------------------------------------------------------------------
+# public helpers
+# ---------------------------------------------------------------------------
 
+
+def save_ckpt(sim, path: PathLike) -> None:
+    """Serialize **simulator** state to a single pickle file."""
+    state = {"arrays": _gather_arrays(sim)}
+    with open(Path(path), "wb") as f:
+        pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_ckpt(sim, path: PathLike) -> None:
+    """Load a pickle produced by `save_ckpt`."""
+    with open(Path(path), "rb") as f:
+        state = pickle.load(f)
+
+    arrays = state["arrays"]
     for solver in sim.active_solvers:
         solver.load_ckpt_from_numpy(arrays)
-
-    sim.reset_grad()
-    sim._cur_substep_global = 0
-    gs.logger.info(f"[ckpt] restored from {path}.npz")
-
-
-class _StatesFacade:
-    save_ckpt = staticmethod(save_ckpt)
-    load_ckpt = staticmethod(load_ckpt)
-
-
-import sys as _sys, genesis as _gs
-
-_sys.modules["genesis.states"] = _StatesFacade()
-_gs.states = _StatesFacade()
