@@ -8,7 +8,7 @@
 
 import numpy as np
 from scipy import interpolate
-
+import genesis as gs
 
 def fractal_terrain(terrain, levels=8, scale=1.0):
     """
@@ -21,7 +21,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
     """
     width = terrain.width
     length = terrain.length
-    height = np.zeros((width, length))
+    height = np.zeros((width, length), dtype=gs.np_float)
     for level in range(1, levels + 1):
         step = 2 ** (levels - level)
         for y in range(0, width, step):
@@ -35,7 +35,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(np.int16)
+    terrain.height_field_raw = height.astype(gs.np_float)
     return terrain
 
 
@@ -83,7 +83,7 @@ def random_uniform_terrain(
     y_upsampled = np.linspace(0, terrain.length * terrain.horizontal_scale, terrain.length)
     z_upsampled = np.rint(f((y_upsampled, x_upsampled)))
 
-    terrain.height_field_raw += z_upsampled.astype(np.int16)
+    terrain.height_field_raw += z_upsampled.astype(gs.np_float)
     return terrain
 
 
@@ -195,7 +195,7 @@ def wave_terrain(terrain, num_waves=1, amplitude=1.0):
     Returns:
         terrain (SubTerrain): update terrain
     """
-    amplitude = int(0.5 * amplitude / terrain.vertical_scale)
+    amplitude = 0.5 * amplitude / terrain.vertical_scale
     if num_waves > 0:
         div = terrain.length / (num_waves * np.pi * 2)
         x = np.arange(0, terrain.width)
@@ -401,4 +401,4 @@ class SubTerrain:
         self.horizontal_scale = horizontal_scale
         self.width = width
         self.length = length
-        self.height_field_raw = np.zeros((self.width, self.length), dtype=np.int16)
+        self.height_field_raw = np.zeros((self.width, self.length), dtype=gs.np_float)
