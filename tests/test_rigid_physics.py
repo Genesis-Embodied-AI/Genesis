@@ -2160,7 +2160,7 @@ def test_urdf_mimic(show_viewer, tol):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_scene_saver_franka(show_viewer, tol):
     gs.init(backend=gs.cpu)
-    scene1 = gs.Scene(show_viewer=True)
+    scene1 = gs.Scene(show_viewer=show_viewer)
     franka1 = scene1.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
@@ -2182,7 +2182,7 @@ def test_scene_saver_franka(show_viewer, tol):
     ckpt_path = Path(tempfile.gettempdir()) / "franka_unit.pkl"
     scene1.save_checkpoint(ckpt_path)
 
-    scene2 = gs.Scene(show_viewer=True)
+    scene2 = gs.Scene(show_viewer=show_viewer)
     franka2 = scene2.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
