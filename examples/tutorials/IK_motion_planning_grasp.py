@@ -1,5 +1,4 @@
 import genesis as gs
-from genesis.utils.path_planing import RRTConnect_OMPL
 import numpy as np
 
 ########################## init ##########################
@@ -60,9 +59,8 @@ qpos = franka.inverse_kinematics(
 )
 # gripper open pos
 qpos[-2:] = 0.04
-planner = RRTConnect_OMPL(franka)
-path = planner.plan(
-    qpos,
+path = franka.plan_path(
+    qpos_goal=qpos,
     num_waypoints=200,  # 2s duration
 )
 # draw the planned path

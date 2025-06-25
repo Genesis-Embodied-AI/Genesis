@@ -19,6 +19,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
+from genesis.utils.path_planing import RRTConnect
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
@@ -1543,6 +1544,79 @@ class RigidEntity(Entity):
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
             # run FK
             self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- motion planing -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @gs.assert_built
+    def plan_path(
+        self,
+        qpos_goal,
+        qpos_start=None,
+        resolution=0.01,
+        timeout=5.0,
+        max_retry=1,
+        smooth_path=True,
+        num_waypoints=300,
+        ignore_collision=False,
+        ignore_joint_limit=False,
+        planner="RRTConnect",
+        envs_idx=None
+    ):
+        """
+        Plan a path from `qpos_start` to `qpos_goal`.
+
+        Parameters
+        ----------
+        qpos_goal : array_like
+            The goal state.
+        qpos_start : None | array_like, optional
+            The start state. If None, the current state of the rigid entity will be used. Defaults to None.
+        resolution : float, optiona
+            Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
+            for validity along a path segment. Default to 1%.
+        timeout : float, optional
+            The maximum time (in seconds) allowed for the motion planning algorithm to find a solution. Defaults to 5.0.
+        max_retry : float, optional
+            Maximum number of retry in case of timeout or convergence failure. Default to 1.
+        smooth_path : bool, optional
+            Whether to smooth the path after finding a solution. Defaults to True.
+        num_waypoints : int, optional
+            The number of waypoints to interpolate the path. If None, no interpolation will be performed. Defaults to 100.
+        ignore_collision : bool, optional
+            Whether to ignore collision checking during motion planning. Defaults to False.
+        ignore_joint_limit : bool, optional
+            This option has been deprecated and is not longer doing anything.
+        planner : str, optional
+            The name of the motion planning algorithm to use. Supported planners: 'RRT', 'RRTConnect'. Defaults to 'RRTConnect'.
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+
+        Returns
+        -------
+        waypoints : torch.Tensor
+            A tensor of waypoints representing the planned path. [N, B] for batched case, [N] for else.
+            Each waypoint is an array storing the entity's qpos of a single time step.
+        """
+
+        planner = RRTConnect(self)
+        path = planner.plan(
+            qpos_goal, 
+            qpos_start,
+            resolution=resolution,
+            timeout=timeout,
+            max_retry=max_retry,
+            smooth_path=smooth_path,
+            num_waypoints=num_waypoints,
+            # ignore_collision=ignore_collision,
+            # ignore_joint_limit=ignore_joint_limit,
+            envs_idx=envs_idx
+        )
+
+        if self._solver.n_envs == 0:
+            return path.squeeze(1)
+        return path
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------

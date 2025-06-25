@@ -341,33 +341,6 @@ class RRT(PathPlanner):
                 self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
                 self._solver._func_update_geoms(i_b)
 
-    @ti.func
-    def _func_check_collision(
-        self,
-        ignore_geom_pairs: ti.types.ndarray(),
-        i_b: ti.int32,
-    ):
-        collision_detected = False
-        for i_c in range(self._solver.collider.n_contacts[i_b]):
-            i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
-            i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
-
-            ignore = False
-            for i_p in range(ignore_geom_pairs.shape[0]):
-                if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
-                    ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga
-                ):
-                    ignore = True
-                    break
-            if ignore:
-                continue
-
-            # TODO: handle self-collision (except the case for closed gripper)
-            if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
-                collision_detected = True
-                break
-        return collision_detected
-
     @ti.kernel
     def _kernel_rrt_step2(
         self,
