@@ -314,6 +314,7 @@ class FEMSolver(Solver):
     def build(self):
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
+        self.tet_wrong_order = ti.field(dtype=ti.u1, shape=(), needs_grad=False)
 
         # batch fields
         self.init_batch_fields()
@@ -333,6 +334,11 @@ class FEMSolver(Solver):
             mat.build(self)
 
         self.compute_surface_info()
+        if self.tet_wrong_order[None] == 1:
+            raise RuntimeError(
+                "The order of vertices in the tetrahedral elements is not correct. "
+                "Please check the input mesh or the FEM solver implementation."
+            )
 
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
@@ -1085,7 +1091,11 @@ class FEMSolver(Solver):
             d = self.elements_v[f, elems[i_e, 3] + v_start, 0].pos
             B_inv = ti.Matrix.cols([a - d, b - d, c - d])
             self.elements_i[i_global].B = B_inv.inverse()
-            V = ti.abs(B_inv.determinant()) / 6
+            det = B_inv.determinant()
+            # Determinant should be consistently smaller than 0
+            if det >= 0:
+                self.tet_wrong_order[None] = True
+            V = ti.abs(det) / 6
             self.elements_i[i_global].V = V
             V_scaled = V * self._vol_scale
             self.elements_i[i_global].V_scaled = V_scaled

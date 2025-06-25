@@ -856,7 +856,7 @@ class SAPCoupler(RBC):
             self.fem_self_detection(f)
             self.has_fem_self_contact = self.n_fem_self_contact_pairs[None] > 0
             self.has_contact = self.has_contact or self.has_fem_self_contact
-
+        return
         if self.has_contact:
             self.sap_solve(f)
             self.update_vel(f)
@@ -999,12 +999,22 @@ class SAPCoupler(RBC):
         self.fem_bvh.query(self.fem_aabb.aabbs)
         print("BVH query done, found", self.fem_bvh.query_result_count[None], "pairs")
         print(self.fem_bvh.max_n_query_results, "max query results")
-        # self.compute_fem_self_pair_candidates(f + 1)
-        # print(self.n_fem_self_contact_pairs[None], "self contact pairs found")
-        # print(self.max_fem_self_contact_pairs, "max self contact pairs")
-        # self.compute_fem_self_pairs(f + 1)
-        # active = self.fem_self_contact_pairs.active.to_numpy()
-        # print(np.sum(active[:self.n_fem_self_contact_pairs[None]]), "self contact pairs are active")
+        if self.fem_bvh.query_result_count[None] > self.fem_bvh.max_n_query_results:
+            raise ValueError(
+                f"Query result count {self.fem_bvh.query_result_count[None]} "
+                f"exceeds max_n_query_results {self.fem_bvh.max_n_query_results}"
+            )
+        self.compute_fem_self_pair_candidates(f + 1)
+        print(self.n_fem_self_contact_pairs[None], "self contact pairs found")
+        print(self.max_fem_self_contact_pairs, "max self contact pairs")
+        if self.n_fem_self_contact_pairs[None] > self.max_fem_self_contact_pairs:
+            raise ValueError(
+                f"Number of self contact pairs {self.n_fem_self_contact_pairs[None]} "
+                f"exceeds max_fem_self_contact_pairs {self.max_fem_self_contact_pairs}"
+            )
+        self.compute_fem_self_pairs(f + 1)
+        active = self.fem_self_contact_pairs.active.to_numpy()
+        print(np.sum(active[: self.n_fem_self_contact_pairs[None]]), "self contact pairs are active")
 
     @ti.kernel
     def coupute_fem_aabb(self, f: ti.i32):
@@ -1025,7 +1035,6 @@ class SAPCoupler(RBC):
         fem_solver = self.fem_solver
         pairs = ti.static(self.fem_self_contact_pairs)
         self.n_fem_self_contact_pairs[None] = 0
-        print(self.fem_bvh.query_result_count[None])
         for i_r in ti.ndrange(self.fem_bvh.query_result_count[None]):
             i_b, i_a, i_q = self.fem_bvh.query_result[i_r]
             i_v0 = fem_solver.elements_i[i_a].el2v[0]
@@ -1098,20 +1107,28 @@ class SAPCoupler(RBC):
         """
         fem_solver = self.fem_solver
         pairs = ti.static(self.fem_self_contact_pairs)
+        normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0])  # make normal point outward
 
         for i_c in range(self.n_fem_self_contact_pairs[None]):
             pairs[i_c].active = 0  # mark the contact pair as inactive
             i_b = pairs[i_c].batch_idx
             i_e0 = pairs[i_c].geom_idx0
+            i_e1 = pairs[i_c].geom_idx1
             intersection_code0 = pairs[i_c].intersection_code0
             distance0 = pairs[i_c].distance0
             intersected_edges0 = ti.static(self.kMarchingTetsEdgeTable)[intersection_code0]
             tet_vertices0 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 0
+            tet_pressures0 = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices of tet 0
             tet_vertices1 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 1
 
             for i in ti.static(range(4)):
                 i_v = fem_solver.elements_i[i_e0].el2v[i]
                 tet_vertices0[:, i] = fem_solver.elements_v[f, i_v, i_b].pos
+                tet_pressures0[i] = self.fem_pressure[i_v]
+
+            for i in ti.static(range(4)):
+                i_v = fem_solver.elements_i[i_e1].el2v[i]
+                tet_vertices1[:, i] = fem_solver.elements_v[f, i_v, i_b].pos
 
             polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 8)  # maximum 8 vertices
             polygon_n_vertices = 0
@@ -1132,10 +1149,12 @@ class SAPCoupler(RBC):
             for face in range(4):
                 clipped_n_vertices = 0
                 x = tet_vertices1[:, (face + 1) % 4]
-                normal = (tet_vertices1[:, (face + 2) % 4] - x).cross(tet_vertices1[:, (face + 3) % 4] - x)
+                normal = (tet_vertices1[:, (face + 2) % 4] - x).cross(
+                    tet_vertices1[:, (face + 3) % 4] - x
+                ) * normal_signs[face]
                 normal /= normal.norm()
 
-                distances = ti.Vector([0.0, 0.0, 0.0, 0.0])
+                distances = ti.Vector.zero(gs.ti_float, 8)
                 for i in range(polygon_n_vertices):
                     distances[i] = (polygon_vertices[:, i] - x).dot(normal)
 
@@ -1187,10 +1206,17 @@ class SAPCoupler(RBC):
             barycentric1 = tet_barycentric(centroid, tet_vertices1)
             pairs[i_c].barycentric0 = barycentric0
             pairs[i_c].barycentric1 = barycentric1
+            pressure = (
+                barycentric0[0] * tet_pressures0[0]
+                + barycentric0[1] * tet_pressures0[1]
+                + barycentric0[2] * tet_pressures0[2]
+                + barycentric0[3] * tet_pressures0[3]
+            )
 
             C = ti.static(1.0e8)
             deformable_k = total_area * C
-            deformable_phi0 = 0
+            deformable_g = C
+            deformable_phi0 = -pressure / deformable_g * 2  # This is a very approximated value, different from Drake
             deformable_fn0 = -deformable_k * deformable_phi0
             # TODO custom dissipation
             pairs[i_c].k = deformable_k  # contact stiffness

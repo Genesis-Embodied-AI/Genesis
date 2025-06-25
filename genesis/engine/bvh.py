@@ -198,7 +198,7 @@ class LBVH(RBC):
         Filter function for FEM tets. Filter out tet that share vertices
         """
         result = False
-        if i_a <= i_q:
+        if i_a >= i_q:
             result = True
         i_av = self.fem_solver.elements_i[i_a].el2v
         i_qv = self.fem_solver.elements_i[i_q].el2v
