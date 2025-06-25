@@ -409,12 +409,7 @@ class FEMSolver(Solver):
 
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
-                    self._mats[mat_idx].pre_compute(
-                        J=J,
-                        F=F,
-                        i_e=i_e,
-                        i_b=i_b,
-                    )
+                    self._mats[mat_idx].pre_compute(J=J, F=F, i_e=i_e, i_b=i_b)
 
     @ti.kernel
     def init_pos_and_inertia(self, f: ti.i32):
@@ -506,32 +501,6 @@ class FEMSolver(Solver):
                         i_e=i_e,
                         i_b=i_b,
                     )
-
-            # add linearized damping energy
-            if self._damping_beta > gs.EPS:
-                damping_beta_over_dt = self._damping_beta / self._substep_dt
-                i_v = self.elements_i[i_e].el2v
-                S = ti.Matrix.zero(gs.ti_float, 4, 3)
-                B = self.elements_i[i_e].B
-                S[:3, :] = B
-                S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-
-                x_diff = ti.Vector.zero(gs.ti_float, 12)
-                for i in ti.static(range(4)):
-                    x_diff[i * 3 : i * 3 + 3] = (
-                        self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
-                    )
-                St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i, j in ti.static(ti.ndrange(3, 4)):
-                    St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
-
-                H_St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i, j in ti.static(ti.ndrange(3, 3)):
-                    H_St_x_diff[i * 3 : i * 3 + 3] += (
-                        self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
-                    )
-
-                self.elements_el_energy[i_b, i_e].energy += 0.5 * damping_beta_over_dt * St_x_diff.dot(H_St_x_diff)
 
             # add linearized damping energy
             if self._damping_beta > gs.EPS:
