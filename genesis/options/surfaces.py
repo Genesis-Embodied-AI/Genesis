@@ -254,10 +254,11 @@ class Surface(Options):
             ):
                 rgba_array = np.dstack((texture.image_array, opacity_texture.image_array))
                 rgba_scale = (*texture.image_color, *opacity_texture.image_color)
+
             else:
                 if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
                     gs.logger.warning("Color and opacity image shapes do not match. Fall back to fully opaque texture.")
-                a_array = np.full((*texture.image_array.shape[:2],), 255, dtype=np.uint8)
+                a_array = np.full(texture.image_array.shape[:2], 255, dtype=np.uint8)
                 rgba_array = np.dstack((texture.image_array, a_array))
                 rgba_scale = (*texture.image_color, 1.0)
 

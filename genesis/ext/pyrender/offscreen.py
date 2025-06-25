@@ -7,6 +7,8 @@ import os
 
 from OpenGL.GL import *
 
+import genesis as gs
+
 from .constants import RenderFlags
 from .renderer import Renderer
 from .shader_program import ShaderProgram, ShaderProgramCache
@@ -31,6 +33,7 @@ class OffscreenRenderer(object):
     def __init__(self, point_size=1.0, pyopengl_platform="pyglet", seg_node_map=None):
         self.point_size = point_size
         self._platform = None
+        self._is_software = False
         self._create(pyopengl_platform)
         self._seg_node_map = seg_node_map
 
@@ -112,10 +115,11 @@ class OffscreenRenderer(object):
 
         self._platform.make_current()
 
-        if shadow:
+        # Forcibly disable shadow for software rendering as it may hang indefinitely
+        if shadow and not self._is_software:
             flags |= RenderFlags.SHADOWS_ALL
 
-        if plane_reflection:
+        if plane_reflection and not self._is_software:
             flags |= RenderFlags.REFLECTIVE_FLOOR
 
         if env_separate_rigid:
@@ -207,6 +211,18 @@ class OffscreenRenderer(object):
             raise ValueError("Unsupported PyOpenGL platform: {}".format(os.environ["PYOPENGL_PLATFORM"]))
         self._platform.init_context()
         self._platform.make_current()
+
+        try:
+            from OpenGL.GL import glGetString, GL_RENDERER
+            renderer = glGetString(GL_RENDERER).decode()
+            self._is_software = "llvmpipe" in renderer
+        except:
+            pass
+        if self._is_software:
+            gs.logger.info(
+                "Software rendering context detected. Shadows and plane reflection not supported. Beware rendering "
+                "will be extremely slow."
+            )
 
     def __del__(self):
         try:

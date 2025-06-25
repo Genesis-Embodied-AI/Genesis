@@ -38,6 +38,8 @@ dependencies = [
     "pycollada",
     # Used for parsing `.glb` mesh files
     "pygltflib == 1.16.0",
+    # Used for parsing `.usd` mesh files
+    "usd-core",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen >= 0.6.4",
     # Used for some advanced mesh processing such as `skeletonization`
@@ -87,7 +89,7 @@ addopts = [
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
     # "--exitfirst",
     "--numprocesses=auto",
-    "--dist=loadgroup",
+    "--dist=worksteal",
     "--random-order-bucket=global",
     "--random-order-seed=0",
     "--max-worker-restart=0",

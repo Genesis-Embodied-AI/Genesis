@@ -53,10 +53,10 @@ class SDF:
     ):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.solver.n_geoms):
-            for j, k in ti.ndrange(4, 4):
+            for j, k in ti.static(ti.ndrange(4, 4)):
                 self.geoms_info[i].T_mesh_to_sdf[j, k] = geoms_T_mesh_to_sdf[i, j, k]
 
-            for j in range(3):
+            for j in ti.static(range(3)):
                 self.geoms_info[i].sdf_res[j] = geoms_sdf_res[i, j]
 
             self.geoms_info[i].sdf_cell_start = geoms_sdf_cell_start[i]

@@ -21,7 +21,6 @@ class DroneEntity(RigidEntity):
         self._KM = float(properties["km"])
 
         self._n_propellers = len(morph.propellers_link_name)
-        self._COM_link_idx = self.get_link(morph.COM_link_name).idx
 
         propellers_link = gs.List([self.get_link(name) for name in morph.propellers_link_name])
         self._propellers_link_idxs = torch.tensor(
@@ -78,7 +77,6 @@ class DroneEntity(RigidEntity):
 
         self.solver._kernel_set_drone_rpm(
             self._n_propellers,
-            self._COM_link_idx,
             self._propellers_link_idxs,
             propellels_rpm,
             self._propellers_spin,

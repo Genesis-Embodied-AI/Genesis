@@ -342,7 +342,6 @@ class Primitive(object):
         #######################################################################
 
         # Generate and bind vertex buffer
-
         if self.stream_positions:
             posbuffer = glGenBuffers(1)
             self._buffers["pos"] = posbuffer

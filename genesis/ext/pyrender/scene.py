@@ -214,21 +214,14 @@ class Scene(object):
             corners = []
             for mesh_node in self.mesh_nodes:
                 mesh = mesh_node.mesh
-                plane_flag = False
-                for primitive in mesh.primitives:
-                    if primitive.is_floor:
-                        plane_flag = True
-                        break
-                if plane_flag:
+                if any(primitive.is_floor for primitive in mesh.primitives):
                     continue
-                pose = self.get_pose(mesh_node)
                 corners_local = trimesh.bounds.corners(mesh.bounds)
+                pose = self.get_pose(mesh_node)
                 corners_world = pose[:3, :3].dot(corners_local.T).T + pose[:3, 3]
                 corners.append(corners_world)
-            if len(corners) == 0:
-                self._bounds = np.zeros((2, 3))
-            else:
-                corners = np.vstack(corners)
+            if corners:
+                corners = np.concatenate(corners, axis=0)
                 self._bounds = np.array([np.min(corners, axis=0), np.max(corners, axis=0)])
         return self._bounds
 
@@ -454,8 +447,8 @@ class Scene(object):
             self._path_cache[node] = path
 
         # Traverse from from_node to to_node
-        pose = np.eye(4)
-        for n in path[:-1]:
+        pose = path[0].matrix
+        for node in path[1:-1]:
             pose = np.dot(n.matrix, pose)
 
         return pose

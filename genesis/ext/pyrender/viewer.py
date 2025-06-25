@@ -644,7 +644,7 @@ class Viewer(pyglet.window.Window):
 
     def update_buffers(self):
         self._renderer.jit.update_buffer(self.pending_buffer_updates)
-        self.pending_buffer_updates = {}
+        self.pending_buffer_updates.clear()
 
     def wait_until_initialized(self):
         self._initialized_event.wait()

@@ -738,17 +738,16 @@ class ConstraintSolver:
                 self.jac_n_relevant_dofs[i_c, i_b] = 0
 
     def handle_constraints(self):
-        if not self._solver._disable_constraint:
-            self.add_equality_constraints()
+        self.add_equality_constraints()
 
-            if self._solver._enable_collision:
-                self.add_collision_constraints()
+        if self._solver._enable_collision:
+            self.add_collision_constraints()
 
-            if self._solver._enable_joint_limit:
-                self.add_joint_limit_constraints()
+        if self._solver._enable_joint_limit:
+            self.add_joint_limit_constraints()
 
-            if self._solver._enable_collision or self._solver._enable_joint_limit or self._solver.n_equalities > 0:
-                self.resolve()
+        if self._solver._enable_collision or self._solver._enable_joint_limit or self._solver.n_equalities > 0:
+            self.resolve()
 
     def resolve(self):
         from genesis.utils.tools import create_timer
@@ -771,17 +770,18 @@ class ConstraintSolver:
 
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
-            for i_col in range(self._collider.n_contacts[i_b]):
-                contact_data = self._collider.contact_data[i_col, i_b]
+            const_start = self.n_constraints_equality[i_b]
+            for i_c in range(self._collider.n_contacts[i_b]):
+                contact_data = self._collider.contact_data[i_c, i_b]
 
                 force = ti.Vector.zero(gs.ti_float, 3)
                 d1, d2 = gu.orthogonals(contact_data.normal)
-                for i in range(4):
-                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                for i_dir in range(4):
+                    d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
                     n = d * contact_data.friction - contact_data.normal
-                    force += n * self.efc_force[i_col * 4 + i, i_b]
+                    force += n * self.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
-                self._collider.contact_data[i_col, i_b].force = force
+                self._collider.contact_data[i_c, i_b].force = force
 
                 self._solver.links_state[contact_data.link_a, i_b].contact_force = (
                     self._solver.links_state[contact_data.link_a, i_b].contact_force - force

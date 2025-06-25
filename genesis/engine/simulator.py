@@ -8,6 +8,7 @@ from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
     CouplerOptions,
+    SAPCouplerOptions,
     FEMOptions,
     MPMOptions,
     PBDOptions,
@@ -19,7 +20,7 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .coupler import Coupler
+from .coupler import Coupler, SAPCoupler
 from .entities import HybridEntity
 from .solvers import (
     AvatarSolver,
@@ -133,7 +134,10 @@ class Simulator(RBC):
         self._active_solvers: list[Solver] = gs.List()
 
         # coupler
-        self._coupler = Coupler(self, self.coupler_options)
+        if isinstance(self.coupler_options, SAPCouplerOptions):
+            self._coupler = SAPCoupler(self, self.coupler_options)
+        else:
+            self._coupler = Coupler(self, self.coupler_options)
 
         # states
         self._queried_states = QueriedStates()
@@ -262,6 +266,9 @@ class Simulator(RBC):
                 self._cur_substep_global += 1
                 if self.cur_substep_local == 0 and not in_backward:
                     self.save_ckpt()
+
+        if self.rigid_solver.is_active():
+            self.rigid_solver._kernel_clear_external_force()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):

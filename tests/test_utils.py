@@ -55,7 +55,8 @@ def test_numpy_round_trip(batch_size):
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 100])
-def test_torch_identity_transform(batch_size):
+@pytest.mark.parametrize("func", ["T", "R"])
+def test_torch_identity_transform(batch_size, func):
     if batch_size == 0:
         pos = torch.randn(3)
         b_pos = torch.randn(10, 3)
@@ -63,23 +64,30 @@ def test_torch_identity_transform(batch_size):
         pos = torch.randn(batch_size, 3)
         b_pos = torch.randn(batch_size, 10, 3)
 
-    T_identity = torch.eye(4)
+    if func == "R":
+        identity = torch.eye(3)
+        batched_identity = torch.eye(3).reshape(1, 3, 3).repeat(batch_size, 1, 1)
+        transform = transform_by_R
+    elif func == "T":
+        identity = torch.eye(4)
+        batched_identity = torch.eye(4).reshape(1, 4, 4).repeat(batch_size, 1, 1)
+        transform = transform_by_T
 
-    transformed = transform_by_T(pos, T_identity).cpu()
+    transformed = transform(pos, identity).cpu()
     assert_allclose(pos.cpu(), transformed, tol=TOL)
-    transformed = transform_by_T(b_pos, T_identity).cpu()
+    transformed = transform(b_pos, identity).cpu()
     assert_allclose(b_pos.cpu(), transformed, tol=TOL)
 
     if batch_size > 0:
-        T_batched_identity = torch.eye(4).reshape(1, 4, 4).repeat(batch_size, 1, 1)
-        transformed = transform_by_T(pos, T_batched_identity).cpu()
+        transformed = transform(pos, batched_identity).cpu()
         assert_allclose(pos.cpu(), transformed, tol=TOL)
-        transformed = transform_by_T(b_pos, T_batched_identity).cpu()
+        transformed = transform(b_pos, batched_identity).cpu()
         assert_allclose(b_pos.cpu(), transformed, tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 100])
-def test_numpy_identity_transform(batch_size):
+@pytest.mark.parametrize("func", ["T", "R"])
+def test_numpy_identity_transform(batch_size, func):
     if batch_size == 0:
         pos = np.random.randn(3)
         b_pos = np.random.randn(10, 3)
@@ -87,18 +95,24 @@ def test_numpy_identity_transform(batch_size):
         pos = np.random.randn(batch_size, 3)
         b_pos = np.random.randn(batch_size, 10, 3)
 
-    T_identity = np.eye(4)
+    if func == "R":
+        identity = np.eye(3)
+        batched_identity = np.eye(3).reshape(1, 3, 3).repeat(batch_size, 0)
+        transform = transform_by_R
+    if func == "T":
+        identity = np.eye(4)
+        batched_identity = np.eye(4).reshape(1, 4, 4).repeat(batch_size, 0)
+        transform = transform_by_T
 
-    transformed = transform_by_T(pos, T_identity)
+    transformed = transform(pos, identity)
     assert_allclose(pos, transformed, tol=TOL)
-    transformed = transform_by_T(b_pos, T_identity)
+    transformed = transform(b_pos, identity)
     assert_allclose(b_pos, transformed, tol=TOL)
 
     if batch_size > 0:
-        T_batched_identity = np.eye(4).reshape(1, 4, 4).repeat(batch_size, 0)
-        transformed = transform_by_T(pos, T_batched_identity)
+        transformed = transform(pos, batched_identity)
         assert_allclose(pos, transformed, tol=TOL)
-        transformed = transform_by_T(b_pos, T_batched_identity)
+        transformed = transform(b_pos, batched_identity)
         assert_allclose(b_pos, transformed, tol=TOL)
 
 
