@@ -13,7 +13,7 @@ from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor
 
 from .base_entity import Entity
-from genesis.engine.coupler import SAPCoupler
+from genesis.engine.couplers import SAPCoupler
 
 
 @ti.data_oriented

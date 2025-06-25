@@ -20,7 +20,7 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .coupler import Coupler, SAPCoupler
+from .couplers import SAPCoupler, IPCCoupler
 from .entities import HybridEntity
 from .solvers import (
     AvatarSolver,
