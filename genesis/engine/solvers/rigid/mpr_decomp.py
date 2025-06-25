@@ -195,8 +195,7 @@ class MPR:
         capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_state.quat)
         capule_radius = self._solver.geoms_info[i_g].data[0]
         capule_halflength = 0.5 * self._solver.geoms_info[i_g].data[1]
-        capule_endpoint_side = ti.math.sign(direction.dot(capsule_axis))
-        capule_endpoint_side = 1.0 if capule_endpoint_side == 0.0 else capule_endpoint_side
+        capule_endpoint_side = -1.0 if direction.dot(capsule_axis) < 0.0 else 1.0
         capule_endpoint = capule_center + capule_halflength * capule_endpoint_side * capsule_axis
         return capule_endpoint + direction * capule_radius
 
@@ -231,19 +230,14 @@ class MPR:
     @ti.func
     def support_box(self, direction, i_g, i_b):
         g_state = self._solver.geoms_state[i_g, i_b]
-        d_box = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_state.quat))
+        d_box = gu.ti_inv_transform_by_quat(direction, g_state.quat)
 
-        d_box_sign = ti.math.sign(d_box)
-        d_box_sign.x = 1.0 if d_box_sign.x == 0 else d_box_sign.x
-        d_box_sign.y = 1.0 if d_box_sign.y == 0 else d_box_sign.y
-        d_box_sign.z = 1.0 if d_box_sign.z == 0 else d_box_sign.z
-
-        vid = (d_box[0] > 0) * 4 + (d_box[1] > 0) * 2 + (d_box[2] > 0) * 1
+        vid = (d_box[0] > 0.0) * 4 + (d_box[1] > 0.0) * 2 + (d_box[2] > 0.0) * 1
         v_ = ti.Vector(
             [
-                d_box_sign[0] * self._solver.geoms_info[i_g].data[0] * 0.5,
-                d_box_sign[1] * self._solver.geoms_info[i_g].data[1] * 0.5,
-                d_box_sign[2] * self._solver.geoms_info[i_g].data[2] * 0.5,
+                (-1.0 if d_box[0] < 0.0 else 1.0) * self._solver.geoms_info[i_g].data[0] * 0.5,
+                (-1.0 if d_box[1] < 0.0 else 1.0) * self._solver.geoms_info[i_g].data[1] * 0.5,
+                (-1.0 if d_box[2] < 0.0 else 1.0) * self._solver.geoms_info[i_g].data[2] * 0.5,
             ],
             dt=gs.ti_float,
         )
@@ -281,7 +275,7 @@ class MPR:
     @ti.func
     def func_geom_support(self, direction, i_g, i_b):
         g_state = self._solver.geoms_state[i_g, i_b]
-        direction_in_init_frame = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_state.quat))
+        direction_in_init_frame = gu.ti_inv_transform_by_quat(direction, g_state.quat)
 
         dot_max = gs.ti_float(-1e10)
         v = ti.Vector.zero(gs.ti_float, 3)
@@ -498,8 +492,8 @@ class MPR:
                         # Compute the size of the bounding boxes along the target offset direction.
                         # First, move the direction in local box frame
                         dir_offset = offset / offset_norm
-                        dir_offset_local_a = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_a.quat))
-                        dir_offset_local_b = gu.ti_transform_by_quat(dir_offset, gu.ti_inv_quat(g_state_b.quat))
+                        dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_state_a.quat)
+                        dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_state_b.quat)
                         box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
                         box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
                         length_a = box_size_a.dot(ti.abs(dir_offset_local_a))

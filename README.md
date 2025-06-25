@@ -113,6 +113,31 @@ docker run --gpus all --rm -it \
 genesis
 ```
 
+### AMD users
+AMD users can use Genesis using the `docker/Dockerfile.amdgpu` file, which is built by running:
+```
+docker build -t genesis-amd -f docker/Dockerfile.amdgpu docker
+```
+
+and can then be used by running:
+
+```xhost +local:docker \
+docker run -it --network=host \
+ --device=/dev/kfd \
+ --device=/dev/dri \
+ --group-add=video \
+ --ipc=host \
+ --cap-add=SYS_PTRACE \
+ --security-opt seccomp=unconfined \
+ --shm-size 8G \
+ -v $PWD:/workspace \
+ -e DISPLAY=$DISPLAY \
+ genesis-amd
+ ```
+
+The examples will be accessible from `/workspace/examples`. Note: AMD users should use the vulkan backend. This means you will need to call `gs.init(vulkan)` to initialise Genesis.
+
+
 ## Documentation
 
 Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html), [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html), and [Japanese](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
