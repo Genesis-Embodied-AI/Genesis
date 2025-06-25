@@ -34,6 +34,45 @@ class Solver(RBC):
     def _add_force_field(self, force_field):
         self._ffs.append(force_field)
 
+    @staticmethod
+    def _is_ti_field(obj) -> bool:
+        return callable(getattr(obj, "to_numpy", None)) and callable(getattr(obj, "from_numpy", None))
+
+    def save_ckpt(self, tag: str = "0"):
+        for val in self.__dict__.values():
+            if self._is_ti_field(val):
+                val[tag] = val[None]
+
+    def load_ckpt(self, tag: str = "0"):
+        for val in self.__dict__.values():
+            if self._is_ti_field(val):
+                val[None] = val[tag]
+
+    def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
+        arrays, prefix = {}, self.__class__.__name__ + "/"
+        for name, val in self.__dict__.items():
+            if not self._is_ti_field(val):
+                continue
+            arr = val.to_numpy()
+            if isinstance(arr, np.ndarray):
+                arrays[prefix + name] = arr.copy()
+            elif isinstance(arr, dict):
+                arrays[prefix + name] = np.array([arr], dtype=object)
+        return arrays
+
+    def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
+        prefix = self.__class__.__name__ + "/"
+        for name, val in self.__dict__.items():
+            if not self._is_ti_field(val):
+                continue
+            key = prefix + name
+            if key not in arr_dict:
+                continue
+            arr = arr_dict[key]
+            if arr.dtype == object and arr.shape == (1,):
+                arr = arr[0]
+            val.from_numpy(arr)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------

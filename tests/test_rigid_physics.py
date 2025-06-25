@@ -11,6 +11,9 @@ import numpy as np
 import mujoco
 import genesis as gs
 
+import tempfile
+from pathlib import Path
+
 from .utils import (
     get_hf_assets,
     assert_allclose,
@@ -2151,6 +2154,34 @@ def test_urdf_mimic(show_viewer, tol):
 
     gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_scene_saver(show_viewer, tol):
+    scene1 = gs.Scene(show_viewer=show_viewer)
+    drone1 = scene1.add_entity(
+        gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 1)),
+    )
+    scene1.build()
+    for _ in range(500):
+        drone1.set_propellels_rpm([15_000] * 4)
+        scene1.step()
+    drone1_pos = drone1.get_pos()
+    ckpt = Path(tempfile.gettempdir()) / "hover"
+    gs.states.save_ckpt(scene1.sim, ckpt)
+
+    scene2 = gs.Scene(show_viewer=show_viewer)
+    drone2 = scene2.add_entity(
+        gs.morphs.Drone(
+            file="urdf/drones/cf2x.urdf",
+            pos=(0, 0, 1),
+        ),
+    )
+    scene2.build()
+    gs.states.load_ckpt(scene2.sim, ckpt)
+
+    assert_allclose(drone2.get_pos(), drone1_pos, tol=tol)
 
 
 @pytest.mark.required

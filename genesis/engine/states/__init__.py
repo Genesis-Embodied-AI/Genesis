@@ -1,1 +1,1 @@
-from .io import save_state, load_state
+from .io import save_ckpt, load_ckpt

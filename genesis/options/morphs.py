@@ -749,13 +749,11 @@ class Drone(FileMorph):
     file : str
         The path to the file.
     scale : float or tuple, optional
-        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along
-        each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to
-        (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
@@ -786,50 +784,42 @@ class Drone(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
         **NB**: Drone doesn't support collision checking for now.
     prioritize_urdf_material : bool, optional
-        Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual
-        material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material.
-        Defaults to False.
+        Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material. Defaults to False.
     model : str, optional
         The model of the drone. Defaults to 'CF2X'. Supported models are 'CF2X', 'CF2P', and 'RACE'.
     COM_link_name : str, optional
-        This option is deprecated. The true Center of Mass (CoM) will be used instead of requesting the user to manually
-        specify the name of the link that represents the center of mass.
+        The name of the link that represents the center of mass. Defaults to 'center_of_mass_link'.
     propellers_link_names : sequence of str, optional
         This option is deprecated and will be removed in the future. Please use 'propellers_link_name' instead.
     propellers_link_name : sequence of str, optional
-        The names of the links that represent the propellers. Defaults to
-        ('prop0_link', 'prop1_link', 'prop2_link', 'prop3_link').
+        The names of the links that represent the propellers. Defaults to ['prop0_link', 'prop1_link', 'prop2_link', 'prop3_link'].
     propellers_spin : sequence of int, optional
-        The spin direction of the propellers. 1: CCW, -1: CW. Defaults to (-1, 1, -1, 1).
+        The spin direction of the propellers. 1: CCW, -1: CW. Defaults to [-1, 1, -1, 1].
     merge_fixed_links : bool, optional
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
-        A list of link names that should not be skipped during link merging. Defaults to ().
+        A list of link names that should not be skipped during link merging. Defaults to [].
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
     """
 
     model: str = "CF2X"
-    COM_link_name: Optional[str] = None
     prioritize_urdf_material: bool = False
+    COM_link_name: str = "center_of_mass_link"
     propellers_link_names: Optional[Sequence[str]] = None
     propellers_link_name: Sequence[str] = ("prop0_link", "prop1_link", "prop2_link", "prop3_link")
     propellers_spin: Sequence[int] = (-1, 1, -1, 1)  # 1: CCW, -1: CW
     merge_fixed_links: bool = True
-    links_to_keep: Sequence[str] = ()
+    links_to_keep: List[str] = []
     default_armature: Optional[float] = 0.1
 
     def __init__(self, **data):
         super().__init__(**data)
-
-        if self.COM_link_name is not None:
-            gs.logger.warning("Drone option 'COM_link_name' is deprecated and will be ignored.")
 
         if self.propellers_link_names is not None:
             gs.logger.warning(
@@ -838,8 +828,10 @@ class Drone(FileMorph):
             )
             self.propellers_link_name = self.propellers_link_names
 
-        # Make sure that Propellers links are preserved
-        self.links_to_keep = tuple(set([*self.links_to_keep, *self.propellers_link_name]))
+        # Make sure that Propellers and COM links are preserved
+        for link_name in (*self.propellers_link_name, self.COM_link_name):
+            if not link_name in self.links_to_keep:
+                self.links_to_keep.append(link_name)
 
         if isinstance(self.file, str) and not self.file.endswith(".urdf"):
             gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
@@ -893,8 +885,6 @@ class Terrain(Morph):
         The size of each cell in the subterrain in meters. Defaults to 0.25.
     vertical_scale : float, optional
         The height of each step in the subterrain in meters. Defaults to 0.005.
-    uv_scale : float, optional
-        The scale of the UV mapping for the terrain. Defaults to 1.0.
     subterrain_types : str or 2D list of str, optional
         The types of subterrains to generate. If a string, it will be repeated for all subterrains. If a 2D list, it should have the same shape as `n_subterrains`.
     height_field : array-like, optional
@@ -903,8 +893,6 @@ class Terrain(Morph):
         The name of the terrain to save
     from_stored : str, optional
         The path of the stored terrain to load
-    subterrain_parameters : dictionary, optional
-        Lets users pick their own subterrain parameters.
     """
 
     is_free: bool = False
@@ -913,7 +901,6 @@ class Terrain(Morph):
     subterrain_size: Tuple[float, float] = (12.0, 12.0)  # meter
     horizontal_scale: float = 0.25  # meter size of each cell in the subterrain
     vertical_scale: float = 0.005  # meter height of each step in the subterrain
-    uv_scale: float = 1.0
     subterrain_types: Any = [
         ["flat_terrain", "random_uniform_terrain", "stepping_stones_terrain"],
         ["pyramid_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain"],
@@ -922,22 +909,9 @@ class Terrain(Morph):
     height_field: Any = None
     name: str = "default"  # name to store and reuse the terrain
     from_stored: Any = None
-    subterrain_parameters: dict[str, dict] | None = None
 
     def __init__(self, **data):
-        custom_params = data.get("subterrain_parameters") or {}
-        terrain_types = set(self.default_params) | set(custom_params)
-        overwritten_params = {}
-
-        for terrain_type in terrain_types:
-            default_value = self.default_params.get(terrain_type, {})
-            custom_value = custom_params.get(terrain_type, {})
-            overwritten_params[terrain_type] = default_value | custom_value
-
-        data["subterrain_parameters"] = overwritten_params
         super().__init__(**data)
-
-        self._subterrain_parameters = overwritten_params
 
         supported_subterrain_types = [
             "flat_terrain",
@@ -986,53 +960,3 @@ class Terrain(Morph):
             self.subterrain_size[1], self.horizontal_scale
         ):
             gs.raise_exception("`subterrain_size` should be divisible by `horizontal_scale`.")
-
-    @property
-    def default_params(self):
-        return {
-            "flat_terrain": {},
-            "fractal_terrain": {
-                "levels": 8,
-                "scale": 5.0,
-            },
-            "random_uniform_terrain": {
-                "min_height": -0.1,
-                "max_height": 0.1,
-                "step": 0.1,
-                "downsampled_scale": 0.5,
-            },
-            "sloped_terrain": {
-                "slope": -0.5,
-            },
-            "pyramid_sloped_terrain": {
-                "slope": -0.1,
-            },
-            "discrete_obstacles_terrain": {
-                "max_height": 0.05,
-                "min_size": 1.0,
-                "max_size": 5.0,
-                "num_rects": 20,
-            },
-            "wave_terrain": {
-                "num_waves": 2.0,
-                "amplitude": 0.1,
-            },
-            "stairs_terrain": {
-                "step_width": 0.75,
-                "step_height": -0.1,
-            },
-            "pyramid_stairs_terrain": {
-                "step_width": 0.75,
-                "step_height": -0.1,
-            },
-            "stepping_stones_terrain": {
-                "stone_size": 1.0,
-                "stone_distance": 0.25,
-                "max_height": 0.2,
-                "platform_size": 0.0,
-            },
-        }
-
-    @property
-    def subterrain_params(self):
-        return self._subterrain_parameters
