@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 
 import genesis as gs
+from genesis.utils.path_planing import RRTConnect_OMPL
 
 
 def main():
@@ -74,7 +75,9 @@ def main():
         quat=np.array([0, 1, 0, 0]),
     )
     qpos[-2:] = 0.04
-    path = franka.plan_path(qpos)
+
+    planner = RRTConnect_OMPL(franka)
+    path = planner.plan(qpos)
     for waypoint in path:
         franka.control_dofs_position(waypoint)
         scene.step()

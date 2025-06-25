@@ -1,6 +1,7 @@
 import genesis as gs
 import numpy as np
 import argparse
+from genesis.utils.path_planing import RRTConnect_OMPL
 
 
 def main():
@@ -70,8 +71,9 @@ def main():
     )
     # gripper open pos
     qpos[-2:] = 0.04
-    path = franka.plan_path(
-        qpos_goal=qpos,
+    planner = RRTConnect_OMPL(franka)
+    path = planner.plan(
+        qpos,
         num_waypoints=100,  # 1s duration
     )
     # execute the planned path

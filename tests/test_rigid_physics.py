@@ -12,6 +12,7 @@ import mujoco
 import genesis as gs
 
 from .utils import (
+    RRTConnect_OMPL,
     get_hf_assets,
     assert_allclose,
     build_mujoco_sim,
@@ -1249,7 +1250,8 @@ def move_cube(use_suction, mode, show_viewer):
     )
     # gripper open pos
     qpos[-2:] = 0.04
-    path = franka.plan_path(
+    planner = RRTConnect_OMPL(franka)
+    path = planner.plan(
         qpos_goal=qpos,
         num_waypoints=100,  # 1s duration
         resolution=0.05,
@@ -1303,7 +1305,8 @@ def move_cube(use_suction, mode, show_viewer):
         pos=np.array([0.4, 0.2, 0.2]),
         quat=np.array([0, 1, 0, 0]),
     )
-    path = franka.plan_path(
+    planner = RRTConnect_OMPL(franka)
+    path = planner.plan(
         qpos_goal=qpos,
         num_waypoints=150,
         resolution=0.05,
@@ -1409,8 +1412,8 @@ def test_path_planning_avoidance(show_viewer):
     hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos[-2:] = 0.04
-
-    avoidance_path = franka.plan_path(
+    planner = RRTConnect_OMPL(franka)
+    avoidance_path = planner.plan(
         qpos_goal=qpos,
         num_waypoints=200,
         ignore_collision=False,
@@ -1421,7 +1424,7 @@ def test_path_planning_avoidance(show_viewer):
     assert avoidance_path
     assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
     assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
-    free_path = franka.plan_path(
+    free_path = planner.plan(
         qpos_goal=qpos,
         num_waypoints=200,
         ignore_collision=True,

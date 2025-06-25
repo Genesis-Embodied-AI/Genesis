@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import torch
 import genesis as gs
+from genesis.utils.path_planing import RRT, RRTConnect
 
 
 def main():
@@ -87,15 +88,18 @@ def main():
     )
     qpos[:,-2:] = 0.04
 
-    cam.start_recording()
+    
 
     if args.algo == "rrt_connect":
-        path = franka.plan_path_rrt_connect(qpos[envs_idx], envs_idx=envs_idx, num_waypoints=300)
+        planner = RRTConnect(franka)
     elif args.algo == "rrt":
-        path = franka.plan_path_rrt(qpos[envs_idx], envs_idx=envs_idx, num_waypoints=300)
+        planner = RRT(franka)
     else:
         raise
 
+    path = planner.plan(qpos[envs_idx], envs_idx=envs_idx, num_waypoints=300)
+
+    cam.start_recording()
     for waypoint in path:
         franka.control_dofs_position(waypoint, envs_idx=envs_idx)
         scene.step()
