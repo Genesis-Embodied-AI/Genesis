@@ -84,12 +84,11 @@ class PathPlanner(ABC):
     def validate_input_qpos_batch(self, qpos_goal, qpos_start, envs_idx, *, check_joint_limits=True):
         if qpos_start is None:
             qpos_start = self._entity.get_qpos()
-        else:
-            if qpos_start.ndim == 1:
-                qpos_start = qpos_start.unsqueeze(0)
-            assert qpos_start.ndim == 2
-            if qpos_start.shape[0] == 1:
-                qpos_start = qpos_start.repeat(len(envs_idx), 1)
+        if qpos_start.ndim == 1:
+            qpos_start = qpos_start.unsqueeze(0)
+        assert qpos_start.ndim == 2
+        if qpos_start.shape[0] == 1:
+            qpos_start = qpos_start.repeat(len(envs_idx), 1)
 
         if qpos_goal.ndim == 1:
             qpos_goal = qpos_goal.unsqueeze(0)
@@ -160,26 +159,23 @@ class PathPlanner(ABC):
         ignore_geom_pairs: ti.types.ndarray(),
         i_b: ti.int32,
     ):
-        collision_detected = False
+        is_collision_detected = False
         for i_c in range(self._solver.collider.n_contacts[i_b]):
-            i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
-            i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
+            if not is_collision_detected:
+                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
+                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
 
-            ignore = False
-            for i_p in range(ignore_geom_pairs.shape[0]):
-                if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
-                    ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga
-                ):
-                    ignore = True
-                    break
-            if ignore:
-                continue
-
-            # TODO: handle self-collision (except the case for closed gripper)
-            if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
-                collision_detected = True
-                break
-        return collision_detected
+                is_ignored = False
+                for i_p in range(ignore_geom_pairs.shape[0]):
+                    if not is_ignored:
+                        if (ignore_geom_pairs[i_p, 0] == i_ga and ignore_geom_pairs[i_p, 1] == i_gb) or (
+                            ignore_geom_pairs[i_p, 0] == i_gb and ignore_geom_pairs[i_p, 1] == i_ga
+                        ):
+                            is_ignored = True
+                            # TODO: handle self-collision (except the case for closed gripper)
+                            if (self.geom_start <= i_ga < self.geom_end) ^ (self.geom_start <= i_gb < self.geom_end):
+                                is_collision_detected = True
+        return is_collision_detected
 
     @ti.kernel
     def _kernel_check_collision(
@@ -295,51 +291,49 @@ class RRT(PathPlanner):
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
-            if not self._rrt_is_active[i_b]:
-                continue
-
-            random_sample = ti.Vector(
-                [
-                    q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
-                    for i_q in ti.static(range(self.n_qs))
-                ]
-            )
-            if ti.random() < self._rrt_goal_bias:
+            if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
-                    [self._rrt_goal_configuration[i_q, i_b] for i_q in ti.static(range(self.n_qs))]
+                    [
+                        q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                        for i_q in range(self.n_qs)
+                    ]
                 )
+                if ti.random() < self._rrt_goal_bias:
+                    random_sample = ti.Vector(
+                        [self._rrt_goal_configuration[i_q, i_b] for i_q in range(self.n_qs)]
+                    )
 
-            # find nearest neighbor
-            nearest_neighbor_idx = -1
-            nearest_neighbor_dist = gs.ti_float(1e30)
-            ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-            for i_n in range(self._rrt_tree_size[i_b]):
-                dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
-                if dist < nearest_neighbor_dist:
-                    nearest_neighbor_dist = dist
-                    nearest_neighbor_idx = i_n
+                # find nearest neighbor
+                nearest_neighbor_idx = -1
+                nearest_neighbor_dist = gs.ti_float(1e30)
+                ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+                for i_n in range(self._rrt_tree_size[i_b]):
+                    dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
+                    if dist < nearest_neighbor_dist:
+                        nearest_neighbor_dist = dist
+                        nearest_neighbor_idx = i_n
 
-            # steer from nearest neighbor to random sample
-            nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
-            direction = random_sample - nearest_config
-            steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
-            for i_q in ti.static(range(self.n_qs)):
-                # If the step size exceeds max_step_size, clip it
-                if abs(direction[i_q]) > self._rrt_max_step_size:
-                    direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
-                steer_result[i_q] = nearest_config[i_q] + direction[i_q]
+                # steer from nearest neighbor to random sample
+                nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
+                direction = random_sample - nearest_config
+                steer_result = ti.Vector.zero(gs.ti_float, self.n_qs)
+                for i_q in range(self.n_qs):
+                    # If the step size exceeds max_step_size, clip it
+                    if ti.abs(direction[i_q]) > self._rrt_max_step_size:
+                        direction[i_q] = ti.math.sign(direction[i_q]) * self._rrt_max_step_size
+                    steer_result[i_q] = nearest_config[i_q] + direction[i_q]
 
-            if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
-                # add new node
-                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
-                self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
-                self._rrt_tree_size[i_b] += 1
+                if self._rrt_tree_size[i_b] < self._rrt_max_nodes - 1:
+                    # add new node
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].configuration = steer_result
+                    self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = nearest_neighbor_idx
+                    self._rrt_tree_size[i_b] += 1
 
-                # set the steer result and collision check for i_b
-                for i_q in ti.static(range(self.n_qs)):
-                    self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
-                self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
-                self._solver._func_update_geoms(i_b)
+                    # set the steer result and collision check for i_b
+                    for i_q in range(self.n_qs):
+                        self._solver.qpos[i_q + self._q_start, i_b] = steer_result[i_q]
+                    self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
+                    self._solver._func_update_geoms(i_b)
 
     @ti.kernel
     def _kernel_rrt_step2(
