@@ -892,15 +892,14 @@ class Collider:
                 if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
                     i_ga, i_gb = i_gb, i_ga
 
-                if ti.static(self._solver._enable_multi_contact):
-                    if (
-                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    ):
-                        if ti.static(sys.platform != "darwin"):
-                            self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
-                        else:
-                            self._func_mpr(i_ga, i_gb, i_b)
+                if (
+                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                    and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                ):
+                    if ti.static(sys.platform == "darwin"):
+                        self._func_mpr(i_ga, i_gb, i_b)
+                    else:
+                        self._func_plane_box_contact(i_ga, i_gb, i_b)
 
                 if ti.static(self._solver._box_box_detection):
                     if (
@@ -1048,7 +1047,7 @@ class Collider:
                                 self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
-    def _func_plane_box_multi_contact(self, i_ga, i_gb, i_b):
+    def _func_plane_box_contact(self, i_ga, i_gb, i_b):
         ga_info = self._solver.geoms_info[i_ga]
         gb_info = self._solver.geoms_info[i_gb]
         ga_state = self._solver.geoms_state[i_ga, i_b]
@@ -1065,20 +1064,21 @@ class Collider:
             contact_pos = v1 - 0.5 * penetration * normal
             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
-            n_con = 1
-            contact_pos_0 = contact_pos
-            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
-            for i_v in range(gb_info.vert_start, gb_info.vert_end):
-                if n_con < self._n_contacts_per_pair:
-                    pos_corner = gu.ti_transform_by_trans_quat(
-                        self._solver.verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
-                    )
-                    penetration = normal.dot(pos_corner - ga_state.pos)
-                    if penetration > 0.0:
-                        contact_pos = pos_corner - 0.5 * penetration * normal
-                        if (contact_pos - contact_pos_0).norm() > tolerance:
-                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
-                            n_con = n_con + 1
+            if ti.static(self._solver._enable_multi_contact):
+                n_con = 1
+                contact_pos_0 = contact_pos
+                tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+                for i_v in range(gb_info.vert_start, gb_info.vert_end):
+                    if n_con < self._n_contacts_per_pair:
+                        pos_corner = gu.ti_transform_by_trans_quat(
+                            self._solver.verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
+                        )
+                        penetration = normal.dot(pos_corner - ga_state.pos)
+                        if penetration > 0.0:
+                            contact_pos = pos_corner - 0.5 * penetration * normal
+                            if (contact_pos - contact_pos_0).norm() > tolerance:
+                                self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                                n_con = n_con + 1
 
     @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
@@ -1178,12 +1178,11 @@ class Collider:
             i_ga, i_gb = i_gb, i_ga
 
         if (
-            self._solver._enable_multi_contact
-            and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
             and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
         ):
             if ti.static(sys.platform == "darwin"):
-                self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                self._func_plane_box_contact(i_ga, i_gb, i_b)
         else:
             # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
             # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
