@@ -49,7 +49,7 @@ def main():
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    
+
     cam = scene.add_camera(
         res=(1280, 960),
         pos=(3.0, 0.0, 1.5),
@@ -60,7 +60,7 @@ def main():
 
     ########################## build ##########################
     n_envs = 100
-    envs_idx=torch.arange(n_envs)
+    envs_idx = torch.arange(n_envs)
     scene.build(n_envs=n_envs)
 
     end_effector = franka.get_link("hand")
@@ -68,7 +68,7 @@ def main():
     fingers_dof = np.arange(7, 9)
 
     # Optional: set control gains
-    franka.set_qpos(np.array([[1.56, -0.72, -0.02, -2.09, 0.04, 1.33, 2.4, 0.01, 0.01]]*n_envs))
+    franka.set_qpos(np.array([[1.56, -0.72, -0.02, -2.09, 0.04, 1.33, 2.4, 0.01, 0.01]] * n_envs))
     franka.set_dofs_kp(
         np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
     )
@@ -83,12 +83,10 @@ def main():
     # move to pre-grasp pose
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([[0.65, 0.0, 0.25]]*n_envs),
-        quat=np.array([[0, 1, 0, 0]]*n_envs),
+        pos=np.array([[0.65, 0.0, 0.25]] * n_envs),
+        quat=np.array([[0, 1, 0, 0]] * n_envs),
     )
-    qpos[:,-2:] = 0.04
-
-    
+    qpos[:, -2:] = 0.04
 
     if args.algo == "rrt_connect":
         planner = RRTConnect(franka)
@@ -111,17 +109,17 @@ def main():
     # reach
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([[0.65, 0.0, 0.142]]*n_envs),
-        quat=np.array([[0, 1, 0, 0]]*n_envs),
+        pos=np.array([[0.65, 0.0, 0.142]] * n_envs),
+        quat=np.array([[0, 1, 0, 0]] * n_envs),
     )
-    franka.control_dofs_position(qpos[:,:-2], motors_dof)
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
     for i in range(100):
         scene.step()
         cam.render()
 
     # grasp
-    franka.control_dofs_position(qpos[:,:-2], motors_dof)
-    franka.control_dofs_position(np.array([[0, 0]]*n_envs), fingers_dof)  # you can use position control
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+    franka.control_dofs_position(np.array([[0, 0]] * n_envs), fingers_dof)  # you can use position control
     for i in range(100):
         scene.step()
         cam.render()
@@ -129,15 +127,15 @@ def main():
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([[0.65, 0.0, 0.3]]*n_envs),
-        quat=np.array([[0, 1, 0, 0]]*n_envs),
+        pos=np.array([[0.65, 0.0, 0.3]] * n_envs),
+        quat=np.array([[0, 1, 0, 0]] * n_envs),
     )
-    franka.control_dofs_position(qpos[:,:-2], motors_dof)
-    franka.control_dofs_force(np.array([[-20, -20]]*n_envs), fingers_dof)  # can also use force control
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+    franka.control_dofs_force(np.array([[-20, -20]] * n_envs), fingers_dof)  # can also use force control
     for i in range(100):
         scene.step()
         cam.render()
-        
+
     cam.stop_recording(save_to_filename="grasp_bottle.mp4")
 
 
