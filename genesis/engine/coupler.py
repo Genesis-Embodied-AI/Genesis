@@ -836,12 +836,9 @@ class SAPCoupler(RBC):
         self.has_contact = False
         if self.fem_solver.is_active():
             self.fem_compute_pressure_gradient(f)
-
             self.fem_floor_detection(f)
             self.has_fem_floor_contact = self.n_fem_floor_contact_pairs[None] > 0
             self.has_contact = self.has_contact or self.has_fem_floor_contact
-
-            self.fem_self_detection(f)
 
         if self.has_contact:
             self.sap_solve(f)
