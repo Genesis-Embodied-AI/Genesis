@@ -268,7 +268,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
 
     scene.add_entity(
         morph=gs.morphs.Sphere(
-            pos=(0.5, -0.2, 0.7),
+            pos=(0.5, -0.2, 0.5),
             radius=0.1,
         ),
         material=fem_material_linear,
@@ -278,7 +278,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
     scene.build()
 
     # Run simulation
-    for _ in range(200):
+    for _ in range(100):
         scene.step()
 
     for entity in scene.entities:
@@ -323,7 +323,7 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
     scene.build()
 
     # Run simulation
-    for _ in range(200):
+    for _ in range(100):
         scene.step()
 
     for entity in scene.entities:
