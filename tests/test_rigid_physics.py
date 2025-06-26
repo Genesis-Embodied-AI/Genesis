@@ -2361,7 +2361,34 @@ def test_data_accessor(n_envs, batched, tol):
     # Simulate for a while, until they collide with something
     for _ in range(400):
         gs_sim.step()
-        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_torch(device="cpu")
+
+        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        assert len(gs_n_contacts) == max(n_envs, 1)
+        for as_tensor in (False, True):
+            for to_torch in (False, True):
+                contacts_info = gs_sim.rigid_solver.collider.get_contacts(as_tensor, to_torch)
+                for value in contacts_info.values():
+                    if n_envs > 0:
+                        assert n_envs == len(value)
+                    else:
+                        assert gs_n_contacts[0] == len(value)
+                        value = value[None] if as_tensor else (value,)
+
+                    for i_b in range(n_envs):
+                        n_contacts = gs_n_contacts[i_b]
+                        if as_tensor:
+                            assert isinstance(value, torch.Tensor if to_torch else np.ndarray)
+                            if value.dtype in (gs.tc_int, gs.np_int):
+                                assert (value[i_b, :n_contacts] != -1).all()
+                                assert (value[i_b, n_contacts:] == -1).all()
+                            else:
+                                assert_allclose(value[i_b, n_contacts:], 0.0, tol=0)
+                        else:
+                            assert isinstance(value, (list, tuple))
+                            assert value[i_b].shape[0] == n_contacts
+                            if value[i_b].dtype in (gs.tc_int, gs.np_int):
+                                assert (value[i_b] != -1).all()
+
         if (gs_n_contacts > 0).all():
             break
     else:
@@ -2369,10 +2396,7 @@ def test_data_accessor(n_envs, batched, tol):
     gs_sim.rigid_solver._kernel_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
 
-    # Make sure that contact info accessor is working
-    for as_tensor in (False, True):
-        for to_torch in (False, True):
-            contacts_info = gs_sim.rigid_solver.collider.get_contacts(as_tensor, to_torch)
+    gs_robot.get_contacts()
 
     # Make sure that all the robots ends up in the different state
     qposs = gs_robot.get_qpos().cpu()

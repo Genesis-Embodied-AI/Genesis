@@ -2088,19 +2088,20 @@ class Collider:
         # Allocate output buffer
         if to_torch:
             iout = torch.full((out_size, 4), -1, dtype=gs.tc_int, device=gs.device)
-            fout = torch.empty((out_size, 10), dtype=gs.tc_float, device=gs.device)
+            fout = torch.zeros((out_size, 10), dtype=gs.tc_float, device=gs.device)
         else:
             iout = np.full((out_size, 4), -1, dtype=gs.np_int)
-            fout = np.empty((out_size, 10), dtype=gs.np_float)
+            fout = np.zeros((out_size, 10), dtype=gs.np_float)
 
         # Copy contact data
-        self._kernel_get_contacts(as_tensor, iout, fout)
+        if n_contacts_max > 0:
+            self._kernel_get_contacts(as_tensor, iout, fout)
 
-        # Return structured view (no copy)
+        # Build structured view (no copy)
         if as_tensor:
             if self._solver.n_envs > 0:
-                iout = iout.reshape((n_contacts_max, n_envs, -1))
-                fout = fout.reshape((n_contacts_max, n_envs, -1))
+                iout = iout.reshape((n_envs, n_contacts_max, 4))
+                fout = fout.reshape((n_envs, n_contacts_max, 10))
             iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
             fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
             values = (*iout_chunks, *fout_chunks)
@@ -2135,10 +2136,7 @@ class Collider:
                     values = (*iout_chunks, *fout_chunks)
 
         contacts_info = dict(
-            zip(
-                ("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"),
-                (value.swapaxes(0, 1) for value in values) if as_tensor and self._solver.n_envs > 0 else values,
-            )
+            zip(("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"), values)
         )
 
         # Cache contact information before returning
