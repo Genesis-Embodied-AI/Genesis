@@ -2159,7 +2159,6 @@ def test_urdf_mimic(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_scene_saver_franka(show_viewer, tol):
-
     scene1 = gs.Scene(show_viewer=show_viewer)
     franka1 = scene1.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),

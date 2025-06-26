@@ -38,22 +38,12 @@ class Solver(RBC):
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
-        cls_prefix = f"{self.__class__.__name__}."
 
         for attr_name, field in self.__dict__.items():
             if not isinstance(field, ti.Field):
                 continue
 
-            key_base = cls_prefix + attr_name
-
-            # ---- fast path: torch → numpy ------------------------------------
-            try:
-                arrays[key_base] = ti_field_to_torch(field).cpu().numpy()
-                continue
-            except (AttributeError, ti.TaichiRuntimeError):
-                pass  # fall back
-
-            # ---- generic path ------------------------------------------------
+            key_base = ".".join((self.__class__.__name__, attr_name))
             data = field.to_numpy()
 
             # StructField → data is a dict: flatten each member
@@ -93,16 +83,6 @@ class Solver(RBC):
                 continue  # nothing saved for this attribute
 
             arr = arr_dict[key_base]
-
-            # Try fast torch route if array is numeric
-            if isinstance(arr, np.ndarray) and arr.dtype.kind != "O":
-                try:
-                    field.from_torch(torch.from_numpy(arr))
-                    continue
-                except (TypeError, ti.TaichiRuntimeError):
-                    pass  # fall back
-
-            # Fallback: generic numpy import
             field.from_numpy(arr)
 
     # ------------------------------------------------------------------------------------

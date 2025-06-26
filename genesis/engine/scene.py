@@ -1072,10 +1072,9 @@ class Scene(RBC):
         """
         arrays: dict[str, np.ndarray] = {}
 
-        scene_prefix = f"{self.__class__.__name__}."
         for name, field in self.__dict__.items():
             if isinstance(field, ti.Field):
-                arrays[scene_prefix + name] = field.to_numpy()
+                arrays[".".join((self.__class__.__name__, name))] = field.to_numpy()
 
         for solver in self.active_solvers:
             arrays.update(solver.dump_ckpt_to_numpy())
@@ -1113,10 +1112,9 @@ class Scene(RBC):
 
         arrays = state["arrays"]
 
-        scene_prefix = f"{self.__class__.__name__}."
         for name, field in self.__dict__.items():
             if isinstance(field, ti.Field):
-                key = scene_prefix + name
+                key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
                     field.from_numpy(arrays[key])
 
