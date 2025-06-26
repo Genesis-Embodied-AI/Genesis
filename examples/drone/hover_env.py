@@ -134,7 +134,7 @@ class HoverEnv:
         self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)
         # update target pos
         if self.target is not None:
-            self.target.set_pos(self.commands, zero_velocity=True, envs_idx=list(range(self.num_envs)))
+            self.target.set_pos(self.commands, zero_velocity=True)
         self.scene.step()
 
         # update buffers
