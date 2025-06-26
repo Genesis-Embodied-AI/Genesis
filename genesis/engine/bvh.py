@@ -158,7 +158,6 @@ class LBVH(RBC):
         # Nodes of the BVH, first n_aabbs - 1 are internal nodes, last n_aabbs are leaf nodes
         self.nodes = self.Node.field(shape=(self.n_batches, self.n_aabbs * 2 - 1))
         # Whether an internal node has been visited during traversal
-        self.internal_node_visited = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
         self.internal_node_active = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
         self.internal_node_ready = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
         self.updated = ti.field(ti.u1, shape=())
