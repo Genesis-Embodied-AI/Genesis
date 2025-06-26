@@ -17,14 +17,11 @@ class Solver(RBC):
         self._uid = gs.UID()
         self._sim = sim
         self._scene = scene
-        self._dt: float = options.dt
-        self._substep_dt: float = options.dt / sim.substeps
+        self._dt = options.dt
+        self._substep_dt = options.dt / sim.substeps
 
-        if hasattr(options, "gravity"):
-            self._gravity = ti.field(dtype=gs.ti_vec3, shape=())
-            self._gravity.from_numpy(np.array(options.gravity, dtype=gs.np_float))
-        else:
-            self._gravity = None
+        self._gravity_cfg = np.asarray(options.gravity, gs.np_float) if hasattr(options, "gravity") else None
+        self._gravity = None
 
         self._entities: list[Entity] = gs.List()
 
@@ -33,6 +30,15 @@ class Solver(RBC):
 
     def _add_force_field(self, force_field):
         self._ffs.append(force_field)
+
+    def _finalize_batch(self, B: int):
+        if self._gravity_cfg is None or self._gravity is not None:
+            return
+        self._gravity = ti.field(dtype=gs.ti_vec3, shape=(B,))
+        g = self._gravity_cfg
+        if g.ndim == 1:
+            g = np.tile(g[None, :], (B, 1))
+        self._gravity.from_numpy(g[..., None])
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

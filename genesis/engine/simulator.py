@@ -106,7 +106,8 @@ class Simulator(RBC):
         self._steps_local = options._steps_local
 
         self._cur_substep_global = 0
-        self._gravity = np.array(options.gravity)
+        self._g_np = np.asarray(options.gravity, dtype=np.float32)
+        self._g_ti = None
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -188,9 +189,15 @@ class Simulator(RBC):
         self._B = self.scene._B
         self._para_level = self.scene._para_level
 
+        if self._g_np.ndim == 1:
+            self._g_np = np.repeat(self._g_np[None], self._B, axis=0)
+        self._g_ti = ti.Vector.field(3, gs.ti_float, shape=self._B)
+        self._g_ti.from_numpy(self._g_np)
+
         # solvers
         self._rigid_only = self.rigid_solver.is_active()
         for solver in self._solvers:
+            solver._finalize_batch(self._B)
             solver.build()
             if solver.is_active():
                 self._active_solvers.append(solver)
@@ -418,7 +425,7 @@ class Simulator(RBC):
     @property
     def gravity(self):
         """The gravity vector."""
-        return self._gravity
+        return self._g_ti
 
     @property
     def requires_grad(self):
