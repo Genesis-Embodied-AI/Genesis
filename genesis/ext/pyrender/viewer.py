@@ -390,7 +390,7 @@ class Viewer(pyglet.window.Window):
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
         self.viewer_interaction = (
-            ViewerInteraction(self._camera_node, context.scene)
+            ViewerInteraction(self._camera_node, context.scene, viewport_size, camera.yfov)
             if use_viewer_interaction
             else ViewerInteractionBase()
         )
@@ -707,6 +707,8 @@ class Viewer(pyglet.window.Window):
         # Render the scene
         self.clear()
         self._render()
+
+        self.viewer_interaction.on_draw()
 
         if not self._initialized_event.is_set():
             self._initialized_event.set()

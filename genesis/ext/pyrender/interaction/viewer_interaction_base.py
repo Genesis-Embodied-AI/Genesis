@@ -29,3 +29,6 @@ class ViewerInteractionBase():
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         if self.log_events: print(f"Key released: {chr(symbol)}")
+
+    def on_draw(self) -> None:
+        pass
