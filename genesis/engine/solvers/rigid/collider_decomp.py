@@ -13,9 +13,18 @@ from genesis.styles import colors, formats
 from genesis.utils.misc import ti_field_to_torch
 
 from .mpr_decomp import MPR
+from .gjk_decomp import GJK
+
+from enum import IntEnum
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+
+
+class CCD_ALGORITHM_CODE(IntEnum):
+    MPR = 0
+    MPR_SDF = 1
+    GJK = 2
 
 
 @ti.func
@@ -42,7 +51,18 @@ class Collider:
         self._solver = rigid_solver
         self._init_verts_connectivity()
         self._init_collision_fields()
+
+        # Identify the convex collision detection (ccd) algorithm
+        if self._solver._options.use_gjk_collision:
+            self.ccd_algorithm = CCD_ALGORITHM_CODE.GJK
+        elif self._solver._enable_mujoco_compatibility:
+            self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR
+        else:
+            self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR_SDF
+
+        # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
+        self._gjk = GJK(rigid_solver) if self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK else None
 
         # multi contact perturbation and tolerance
         if self._solver._enable_mujoco_compatibility:
@@ -879,7 +899,7 @@ class Collider:
                         and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                     )
                 ):
-                    self._func_mpr(i_ga, i_gb, i_b)
+                    self._func_convex_convex_contact(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_convex_specializations(self):
@@ -897,7 +917,9 @@ class Collider:
                     and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                 ):
                     if ti.static(sys.platform == "darwin"):
-                        self._func_mpr(i_ga, i_gb, i_b)
+                        # FIXME: It seems redundant, why don't we just call _func_plane_box_contact directly?
+                        # Anyway in this function, we will call _func_plane_box_contact.
+                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
                     else:
                         self._func_plane_box_contact(i_ga, i_gb, i_b)
 
@@ -1057,7 +1079,7 @@ class Collider:
         plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
         normal = -plane_dir.normalized()
 
-        v1, _ = self._mpr.support_box(normal, i_gb, i_b)
+        v1, _ = self._mpr.support_field._func_support_box(normal, i_gb, i_b)
         penetration = normal.dot(v1 - ga_state.pos)
 
         if penetration > 0.0:
@@ -1173,7 +1195,7 @@ class Collider:
         return axis_0, axis_1
 
     @ti.func
-    def _func_mpr(self, i_ga, i_gb, i_b):
+    def _func_convex_convex_contact(self, i_ga, i_gb, i_b):
         if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
             i_ga, i_gb = i_gb, i_ga
 
@@ -1242,41 +1264,68 @@ class Collider:
                         contact_pos = v1 - 0.5 * penetration * normal
                         is_col = penetration > 0
                     else:
-                        # Try using MPR before anything else
-                        is_mpr_updated = False
-                        is_mpr_guess_direction_available = True
-                        normal_ws = self.contact_cache[i_ga, i_gb, i_b].normal
-                        for i_mpr in range(2):
-                            if i_mpr == 1:
-                                # Try without warm-start if no contact was detected using it.
-                                # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
-                                # contact while they actually are. This helps to improve contact persistence without increasing
-                                # much the overall computational cost since the fallback should not be triggered very often.
-                                is_mpr_guess_direction_available = (ti.abs(normal_ws) > gs.EPS).any()
-                                if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
-                                    normal_ws = ti.Vector.zero(gs.ti_float, 3)
-                                    is_mpr_updated = False
+                        ### MPR, MPR + SDF
+                        if ti.static(self.ccd_algorithm != CCD_ALGORITHM_CODE.GJK):
+                            # Try using MPR before anything else
+                            is_mpr_updated = False
+                            is_mpr_guess_direction_available = True
+                            normal_ws = self.contact_cache[i_ga, i_gb, i_b].normal
+                            for i_mpr in range(2):
+                                if i_mpr == 1:
+                                    # Try without warm-start if no contact was detected using it.
+                                    # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
+                                    # contact while they actually are. This helps to improve contact persistence without increasing
+                                    # much the overall computational cost since the fallback should not be triggered very often.
+                                    is_mpr_guess_direction_available = (ti.abs(normal_ws) > gs.EPS).any()
+                                    if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
+                                        normal_ws = ti.Vector.zero(gs.ti_float, 3)
+                                        is_mpr_updated = False
 
-                            if not is_mpr_updated:
-                                is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                    i_ga, i_gb, i_b, normal_ws
-                                )
-                                is_mpr_updated = True
+                                if not is_mpr_updated:
+                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
+                                        i_ga, i_gb, i_b, normal_ws
+                                    )
+                                    is_mpr_updated = True
 
-                        # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
-                        # initial penetration is already quite large, because the contact information provided by MPR
-                        # may be unreliable in such a case.
-                        # Here it is assumed that generic SDF is much slower than MPR, so it is faster in average
-                        # to first make sure that the geometries are truly colliding and only after to run SDF if
-                        # necessary. This would probably not be the case anymore if it was possible to rely on
-                        # specialized SDF implementation for convex-convex collision detection in the first place.
-                        if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
-                            # Note that SDF may detect different collision points depending on geometry ordering.
-                            # Because of this, it is necessary to run it twice and take the contact information
-                            # associated with the point of deepest penetration.
-                            try_sdf = True
+                            # Fallback on SDF if collision is detected by MPR but no collision direction was cached but the
+                            # initial penetration is already quite large, because the contact information provided by MPR
+                            # may be unreliable in such a case.
+                            # Here it is assumed that generic SDF is much slower than MPR, so it is faster in average
+                            # to first make sure that the geometries are truly colliding and only after to run SDF if
+                            # necessary. This would probably not be the case anymore if it was possible to rely on
+                            # specialized SDF implementation for convex-convex collision detection in the first place.
+                            if is_col and penetration > tolerance and not is_mpr_guess_direction_available:
+                                # Note that SDF may detect different collision points depending on geometry ordering.
+                                # Because of this, it is necessary to run it twice and take the contact information
+                                # associated with the point of deepest penetration.
+                                try_sdf = True
+                        ### GJK
+                        elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
+                            # If it was not the first detection, only detect single contact point.
+                            self._gjk.func_gjk_contact(i_ga, i_gb, i_b, i_detection == 0)
 
-                    if ti.static(not self._solver._enable_mujoco_compatibility):
+                            is_col = self._gjk.is_col[i_b] == 1
+                            penetration = self._gjk.penetration[i_b]
+                            n_contacts = self._gjk.n_contacts[i_b]
+
+                            if is_col:
+                                if self._gjk.multi_contact_flag[i_b]:
+                                    # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
+                                    # add the discovered contact points and stop multi-contact search.
+                                    for i_c in range(n_contacts):
+                                        if i_c >= self._n_contacts_per_pair:
+                                            # Ignore contact points if the number of contacts exceeds the limit.
+                                            break
+                                        contact_pos = self._gjk.contact_pos[i_b, i_c]
+                                        normal = self._gjk.normal[i_b, i_c]
+                                        self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+
+                                    break
+                                else:
+                                    contact_pos = self._gjk.contact_pos[i_b, 0]
+                                    normal = self._gjk.normal[i_b, 0]
+
+                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR_SDF):
                         if try_sdf:
                             is_col_a = False
                             is_col_b = False
@@ -1350,7 +1399,7 @@ class Collider:
                         self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    if ti.static(not self._solver._enable_mujoco_compatibility):
+                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR_SDF):
                         # 1. Project the contact point on both geometries
                         # 2. Revert the effect of small rotation
                         # 3. Update contact point
@@ -1386,6 +1435,11 @@ class Collider:
                         # contact points and thefore more continuous contact forces, without changing the mean-field
                         # dynamics since zero-penetration contact points should not induce any force.
                         penetration = normal.dot(contact_point_b - contact_point_a)
+
+                    elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
+                        # Only change penetration to the initial one, because the normal vector could change abruptly
+                        # under GJK-EPA as the nearest simplex is determined by discrete logic, unlike MPR.
+                        penetration = penetration_0
 
                     # Discard contact point is repeated
                     repeated = False

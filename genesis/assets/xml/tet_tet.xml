@@ -1,0 +1,38 @@
+<mujoco model="two_tet">
+  <compiler angle="degree"/>
+  <option gravity="0 0 -9.8100000000000005"/>
+  <default>
+    <default class="/">
+      <joint damping="0.001"/>
+      <geom friction="1 0.0050000000000000001 0.0001" density="500"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.5" shininess="1" specular="1" texrepeat="60 60" texture="texplane"/>
+    <mesh name="tet" file="tet.obj"/>
+    <mesh name="small_tet" file="tet.obj" scale="0.1 0.1 0.1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="tet1" contype="1" conaffinity="1" pos="0 0 0" type="mesh" rgba="0 0 1 1" mesh="tet"/>
+    
+    <body name="tet2" pos="0 0 1.5">
+      <joint name="root1" class="/" type="free"/>
+      <geom name="tet2" contype="1" conaffinity="1" pos="0 0 0" type="mesh" mesh="small_tet"/>
+    </body>
+
+    <body name="tet3" pos="0.5 0 1.5">
+      <joint name="root2" class="/" type="free"/>
+      <geom name="tet3" contype="1" conaffinity="1" pos="0 0 0" type="mesh" mesh="small_tet"/>
+    </body>
+
+    <body name="tet4" pos="0.1 0 2.0">
+      <joint name="root3" class="/" type="free"/>
+      <geom name="tet4" contype="1" conaffinity="1" pos="0 0 0" type="mesh" mesh="small_tet"/>
+    </body>
+  </worldbody>
+</mujoco>
