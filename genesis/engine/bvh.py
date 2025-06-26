@@ -238,8 +238,7 @@ class LBVH(RBC):
     @ti.kernel
     def _kernel_radix_sort_morton_codes_one_round(self, i: int):
         # Clear histogram
-        for i_b, j in ti.ndrange(self.n_batches, 256):
-            self.hist[i_b, j] = 0
+        self.hist.fill(0)
 
         # Fill histogram
         for i_b in range(self.n_batches):
