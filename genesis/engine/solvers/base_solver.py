@@ -58,13 +58,11 @@ class Solver(RBC):
         return arrays
 
     def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
-        cls_prefix = f"{self.__class__.__name__}."
-
         for attr_name, field in self.__dict__.items():
             if not isinstance(field, ti.Field):
                 continue
 
-            key_base = cls_prefix + attr_name
+            key_base = ".".join((self.__class__.__name__, attr_name))
             member_prefix = key_base + "."
 
             # ---- StructField: gather its members -----------------------------
