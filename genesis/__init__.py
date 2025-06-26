@@ -8,6 +8,7 @@ import traceback
 from platform import system
 from unittest.mock import patch
 
+
 _ti_outputs = []
 
 

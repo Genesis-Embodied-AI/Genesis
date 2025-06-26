@@ -240,10 +240,11 @@ class RigidSolver(Solver):
             return
 
         # Compute mass matrix without any implicit damping terms
-        self._kernel_compute_mass_matrix()
+        self._kernel_compute_mass_matrix(decompose=True)
 
         # Define some proxies for convenience
-        mass_mat = self.mass_mat.to_numpy()[:, :, 0]
+        mass_mat_D_inv = self.mass_mat_D_inv.to_numpy()[:, 0]
+        mass_mat_L = self.mass_mat_L.to_numpy()[:, :, 0]
         offsets = self.links_state.i_pos.to_numpy()[:, 0]
         cdof_ang = self.dofs_state.cdof_ang.to_numpy()[:, 0]
         cdof_vel = self.dofs_state.cdof_vel.to_numpy()[:, 0]
@@ -266,6 +267,13 @@ class RigidSolver(Solver):
             joints_dof_start = joints_dof_start[:, 0]
             joints_n_dofs = joints_n_dofs[:, 0]
 
+        # Compute the inverted mass matrix efficiently
+        mass_mat_L_inv = np.eye(self.n_dofs_)
+        for i in range(self.n_dofs_):
+            for j in range(i):
+                mass_mat_L_inv[i] -= mass_mat_L[i, j] * mass_mat_L_inv[j]
+        mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv) @ mass_mat_L_inv.T
+
         # Compute links invweight
         links_invweight = np.zeros((self._n_links, 2), dtype=gs.np_float)
         for i_l in range(self._n_links):
@@ -284,7 +292,7 @@ class RigidSolver(Solver):
 
             jac = np.concatenate((jacp, jacr), axis=0)
 
-            A = jac @ np.linalg.inv(mass_mat) @ jac.T
+            A = jac @ mass_mat_inv @ jac.T
             A_diag = np.diag(A)
 
             links_invweight[i_l, 0] = A_diag[:3].mean()
@@ -304,7 +312,7 @@ class RigidSolver(Solver):
                 for i_d_ in range(n_dofs):
                     jac[i_d_, dof_start + i_d_] = 1.0
 
-                A = jac @ np.linalg.inv(mass_mat) @ jac.T
+                A = jac @ mass_mat_inv @ jac.T
                 A_diag = np.diag(A)
 
                 if joint_type == gs.JOINT_TYPE.FREE:
@@ -319,8 +327,10 @@ class RigidSolver(Solver):
         self._kernel_init_invweight(links_invweight, dofs_invweight)
 
     @ti.kernel
-    def _kernel_compute_mass_matrix(self):
+    def _kernel_compute_mass_matrix(self, decompose: ti.u1):
         self._func_compute_mass_matrix(implicit_damping=False)
+        if decompose:
+            self._func_factor_mass(implicit_damping=False)
 
     @ti.kernel
     def _kernel_init_invweight(

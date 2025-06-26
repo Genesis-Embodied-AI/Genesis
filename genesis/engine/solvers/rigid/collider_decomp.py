@@ -1,3 +1,4 @@
+import sys
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -891,12 +892,14 @@ class Collider:
                 if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
                     i_ga, i_gb = i_gb, i_ga
 
-                if ti.static(self._solver._enable_multi_contact):
-                    if (
-                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    ):
-                        self._func_plane_box_multi_contact(i_ga, i_gb, i_b)
+                if (
+                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                    and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                ):
+                    if ti.static(sys.platform == "darwin"):
+                        self._func_mpr(i_ga, i_gb, i_b)
+                    else:
+                        self._func_plane_box_contact(i_ga, i_gb, i_b)
 
                 if ti.static(self._solver._box_box_detection):
                     if (
@@ -1044,7 +1047,7 @@ class Collider:
                                 self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
     @ti.func
-    def _func_plane_box_multi_contact(self, i_ga, i_gb, i_b):
+    def _func_plane_box_contact(self, i_ga, i_gb, i_b):
         ga_info = self._solver.geoms_info[i_ga]
         gb_info = self._solver.geoms_info[i_gb]
         ga_state = self._solver.geoms_state[i_ga, i_b]
@@ -1054,27 +1057,28 @@ class Collider:
         plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
         normal = -plane_dir.normalized()
 
-        v1 = self._mpr.support_driver(normal, i_gb, i_b)
+        v1, _ = self._mpr.support_box(normal, i_gb, i_b)
         penetration = normal.dot(v1 - ga_state.pos)
 
         if penetration > 0.0:
             contact_pos = v1 - 0.5 * penetration * normal
             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
-            n_con = 1
-            contact_pos_0 = contact_pos
-            tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
-            for i_v in range(gb_info.vert_start, gb_info.vert_end):
-                if n_con < self._n_contacts_per_pair:
-                    pos_corner = gu.ti_transform_by_trans_quat(
-                        self._solver.verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
-                    )
-                    penetration = normal.dot(pos_corner - ga_state.pos)
-                    if penetration > 0.0:
-                        contact_pos = pos_corner - 0.5 * penetration * normal
-                        if (contact_pos - contact_pos_0).norm() > tolerance:
-                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
-                            n_con = n_con + 1
+            if ti.static(self._solver._enable_multi_contact):
+                n_con = 1
+                contact_pos_0 = contact_pos
+                tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
+                for i_v in range(gb_info.vert_start, gb_info.vert_end):
+                    if n_con < self._n_contacts_per_pair:
+                        pos_corner = gu.ti_transform_by_trans_quat(
+                            self._solver.verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
+                        )
+                        penetration = normal.dot(pos_corner - ga_state.pos)
+                        if penetration > 0.0:
+                            contact_pos = pos_corner - 0.5 * penetration * normal
+                            if (contact_pos - contact_pos_0).norm() > tolerance:
+                                self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                                n_con = n_con + 1
 
     @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
@@ -1173,23 +1177,25 @@ class Collider:
         if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
             i_ga, i_gb = i_gb, i_ga
 
-        # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
-        # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
-        # criteria to get rid of redundant contact points seems to be a better option.
-        multi_contact = (
-            self._solver._enable_multi_contact
-            # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
-            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
-            and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
-            and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
-            and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
-        )
-
         if (
-            not multi_contact
-            or self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE
-            or self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.BOX
+            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
         ):
+            if ti.static(sys.platform == "darwin"):
+                self._func_plane_box_contact(i_ga, i_gb, i_b)
+        else:
+            # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
+            # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
+            # criteria to get rid of redundant contact points seems to be a better option.
+            multi_contact = (
+                self._solver._enable_multi_contact
+                # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
+                and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
+                and self._solver.geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
+                and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
+                and self._solver.geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
+            )
+
             tolerance = self._func_compute_tolerance(i_ga, i_gb, i_b)
 
             # Backup state before local perturbation
@@ -2017,13 +2023,13 @@ class Collider:
             return contacts_info
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = ti_field_to_torch(self.n_contacts) if to_torch else self.n_contacts.to_numpy()
+        n_contacts = tuple(self.n_contacts.to_numpy())
         n_envs = len(n_contacts)
-        n_contacts_max = n_contacts.max()
+        n_contacts_max = max(n_contacts)
         if as_tensor:
             out_size = n_contacts_max * n_envs
         else:
-            out_size = n_contacts.sum()
+            *n_contacts_starts, out_size = np.cumsum(n_contacts)
 
         # Allocate output buffer
         if to_torch:
@@ -2055,29 +2061,29 @@ class Collider:
                     iout_chunks = torch.split(iout, n_contacts)
                     fout_chunks = torch.split(fout, n_contacts)
                 else:
-                    iout_chunks = np.split(iout, n_contacts)
-                    fout_chunks = np.split(fout, n_contacts)
+                    iout_chunks = np.split(iout, n_contacts_starts)
+                    fout_chunks = np.split(fout, n_contacts_starts)
                 iout_chunks = ((out[..., 0], out[..., 1], out[..., 2], out[..., 3]) for out in iout_chunks)
                 fout_chunks = ((out[..., 0], out[..., 1:4], out[..., 4:7], out[..., 7:]) for out in fout_chunks)
-                values = (*iout_chunks, *fout_chunks)
+                values = (*zip(*iout_chunks), *zip(*fout_chunks))
             else:
                 iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
                 fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
                 if self._solver.n_envs == 1:
+                    values = [(value,) for value in (*iout_chunks, *fout_chunks)]
+                else:
                     if to_torch:
                         iout_chunks = (torch.split(out, n_contacts) for out in iout_chunks)
                         fout_chunks = (torch.split(out, n_contacts) for out in fout_chunks)
                     else:
-                        iout_chunks = (np.split(out, n_contacts) for out in iout_chunks)
-                        fout_chunks = (np.split(out, n_contacts) for out in fout_chunks)
-                    values = (*zip(*iout_chunks), *zip(*fout_chunks))
-                else:
+                        iout_chunks = (np.split(out, n_contacts_starts) for out in iout_chunks)
+                        fout_chunks = (np.split(out, n_contacts_starts) for out in fout_chunks)
                     values = (*iout_chunks, *fout_chunks)
 
         contacts_info = dict(
             zip(
                 ("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"),
-                values if self._solver.n_envs == 0 else (value.swapaxes(0, 1) for value in values),
+                (value.swapaxes(0, 1) for value in values) if as_tensor and self._solver.n_envs > 0 else values,
             )
         )
 
@@ -2089,7 +2095,8 @@ class Collider:
     @ti.kernel
     def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):
         n_contacts_max = gs.ti_int(0)
-        for n_contacts in self.n_contacts:
+        for i_b in range(self._solver._B):
+            n_contacts = self.n_contacts[i_b]
             if n_contacts > n_contacts_max:
                 n_contacts_max = n_contacts
 
@@ -2097,20 +2104,20 @@ class Collider:
         for i_b in range(self._solver._B):
             i_c_start = gs.ti_int(0)
             if ti.static(is_padded):
-                for j in range(i_b - 1):
-                    i_c_start = i_c_start + self.n_contacts[j]
+                i_c_start = i_b * n_contacts_max
             else:
-                i_c_start = (i_b - 1) * n_contacts_max
+                for j_b in range(i_b):
+                    i_c_start = i_c_start + self.n_contacts[j_b]
 
             for i_c_ in range(self.n_contacts[i_b]):
                 i_c = i_c_start + i_c_
 
-                iout[i_c, 0] = self.contact_data[i_b, i_c].link_a
-                iout[i_c, 1] = self.contact_data[i_b, i_c].link_b
-                iout[i_c, 2] = self.contact_data[i_b, i_c].geom_a
-                iout[i_c, 3] = self.contact_data[i_b, i_c].geom_b
-                fout[i_c, 0] = self.contact_data[i_b, i_c].penetration
+                iout[i_c, 0] = self.contact_data[i_c_, i_b].link_a
+                iout[i_c, 1] = self.contact_data[i_c_, i_b].link_b
+                iout[i_c, 2] = self.contact_data[i_c_, i_b].geom_a
+                iout[i_c, 3] = self.contact_data[i_c_, i_b].geom_b
+                fout[i_c, 0] = self.contact_data[i_c_, i_b].penetration
                 for j in ti.static(range(3)):
-                    fout[i_c, 1 + j] = self.contact_data[i_b, i_c].pos[j]
-                    fout[i_c, 4 + j] = self.contact_data[i_b, i_c].normal[j]
-                    fout[i_c, 7 + j] = self.contact_data[i_b, i_c].force[j]
+                    fout[i_c, 1 + j] = self.contact_data[i_c_, i_b].pos[j]
+                    fout[i_c, 4 + j] = self.contact_data[i_c_, i_b].normal[j]
+                    fout[i_c, 7 + j] = self.contact_data[i_c_, i_b].force[j]

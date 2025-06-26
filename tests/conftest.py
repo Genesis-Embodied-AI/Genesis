@@ -3,9 +3,6 @@ import os
 import sys
 from enum import Enum
 
-import psutil
-import pyglet
-import numpy as np
 import pytest
 from _pytest.mark import Expression, MarkMatcher
 
@@ -19,11 +16,6 @@ except ImportError:
     sys.modules["tkinter"] = tkinter
     sys.modules["tkinter.Tk"] = tkinter.Tk
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
-
-import genesis as gs
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
-
-from .utils import MjSim, build_mujoco_sim, build_genesis_sim
 
 
 TOL_SINGLE = 5e-5
@@ -53,9 +45,21 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if show_viewer:
         config.option.numprocesses = 0
 
+    # Disable low-level parallelization if distributed framework is enabled
+    # if config.option.numprocesses > 0:
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["NUMBA_NUM_THREADS"] = "1"
+
 
 def pytest_xdist_auto_num_workers(config):
     # Get available memory (RAM & VRAM) and number of physical cores.
+    import psutil
+    import genesis as gs
+
     physical_core_count = psutil.cpu_count(logical=False)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
     _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
@@ -80,7 +84,7 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_addoption(parser):
-    parser.addoption("--backend", action="store", default=gs.cpu, help="Default simulation backend.")
+    parser.addoption("--backend", action="store", default="cpu", help="Default simulation backend.")
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
 
 
@@ -91,6 +95,8 @@ def show_viewer(pytestconfig):
 
 @pytest.fixture(scope="session")
 def backend(pytestconfig):
+    import genesis as gs
+
     backend = pytestconfig.getoption("--backend", "cpu")
     if isinstance(backend, str):
         return getattr(gs.constants.backend, backend)
@@ -104,6 +110,9 @@ def asset_tmp_path(tmp_path_factory):
 
 @pytest.fixture
 def tol():
+    import numpy as np
+    import genesis as gs
+
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
@@ -187,6 +196,10 @@ def taichi_offline_cache(request):
 
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, backend, taichi_offline_cache):
+    import pyglet
+    import genesis as gs
+    from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
+
     logging_level = request.config.getoption("--log-cli-level")
     if backend == gs.cpu:
         precision = "64"
@@ -197,6 +210,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
     try:
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
+
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
         gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
         if backend != gs.cpu and gs.backend == gs.cpu:
@@ -211,6 +225,8 @@ def initialize_genesis(request, backend, taichi_offline_cache):
 
 @pytest.fixture
 def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping):
+    from .utils import build_mujoco_sim
+
     return build_mujoco_sim(
         xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
     )
@@ -228,6 +244,8 @@ def gs_sim(
     show_viewer,
     mj_sim,
 ):
+    from .utils import build_genesis_sim
+
     return build_genesis_sim(
         xml_path,
         gs_solver,
