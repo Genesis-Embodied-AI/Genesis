@@ -99,6 +99,8 @@ class ViewerInteraction(ViewerInteractionBase):
         ground_plane = Plane(Vec3.from_xyz(0, 0, 1), Vec3.zero())
         return ground_plane.raycast(ray)
 
-    def _draw_arrow(self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1, 1, 1, 1)) -> None:
+    def _draw_arrow(
+        self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+    ) -> None:
         self.scene.draw_debug_arrow(pos.v, dir.v, color=color)  # Only draws arrowhead -- bug?
         self.scene.draw_debug_line(pos.v, pos.v + dir.v, color=color)
