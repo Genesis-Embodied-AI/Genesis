@@ -10,6 +10,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from genesis.ext import pyrender
+from genesis.options.vis import ViewerOptions
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
 from genesis.utils.misc import redirect_libc_stderr
@@ -27,7 +28,7 @@ class ViewerLock:
 
 
 class Viewer(RBC):
-    def __init__(self, options, context):
+    def __init__(self, options: ViewerOptions, context):
         self._res = options.res
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
@@ -36,7 +37,7 @@ class Viewer(RBC):
         self._camera_init_lookat = options.camera_lookat
         self._camera_up = options.camera_up
         self._camera_fov = options.camera_fov
-        self._use_viewer_interaction = options.use_viewer_interaction
+        self._enable_interaction = options.enable_interaction
 
         self._pyrender_viewer = None
         self.context = context
@@ -83,7 +84,7 @@ class Viewer(RBC):
                         shadow=self.context.shadow,
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
-                        use_viewer_interaction=self._use_viewer_interaction,
+                        enable_interaction=self._enable_interaction,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,

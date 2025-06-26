@@ -14,6 +14,7 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
+from genesis.vis.rasterizer_context import RasterizerContext
 
 import sys
 
@@ -42,6 +43,7 @@ except:
 import pyglet
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from pyglet import clock
+from pyglet.event import EVENT_HANDLE_STATE
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
 from .constants import (
@@ -62,11 +64,8 @@ from .renderer import Renderer
 from .shader_program import ShaderProgram, ShaderProgramCache
 from .trackball import Trackball
 
-pyglet.options["shadow_window"] = False
 
-# Used for type checking:
-from pyglet.event import EVENT_HANDLE_STATE
-from genesis.vis.rasterizer_context import RasterizerContext
+pyglet.options["shadow_window"] = False
 
 
 MODULE_DIR = os.path.dirname(__file__)
@@ -215,7 +214,7 @@ class Viewer(pyglet.window.Window):
         shadow=False,
         plane_reflection=False,
         env_separate_rigid=False,
-        use_viewer_interaction=False,
+        enable_interaction=False,
         **kwargs,
     ):
         #######################################################################
@@ -391,7 +390,7 @@ class Viewer(pyglet.window.Window):
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
         self.viewer_interaction = (
             ViewerInteraction(self._camera_node, context.scene, viewport_size, camera.yfov)
-            if use_viewer_interaction
+            if enable_interaction
             else ViewerInteractionBase()
         )
 

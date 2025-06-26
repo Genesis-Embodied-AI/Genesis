@@ -9,7 +9,8 @@ class Ray:
         self.origin = origin
         self.direction = direction.normalized()
 
-    def __repr__(self) -> str: return f"Ray(origin={self.origin}, direction={self.direction})"
+    def __repr__(self) -> str:
+        return f"Ray(origin={self.origin}, direction={self.direction})"
 
 
 @dataclass

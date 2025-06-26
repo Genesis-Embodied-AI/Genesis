@@ -57,9 +57,7 @@ class ViewerInteraction(ViewerInteractionBase):
     def on_draw(self) -> None:
         if self.scene._visualizer is not None and self.scene._visualizer.viewer_lock is not None:
             self.scene.clear_debug_objects()
-            self._draw_arrow(Vec3.zero(), Vec3.one(), (1, 0, 0, 1))
         
-            # ray_hit = self._raycast_against_ground(self.get_camera_ray())
             ray_hit = self._raycast_against_ground(self.screen_position_to_ray(*self.prev_mouse_pos))
             if ray_hit.is_hit:
                 self.scene.draw_debug_sphere(ray_hit.position.v, 0.01, (0, 1, 0, 1))
@@ -83,18 +81,18 @@ class ViewerInteraction(ViewerInteractionBase):
         # Note: ignoring pixel aspect ratio
 
         mtx = self.camera.matrix
-        position = Vec3(mtx[:3, 3])
-        forward = Vec3(-mtx[:3, 2])
-        right = Vec3(mtx[:3, 0])
-        up = Vec3(mtx[:3, 1])
+        position = Vec3.from_float64(mtx[:3, 3])
+        forward = Vec3.from_float64(-mtx[:3, 2])
+        right = Vec3.from_float64(mtx[:3, 0])
+        up = Vec3.from_float64(mtx[:3, 1])
 
         direction = forward + right * x + up * y
         return Ray(position, direction)
 
     def get_camera_ray(self) -> Ray:
         mtx = self.camera.matrix
-        position = Vec3(mtx[:3, 3])
-        forward = Vec3(-mtx[:3, 2])
+        position = Vec3.from_float64(mtx[:3, 3])
+        forward = Vec3.from_float64(-mtx[:3, 2])
         return Ray(position, forward)
 
     def _raycast_against_ground(self, ray: Ray) -> RayHit:
@@ -102,14 +100,5 @@ class ViewerInteraction(ViewerInteractionBase):
         return ground_plane.raycast(ray)
 
     def _draw_arrow(self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1, 1, 1, 1)) -> None:
-        # Only draws arrowhead:
-        self.scene.draw_debug_arrow(
-            pos=pos.v,
-            vec=dir.v,
-            color=color,
-        )
-        self.scene.draw_debug_line(
-            start=pos.v,
-            end=pos.v + dir.v,
-            color=color,
-        )
+        self.scene.draw_debug_arrow(pos.v, dir.v, color=color)  # Only draws arrowhead -- bug?
+        self.scene.draw_debug_line(pos.v, pos.v + dir.v, color=color)
