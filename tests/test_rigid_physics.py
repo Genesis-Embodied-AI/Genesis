@@ -2322,6 +2322,11 @@ def test_data_accessor(n_envs, batched, tol):
     gs_sim.rigid_solver._kernel_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
 
+    # Make sure that contact info accessor is working
+    for as_tensor in (False, True):
+        for to_torch in (False, True):
+            contacts_info = gs_sim.rigid_solver.collider.get_contacts(as_tensor, to_torch)
+
     # Make sure that all the robots ends up in the different state
     qposs = gs_robot.get_qpos().cpu()
     for i in range(n_envs - 1):

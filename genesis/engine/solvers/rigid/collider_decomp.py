@@ -2023,13 +2023,13 @@ class Collider:
             return contacts_info
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = ti_field_to_torch(self.n_contacts) if to_torch else self.n_contacts.to_numpy()
+        n_contacts = tuple(self.n_contacts.to_numpy())
         n_envs = len(n_contacts)
-        n_contacts_max = n_contacts.max()
+        n_contacts_max = max(n_contacts)
         if as_tensor:
             out_size = n_contacts_max * n_envs
         else:
-            out_size = n_contacts.sum()
+            *n_contacts_starts, out_size = np.cumsum(n_contacts)
 
         # Allocate output buffer
         if to_torch:
@@ -2061,29 +2061,29 @@ class Collider:
                     iout_chunks = torch.split(iout, n_contacts)
                     fout_chunks = torch.split(fout, n_contacts)
                 else:
-                    iout_chunks = np.split(iout, n_contacts)
-                    fout_chunks = np.split(fout, n_contacts)
+                    iout_chunks = np.split(iout, n_contacts_starts)
+                    fout_chunks = np.split(fout, n_contacts_starts)
                 iout_chunks = ((out[..., 0], out[..., 1], out[..., 2], out[..., 3]) for out in iout_chunks)
                 fout_chunks = ((out[..., 0], out[..., 1:4], out[..., 4:7], out[..., 7:]) for out in fout_chunks)
-                values = (*iout_chunks, *fout_chunks)
+                values = (*zip(*iout_chunks), *zip(*fout_chunks))
             else:
                 iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
                 fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
                 if self._solver.n_envs == 1:
+                    values = [(value,) for value in (*iout_chunks, *fout_chunks)]
+                else:
                     if to_torch:
                         iout_chunks = (torch.split(out, n_contacts) for out in iout_chunks)
                         fout_chunks = (torch.split(out, n_contacts) for out in fout_chunks)
                     else:
-                        iout_chunks = (np.split(out, n_contacts) for out in iout_chunks)
-                        fout_chunks = (np.split(out, n_contacts) for out in fout_chunks)
-                    values = (*zip(*iout_chunks), *zip(*fout_chunks))
-                else:
+                        iout_chunks = (np.split(out, n_contacts_starts) for out in iout_chunks)
+                        fout_chunks = (np.split(out, n_contacts_starts) for out in fout_chunks)
                     values = (*iout_chunks, *fout_chunks)
 
         contacts_info = dict(
             zip(
                 ("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"),
-                values if self._solver.n_envs == 0 else (value.swapaxes(0, 1) for value in values),
+                (value.swapaxes(0, 1) for value in values) if as_tensor and self._solver.n_envs > 0 else values,
             )
         )
 
@@ -2095,7 +2095,8 @@ class Collider:
     @ti.kernel
     def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):
         n_contacts_max = gs.ti_int(0)
-        for n_contacts in self.n_contacts:
+        for i_b in range(self._solver._B):
+            n_contacts = self.n_contacts[i_b]
             if n_contacts > n_contacts_max:
                 n_contacts_max = n_contacts
 
@@ -2103,20 +2104,20 @@ class Collider:
         for i_b in range(self._solver._B):
             i_c_start = gs.ti_int(0)
             if ti.static(is_padded):
-                for j in range(i_b - 1):
-                    i_c_start = i_c_start + self.n_contacts[j]
+                i_c_start = i_b * n_contacts_max
             else:
-                i_c_start = (i_b - 1) * n_contacts_max
+                for j_b in range(i_b):
+                    i_c_start = i_c_start + self.n_contacts[j_b]
 
             for i_c_ in range(self.n_contacts[i_b]):
                 i_c = i_c_start + i_c_
 
-                iout[i_c, 0] = self.contact_data[i_b, i_c].link_a
-                iout[i_c, 1] = self.contact_data[i_b, i_c].link_b
-                iout[i_c, 2] = self.contact_data[i_b, i_c].geom_a
-                iout[i_c, 3] = self.contact_data[i_b, i_c].geom_b
-                fout[i_c, 0] = self.contact_data[i_b, i_c].penetration
+                iout[i_c, 0] = self.contact_data[i_c_, i_b].link_a
+                iout[i_c, 1] = self.contact_data[i_c_, i_b].link_b
+                iout[i_c, 2] = self.contact_data[i_c_, i_b].geom_a
+                iout[i_c, 3] = self.contact_data[i_c_, i_b].geom_b
+                fout[i_c, 0] = self.contact_data[i_c_, i_b].penetration
                 for j in ti.static(range(3)):
-                    fout[i_c, 1 + j] = self.contact_data[i_b, i_c].pos[j]
-                    fout[i_c, 4 + j] = self.contact_data[i_b, i_c].normal[j]
-                    fout[i_c, 7 + j] = self.contact_data[i_b, i_c].force[j]
+                    fout[i_c, 1 + j] = self.contact_data[i_c_, i_b].pos[j]
+                    fout[i_c, 4 + j] = self.contact_data[i_c_, i_b].normal[j]
+                    fout[i_c, 7 + j] = self.contact_data[i_c_, i_b].force[j]
