@@ -1,14 +1,15 @@
 import argparse
 
 import numpy as np
-
+import torch
 import genesis as gs
+from genesis.utils.path_planing import RRT, RRTConnect
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-n", "--n_envs", type=int, default=1)
+    parser.add_argument("-a", "--algo", type=str, default="rrt", choices=["rrt", "rrt_connect"])
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -26,6 +27,9 @@ def main():
         viewer_options=viewer_options,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=True,
         ),
         show_viewer=args.vis,
     )
@@ -48,14 +52,25 @@ def main():
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
-    ########################## build ##########################
-    scene.build(n_envs=args.n_envs)
+    cam = scene.add_camera(
+        res=(1280, 960),
+        pos=(3.0, 0.0, 1.5),
+        lookat=(0.5, 0.0, 0.5),
+        fov=30,
+        GUI=False,
+    )
 
+    ########################## build ##########################
+    n_envs = 100
+    envs_idx = torch.arange(n_envs)
+    scene.build(n_envs=n_envs)
+
+    end_effector = franka.get_link("hand")
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
 
     # Optional: set control gains
-    franka.set_qpos(np.array([[1.56, -0.72, -0.02, -2.09, 0.04, 1.33, 2.4, 0.01, 0.01]] * args.n_envs))
+    franka.set_qpos(np.array([[1.56, -0.72, -0.02, -2.09, 0.04, 1.33, 2.4, 0.01, 0.01]] * n_envs))
     franka.set_dofs_kp(
         np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
     )
@@ -67,49 +82,63 @@ def main():
         np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
     )
 
-    end_effector = franka.get_link("hand")
-
     # move to pre-grasp pose
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([[0.65, 0.0, 0.25]] * args.n_envs),
-        quat=np.array([[0, 1, 0, 0]] * args.n_envs),
+        pos=np.array([[0.65, 0.0, 0.25]] * n_envs),
+        quat=np.array([[0, 1, 0, 0]] * n_envs),
     )
-    qpos[-2:] = 0.04
+    qpos[:, -2:] = 0.04
 
-    path = franka.plan_path(qpos)
+    if args.algo == "rrt_connect":
+        planner = RRTConnect(franka)
+    elif args.algo == "rrt":
+        planner = RRT(franka)
+    else:
+        raise
+
+    path = planner.plan(qpos[envs_idx], envs_idx=envs_idx, num_waypoints=300)
+
+    cam.start_recording()
     for waypoint in path:
-        franka.control_dofs_position(waypoint)
+        franka.control_dofs_position(waypoint, envs_idx=envs_idx)
         scene.step()
+        cam.render()
+
     for i in range(30):
         scene.step()
 
     # reach
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([[0.65, 0.0, 0.142]] * args.n_envs),
-        quat=np.array([[0, 1, 0, 0]] * args.n_envs),
+        pos=np.array([[0.65, 0.0, 0.142]] * n_envs),
+        quat=np.array([[0, 1, 0, 0]] * n_envs),
     )
-    franka.control_dofs_position(qpos[...,:-2], motors_dof)
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
     for i in range(100):
         scene.step()
+        cam.render()
 
     # grasp
-    franka.control_dofs_position(qpos[...,:-2], motors_dof)
-    franka.control_dofs_position(np.array([[0, 0]] * args.n_envs), fingers_dof)  # you can use position control
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+    franka.control_dofs_position(np.array([[0, 0]] * n_envs), fingers_dof)  # you can use position control
     for i in range(100):
         scene.step()
+        cam.render()
 
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([[0.65, 0.0, 0.3]] * args.n_envs),
-        quat=np.array([[0, 1, 0, 0]] * args.n_envs),
+        pos=np.array([[0.65, 0.0, 0.3]] * n_envs),
+        quat=np.array([[0, 1, 0, 0]] * n_envs),
     )
-    franka.control_dofs_position(qpos[...,:-2], motors_dof)
-    franka.control_dofs_force(np.array([[-20, -20]] * args.n_envs), fingers_dof)  # can also use force control
-    for i in range(1000):
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+    franka.control_dofs_force(np.array([[-20, -20]] * n_envs), fingers_dof)  # can also use force control
+    for i in range(100):
         scene.step()
+        cam.render()
+
+    cam.stop_recording(save_to_filename="grasp_bottle.mp4")
 
 
 if __name__ == "__main__":

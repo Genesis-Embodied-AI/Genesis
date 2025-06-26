@@ -1474,7 +1474,6 @@ def test_path_planning_avoidance(show_viewer):
     hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos[-2:] = 0.04
-
     avoidance_path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=200,
