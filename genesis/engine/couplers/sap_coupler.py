@@ -121,8 +121,7 @@ class SAPCoupler(RBC):
         self.n_fem_floor_contact_pairs = ti.field(gs.ti_int, shape=())
         self.fem_floor_contact_pairs = self.fem_floor_contact_pair_type.field(shape=(self.max_fem_floor_contact_pairs,))
 
-        self.fem_self_contact_pair_type = ti.types.struct(
-            active=gs.ti_int,  # whether the contact pair is active
+        self.fem_self_contact_pair_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             normal=gs.ti_vec3,  # contact plane normal
             x=gs.ti_vec3,  # a point on the contact plane
@@ -130,8 +129,13 @@ class SAPCoupler(RBC):
             intersection_code0=gs.ti_int,  # intersection code for element0
             distance0=gs.ti_vec4,  # distance vector for element0
             geom_idx1=gs.ti_int,  # index of the FEM element1
-            intersection_code1=gs.ti_int,  # intersection code for element1
-            distance1=gs.ti_vec4,  # distance vector for element1
+        )
+        self.fem_self_contact_pair_type = ti.types.struct(
+            batch_idx=gs.ti_int,  # batch index
+            normal=gs.ti_vec3,  # contact plane normal
+            x=gs.ti_vec3,  # a point on the contact plane
+            geom_idx0=gs.ti_int,  # index of the FEM element0
+            geom_idx1=gs.ti_int,  # index of the FEM element1
             k=gs.ti_float,  # contact stiffness
             phi0=gs.ti_float,  # initial signed distance
             fn0=gs.ti_float,  # initial normal force magnitude
@@ -147,8 +151,13 @@ class SAPCoupler(RBC):
             energy=gs.ti_float,  # energy
             G=gs.ti_mat3,  # Hessian matrix
         )
-        self.max_fem_self_contact_pairs = fem_solver.n_surfaces * fem_solver._B * 8
+        self.max_fem_self_contact_pair_candidates = fem_solver.n_surfaces * fem_solver._B * 8
+        self.max_fem_self_contact_pairs = fem_solver.n_surfaces * fem_solver._B
+        self.n_fem_self_contact_pair_candidates = ti.field(gs.ti_int, shape=())
         self.n_fem_self_contact_pairs = ti.field(gs.ti_int, shape=())
+        self.fem_self_contact_pair_candidates = self.fem_self_contact_pair_candidate_type.field(
+            shape=(self.max_fem_self_contact_pair_candidates,)
+        )
         self.fem_self_contact_pairs = self.fem_self_contact_pair_type.field(shape=(self.max_fem_self_contact_pairs,))
         # TODO change to surface element only instead of all elements
         self.fem_aabb = AABB(fem_solver._B, fem_solver.n_elements)
@@ -426,6 +435,14 @@ class SAPCoupler(RBC):
                 f"exceeds max_n_query_results {self.fem_bvh.max_n_query_results}"
             )
         self.compute_fem_self_pair_candidates(f + 1)
+        print(self.n_fem_self_contact_pair_candidates[None], "self contact pair candidates found")
+        print(self.max_fem_self_contact_pair_candidates, "max self contact pair candidates")
+        if self.n_fem_self_contact_pairs[None] > self.max_fem_self_contact_pair_candidates:
+            raise ValueError(
+                f"Number of self contact pair candidates {self.n_fem_self_contact_pair_candidates[None]} "
+                f"exceeds max_fem_self_contact_pair_candidates {self.max_fem_self_contact_pair_candidates}"
+            )
+        self.compute_fem_self_pairs(f + 1)
         print(self.n_fem_self_contact_pairs[None], "self contact pairs found")
         print(self.max_fem_self_contact_pairs, "max self contact pairs")
         if self.n_fem_self_contact_pairs[None] > self.max_fem_self_contact_pairs:
@@ -433,9 +450,18 @@ class SAPCoupler(RBC):
                 f"Number of self contact pairs {self.n_fem_self_contact_pairs[None]} "
                 f"exceeds max_fem_self_contact_pairs {self.max_fem_self_contact_pairs}"
             )
-        self.compute_fem_self_pairs(f + 1)
-        active = self.fem_self_contact_pairs.active.to_numpy()
-        print(np.sum(active[: self.n_fem_self_contact_pairs[None]]), "self contact pairs are active")
+        # g0 = self.fem_self_contact_pairs.geom_idx0.to_numpy()[:self.n_fem_self_contact_pairs[None]]
+        # g1 = self.fem_self_contact_pairs.geom_idx1.to_numpy()[:self.n_fem_self_contact_pairs[None]]
+        # pair_set = set()
+        # for i in range(self.n_fem_self_contact_pairs[None]):
+        #     pair = (int(g0[i]), int(g1[i]))
+        #     pair_set.add(pair)
+        # if hasattr(self, 'pair_set'):
+        #     diff1 = self.pair_set - pair_set
+        #     diff2 = pair_set - self.pair_set
+        #     print(diff1)
+        #     print(diff2)
+        # self.pair_set = pair_set
 
     @ti.kernel
     def coupute_fem_aabb(self, f: ti.i32):
@@ -454,8 +480,8 @@ class SAPCoupler(RBC):
     @ti.kernel
     def compute_fem_self_pair_candidates(self, f: ti.i32):
         fem_solver = self.fem_solver
-        pairs = ti.static(self.fem_self_contact_pairs)
-        self.n_fem_self_contact_pairs[None] = 0
+        candidates = ti.static(self.fem_self_contact_pair_candidates)
+        self.n_fem_self_contact_pair_candidates[None] = 0
         for i_r in ti.ndrange(self.fem_bvh.query_result_count[None]):
             i_b, i_a, i_q = self.fem_bvh.query_result[i_r]
             i_v0 = fem_solver.elements_i[i_a].el2v[0]
@@ -500,6 +526,7 @@ class SAPCoupler(RBC):
                 distance1[i] = (pos_v - x).dot(normal)
                 if distance1[i] > 0:
                     intersection_code1 |= 1 << i
+            # Fast check for whether both tets intersect with the plane
             if (
                 intersection_code0 == 0
                 or intersection_code1 == 0
@@ -507,17 +534,15 @@ class SAPCoupler(RBC):
                 or intersection_code1 == 15
             ):
                 continue
-            pair_idx = ti.atomic_add(self.n_fem_self_contact_pairs[None], 1)
-            if pair_idx < self.max_fem_self_contact_pairs:
-                pairs[pair_idx].batch_idx = i_b
-                pairs[pair_idx].normal = normal
-                pairs[pair_idx].x = x
-                pairs[pair_idx].geom_idx0 = i_a
-                pairs[pair_idx].intersection_code0 = intersection_code0
-                pairs[pair_idx].distance0 = distance0
-                pairs[pair_idx].geom_idx1 = i_q
-                pairs[pair_idx].intersection_code1 = intersection_code1
-                pairs[pair_idx].distance1 = distance1
+            candidate_idx = ti.atomic_add(self.n_fem_self_contact_pair_candidates[None], 1)
+            if candidate_idx < self.max_fem_self_contact_pair_candidates:
+                candidates[candidate_idx].batch_idx = i_b
+                candidates[candidate_idx].normal = normal
+                candidates[candidate_idx].x = x
+                candidates[candidate_idx].geom_idx0 = i_a
+                candidates[candidate_idx].intersection_code0 = intersection_code0
+                candidates[candidate_idx].distance0 = distance0
+                candidates[candidate_idx].geom_idx1 = i_q
 
     @ti.kernel
     def compute_fem_self_pairs(self, f: ti.i32):
@@ -527,16 +552,16 @@ class SAPCoupler(RBC):
         https://github.com/RobotLocomotion/drake/blob/8c3a249184ed09f0faab3c678536d66d732809ce/geometry/proximity/field_intersection.cc#L87
         """
         fem_solver = self.fem_solver
+        candidates = ti.static(self.fem_self_contact_pair_candidates)
         pairs = ti.static(self.fem_self_contact_pairs)
         normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0])  # make normal point outward
-
-        for i_c in range(self.n_fem_self_contact_pairs[None]):
-            pairs[i_c].active = 0  # mark the contact pair as inactive
-            i_b = pairs[i_c].batch_idx
-            i_e0 = pairs[i_c].geom_idx0
-            i_e1 = pairs[i_c].geom_idx1
-            intersection_code0 = pairs[i_c].intersection_code0
-            distance0 = pairs[i_c].distance0
+        self.n_fem_self_contact_pairs[None] = 0
+        for i_c in range(self.n_fem_self_contact_pair_candidates[None]):
+            i_b = candidates[i_c].batch_idx
+            i_e0 = candidates[i_c].geom_idx0
+            i_e1 = candidates[i_c].geom_idx1
+            intersection_code0 = candidates[i_c].intersection_code0
+            distance0 = candidates[i_c].distance0
             intersected_edges0 = ti.static(self.kMarchingTetsEdgeTable)[intersection_code0]
             tet_vertices0 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 0
             tet_pressures0 = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices of tet 0
@@ -625,26 +650,34 @@ class SAPCoupler(RBC):
             centroid = total_area_weighted_centroid / total_area
             barycentric0 = tet_barycentric(centroid, tet_vertices0)
             barycentric1 = tet_barycentric(centroid, tet_vertices1)
-            pairs[i_c].barycentric0 = barycentric0
-            pairs[i_c].barycentric1 = barycentric1
-            pressure = (
-                barycentric0[0] * tet_pressures0[0]
-                + barycentric0[1] * tet_pressures0[1]
-                + barycentric0[2] * tet_pressures0[2]
-                + barycentric0[3] * tet_pressures0[3]
-            )
+            i_p = ti.atomic_add(self.n_fem_self_contact_pairs[None], 1)
+            if i_p < self.max_fem_self_contact_pairs:
+                pairs[i_p].batch_idx = i_b
+                pairs[i_p].normal = candidates[i_c].normal
+                pairs[i_p].x = candidates[i_c].x
+                pairs[i_p].geom_idx0 = i_e0
+                pairs[i_p].geom_idx1 = i_e1
+                pairs[i_p].barycentric0 = barycentric0
+                pairs[i_p].barycentric1 = barycentric1
+                pressure = (
+                    barycentric0[0] * tet_pressures0[0]
+                    + barycentric0[1] * tet_pressures0[1]
+                    + barycentric0[2] * tet_pressures0[2]
+                    + barycentric0[3] * tet_pressures0[3]
+                )
 
-            C = ti.static(1.0e8)
-            deformable_k = total_area * C
-            deformable_g = C
-            deformable_phi0 = -pressure / deformable_g * 2  # This is a very approximated value, different from Drake
-            deformable_fn0 = -deformable_k * deformable_phi0
-            # TODO custom dissipation
-            pairs[i_c].k = deformable_k  # contact stiffness
-            pairs[i_c].phi0 = deformable_phi0
-            pairs[i_c].fn0 = deformable_fn0
-            pairs[i_c].taud = 0.1  # Drake uses 100ms as default
-            pairs[i_c].active = 1  # mark the contact pair as active
+                C = ti.static(1.0e8)
+                deformable_k = total_area * C
+                deformable_g = C
+                deformable_phi0 = (
+                    -pressure / deformable_g * 2
+                )  # This is a very approximated value, different from Drake
+                deformable_fn0 = -deformable_k * deformable_phi0
+                # TODO custom dissipation
+                pairs[i_p].k = deformable_k  # contact stiffness
+                pairs[i_p].phi0 = deformable_phi0
+                pairs[i_p].fn0 = deformable_fn0
+                pairs[i_p].taud = 0.1  # Drake uses 100ms as default
 
     def sap_solve(self, f):
         self.init_sap_solve(f)

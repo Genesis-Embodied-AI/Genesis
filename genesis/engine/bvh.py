@@ -1,6 +1,7 @@
 import genesis as gs
 import taichi as ti
 from genesis.repr_base import RBC
+import numpy as np
 
 
 @ti.data_oriented
@@ -370,6 +371,8 @@ class LBVH(RBC):
         """
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
             self.internal_node_visited[i_b, i] = ti.u8(0)
+            self.nodes[i_b, i].bound.min = np.inf
+            self.nodes[i_b, i].bound.max = -np.inf
 
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs):
             idx = ti.i32(self.morton_codes[i_b, i])
@@ -383,8 +386,8 @@ class LBVH(RBC):
                     break
                 left_bound = self.nodes[i_b, self.nodes[i_b, cur_idx].left].bound
                 right_bound = self.nodes[i_b, self.nodes[i_b, cur_idx].right].bound
-                self.nodes[i_b, cur_idx].bound.min = ti.min(left_bound.min, right_bound.min)
-                self.nodes[i_b, cur_idx].bound.max = ti.max(left_bound.max, right_bound.max)
+                ti.atomic_min(self.nodes[i_b, cur_idx].bound.min, ti.min(left_bound.min, right_bound.min))
+                ti.atomic_max(self.nodes[i_b, cur_idx].bound.max, ti.max(left_bound.max, right_bound.max))
                 cur_idx = self.nodes[i_b, cur_idx].parent
 
     @ti.kernel
