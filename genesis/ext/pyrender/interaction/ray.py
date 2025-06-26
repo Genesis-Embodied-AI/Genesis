@@ -1,5 +1,10 @@
 from dataclasses import dataclass
+
+import numpy as np
+
 from genesis.ext.pyrender.interaction.vec3 import Vec3
+
+EPSILON32: np.float32 = np.float32(1e-6)
 
 class Ray:
     origin: Vec3
@@ -16,7 +21,7 @@ class Ray:
 @dataclass
 class RayHit:
     is_hit: bool
-    distance: float    
+    distance: np.float32
     normal: Vec3
     position: Vec3
     object_idx: int
@@ -24,7 +29,7 @@ class RayHit:
 
 class Plane:
     normal: Vec3
-    distance: float  # distance from plane to origin along normal
+    distance: np.float32  # distance from plane to origin along normal
 
     def __init__(self, normal: Vec3, point: Vec3):
         self.normal = normal
@@ -34,8 +39,8 @@ class Plane:
         dot = ray.direction.dot(self.normal)
         dist = ray.origin.dot(self.normal) + self.distance
 
-        if -1e-6 < dot or dist < 1e-6:
-            return RayHit(is_hit=False, distance=0, normal=Vec3.zero(), position=Vec3.zero(), object_idx=-1)
+        if -EPSILON32 < dot or dist < EPSILON32:
+            return RayHit(is_hit=False, distance=np.float32(0), normal=Vec3.zero(), position=Vec3.zero(), object_idx=-1)
 
         dist_along_ray = dist / -dot
 

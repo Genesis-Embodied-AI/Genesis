@@ -86,7 +86,7 @@ class ViewerInteraction(ViewerInteractionBase):
         right = Vec3.from_float64(mtx[:3, 0])
         up = Vec3.from_float64(mtx[:3, 1])
 
-        direction = forward + right * x + up * y
+        direction = forward + right * np.float32(x) + up * np.float32(y)
         return Ray(position, direction)
 
     def get_camera_ray(self) -> Ray:
