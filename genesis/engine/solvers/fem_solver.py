@@ -409,12 +409,7 @@ class FEMSolver(Solver):
 
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
-                    self._mats[mat_idx].pre_compute(
-                        J=J,
-                        F=F,
-                        i_e=i_e,
-                        i_b=i_b,
-                    )
+                    self._mats[mat_idx].pre_compute(J=J, F=F, i_e=i_e, i_b=i_b)
 
     @ti.kernel
     def init_pos_and_inertia(self, f: ti.i32):
