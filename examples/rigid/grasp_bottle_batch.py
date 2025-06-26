@@ -28,7 +28,9 @@ def main():
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
         ),
-        show_FPS=False,
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=True,
+        ),
         show_viewer=args.vis,
     )
 
