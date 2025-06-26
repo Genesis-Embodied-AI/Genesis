@@ -1,6 +1,7 @@
 import genesis as gs
 import taichi as ti
 from genesis.repr_base import RBC
+import numpy as np
 
 
 @ti.data_oriented
@@ -158,6 +159,9 @@ class LBVH(RBC):
         self.nodes = self.Node.field(shape=(self.n_batches, self.n_aabbs * 2 - 1))
         # Whether an internal node has been visited during traversal
         self.internal_node_visited = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
+        self.internal_node_active = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
+        self.internal_node_ready = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
+        self.updated = ti.field(ti.u1, shape=())
 
         # Query results, vec3 of batch id, self id, query id
         self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
@@ -328,31 +332,53 @@ class LBVH(RBC):
                     break
         return result
 
-    @ti.kernel
     def compute_bounds(self):
         """
         Compute the bounds of the BVH nodes.
 
-        Starts from the leaf nodes and works upwards.
+        Starts from the leaf nodes and works upwards layer by layer.
         """
+        self._kernel_compute_bounds_init()
+        while self.updated[None]:
+            self._kernel_compute_bounds_one_layer()
+
+    @ti.kernel
+    def _kernel_compute_bounds_init(self):
+        self.updated[None] = True
+
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            self.internal_node_visited[i_b, i] = ti.u8(0)
+            self.internal_node_active[i_b, i] = ti.u8(0)
+            self.internal_node_ready[i_b, i] = ti.u8(0)
 
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs):
             idx = ti.i32(self.morton_codes[i_b, i])
             self.nodes[i_b, i + self.n_aabbs - 1].bound.min = self.aabbs[i_b, idx].min
             self.nodes[i_b, i + self.n_aabbs - 1].bound.max = self.aabbs[i_b, idx].max
+            parent_idx = self.nodes[i_b, i + self.n_aabbs - 1].parent
+            if parent_idx != -1:
+                self.internal_node_active[i_b, parent_idx] = ti.u8(1)
 
-            cur_idx = self.nodes[i_b, i + self.n_aabbs - 1].parent
-            while cur_idx != -1:
-                visited = ti.u1(ti.atomic_or(self.internal_node_visited[i_b, cur_idx], ti.u8(1)))
-                if not visited:
-                    break
-                left_bound = self.nodes[i_b, self.nodes[i_b, cur_idx].left].bound
-                right_bound = self.nodes[i_b, self.nodes[i_b, cur_idx].right].bound
-                self.nodes[i_b, cur_idx].bound.min = ti.min(left_bound.min, right_bound.min)
-                self.nodes[i_b, cur_idx].bound.max = ti.max(left_bound.max, right_bound.max)
-                cur_idx = self.nodes[i_b, cur_idx].parent
+    @ti.kernel
+    def _kernel_compute_bounds_one_layer(self):
+        self.updated[None] = False
+        for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
+            if self.internal_node_active[i_b, i] == ti.uint8(0):
+                continue
+            left_bound = self.nodes[i_b, self.nodes[i_b, i].left].bound
+            right_bound = self.nodes[i_b, self.nodes[i_b, i].right].bound
+            self.nodes[i_b, i].bound.min = ti.min(left_bound.min, right_bound.min)
+            self.nodes[i_b, i].bound.max = ti.max(left_bound.max, right_bound.max)
+            parent_idx = self.nodes[i_b, i].parent
+            if parent_idx != -1:
+                self.internal_node_ready[i_b, parent_idx] = ti.u8(1)
+            self.internal_node_active[i_b, i] = ti.u8(0)
+            self.updated[None] = True
+
+        for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
+            if self.internal_node_ready[i_b, i] == ti.uint8(0):
+                continue
+            self.internal_node_active[i_b, i] = ti.u8(1)
+            self.internal_node_ready[i_b, i] = ti.u8(0)
 
     @ti.kernel
     def query(self, aabbs: ti.template()):
