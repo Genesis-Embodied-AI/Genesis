@@ -901,6 +901,8 @@ class Terrain(Morph):
         The name of the terrain to save
     from_stored : str, optional
         The path of the stored terrain to load
+    subterrain_parameters : dictionary, optional
+        Lets users pick their own subterrain parameters.
     """
 
     is_free: bool = False
@@ -917,9 +919,22 @@ class Terrain(Morph):
     height_field: Any = None
     name: str = "default"  # name to store and reuse the terrain
     from_stored: Any = None
+    subterrain_parameters: dict[str, dict] | None = None
 
     def __init__(self, **data):
+        custom_params = data.get("subterrain_parameters") or {}
+        terrain_types = set(self.default_params) | set(custom_params)
+        overwritten_params = {}
+
+        for terrain_type in terrain_types:
+            default_value = self.default_params.get(terrain_type, {})
+            custom_value = custom_params.get(terrain_type, {})
+            overwritten_params[terrain_type] = default_value | custom_value
+
+        data["subterrain_parameters"] = overwritten_params
         super().__init__(**data)
+
+        self._subterrain_parameters = overwritten_params
 
         supported_subterrain_types = [
             "flat_terrain",
@@ -968,3 +983,53 @@ class Terrain(Morph):
             self.subterrain_size[1], self.horizontal_scale
         ):
             gs.raise_exception("`subterrain_size` should be divisible by `horizontal_scale`.")
+
+    @property
+    def default_params(self):
+        return {
+            "flat_terrain": {},
+            "fractal_terrain": {
+                "levels": 8,
+                "scale": 5.0,
+            },
+            "random_uniform_terrain": {
+                "min_height": -0.1,
+                "max_height": 0.1,
+                "step": 0.1,
+                "downsampled_scale": 0.5,
+            },
+            "sloped_terrain": {
+                "slope": -0.5,
+            },
+            "pyramid_sloped_terrain": {
+                "slope": -0.1,
+            },
+            "discrete_obstacles_terrain": {
+                "max_height": 0.05,
+                "min_size": 1.0,
+                "max_size": 5.0,
+                "num_rects": 20,
+            },
+            "wave_terrain": {
+                "num_waves": 2.0,
+                "amplitude": 0.1,
+            },
+            "stairs_terrain": {
+                "step_width": 0.75,
+                "step_height": -0.1,
+            },
+            "pyramid_stairs_terrain": {
+                "step_width": 0.75,
+                "step_height": -0.1,
+            },
+            "stepping_stones_terrain": {
+                "stone_size": 1.0,
+                "stone_distance": 0.25,
+                "max_height": 0.2,
+                "platform_size": 0.0,
+            },
+        }
+
+    @property
+    def subterrain_params(self):
+        return self._subterrain_parameters

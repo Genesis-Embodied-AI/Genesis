@@ -1,0 +1,37 @@
+<mujoco model="tet_ball">
+  <compiler angle="degree"/>
+  <option gravity="0 0 -9.8100000000000005"/>
+  <default>
+    <default class="/">
+      <joint damping="0.001"/>
+      <geom friction="1 0.0050000000000000001 0.0001" density="500"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture builtin="gradient" height="100" rgb1="1 1 1" rgb2="0 0 0" type="skybox" width="100"/>
+    <texture builtin="flat" height="1278" mark="cross" markrgb="1 1 1" name="texgeom" random="0.01" rgb1="0.8 0.6 0.4" rgb2="0.8 0.6 0.4" type="cube" width="127"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
+    <material name="MatPlane" reflectance="0.5" shininess="1" specular="1" texrepeat="60 60" texture="texplane"/>
+    <mesh name="tet" file="tet.obj"/>
+  </asset>
+
+  <worldbody>
+    <geom name="tet1" contype="1" conaffinity="1" pos="0 0 0" type="mesh" rgba="0 0 1 1" mesh="tet"/>
+    
+    <body name="sphere1" pos="0 0 1.2">
+      <joint name="root1" class="/" type="free"/>
+      <geom name="seg1_geom" class="/" type="sphere" size="0.1"/>
+    </body>
+
+    <body name="sphere2" pos="0.3 0 1.2">
+      <joint name="root2" class="/" type="free"/>
+      <geom name="seg2_geom" class="/" type="sphere" size="0.1"/>
+    </body>
+
+    <body name="sphere3" pos="0.3 0.29 1.2">
+      <joint name="root3" class="/" type="free"/>
+      <geom name="seg3_geom" class="/" type="sphere" size="0.1"/>
+    </body>
+  </worldbody>
+</mujoco>

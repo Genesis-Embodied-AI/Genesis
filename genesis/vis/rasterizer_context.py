@@ -1,6 +1,8 @@
 import numpy as np
 import trimesh
 
+import taichi as ti
+
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
@@ -325,25 +327,47 @@ class RasterizerContext:
                         self.set_reflection_mat(geom_T)
 
     def update_contact(self, buffer_updates):
-        if self.sim.rigid_solver.is_active():
-            batch_idx = 0  # only visualize contact for the first scene
-            for i_con in range(self.sim.rigid_solver.collider.n_contacts[batch_idx]):
-                contact_data = self.sim.rigid_solver.collider.contact_data[i_con, batch_idx]
-                contact_pos = np.array(contact_data.pos) + self.scene.envs_offset[batch_idx]
+        if self.sim.rigid_solver.is_active() and any(link.visualize_contact for link in self.sim.rigid_solver.links):
+            # Extract all contact information at once
+            contacts_info = self.sim.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
-                ga_state = self.sim.rigid_solver.geoms_state[contact_data.geom_a, batch_idx]
-                gb_state = self.sim.rigid_solver.geoms_state[contact_data.geom_b, batch_idx]
-                aabb_size = min(
-                    (ga_state.aabb_max - ga_state.aabb_min).norm(), (gb_state.aabb_max - gb_state.aabb_min).norm()
-                )
-                normal_scaled = aabb_size * contact_data.normal
-                normal_color = (0.9, 0.0, 0.8, 1.0)
-                if self.sim.rigid_solver.links[contact_data.link_a].visualize_contact:
-                    self.draw_contact_arrow(pos=contact_pos, force=-contact_data.force)
-                    self.draw_debug_arrow(pos=contact_pos, vec=normal_scaled, color=normal_color, persistent=False)
-                if self.sim.rigid_solver.links[contact_data.link_b].visualize_contact:
-                    self.draw_contact_arrow(pos=contact_pos, force=contact_data.force)
-                    self.draw_debug_arrow(pos=contact_pos, vec=-normal_scaled, color=normal_color, persistent=False)
+            # Only visualize contact for the first scene
+            batch_idx = 0
+            if self.sim.rigid_solver.n_envs > 0:
+                contacts_info = {key: value[batch_idx] for key, value in contacts_info.items()}
+
+            # Early return if no contact
+            n_contacts = len(contacts_info["geom_a"])
+            if n_contacts == 0:
+                return
+
+            geoms_aabb = self.sim.rigid_solver.geoms_init_AABB.to_numpy()
+            ga_aabb = geoms_aabb[contacts_info["geom_a"]]
+            gb_aabb = geoms_aabb[contacts_info["geom_b"]]
+            ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
+            gb_aabb_size = np.linalg.norm(gb_aabb[:, -1] - gb_aabb[:, 0], axis=1)
+            normal_scale = np.minimum(ga_aabb_size, gb_aabb_size)
+
+            contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
+            contact_normal_scaled = contacts_info["normal"] * normal_scale[:, None]
+            contact_force = contacts_info["force"]
+
+            for i_c in range(n_contacts):
+                for link_idx, sign in (
+                    (contacts_info["link_a"][i_c], -1),
+                    (contacts_info["link_b"][i_c], 1),
+                ):
+                    if self.sim.rigid_solver.links[link_idx].visualize_contact:
+                        self.draw_contact_arrow(
+                            pos=contact_pos[i_c],
+                            force=sign * contact_force[i_c],
+                        )
+                        self.draw_debug_arrow(
+                            pos=contact_pos[i_c],
+                            vec=-sign * contact_normal_scaled[i_c],
+                            color=(0.9, 0.0, 0.8, 1.0),
+                            persistent=False,
+                        )
 
     def on_avatar(self):
         if self.sim.avatar_solver.is_active():

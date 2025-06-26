@@ -44,10 +44,11 @@ def _sanitize_sol_params(
     if (timeconst < gs.EPS).any():
         # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
         gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
-    if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():
+    invalid_mask = (timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)
+    if invalid_mask.any():
         gs.logger.warning(
-            "Constraint solver time constant should be greater than 2*subste_dt. timeconst is changed from "
-            f"`{timeconst.min():0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
+            "Constraint solver time constant should be greater than 2*substep_dt. timeconst is changed from "
+            f"`{min(timeconst[invalid_mask]):0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
             "increase timeconst to avoid altering the original value."
         )
     timeconst[:] = timeconst.clip(min_timeconst)
@@ -239,10 +240,11 @@ class RigidSolver(Solver):
             return
 
         # Compute mass matrix without any implicit damping terms
-        self._kernel_compute_mass_matrix()
+        self._kernel_compute_mass_matrix(decompose=True)
 
         # Define some proxies for convenience
-        mass_mat = self.mass_mat.to_numpy()[:, :, 0]
+        mass_mat_D_inv = self.mass_mat_D_inv.to_numpy()[:, 0]
+        mass_mat_L = self.mass_mat_L.to_numpy()[:, :, 0]
         offsets = self.links_state.i_pos.to_numpy()[:, 0]
         cdof_ang = self.dofs_state.cdof_ang.to_numpy()[:, 0]
         cdof_vel = self.dofs_state.cdof_vel.to_numpy()[:, 0]
@@ -265,6 +267,13 @@ class RigidSolver(Solver):
             joints_dof_start = joints_dof_start[:, 0]
             joints_n_dofs = joints_n_dofs[:, 0]
 
+        # Compute the inverted mass matrix efficiently
+        mass_mat_L_inv = np.eye(self.n_dofs_)
+        for i in range(self.n_dofs_):
+            for j in range(i):
+                mass_mat_L_inv[i] -= mass_mat_L[i, j] * mass_mat_L_inv[j]
+        mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv) @ mass_mat_L_inv.T
+
         # Compute links invweight
         links_invweight = np.zeros((self._n_links, 2), dtype=gs.np_float)
         for i_l in range(self._n_links):
@@ -283,7 +292,7 @@ class RigidSolver(Solver):
 
             jac = np.concatenate((jacp, jacr), axis=0)
 
-            A = jac @ np.linalg.inv(mass_mat) @ jac.T
+            A = jac @ mass_mat_inv @ jac.T
             A_diag = np.diag(A)
 
             links_invweight[i_l, 0] = A_diag[:3].mean()
@@ -303,7 +312,7 @@ class RigidSolver(Solver):
                 for i_d_ in range(n_dofs):
                     jac[i_d_, dof_start + i_d_] = 1.0
 
-                A = jac @ np.linalg.inv(mass_mat) @ jac.T
+                A = jac @ mass_mat_inv @ jac.T
                 A_diag = np.diag(A)
 
                 if joint_type == gs.JOINT_TYPE.FREE:
@@ -318,8 +327,10 @@ class RigidSolver(Solver):
         self._kernel_init_invweight(links_invweight, dofs_invweight)
 
     @ti.kernel
-    def _kernel_compute_mass_matrix(self):
+    def _kernel_compute_mass_matrix(self, decompose: ti.u1):
         self._func_compute_mass_matrix(implicit_damping=False)
+        if decompose:
+            self._func_factor_mass(implicit_damping=False)
 
     @ti.kernel
     def _kernel_init_invweight(
@@ -1310,7 +1321,6 @@ class RigidSolver(Solver):
         equalities_eq_type: ti.types.ndarray(),
         equalities_sol_params: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_equalities, self._B):
             self.equalities_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
@@ -3404,7 +3414,7 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_update_geoms_render_T(self, geoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
             geom_T = gu.ti_trans_quat_to_T(
                 self.geoms_state[i_g, i_b].pos + self.envs_offset[i_b],
@@ -3418,7 +3428,7 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_update_vgeoms_render_T(self, vgeoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_g, i_b in ti.ndrange(self.n_vgeoms, self._B):
             geom_T = gu.ti_trans_quat_to_T(
                 self.vgeoms_state[i_g, i_b].pos + self.envs_offset[i_b],

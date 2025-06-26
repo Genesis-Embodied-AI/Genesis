@@ -82,6 +82,7 @@ class Elastic(Base):
 
     @ti.func
     def pre_compute_linear_corotated(self, J, F, i_e, i_b):
+        # Computing Polar Decomposition instead of calling `R, P = ti.polar_decompose(F)` since `P` is not needed here
         U, S, V = ti.svd(F)
         R = U @ V.transpose()
         self.R[i_b, i_e] = R
@@ -412,10 +413,12 @@ class Elastic(Base):
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
 
         """
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
         R = self.R[i_b, i_e]
         F_hat = R.transpose() @ F
-        eps = 0.5 * (F_hat + F_hat.transpose()) - I
+        # E = 1/2(F_hat + F_hat.transpose()) - I
+        eps = 0.5 * (F_hat + F_hat.transpose())
+        for i in ti.static(range(3)):
+            eps[i, i] -= 1.0
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
 
@@ -468,9 +471,11 @@ class Elastic(Base):
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
 
         """
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
         F_hat = self.R[i_b, i_e].transpose() @ F
-        eps = 0.5 * (F_hat + F_hat.transpose()) - I
+        # E = 1/2(F_hat + F_hat.transpose()) - I
+        eps = 0.5 * (F_hat + F_hat.transpose())
+        for i in ti.static(range(3)):
+            eps[i, i] -= 1.0
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
         gradient = 2.0 * mu * self.R[i_b, i_e] @ eps + lam * trEps * self.R[i_b, i_e]
@@ -509,9 +514,11 @@ class Elastic(Base):
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
 
         """
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
         F_hat = self.R[i_b, i_e].transpose() @ F
-        eps = 0.5 * (F_hat + F_hat.transpose()) - I
+        # E = 1/2(F_hat + F_hat.transpose()) - I
+        eps = 0.5 * (F_hat + F_hat.transpose())
+        for i in ti.static(range(3)):
+            eps[i, i] -= 1.0
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
 
