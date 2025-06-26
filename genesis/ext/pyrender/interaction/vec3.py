@@ -11,9 +11,9 @@ class Vec3:
 
     def __add__(self, other: 'Vec3') -> 'Vec3': return Vec3(self.v + other.v)
     def __sub__(self, other: 'Vec3') -> 'Vec3': return Vec3(self.v - other.v)
-    def __mul__(self, other: np.float32) -> 'Vec3': return Vec3(self.v * np.float32(other))
-    def __rmul__(self, other: np.float32) -> 'Vec3': return Vec3(self.v * np.float32(other))
-    def dot(self, other: 'Vec3') -> np.float32: return np.dot(self.v, other.v)
+    def __mul__(self, other: float) -> 'Vec3': return Vec3(self.v * np.float32(other))
+    def __rmul__(self, other: float) -> 'Vec3': return Vec3(self.v * np.float32(other))
+    def dot(self, other: 'Vec3') -> float: return np.dot(self.v, other.v).item()
     def cross(self, other: 'Vec3') -> 'Vec3': return Vec3(np.cross(self.v, other.v))
 
     def normalized(self) -> 'Vec3': return Vec3(self.v / (np.linalg.norm(self.v) + 1e-24))
