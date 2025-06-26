@@ -228,6 +228,9 @@ class RigidOptions(Options):
         Acceleration threshold for hibernation. Defaults to 1e-2.
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
+    use_gjk_collision: bool, optional
+        Whether to use GJK for collision detection. Defaults to False, because it requires more compilation time
+        than MPR or MPR++. Also, it requires more stress testing before being fully supported.
 
     Warning
     -------
@@ -275,6 +278,9 @@ class RigidOptions(Options):
     # Experimental options mainly intended for debug purpose and unit tests
     enable_multi_contact: bool = True
     enable_mujoco_compatibility: bool = False
+
+    # GJK collision detection
+    use_gjk_collision: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)

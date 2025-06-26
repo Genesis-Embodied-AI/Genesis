@@ -167,99 +167,20 @@ class MPR:
         return dot1 < self.CCD_TOLERANCE + self.CCD_EPS * ti.max(1.0, dot1)
 
     @ti.func
-    def support_sphere(self, direction, i_g, i_b):
-        sphere_center = self._solver.geoms_state[i_g, i_b].pos
-        sphere_radius = self._solver.geoms_info[i_g].data[0]
-        return sphere_center + direction * sphere_radius
-
-    @ti.func
-    def support_ellipsoid(self, direction, i_g, i_b):
-        g_state = self._solver.geoms_state[i_g, i_b]
-        ellipsoid_center = g_state.pos
-        ellipsoid_scaled_axis = ti.Vector(
-            [
-                self._solver.geoms_info[i_g].data[0] ** 2,
-                self._solver.geoms_info[i_g].data[1] ** 2,
-                self._solver.geoms_info[i_g].data[2] ** 2,
-            ],
-            dt=gs.ti_float,
-        )
-        ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, g_state.quat)
-        dist = ellipsoid_scaled_axis / ti.sqrt(direction.dot(1.0 / ellipsoid_scaled_axis))
-        return ellipsoid_center + direction * dist
-
-    @ti.func
-    def support_capsule(self, direction, i_g, i_b):
-        g_state = self._solver.geoms_state[i_g, i_b]
-        capule_center = g_state.pos
-        capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_state.quat)
-        capule_radius = self._solver.geoms_info[i_g].data[0]
-        capule_halflength = 0.5 * self._solver.geoms_info[i_g].data[1]
-        capule_endpoint_side = -1.0 if direction.dot(capsule_axis) < 0.0 else 1.0
-        capule_endpoint = capule_center + capule_halflength * capule_endpoint_side * capsule_axis
-        return capule_endpoint + direction * capule_radius
-
-    # @ti.func
-    # def support_prism(self, direction, i_g, i_b):
-    #     ibest = 0
-    #     best = self._solver.collider.prism[ibest, i_b].dot(direction)
-    #     for i in range(1, 6):
-    #         dot = self._solver.collider.prism[i, i_b].dot(direction)
-    #         if dot > best:
-    #             ibest = i
-    #             best = dot
-
-    #     return self._solver.collider.prism[ibest, i_b], ibest
-
-    @ti.func
-    def support_prism(self, direction, i_g, i_b):
-        istart = 3
-        if direction[2] < 0:
-            istart = 0
-
-        ibest = istart
-        best = self._solver.collider.prism[istart, i_b].dot(direction)
-        for i in range(istart + 1, istart + 3):
-            dot = self._solver.collider.prism[i, i_b].dot(direction)
-            if dot > best:
-                ibest = i
-                best = dot
-
-        return self._solver.collider.prism[ibest, i_b], ibest
-
-    @ti.func
-    def support_box(self, direction, i_g, i_b):
-        g_state = self._solver.geoms_state[i_g, i_b]
-        d_box = gu.ti_inv_transform_by_quat(direction, g_state.quat)
-
-        vid = (d_box[0] > 0.0) * 4 + (d_box[1] > 0.0) * 2 + (d_box[2] > 0.0) * 1
-        v_ = ti.Vector(
-            [
-                (-1.0 if d_box[0] < 0.0 else 1.0) * self._solver.geoms_info[i_g].data[0] * 0.5,
-                (-1.0 if d_box[1] < 0.0 else 1.0) * self._solver.geoms_info[i_g].data[1] * 0.5,
-                (-1.0 if d_box[2] < 0.0 else 1.0) * self._solver.geoms_info[i_g].data[2] * 0.5,
-            ],
-            dt=gs.ti_float,
-        )
-        vid += self._solver.geoms_info[i_g].vert_start
-        v = gu.ti_transform_by_trans_quat(v_, g_state.pos, g_state.quat)
-        return v, vid
-
-    @ti.func
     def support_driver(self, direction, i_g, i_b):
         v = ti.Vector.zero(gs.ti_float, 3)
         geom_type = self._solver.geoms_info[i_g].type
         if geom_type == gs.GEOM_TYPE.SPHERE:
-            v = self.support_sphere(direction, i_g, i_b)
+            v = self.support_field._func_support_sphere(direction, i_g, i_b, False)
         elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-            v = self.support_ellipsoid(direction, i_g, i_b)
+            v = self.support_field._func_support_ellipsoid(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.CAPSULE:
-            v = self.support_capsule(direction, i_g, i_b)
+            v = self.support_field._func_support_capsule(direction, i_g, i_b, False)
         elif geom_type == gs.GEOM_TYPE.BOX:
-            v, _ = self.support_box(direction, i_g, i_b)
+            v, _ = self.support_field._func_support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
             if ti.static(self._solver.collider._has_terrain):
-                v, _ = self.support_prism(direction, i_g, i_b)
+                v, _ = self.support_field._func_support_prism(direction, i_g, i_b)
         else:
             v, _ = self.support_field._func_support_world(direction, i_g, i_b)
         return v
