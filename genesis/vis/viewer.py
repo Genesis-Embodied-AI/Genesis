@@ -1,6 +1,7 @@
 import os
 import threading
 import importlib
+from typing import TYPE_CHECKING
 
 import numpy as np
 import OpenGL.error
@@ -10,10 +11,12 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from genesis.ext import pyrender
-from genesis.options.vis import ViewerOptions
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
 from genesis.utils.misc import redirect_libc_stderr
+
+if TYPE_CHECKING:
+    from genesis.options.vis import ViewerOptions
 
 
 class ViewerLock:
@@ -28,7 +31,7 @@ class ViewerLock:
 
 
 class Viewer(RBC):
-    def __init__(self, options: ViewerOptions, context):
+    def __init__(self, options: 'ViewerOptions', context):
         self._res = options.res
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate

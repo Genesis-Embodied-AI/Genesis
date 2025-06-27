@@ -1,12 +1,16 @@
-from typing import override
-from pyglet.event import EVENT_HANDLE_STATE
+from typing import override, TYPE_CHECKING
+
 import numpy as np
 
-from genesis.engine.scene import Scene
-from genesis.ext.pyrender.node import Node
+from pyglet.event import EVENT_HANDLE_STATE
+
 from genesis.ext.pyrender.interaction.ray import Plane, Ray, RayHit
 from genesis.ext.pyrender.interaction.vec3 import Vec3
 from genesis.ext.pyrender.interaction.viewer_interaction_base import ViewerInteractionBase
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.ext.pyrender.node import Node
 
 
 class ViewerInteraction(ViewerInteractionBase):
@@ -15,8 +19,8 @@ class ViewerInteraction(ViewerInteractionBase):
     - mouse dragging
     """
 
-    camera: Node
-    scene: Scene
+    camera: 'Node'
+    scene: 'Scene'
     viewport_size: tuple[int, int]
     camera_yfov: float
 
@@ -24,8 +28,8 @@ class ViewerInteraction(ViewerInteractionBase):
     prev_mouse_pos: tuple[int, int]
 
     def __init__(self, 
-        camera: Node, 
-        scene: Scene, 
+        camera: 'Node', 
+        scene: 'Scene', 
         viewport_size: tuple[int, int], 
         camera_yfov: float,
         log_events: bool = False,

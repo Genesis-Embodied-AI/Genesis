@@ -14,6 +14,8 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
+from genesis.ext.pyrender.interaction.viewer_interaction import ViewerInteraction
+from genesis.ext.pyrender.interaction.viewer_interaction_base import ViewerInteractionBase
 from genesis.vis.rasterizer_context import RasterizerContext
 
 import sys
@@ -381,10 +383,6 @@ class Viewer(pyglet.window.Window):
         self._reset_view()
 
         # Setup mouse interaction
-
-        # Note: can't import ViewerIntaction at file scope while genesis.engine.scene is still being imported
-        from genesis.ext.pyrender.interaction.viewer_interaction import ViewerInteraction
-        from genesis.ext.pyrender.interaction.viewer_interaction_base import ViewerInteractionBase
 
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene

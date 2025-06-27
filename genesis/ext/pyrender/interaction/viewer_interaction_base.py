@@ -1,7 +1,5 @@
 from pyglet.event import EVENT_HANDLE_STATE
 
-from genesis import logger as gs_logger
-
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 
 class ViewerInteractionBase():
@@ -12,6 +10,10 @@ class ViewerInteractionBase():
 
     def __init__(self, log_events: bool = False):
         self.log_events = log_events
+
+        # delay import to avoid circular dependency
+        global gs_logger
+        from genesis import logger as gs_logger
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         if self.log_events:
