@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import torch
+from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 import genesis as gs
@@ -10,23 +11,15 @@ from genesis.utils.misc import tensor_to_array
 
 class FrameImageExporter:
     @staticmethod
-    def _export_frame_rgb_camera(export_dir, i_cam, i_env, i_step, rgb):
+    def _export_frame_rgb_camera(i_env, export_dir, i_cam, i_step, rgb):
         # Take the rgb channel in case the rgb tensor has RGBA channel.
         rgb = np.flip(tensor_to_array(rgb[i_env, ..., :3]), axis=-1)
         cv2.imwrite(f"{export_dir}/rgb_cam{i_cam}_env{i_env}_{i_step:03d}.png", rgb)
 
     @staticmethod
-    def _export_frame_depth_camera(export_dir, i_cam, i_env, i_step, depth):
+    def _export_frame_depth_camera(i_env, export_dir, i_cam, i_step, depth):
         depth = tensor_to_array(depth[i_env])
         cv2.imwrite(f"{export_dir}/depth_cam{i_cam}_env{i_env}_{i_step:03d}.png", depth)
-
-    @staticmethod
-    def _worker_export_frame_camera(args):
-        export_dir, i_cam, i_env, rgb, depth, i_step = args
-        if rgb is not None:
-            FrameImageExporter._export_frame_rgb_camera(export_dir, i_cam, i_env, i_step, rgb)
-        if depth is not None:
-            FrameImageExporter._export_frame_depth_camera(export_dir, i_cam, i_env, i_step, depth)
 
     def __init__(self, export_dir, depth_clip_max=100, depth_scale="log"):
         self.export_dir = export_dir
@@ -78,8 +71,8 @@ class FrameImageExporter:
         if camera_idx is None:
             camera_idx = range(len(depth if rgb is None else rgb))
         for i_cam in camera_idx:
-            rgb_cam = rgb[i_cam] if i_cam < len(rgb) else None
-            depth_cam = depth[i_cam] if i_cam < len(depth) else None
+            rgb_cam = rgb[i_cam] if rgb is not None and i_cam < len(rgb) else None
+            depth_cam = depth[i_cam] if depth is not None and i_cam < len(depth) else None
             if rgb_cam is not None or depth_cam is not None:
                 self.export_frame_single_camera(i_step, i_cam, rgb_cam, depth_cam)
 
@@ -101,6 +94,17 @@ class FrameImageExporter:
                 rgb = rgb.unsqueeze(0)
             assert rgb.ndim == 4, "rgb must be of shape (n_envs, H, W, 3)"
 
+            rgb_job = partial(
+                FrameImageExporter._export_frame_rgb_camera,
+                export_dir=self.export_dir,
+                i_cam=i_cam,
+                i_step=i_step,
+                rgb=rgb,
+            )
+
+            with ThreadPoolExecutor() as executor:
+                executor.map(rgb_job, np.arange(len(rgb)))
+
         if depth is not None:
             depth = torch.as_tensor(depth, dtype=gs.tc_float, device=gs.device)
 
@@ -112,7 +116,13 @@ class FrameImageExporter:
             depth = self._normalize_depth(depth)
             assert depth.ndim == 4, "depth must be of shape (n_envs, H, W, 1)"
 
-        env_idx = range(len(depth if rgb is None else rgb))
-        args_list = [(self.export_dir, i_cam, i_env, rgb, depth, i_step) for i_env in env_idx]
-        with ThreadPoolExecutor() as executor:
-            executor.map(FrameImageExporter._worker_export_frame_camera, args_list)
+            depth_job = partial(
+                FrameImageExporter._export_frame_depth_camera,
+                export_dir=self.export_dir,
+                i_cam=i_cam,
+                i_step=i_step,
+                depth=depth,
+            )
+
+            with ThreadPoolExecutor() as executor:
+                executor.map(depth_job, np.arange(len(depth)))

@@ -534,7 +534,9 @@ class Scene(RBC):
         denoise=True,
     ):
         """
-        Add a camera to the scene. The camera model can be either 'pinhole' or 'thinlens'.
+        Add a camera to the scene.
+
+        The camera model can be either 'pinhole' or 'thinlens'.
         The 'pinhole' model is a simple camera model that captures light rays from a single point in space.
         The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size,
         allowing for depth of field effects. When 'pinhole' is used, the `aperture` and `focal_len`
@@ -1080,15 +1082,28 @@ class Scene(RBC):
             )
 
     @gs.assert_built
-    def render_all_cameras(self, force_render=False):
+    def render_all_cameras(self, rgb=True, depth=False, normal=False, segmentation=False, force_render=False):
         """
         Render the scene for all cameras using the batch renderer.
+
+        Parameters
+        ----------
+        rgb : bool, optional
+            Whether to render the rgb image.
+        depth : bool, optional
+            Whether to render the depth image.
+        normal : bool, optional
+            Whether to render the normal image.
+        segmentation : bool, optional
+            Whether to render the segmentation image.
+        force_render : bool, optional
+            Whether to force render the scene.
 
         Returns:
             A tuple of tensors of shape (n_envs, H, W, 3) if rgb is not None, otherwise a list of tensors of shape (n_envs, H, W, 1) if depth is not None.
             If n_envs ==0, the first dimension of the tensor is squeezed.
         """
-        return self._visualizer.batch_renderer.render(force_render=force_render)
+        return self._visualizer.batch_renderer.render(rgb, depth, normal, segmentation, force_render)
 
     @gs.assert_built
     def clear_debug_object(self, object):
