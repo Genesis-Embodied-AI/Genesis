@@ -196,10 +196,13 @@ class Simulator(RBC):
         self._g_ti = ti.Vector.field(3, gs.ti_float, shape=self._B)
         self._g_ti.from_numpy(g_np)
 
+        for solver in self._solvers:
+            solver._gravity = self._g_ti
+
         # solvers
         self._rigid_only = self.rigid_solver.is_active()
         for solver in self._solvers:
-            solver._finalize_batch(self._B)
+            # solver._finalize_batch(self._B)
             solver.build()
             if solver.is_active():
                 self._active_solvers.append(solver)

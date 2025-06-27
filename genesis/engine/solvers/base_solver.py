@@ -19,9 +19,9 @@ class Solver(RBC):
         self._scene = scene
         self._dt: float = options.dt
         self._substep_dt: float = options.dt / sim.substeps
-
-        self._gravity_cfg = np.asarray(options.gravity, gs.np_float) if hasattr(options, "gravity") else None
-        self._gravity = None
+        self._gravity = sim.gravity
+        # self._gravity_cfg = np.asarray(options.gravity, gs.np_float) if hasattr(options, "gravity") else None
+        # self._gravity = None
 
         self._entities: list[Entity] = gs.List()
 
@@ -31,6 +31,7 @@ class Solver(RBC):
     def _add_force_field(self, force_field):
         self._ffs.append(force_field)
 
+    """
     def _finalize_batch(self, B: int):
         if self._gravity_cfg is None or self._gravity is not None:
             return
@@ -39,7 +40,7 @@ class Solver(RBC):
         if g.ndim == 1:
             g = np.tile(g[None, :], (B, 1))
         self._gravity.from_numpy(g[..., None])
-
+    """
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
