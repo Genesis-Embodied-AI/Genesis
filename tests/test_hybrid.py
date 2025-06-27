@@ -71,4 +71,4 @@ def test_rigid_mpm_muscle(show_viewer):
         scene.step()
 
     with np.testing.assert_raises(AssertionError):
-        assert_allclose(ball.get_pos().cpu(), ball_pos_init, atol=1e-2)
+        assert_allclose(ball.get_pos(), ball_pos_init, atol=1e-2)
