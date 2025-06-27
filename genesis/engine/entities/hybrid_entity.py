@@ -431,8 +431,8 @@ class HybridEntity(Entity):
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
                 frc_ang = (x_pos - link.COM).cross(frc_vel)
-                self._solver_rigid.links_state[link_idx, i_b].cfrc_ext_vel += frc_vel
-                self._solver_rigid.links_state[link_idx, i_b].cfrc_ext_ang += frc_ang
+                self._solver_rigid.links_state[link_idx, i_b].cfrc_applied_vel += frc_vel
+                self._solver_rigid.links_state[link_idx, i_b].cfrc_applied_ang += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
                 self._solver_soft.particles[f_, i_global, i_b].vel += vel_d * self.material.soft_dv_coef
