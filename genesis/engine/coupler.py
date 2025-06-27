@@ -649,6 +649,7 @@ class SAPCoupler(RBC):
         self._n_linesearch_iterations = options.n_linesearch_iterations
         self._linesearch_c = options.linesearch_c
         self._linesearch_tau = options.linesearch_tau
+        self.default_deformable_g = gs.ti_float(1.0e8)  # default deformable geometry size
 
     def build(self) -> None:
         self._B = self.sim._B
@@ -935,7 +936,7 @@ class SAPCoupler(RBC):
             )
             self.fem_floor_contact_pairs[i_c].barycentric = barycentric
 
-            deformable_g = ti.static(1.0e8)
+            deformable_g = ti.static(self.default_deformable_g)
             rigid_g = self.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
             if total_area < gs.EPS or rigid_g < gs.EPS:
