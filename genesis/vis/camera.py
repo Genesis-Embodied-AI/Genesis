@@ -1,6 +1,7 @@
 import inspect
 import os
 import time
+import math
 
 import cv2
 import numpy as np
@@ -185,8 +186,7 @@ class Camera(RBC):
     @gs.assert_built
     def _batch_render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
         """
-        Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
-        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `len(rendered_envs_idx)`.
+        Render the camera view with batch renderer.
         """
         assert self._visualizer._use_batch_renderer, "Batch renderer is not enabled."
 
@@ -441,11 +441,9 @@ class Camera(RBC):
     def _T_to_quat_for_madrona(self, T):
         if isinstance(T, torch.Tensor):
             _, quat = gu.T_to_trans_quat(T)
-            to_y_fwd = torch.tensor(
-                [1.0 / np.sqrt(2.0), -1.0 / np.sqrt(2.0), 0, 0], dtype=gs.tc_float, device=gs.device
-            ).expand(quat.shape[0], 4)
-            quat = gu.transform_quat_by_quat(to_y_fwd, quat)
-            return quat
+
+            w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+            return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
         else:
             gs.raise_exception(f"the input must be torch.Tensor. got: {type(T)=}")
 
@@ -528,19 +526,19 @@ class Camera(RBC):
             if transform.shape[-2:] != (4, 4):
                 raise ValueError(f"Transform shape {transform.shape} does not match (4, 4)")
             if transform.ndim == 2:
-                transform = transform.unsqueeze(0).expand(self.n_envs, 4, 4)
+                transform = transform.expand(self.n_envs, 4, 4)
         if pos is not None:
             assert pos.shape[-1] == 3, f"Pos shape {pos.shape} does not match (n_envs, 3)"
             if pos.ndim == 1:
-                pos = pos.unsqueeze(0).expand(self.n_envs, 3)
+                pos = pos.expand(self.n_envs, 3)
         if lookat is not None:
             assert lookat.shape[-1] == 3, f"Lookat shape {lookat.shape} does not match (n_envs, 3)"
             if lookat.ndim == 1:
-                lookat = lookat.unsqueeze(0).expand(self.n_envs, 3)
+                lookat = lookat.expand(self.n_envs, 3)
         if up is not None:
             assert up.shape[-1] == 3, f"Up shape {up.shape} does not match (n_envs, 3)"
             if up.ndim == 1:
-                up = up.unsqueeze(0).expand(self.n_envs, 3)
+                up = up.expand(self.n_envs, 3)
 
         assert (
             transform is None or transform.shape[0] == env_idx.shape[0]

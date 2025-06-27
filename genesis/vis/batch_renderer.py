@@ -155,20 +155,20 @@ class BatchRenderer(RBC):
         # TODO: Control whether to render rgb, depth, segmentation, normal separately
         rgb_torch, depth_torch = self._renderer.render(rigid, camera_pos, camera_quat)
 
-        # Squeeze the first dimension of the output if n_envs == 0
-        if self._visualizer.scene.n_envs == 0:
+        if rgb_torch is not None:
             if rgb_torch.ndim == 4:
                 rgb_torch = rgb_torch.squeeze(0)
+            self._rgb_torch = tuple(rgb_torch.swapaxes(0, 1))
+        else:
+            self._rgb_torch = None
+
+        if depth_torch is not None:
             if depth_torch.ndim == 4:
                 depth_torch = depth_torch.squeeze(0)
+            self._depth_torch = tuple(depth_torch.swapaxes(0, 1))
+        else:
+            self._depth_torch = None
 
-        # swap the first two dimensions of the output
-        rgb_torch = rgb_torch.swapaxes(0, 1)
-        depth_torch = depth_torch.swapaxes(0, 1)
-
-        # Create a tuple of tensors pointing to each sub tensor
-        self._rgb_torch = tuple(rgb_torch[i] for i in range(rgb_torch.shape[0]))
-        self._depth_torch = tuple(depth_torch[i] for i in range(depth_torch.shape[0]))
         return self._rgb_torch, self._depth_torch, None, None
 
     def destroy(self):
