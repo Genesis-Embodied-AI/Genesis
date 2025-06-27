@@ -231,7 +231,7 @@ def stream_writers(backend, printer_session):
                 path.unlink()
 
     # Create new empty worker-specific report
-    report_name = "-".join((report_path.stem, worker_id))
+    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
     report_path = report_path.with_name(f"{report_name}.txt")
     if report_path.exists():
         report_path.unlink()
