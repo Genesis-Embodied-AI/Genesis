@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from genesis.ext.pyrender.interaction.vec3 import Vec3
+
+from .vec3 import Vec3
 
 
 EPSILON = 1e-6
