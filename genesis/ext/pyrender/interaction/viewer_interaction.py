@@ -42,19 +42,23 @@ class ViewerInteraction(ViewerInteractionBase):
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
+        super().on_mouse_motion(x, y, dx, dy)
         self.prev_mouse_pos = (x, y)
 
     @override
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
+        super().on_mouse_drag(x, y, dx, dy, buttons, modifiers)
         self.prev_mouse_pos = (x, y)
 
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
+        super().on_mouse_press(x, y, button, modifiers)
         mouse_ray = self.screen_position_to_ray(x, y)
         # print(f"mouse_ray: {mouse_ray}")
 
     @override
     def on_draw(self) -> None:
+        super().on_draw()
         if self.scene._visualizer is not None and self.scene._visualizer.viewer_lock is not None:
             self.scene.clear_debug_objects()
         
