@@ -11,6 +11,9 @@ import numpy as np
 import mujoco
 import genesis as gs
 
+import tempfile
+from pathlib import Path
+
 from .utils import (
     get_hf_assets,
     assert_allclose,
@@ -2198,6 +2201,43 @@ def test_urdf_mimic(show_viewer, tol):
 
     gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_scene_saver_franka(show_viewer, tol):
+    scene1 = gs.Scene(show_viewer=show_viewer)
+    franka1 = scene1.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene1.build()
+
+    dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
+
+    franka1.set_dofs_kp(np.full(len(dof_idx), 3000), dof_idx)
+    franka1.set_dofs_kv(np.full(len(dof_idx), 300), dof_idx)
+
+    target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
+    franka1.control_dofs_position(target_pose, dof_idx)
+
+    for _ in range(400):
+        scene1.step()
+
+    pose_ref = franka1.get_dofs_position(dof_idx)
+
+    ckpt_path = Path(tempfile.gettempdir()) / "franka_unit.pkl"
+    scene1.save_checkpoint(ckpt_path)
+
+    scene2 = gs.Scene(show_viewer=show_viewer)
+    franka2 = scene2.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene2.build()
+    scene2.load_checkpoint(ckpt_path)
+
+    pose_loaded = franka2.get_dofs_position(dof_idx)
+
+    assert_allclose(pose_ref, pose_loaded, tol=tol)
 
 
 @pytest.mark.required
