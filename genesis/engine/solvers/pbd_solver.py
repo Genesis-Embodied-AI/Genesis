@@ -371,7 +371,7 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles[i_p, i_b].free:
                 # gravity
-                self.particles[i_p, i_b].vel = self.particles[i_p, i_b].vel + self._gravity[None] * self._substep_dt
+                self.particles[i_p, i_b].vel = self.particles[i_p, i_b].vel + self._gravity[i_b] * self._substep_dt
 
                 # external force fields
                 acc = ti.Vector.zero(gs.ti_float, 3)
