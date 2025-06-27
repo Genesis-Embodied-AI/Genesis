@@ -31,7 +31,7 @@ class ViewerLock:
 
 
 class Viewer(RBC):
-    def __init__(self, options: 'ViewerOptions', context):
+    def __init__(self, options: "ViewerOptions", context):
         self._res = options.res
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
