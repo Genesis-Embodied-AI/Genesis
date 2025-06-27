@@ -1,5 +1,6 @@
 import gc
 import os
+import re
 import sys
 from enum import Enum
 
@@ -30,11 +31,23 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
-    # Force disabling distributed framework if benchmarks are selected
+    # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
     if is_benchmarks:
-        config.option.numprocesses = 0
+        # Make sure that GPU backend is enforced
+        backend = config.getoption("--backend")
+        if backend == "cpu":
+            raise ValueError("Running benchmarks on CPU is not supported.")
+        config.option.backend = "gpu"
+
+        # Make sure that the number of workers is not too large
+        if isinstance(config.option.numprocesses, int):
+            max_workers = max(pytest_xdist_auto_num_workers(config), 1)
+            if config.option.numprocesses > max_workers:
+                raise ValueError(
+                    f"The number of workers for running benchmarks cannot exceed '{max_workers}' on this machine."
+                )
 
     # Force disabling forked for non-linux systems
     if not sys.platform.startswith("linux"):
@@ -45,21 +58,40 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if show_viewer:
         config.option.numprocesses = 0
 
-    # Disable low-level parallelization if distributed framework is enabled
-    # if config.option.numprocesses > 0:
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-    os.environ["NUMEXPR_NUM_THREADS"] = "1"
-    os.environ["NUMBA_NUM_THREADS"] = "1"
+    # Disable low-level parallelization if distributed framework is enabled.
+    # FIXME: It should be set to `max(int(physical_core_count / num_workers), 1)`, but 'num_workers' may be unknown.
+    if not is_benchmarks and config.option.numprocesses != 0:
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        os.environ["NUMBA_NUM_THREADS"] = "1"
+
+
+def _get_gpu_indices():
+    nvidia_gpu_indices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if nvidia_gpu_indices is not None:
+        return tuple(sorted(map(int, nvidia_gpu_indices.split(","))))
+
+    if sys.platform == "linux":
+        nvidia_gpu_indices = []
+        nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
+        if os.path.exists(nvidia_gpu_interface_path):
+            for device_path in os.listdir(nvidia_gpu_interface_path):
+                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
+                    gpu_id = int(re.search(r"Device Minor:\s+(\d+)", f.read()).group(1))
+                nvidia_gpu_indices.append(gpu_id)
+            return tuple(sorted(nvidia_gpu_indices))
+
+    return (0,)
 
 
 def pytest_xdist_auto_num_workers(config):
-    # Get available memory (RAM & VRAM) and number of physical cores.
     import psutil
     import genesis as gs
 
+    # Get available memory (RAM & VRAM) and number of physical cores.
     physical_core_count = psutil.cpu_count(logical=False)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
     _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
@@ -76,15 +108,39 @@ def pytest_xdist_auto_num_workers(config):
     else:
         ram_memory_per_worker = 7.5
         vram_memory_per_worker = 1.6
-    return min(
-        int(ram_memory / ram_memory_per_worker),
-        int(vram_memory / vram_memory_per_worker),
+    num_workers = min(
         physical_core_count,
+        max(int(ram_memory / ram_memory_per_worker), 1),
+        max(int(vram_memory / vram_memory_per_worker), 1),
     )
+
+    # Special treatment for benchmarks
+    expr = Expression.compile(config.option.markexpr)
+    is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+    if is_benchmarks:
+        num_cpu_per_gpu = 4
+        num_workers = min(
+            num_workers,
+            len(_get_gpu_indices()),
+            max(int(physical_core_count / num_cpu_per_gpu), 1),
+        )
+
+    return num_workers
+
+
+def pytest_runtest_setup(item):
+    # Enforce GPU affinity that distributed framework is enabled
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id and worker_id.startswith("gw"):
+        worker_num = int(worker_id[2:])
+        gpu_indices = _get_gpu_indices()
+        gpu_num = worker_num % len(gpu_indices)
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_indices[gpu_num])
+        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_indices[gpu_num])
 
 
 def pytest_addoption(parser):
-    parser.addoption("--backend", action="store", default="cpu", help="Default simulation backend.")
+    parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
 
 
@@ -97,7 +153,7 @@ def show_viewer(pytestconfig):
 def backend(pytestconfig):
     import genesis as gs
 
-    backend = pytestconfig.getoption("--backend", "cpu")
+    backend = pytestconfig.getoption("--backend") or gs.cpu
     if isinstance(backend, str):
         return getattr(gs.constants.backend, backend)
     return backend
@@ -220,6 +276,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
     else:
         precision = "32"
         debug = False
+
     try:
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"

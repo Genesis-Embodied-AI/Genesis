@@ -35,6 +35,12 @@ jobs:
 
           mkdir -p "${HOME}/.cache"
 
+          # Prefer idle nodes if any
+          IDLE_NODES=$(sinfo -h -o "%N %t" | awk '$2 == "idle" {print $1}')
+          if [[ -n "$IDLE_NODES" ]]; then
+            NODELIST="--nodelist=$IDLE_NODES"
+          fi
+
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
@@ -44,7 +50,7 @@ jobs:
             --export=\
           HF_TOKEN="${HF_TOKEN}",\
           NVIDIA_DRIVER_CAPABILITIES=all \
-            --partition=hpc-mid --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid ${NODELIST} --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
               pip install -e '.[dev,render]' && \
@@ -69,7 +75,7 @@ jobs:
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
             --export=${SLURM_ENV_VARS} \
-            --partition=hpc-mid --exclusive --nodes=1 --gpus=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
               : # sudo apt install -y tmate && \
@@ -77,8 +83,8 @@ jobs:
               tmate -S /tmp/tmate.sock wait tmate-ready && \
               tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
               pip install -e '.[dev,render]' && \
-              pytest --print -x -m 'benchmarks' --backend gpu ./tests && \
-              cp 'speed_test.txt' '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
+              pytest --print -x -m 'benchmarks' ./tests && \
+              cat speed_test*.txt > '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
               : # tmate -S /tmp/tmate.sock wait tmate-exit
             "
 

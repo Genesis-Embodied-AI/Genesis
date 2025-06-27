@@ -179,8 +179,8 @@ def get_device(backend: gs_backend):
             gs.raise_exception("torch cuda not available")
 
         device_idx = torch.cuda.current_device()
-        device = torch.device(f"cuda:{device_idx}")
-        device_property = torch.cuda.get_device_properties(device_idx)
+        device = torch.device("cuda", device_idx)
+        device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
         total_mem = device_property.total_memory / 1024**3
 
@@ -190,14 +190,14 @@ def get_device(backend: gs_backend):
 
         # on mac, cpu and gpu are in the same device
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps:0")
+        device = torch.device("mps", 0)
 
     elif backend == gs_backend.vulkan:
         if torch.cuda.is_available():
             device, device_name, total_mem, _ = get_device(gs_backend.cuda)
         elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
             device_idx = torch.xpu.current_device()
-            device = torch.device(f"xpu:{device_idx}")
+            device = torch.device("xpu", device_idx)
             device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3

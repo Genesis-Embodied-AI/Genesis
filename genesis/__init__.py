@@ -291,6 +291,7 @@ def _display_greeting(INFO_length):
     wave_width = max(0, min(38, wave_width))
     bar_width = wave_width * 2 + 9
     wave = ("┈┉" * wave_width)[:wave_width]
+    global logger
     logger.info(f"~<╭{'─'*(bar_width)}╮>~")
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─'*(bar_width)}╯>~")
@@ -314,9 +315,10 @@ def _custom_excepthook(exctype, value, tb):
     print("".join(traceback.format_exception(exctype, value, tb)))
 
     # Logger the exception right before exit if possible
+    global logger
     try:
         logger.error(f"{exctype.__name__}: {value}")
-    except AttributeError:
+    except (AttributeError, NameError):
         # Logger may not be configured at this point
         pass
 
