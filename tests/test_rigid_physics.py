@@ -2202,32 +2202,27 @@ def test_urdf_mimic(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_gravity(show_viewer):
-    base_rpm = 14468.429183500699
+def test_gravity(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
         sim_options=gs.options.SimOptions(
             dt=0.01,
             substeps=1,
-            gravity=[(0.0, 0.0, -9.8), (0.0, 0.0, -10.00)],
+            gravity=[(0.0, 0.0, -9.8), (0.0, 0.0, 9.8)],
         ),
     )
 
-    drone = scene.add_entity(
-        gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 1.0)),
-    )
+    sphere = scene.add_entity(gs.morphs.Sphere())
 
     scene.build(n_envs=2)
 
-    for _ in range(500):
-        drone.set_propellels_rpm([[base_rpm, base_rpm, base_rpm, base_rpm], [base_rpm, base_rpm, base_rpm, base_rpm]])
+    for _ in range(200):
         scene.step()
 
-    first_pos = drone.get_dofs_position()[0, 2]
-    second_pos = drone.get_dofs_position()[1, 2]
-    assert_allclose(
-        second_pos, first_pos - 2.5, tol=scene.sim_options.dt
-    )  # Relax the tolerance due to time integration's error
+    first_pos = sphere.get_dofs_position()[0, 2]
+    second_pos = sphere.get_dofs_position()[1, 2]
+
+    assert_allclose(first_pos * -1, second_pos, tol=tol)
 
 
 @pytest.mark.required

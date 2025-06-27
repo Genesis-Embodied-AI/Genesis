@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
+import torch
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -106,8 +107,8 @@ class Simulator(RBC):
         self._steps_local = options._steps_local
 
         self._cur_substep_global = 0
-        self._g_np = np.asarray(options.gravity, dtype=np.float32)
-        self._g_ti = None
+        self._g = torch.as_tensor(options.gravity, dtype=torch.float32).clone()
+        self._g_ti: ti.Field | None = None
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -189,10 +190,11 @@ class Simulator(RBC):
         self._B = self.scene._B
         self._para_level = self.scene._para_level
 
-        if self._g_np.ndim == 1:
-            self._g_np = np.repeat(self._g_np[None], self._B, axis=0)
+        g_np = self._g.numpy()
+        if g_np.ndim == 1:
+            g_np = np.repeat(g_np[None], self._B, axis=0)
         self._g_ti = ti.Vector.field(3, gs.ti_float, shape=self._B)
-        self._g_ti.from_numpy(self._g_np)
+        self._g_ti.from_numpy(g_np)
 
         # solvers
         self._rigid_only = self.rigid_solver.is_active()
@@ -425,7 +427,19 @@ class Simulator(RBC):
     @property
     def gravity(self):
         """The gravity vector."""
-        return self._g_ti
+        return self._g_ti if self._g_ti is not None else self._g
+
+    @gravity.setter
+    def gravity(self, new_g):
+        """Set the gravity vector for the simulator."""
+        # store as torch tensor
+        self._g = torch.as_tensor(new_g, dtype=gs.tc_float)
+        # if we've already built, update the Taichi field in-place
+        if self._g_ti is not None:
+            g_np = self._g.numpy()
+            if g_np.ndim == 1:
+                g_np = np.repeat(g_np[None], self._B, axis=0)
+            self._g_ti.from_numpy(g_np)
 
     @property
     def requires_grad(self):
