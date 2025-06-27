@@ -4,9 +4,9 @@ import numpy as np
 
 from pyglet.event import EVENT_HANDLE_STATE
 
-from genesis.ext.pyrender.interaction.ray import Plane, Ray, RayHit
-from genesis.ext.pyrender.interaction.vec3 import Vec3
-from genesis.ext.pyrender.interaction.viewer_interaction_base import ViewerInteractionBase
+from .ray import Plane, Ray, RayHit
+from .vec3 import Vec3
+from .viewer_interaction_base import ViewerInteractionBase
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene

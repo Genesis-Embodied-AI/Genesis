@@ -14,11 +14,7 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-from genesis.ext.pyrender.interaction.viewer_interaction import ViewerInteraction
-from genesis.ext.pyrender.interaction.viewer_interaction_base import ViewerInteractionBase
 from genesis.vis.rasterizer_context import RasterizerContext
-
-import sys
 
 if sys.platform.startswith("darwin"):
     # Mac OS
@@ -60,6 +56,8 @@ from .constants import (
     RenderFlags,
     TextAlign,
 )
+from .interaction.viewer_interaction import ViewerInteraction
+from .interaction.viewer_interaction_base import ViewerInteractionBase
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
