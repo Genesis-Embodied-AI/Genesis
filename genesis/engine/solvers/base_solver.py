@@ -17,8 +17,8 @@ class Solver(RBC):
         self._uid = gs.UID()
         self._sim = sim
         self._scene = scene
-        self._dt = options.dt
-        self._substep_dt = options.dt / sim.substeps
+        self._dt: float = options.dt
+        self._substep_dt: float = options.dt / sim.substeps
 
         self._gravity_cfg = np.asarray(options.gravity, gs.np_float) if hasattr(options, "gravity") else None
         self._gravity = None
