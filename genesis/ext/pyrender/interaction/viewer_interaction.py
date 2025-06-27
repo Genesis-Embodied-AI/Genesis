@@ -1,4 +1,5 @@
-from typing import override, TYPE_CHECKING
+from typing import TYPE_CHECKING
+from typing_extensions import override
 
 import numpy as np
 
