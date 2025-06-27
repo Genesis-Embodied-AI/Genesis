@@ -21,6 +21,7 @@ from genesis.options.solvers import (
 from genesis.repr_base import RBC
 
 from .couplers import SAPCoupler
+from .coupler import Coupler
 from .entities import HybridEntity
 from .solvers import (
     AvatarSolver,

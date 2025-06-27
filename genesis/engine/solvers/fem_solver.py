@@ -881,12 +881,23 @@ class FEMSolver(Solver):
                 continue
             self.linesearch_state[i_b].step_size *= self._linesearch_tau
 
+    @ti.kernel
+    def skip_linesearch(self, f: ti.i32):
+        # Inertia, x_prev, m
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_active[i_b]:
+                continue
+            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f + 1, i_v, i_b].pos + self.pcg_state_v[i_b, i_v].x
+
     def linesearch(self, f: ti.i32):
         """
         Note
         ------
         https://en.wikipedia.org/wiki/Backtracking_line_search#Algorithm
         """
+        if self._n_linesearch_iterations <= 0:
+            self.skip_linesearch(f)
+            return
         self.init_linesearch(f)
         for i in range(self._n_linesearch_iterations):
             self.one_linesearch_iter(f)
