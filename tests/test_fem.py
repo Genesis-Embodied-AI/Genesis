@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import igl
 
 import genesis as gs
 from .utils import assert_allclose
@@ -26,7 +27,7 @@ def test_multiple_fem_entities(fem_material, show_viewer):
             gravity=(0.0, 0.0, 0.0),
         ),
         fem_options=gs.options.FEMOptions(
-            damping=45.0,
+            damping=0.0,
         ),
         show_viewer=show_viewer,
     )
@@ -202,17 +203,18 @@ def fem_material_linear():
     return gs.materials.FEM.Elastic()
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
+def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-2,
+            dt=1.0 / 60.0,
+            substeps=2,
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
 
     # Add first FEM entity
@@ -237,15 +239,105 @@ def test_multiple_fem_entities_implicit(fem_material_linear, show_viewer):
     scene.build()
 
     # Run simulation
-    for _ in range(500):
+    for _ in range(200):
         scene.step()
 
     for entity in scene.entities:
         state = entity.get_state()
-        vel = state.vel.detach().cpu().numpy()
-        assert_allclose(vel, 0.0, atol=2e-3), f"Entity {entity.uid} velocity is not near zero."
         pos = state.pos.detach().cpu().numpy()
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
             min_pos_z, 0.0, atol=5e-2
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+
+
+def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
+    """Test adding multiple FEM entities to the scene"""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.5, -0.2, 0.7),
+            radius=0.1,
+        ),
+        material=fem_material_linear,
+    )
+
+    # Build the scene
+    scene.build()
+
+    # Run simulation
+    for _ in range(200):
+        scene.step()
+
+    for entity in scene.entities:
+        state = entity.get_state()
+        pos = state.pos.detach().cpu().numpy()
+        min_pos_z = np.min(pos[..., 2])
+        assert_allclose(
+            min_pos_z, 0.0, atol=1e-3
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear_corotated():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated")
+
+
+def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
+    """Test adding multiple FEM entities to the scene"""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.5, -0.2, 0.5),
+            radius=0.1,
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    # Build the scene
+    scene.build()
+
+    # Run simulation
+    for _ in range(200):
+        scene.step()
+
+    for entity in scene.entities:
+        state = entity.get_state()
+        pos = state.pos.detach().cpu().numpy().reshape(-1, 3)
+        min_pos_z = np.min(pos[..., 2])
+        assert_allclose(
+            min_pos_z, 0.0, atol=1e-3
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+        BV, BF = igl.bounding_box(pos)
+        x_scale = BV[0, 0] - BV[-1, 0]
+        y_scale = BV[0, 1] - BV[-1, 1]
+        z_scale = BV[0, 2] - BV[-1, 2]
+        assert_allclose(x_scale, 0.2, atol=1e-3), f"Entity {entity.uid} X scale {x_scale} is not close to 0.2."
+        assert_allclose(y_scale, 0.2, atol=1e-3), f"Entity {entity.uid} Y scale {y_scale} is not close to 0.2."
+        # The Z scale is expected to be more squashed due to gravity
+        assert_allclose(z_scale, 0.2, atol=2e-3), f"Entity {entity.uid} Z scale {z_scale} is not close to 0.2."

@@ -380,12 +380,16 @@ class RigidEntity(Entity):
             and links_j_infos
             and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
         ):
-            # Select the deepest fixed joint down the kinematic tree
-            idx = 0
-            for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
-                if l_info["parent_idx"] in (0, -1) and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0:
+            # Select the second joint down the kinematic tree if possible without messing up with fixed links to keep
+            root_idx = 0
+            for idx, (l_info, link_j_infos) in tuple(enumerate(zip(l_infos, links_j_infos)))[:2]:
+                if (
+                    l_info["name"] not in morph.links_to_keep
+                    and l_info["parent_idx"] in (0, -1)
+                    and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0
+                ):
+                    root_idx = idx
                     continue
-                idx -= 1
                 break
 
             # Define free joint
@@ -407,20 +411,21 @@ class RigidEntity(Entity):
             j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
-            links_j_infos[idx] = [j_info]
+            links_j_infos[root_idx] = [j_info]
 
             # Rename root link for clarity if relevant
-            if idx == 0:
-                l_infos[idx]["name"] = "base"
+            if root_idx == 0:
+                l_infos[root_idx]["name"] = "base"
 
-            # Shift root idx for all child links
-            for l_info in l_infos[idx:]:
-                if "root_idx" in l_info and l_info["root_idx"] == idx + 1:
-                    l_info["root_idx"] = idx
+            # Shift root idx for all child links and replace root if no longer fixed wrt world
+            for i_l in range(root_idx, len(l_infos)):
+                l_info = l_infos[i_l]
+                if "root_idx" in l_info and l_info["root_idx"] in (root_idx + 1, i_l):
+                    l_info["root_idx"] = root_idx
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
-            for i_l in range(idx, len(l_infos)):
+            for i_l in range(root_idx, len(l_infos)):
                 l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in links_j_infos[i_l]:
                     j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
@@ -1319,10 +1324,11 @@ class RigidEntity(Entity):
                         )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                         # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
-                        for i_error, i_dof in ti.ndrange(6, n_dofs):
-                            i_row = i_ee * 6 + i_error
-                            i_dof_ = dofs_idx[i_dof]
-                            self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
+                        for i_dof in range(n_dofs):
+                            for i_error in ti.static(range(6)):
+                                i_row = i_ee * 6 + i_error
+                                i_dof_ = dofs_idx[i_dof]
+                                self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
 
                     # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
                     lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, n_dofs, i_b)
@@ -1395,6 +1401,7 @@ class RigidEntity(Entity):
                         self._IK_qpos_best[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
                     for i_error in range(n_error_dims):
                         self._IK_err_pose_best[i_error, i_b] = self._IK_err_pose[i_error, i_b]
+                    break
 
                 else:
                     # copy to _IK_qpos if this sample is better
@@ -3334,8 +3341,7 @@ class RigidEntity(Entity):
         contact_info : dict
             The contact information.
         """
-        scene_contact_info = self._solver.collider.contact_data.to_torch(gs.device)
-        n_contacts = self._solver.collider.n_contacts.to_torch(gs.device)
+        contacts_info = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
         if with_entity is not None and self.idx == with_entity.idx:
@@ -3345,12 +3351,12 @@ class RigidEntity(Entity):
 
         valid_mask = logical_operation(
             torch.logical_and(
-                scene_contact_info["geom_a"] >= self.geom_start,
-                scene_contact_info["geom_a"] < self.geom_end,
+                contacts_info["geom_a"] >= self.geom_start,
+                contacts_info["geom_a"] < self.geom_end,
             ),
             torch.logical_and(
-                scene_contact_info["geom_b"] >= self.geom_start,
-                scene_contact_info["geom_b"] < self.geom_end,
+                contacts_info["geom_b"] >= self.geom_start,
+                contacts_info["geom_b"] < self.geom_end,
             ),
         )
         if with_entity is not None and self.idx != with_entity.idx:
@@ -3358,45 +3364,26 @@ class RigidEntity(Entity):
                 valid_mask,
                 torch.logical_or(
                     torch.logical_and(
-                        scene_contact_info["geom_a"] >= with_entity.geom_start,
-                        scene_contact_info["geom_a"] < with_entity.geom_end,
+                        contacts_info["geom_a"] >= with_entity.geom_start,
+                        contacts_info["geom_a"] < with_entity.geom_end,
                     ),
                     torch.logical_and(
-                        scene_contact_info["geom_b"] >= with_entity.geom_start,
-                        scene_contact_info["geom_b"] < with_entity.geom_end,
+                        contacts_info["geom_b"] >= with_entity.geom_start,
+                        contacts_info["geom_b"] < with_entity.geom_end,
                     ),
                 ),
             )
 
-        # Create an index tensor for contacts and compare against per-env n_contacts.
-        # Assumes valid_mask.shape[0] corresponds to the maximum number of contacts.
-        contact_indices = torch.arange(valid_mask.shape[0], device=valid_mask.device).unsqueeze(1)
-        valid_mask = torch.logical_and(valid_mask, contact_indices < n_contacts)
-
         if self._solver.n_envs == 0:
-            valid_idx = torch.nonzero(valid_mask.squeeze(), as_tuple=True)[0]
-            contact_info = {
-                "geom_a": scene_contact_info["geom_a"][valid_idx, 0],
-                "geom_b": scene_contact_info["geom_b"][valid_idx, 0],
-                "link_a": scene_contact_info["link_a"][valid_idx, 0],
-                "link_b": scene_contact_info["link_b"][valid_idx, 0],
-                "position": scene_contact_info["pos"][valid_idx, 0],
-                "force_a": -scene_contact_info["force"][valid_idx, 0],
-                "force_b": scene_contact_info["force"][valid_idx, 0],
-            }
+            contacts_info = {key: value[valid_mask] for key, value in contacts_info.items()}
         else:
-            max_env_collisions = int(torch.max(n_contacts).item())
-            contact_info = {
-                "geom_a": scene_contact_info["geom_a"][:max_env_collisions].t(),
-                "geom_b": scene_contact_info["geom_b"][:max_env_collisions].t(),
-                "link_a": scene_contact_info["link_a"][:max_env_collisions].t(),
-                "link_b": scene_contact_info["link_b"][:max_env_collisions].t(),
-                "position": scene_contact_info["pos"][:max_env_collisions].transpose(1, 0),
-                "force_a": -scene_contact_info["force"][:max_env_collisions].transpose(1, 0),
-                "force_b": scene_contact_info["force"][:max_env_collisions].transpose(1, 0),
-                "valid_mask": valid_mask[:max_env_collisions].t(),
-            }
-        return contact_info
+            contacts_info["valid_mask"] = valid_mask
+
+        contacts_info["force_a"] = -contacts_info["force"]
+        contacts_info["force_b"] = +contacts_info["force"]
+        del contacts_info["force"]
+
+        return contacts_info
 
     def get_links_net_contact_force(self, envs_idx=None, *, unsafe=False):
         """

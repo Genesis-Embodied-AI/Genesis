@@ -1,6 +1,8 @@
 import numpy as np
 import trimesh
 
+import taichi as ti
+
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
@@ -231,12 +233,8 @@ class RasterizerContext:
 
                 for link in links:
                     link_T = gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx])
-                    buffer_updates[
-                        self._scene.get_buffer_id(
-                            self.link_frame_nodes[link.uid],
-                            "model",
-                        )
-                    ] = link_T.transpose([0, 2, 1])
+                    node = self._scene.get_buffer_id(self.link_frame_nodes[link.uid], "model")
+                    buffer_updates[node] = link_T.transpose((0, 2, 1))
 
     def on_tool(self):
         if self.sim.tool_solver.is_active():
@@ -320,32 +318,56 @@ class RasterizerContext:
 
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
-                    buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
-                        [0, 2, 1]
-                    )
+                    node = self.rigid_nodes[geom.uid]
+                    node.mesh._bounds = None
+                    for primitive in node.mesh.primitives:
+                        primitive.poses = geom_T
+                    buffer_updates[self._scene.get_buffer_id(node, "model")] = geom_T.transpose((0, 2, 1))
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
     def update_contact(self, buffer_updates):
-        if self.sim.rigid_solver.is_active():
-            batch_idx = 0  # only visualize contact for the first scene
-            for i_con in range(self.sim.rigid_solver.collider.n_contacts[batch_idx]):
-                contact_data = self.sim.rigid_solver.collider.contact_data[i_con, batch_idx]
-                contact_pos = np.array(contact_data.pos) + self.scene.envs_offset[batch_idx]
+        if self.sim.rigid_solver.is_active() and any(link.visualize_contact for link in self.sim.rigid_solver.links):
+            # Extract all contact information at once
+            contacts_info = self.sim.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
-                ga_state = self.sim.rigid_solver.geoms_state[contact_data.geom_a, batch_idx]
-                gb_state = self.sim.rigid_solver.geoms_state[contact_data.geom_b, batch_idx]
-                aabb_size = min(
-                    (ga_state.aabb_max - ga_state.aabb_min).norm(), (gb_state.aabb_max - gb_state.aabb_min).norm()
-                )
-                normal_scaled = aabb_size * contact_data.normal
-                normal_color = (0.9, 0.0, 0.8, 1.0)
-                if self.sim.rigid_solver.links[contact_data.link_a].visualize_contact:
-                    self.draw_contact_arrow(pos=contact_pos, force=-contact_data.force)
-                    self.draw_debug_arrow(pos=contact_pos, vec=normal_scaled, color=normal_color, persistent=False)
-                if self.sim.rigid_solver.links[contact_data.link_b].visualize_contact:
-                    self.draw_contact_arrow(pos=contact_pos, force=contact_data.force)
-                    self.draw_debug_arrow(pos=contact_pos, vec=-normal_scaled, color=normal_color, persistent=False)
+            # Only visualize contact for the first scene
+            batch_idx = 0
+            if self.sim.rigid_solver.n_envs > 0:
+                contacts_info = {key: value[batch_idx] for key, value in contacts_info.items()}
+
+            # Early return if no contact
+            n_contacts = len(contacts_info["geom_a"])
+            if n_contacts == 0:
+                return
+
+            geoms_aabb = self.sim.rigid_solver.geoms_init_AABB.to_numpy()
+            ga_aabb = geoms_aabb[contacts_info["geom_a"]]
+            gb_aabb = geoms_aabb[contacts_info["geom_b"]]
+            ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
+            gb_aabb_size = np.linalg.norm(gb_aabb[:, -1] - gb_aabb[:, 0], axis=1)
+            normal_scale = np.minimum(ga_aabb_size, gb_aabb_size)
+
+            contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
+            contact_normal_scaled = contacts_info["normal"] * normal_scale[:, None]
+            contact_force = contacts_info["force"]
+
+            for i_c in range(n_contacts):
+                for link_idx, sign in (
+                    (contacts_info["link_a"][i_c], -1),
+                    (contacts_info["link_b"][i_c], 1),
+                ):
+                    if self.sim.rigid_solver.links[link_idx].visualize_contact:
+                        self.draw_contact_arrow(
+                            pos=contact_pos[i_c],
+                            force=sign * contact_force[i_c],
+                        )
+                        self.draw_debug_arrow(
+                            pos=contact_pos[i_c],
+                            vec=-sign * contact_normal_scaled[i_c],
+                            color=(0.9, 0.0, 0.8, 1.0),
+                            persistent=False,
+                        )
 
     def on_avatar(self):
         if self.sim.avatar_solver.is_active():
@@ -389,9 +411,11 @@ class RasterizerContext:
 
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx]
-                    buffer_updates[self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")] = geom_T.transpose(
-                        [0, 2, 1]
-                    )
+                    node = self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")
+                    node.mesh._bounds = None
+                    for primitive in node.mesh.primitives:
+                        primitive.poses = geom_T
+                    buffer_updates[node] = geom_T.transpose((0, 2, 1))
 
     def on_mpm(self):
         if self.sim.mpm_solver.is_active():
@@ -420,12 +444,7 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array(
-                                [
-                                    self.sim.mpm_solver.boundary.lower,
-                                    self.sim.mpm_solver.boundary.upper,
-                                ]
-                            ),
+                            bounds=np.array([self.sim.mpm_solver.boundary.lower, self.sim.mpm_solver.boundary.upper]),
                             wireframe=True,
                             color=(1.0, 1.0, 0.0, 1.0),
                         ),
@@ -456,12 +475,8 @@ class RasterizerContext:
                     tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
                     tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end]
 
-                    buffer_updates[
-                        self._scene.get_buffer_id(
-                            self.static_nodes[mpm_entity.uid],
-                            "model",
-                        )
-                    ] = tfs.transpose([0, 2, 1])
+                    node = self._scene.get_buffer_id(self.static_nodes[mpm_entity.uid], "model")
+                    buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                 elif mpm_entity.surface.vis_mode == "visual":
                     mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end]
@@ -490,12 +505,7 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array(
-                                [
-                                    self.sim.sph_solver.boundary.lower,
-                                    self.sim.sph_solver.boundary.upper,
-                                ]
-                            ),
+                            bounds=np.array([self.sim.sph_solver.boundary.lower, self.sim.sph_solver.boundary.upper]),
                             wireframe=True,
                             color=(0.0, 1.0, 1.0, 1.0),
                         ),
@@ -526,12 +536,8 @@ class RasterizerContext:
                     tfs = np.tile(np.eye(4), (sph_entity.n_particles, 1, 1))
                     tfs[:, :3, 3] = particles_all[sph_entity.particle_start : sph_entity.particle_end]
 
-                    buffer_updates[
-                        self._scene.get_buffer_id(
-                            self.static_nodes[sph_entity.uid],
-                            "model",
-                        )
-                    ] = tfs.transpose([0, 2, 1])
+                    node = self._scene.get_buffer_id(self.static_nodes[sph_entity.uid], "model")
+                    buffer_updates[node] = tfs.transpose((0, 2, 1))
 
     def on_pbd(self):
         if self.sim.pbd_solver.is_active():
@@ -572,12 +578,7 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array(
-                                [
-                                    self.sim.pbd_solver.boundary.lower,
-                                    self.sim.pbd_solver.boundary.upper,
-                                ]
-                            ),
+                            bounds=np.array([self.sim.pbd_solver.boundary.lower, self.sim.pbd_solver.boundary.upper]),
                             wireframe=True,
                             color=(0.0, 1.0, 1.0, 1.0),
                         ),
@@ -610,12 +611,8 @@ class RasterizerContext:
                         tfs = np.tile(np.eye(4), (pbd_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[pbd_entity.particle_start : pbd_entity.particle_end]
 
-                        buffer_updates[
-                            self._scene.get_buffer_id(
-                                self.static_nodes[pbd_entity.uid],
-                                "model",
-                            )
-                        ] = tfs.transpose([0, 2, 1])
+                        node = self._scene.get_buffer_id(self.static_nodes[pbd_entity.uid], "model")
+                        buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                     elif self.render_particle_as == "tet":
                         new_verts = mu.transform_tets_mesh_verts(
@@ -808,6 +805,7 @@ class RasterizerContext:
         # update variables not used in simulation
         self.visualizer.update_visual_states()
 
+        self._scene._bounds = None
         self.update_link_frame(buffer_updates)
         self.update_tool(buffer_updates)
         self.update_rigid(buffer_updates)

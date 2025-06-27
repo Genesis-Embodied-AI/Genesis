@@ -98,7 +98,7 @@ class Logger:
         self.timer_lock.acquire()
 
         # swap with timer output
-        if not self._is_new_line:
+        if not self._is_new_line and not self._stream.closed:
             self._stream.write("\r")
         try:
             yield
@@ -113,6 +113,10 @@ class Logger:
             yield
         finally:
             self.timer_lock.release()
+
+    def log(self, level, msg, *args, **kwargs):
+        with self.log_wrapper():
+            self._logger.log(level, msg, *args, **kwargs)
 
     def debug(self, message):
         with self.log_wrapper():

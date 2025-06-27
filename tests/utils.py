@@ -166,44 +166,47 @@ def get_git_commit_info(ref="HEAD"):
 def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
     assert num_retry >= 1
 
-    num_trials = 0
-    try:
-        # Try downloading the assets
-        asset_path = snapshot_download(
-            repo_type="dataset",
-            repo_id="Genesis-Intelligence/assets",
-            allow_patterns=pattern,
-            max_workers=1,
-        )
+    for _ in range(num_retry):
+        num_trials = 0
+        try:
+            # Try downloading the assets
+            asset_path = snapshot_download(
+                repo_type="dataset",
+                repo_id="Genesis-Intelligence/assets",
+                allow_patterns=pattern,
+                max_workers=1,
+            )
 
-        # Make sure that download was successful
-        has_files = False
-        for path in Path(asset_path).rglob("*"):
-            if not path.is_file():
-                continue
-            has_files = True
+            # Make sure that download was successful
+            has_files = False
+            for path in Path(asset_path).rglob(pattern):
+                if not path.is_file():
+                    continue
+                has_files = True
 
-            if path.stat().st_size == 0:
-                raise HTTPError(f"File '{path}' is empty.")
+                if path.stat().st_size == 0:
+                    raise HTTPError(f"File '{path}' is empty.")
 
-            if path.suffix.lower() == ".xml":
-                try:
-                    ET.parse(path)
-                except ET.ParseError as e:
-                    raise HTTPError(f"Impossible to parse XML file.") from e
-        if not has_files:
-            raise HTTPError("No file downloaded.")
-    except HTTPError:
-        if num_trials == num_retry:
-            raise
-        print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
-        time.sleep(retry_delay)
-        num_trials += 1
+                if path.suffix.lower() in (".xml", ".urdf"):
+                    try:
+                        ET.parse(path)
+                    except ET.ParseError as e:
+                        raise HTTPError(f"Impossible to parse XML file.") from e
+            if not has_files:
+                raise HTTPError("No file downloaded.")
+        except HTTPError:
+            num_trials += 1
+            if num_trials == num_retry:
+                raise
+            print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
+            time.sleep(retry_delay)
+        else:
+            break
 
     return asset_path
 
 
-def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
+def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
     if all(isinstance(e, np.ndarray) and e.size == 0 for e in (actual, desired)):
         return
@@ -214,7 +217,11 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None):
         rtol = 0.0
     if atol is None:
         atol = 0.0
-    np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol)
+    np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
+
+
+def assert_array_equal(actual, desired, *, err_msg=None):
+    np.testing.assert_array_equal(actual, desired, err_msg=err_msg)
 
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
@@ -412,7 +419,7 @@ def _get_model_mappings(
 
 
 def build_mujoco_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping
+    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping, native_ccd
 ):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
@@ -438,7 +445,10 @@ def build_mujoco_sim(
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
+    if native_ccd:
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
+    else:
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     if multi_contact:
         model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
     else:
@@ -460,6 +470,7 @@ def build_genesis_sim(
     multi_contact,
     mujoco_compatibility,
     adjacent_collision,
+    gjk_collision,
     show_viewer,
     mj_sim,
 ):
@@ -488,6 +499,7 @@ def build_genesis_sim(
             tolerance=mj_sim.model.opt.tolerance,
             ls_iterations=mj_sim.model.opt.ls_iterations,
             ls_tolerance=mj_sim.model.opt.ls_tolerance,
+            use_gjk_collision=gjk_collision,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -555,12 +567,15 @@ def check_mujoco_model_consistency(
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     assert not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    assert mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     assert not (mj_sim.model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_FWDINV)
 
     mj_adj_collision = bool(mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_FILTERPARENT)
     gs_adj_collision = gs_sim.rigid_solver._options.enable_adjacent_collision
     assert gs_adj_collision == mj_adj_collision
+
+    gs_use_gjk_collision = gs_sim.rigid_solver._options.use_gjk_collision
+    mj_use_gjk_collision = not (mj_sim.model.opt.disableflags & mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
+    assert gs_use_gjk_collision == mj_use_gjk_collision
 
     mj_solver = mujoco.mjtSolver(mj_sim.model.opt.solver)
     if mj_solver.name == "mjSOL_PGS":
@@ -747,8 +762,18 @@ def check_mujoco_data_consistency(
     if gs_n_constraints:
         gs_contact_pos = gs_sim.rigid_solver.collider.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
         mj_contact_pos = mj_sim.data.contact.pos
-        gs_sidx = np.argsort(gs_contact_pos[:, 0])
-        mj_sidx = np.argsort(mj_contact_pos[:, 0])
+        # Sort based on the axis with the largest variation
+        max_var_axis = 0
+        if gs_n_contacts > 1:
+            max_var = -1
+            for axis in range(3):
+                sorted_contact_pos = np.sort(mj_contact_pos[:, axis])
+                var = np.min(sorted_contact_pos[1:] - sorted_contact_pos[:-1])
+                if var > max_var:
+                    max_var_axis = axis
+                    max_var = var
+        gs_sidx = np.argsort(gs_contact_pos[:, max_var_axis])
+        mj_sidx = np.argsort(mj_contact_pos[:, max_var_axis])
         assert_allclose(gs_contact_pos[gs_sidx], mj_contact_pos[mj_sidx], tol=tol)
         gs_contact_normal = gs_sim.rigid_solver.collider.contact_data.normal.to_numpy()[:gs_n_contacts, 0]
         mj_contact_normal = -mj_sim.data.contact.frame[:, :3]

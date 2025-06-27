@@ -45,28 +45,71 @@ def raise_exception_from(msg="Something went wrong.", cause=None):
 
 
 class redirect_libc_stderr:
+    """
+    Context-manager that temporarily redirects C / C++ std::cerr (i.e. the C `stderr` file descriptor 2) to a given
+    Python file-like object's fd.
+
+    Works on macOS, Linux (glibc / musl), and Windows (MSVCRT / Universal CRT ≥ VS2015).
+    """
+
     def __init__(self, fd):
         self.fd = fd
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
     def __enter__(self):
-        # TODO: Add Linux and Windows support
-        if sys.platform == "darwin":
+        self.stderr_fileno = sys.stderr.fileno()
+        self.original_stderr_fileno = os.dup(self.stderr_fileno)
+        sys.stderr.flush()
+
+        if os.name == "posix":  # macOS, Linux, *BSD, …
             libc = ctypes.CDLL(None)
-            self.stderr_fileno = sys.stderr.fileno()
-            self.original_stderr_fileno = os.dup(self.stderr_fileno)
-            sys.stderr.flush()
             libc.fflush(None)
             libc.dup2(self.fd.fileno(), self.stderr_fileno)
+        elif os.name == "nt":  # Windows
+            # FIXME: Do not redirect stderr on Windows OS when running pytest, otherwise it will raise this exception:
+            # "OSError: [WinError 6] The handle is invalid"
+            if "PYTEST_VERSION" not in os.environ:
+                msvcrt = ctypes.CDLL("msvcrt")
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+                msvcrt.fflush(None)
+                msvcrt._dup2(self.fd.fileno(), self.stderr_fileno)
+
+                STDERR_HANDLE = -12
+                new_os_handle = msvcrt._get_osfhandle(self.fd.fileno())
+                kernel32.SetStdHandle(STDERR_HANDLE, new_os_handle)
+        else:
+            gs.logger.warning(f"Unsupported platform for redirecting libc stderr: {sys.platform}")
+
+        return self
+
+    # --------------------------------------------------
+    # Exit: restore previous stderr, close the temp copy
+    # --------------------------------------------------
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.stderr_fileno is not None:
+        if self.stderr_fileno is None:
+            return
+
+        if os.name == "posix":
             libc = ctypes.CDLL(None)
             sys.stderr.flush()
             libc.fflush(None)
             libc.dup2(self.original_stderr_fileno, self.stderr_fileno)
-            os.close(self.original_stderr_fileno)
+        elif os.name == "nt":
+            if "PYTEST_VERSION" not in os.environ:
+                msvcrt = ctypes.CDLL("msvcrt")
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+                sys.stderr.flush()
+                msvcrt.fflush(None)
+                msvcrt._dup2(self.original_stderr_fileno, self.stderr_fileno)
+
+                STDERR_HANDLE = -12
+                orig_os_handle = msvcrt._get_osfhandle(self.original_stderr_fileno)
+                kernel32.SetStdHandle(STDERR_HANDLE, orig_os_handle)
+
+        os.close(self.original_stderr_fileno)
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 

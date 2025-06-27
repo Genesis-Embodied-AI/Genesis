@@ -27,10 +27,15 @@ class Elastic(Base):
         Poisson ratio, describing the material's volume change under stress. Default is 0.2.
     rho: float, optional
         Material density (kg/m^3). Default is 1000.
+    hydroelastic_modulus: float, optional
+        Hydroelastic modulus for hydroelastic contact. Default is 1e7.
+    friction_mu: float, optional
+        Friction coefficient. Default is 0.1.
     model: str, optional
         Constitutive model to use for stress computation. Options are:
         - 'linear': Linear elasticity model
         - 'stable_neohookean': A numerically stable Neo-Hookean model
+        - 'linear_corotated': Linear corotated elasticity model
         Default is 'linear'.
     """
 
@@ -39,27 +44,47 @@ class Elastic(Base):
         E=1e6,  # Young's modulus
         nu=0.2,  # Poisson's ratio
         rho=1000.0,  # density (kg/m^3)
+        hydroelastic_modulus=1e7,  # hydroelastic_modulus for hydroelastic contact
+        friction_mu=0.1,
         model="linear",
     ):
-        super().__init__(E, nu, rho)
+        super().__init__(E, nu, rho, hydroelastic_modulus, friction_mu)
 
         if model == "linear":
             self.update_stress = self.update_stress_linear
             self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_linear
+            self.compute_energy_gradient = self.compute_energy_gradient_linear
             self.compute_energy = self.compute_energy_linear
-        elif model == "stable_neohookean":
+            self.hessian_invariant = True
+        elif model in ("stable_neohookean", "stable_neohooken"):
             self.update_stress = self.update_stress_stable_neohookean
             self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_stable_neohookean
+            self.compute_energy_gradient = self.compute_energy_gradient_stable_neohookean
             self.compute_energy = self.compute_energy_stable_neohookean
-        elif model == "stable_neohooken":
-            gs.logger.warning("The 'stable_neohooken' model is deprecated. Use 'stable_neohookean' instead.")
-            self.update_stress = self.update_stress_stable_neohookean
-            self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_stable_neohookean
-            self.compute_energy = self.compute_energy_stable_neohookean
+            self.hessian_invariant = False
+            if model == "stable_neohooken":
+                gs.logger.warning("The 'stable_neohooken' model is deprecated. Use 'stable_neohookean' instead.")
+        elif model == "linear_corotated":
+            self.build = self.build_linear_corotated
+            self.pre_compute = self.pre_compute_linear_corotated
+            self.update_stress = self.update_stress_linear_corotated
+            self.compute_energy_gradient_hessian = self.compute_energy_gradient_hessian_linear_corotated
+            self.compute_energy_gradient = self.compute_energy_gradient_linear_corotated
+            self.compute_energy = self.compute_energy_linear_corotated
+            self.hessian_static = False
         else:
             gs.raise_exception(f"Unrecognized constitutive model: {model}")
 
         self._model = model
+
+    def build_linear_corotated(self, fem_solver):
+        self.R = ti.field(dtype=gs.ti_mat3, shape=(fem_solver._B, fem_solver.n_elements))
+
+    @ti.func
+    def pre_compute_linear_corotated(self, J, F, i_e, i_b):
+        U, S, V = ti.svd(F)
+        R = U @ V.transpose()
+        self.R[i_b, i_e] = R
 
     @ti.func
     def update_stress_linear(self, mu, lam, J, F, actu, m_dir):
@@ -79,6 +104,10 @@ class Elastic(Base):
         stress = mu * (1 - 1 / (IC + 1)) * F + lam * (J - alpha) * dJdF
 
         return stress
+
+    @ti.func
+    def update_stress_linear_corotated(self, mu, lam, J, F, actu, m_dir):
+        raise NotImplementedError("Linear corotated stress update is not implemented yet.")
 
     @ti.func
     def compute_energy_gradient_hessian_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
@@ -148,7 +177,49 @@ class Elastic(Base):
         return energy, gradient
 
     @ti.func
-    def compute_energy_linear(self, mu, lam, J, F, actu, m_dir):
+    def compute_energy_gradient_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
+        """
+        Compute the energy, gradient for linear elasticity.
+
+        Parameters
+        ----------
+        mu: float
+            The first Lame parameter (shear modulus).
+        lam: float
+            The second Lame parameter (related to volume change).
+        J: float
+            The determinant of the deformation gradient F.
+        F: ti.Matrix
+            The deformation gradient matrix.
+        actu: ti.Matrix
+            The activation matrix (not used in linear elasticity).
+        m_dir: ti.Matrix
+            The material direction (not used in linear elasticity).
+
+        Returns
+        -------
+        energy: float
+            The computed energy.
+        gradient: ti.Matrix
+            The gradient of the energy with respect to the deformation gradient F.
+
+        Notes
+        -------
+        This implementation assumes small deformations and linear stress-strain relationship.
+        It is adapted from the HOBAKv1 implementation for linear elasticity:
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/LINEAR.cpp
+        """
+        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
+        eps = 0.5 * (F + F.transpose()) - I
+        trEps = eps.trace()
+        energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
+
+        gradient = 2.0 * mu * eps + lam * trEps * I
+
+        return energy, gradient
+
+    @ti.func
+    def compute_energy_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy for linear elasticity.
 
@@ -176,8 +247,7 @@ class Elastic(Base):
         -------
         This implementation assumes small deformations and linear stress-strain relationship.
         It is adapted from the HOBAKv1 implementation for linear elasticity:
-        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
-
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/LINEAR.cpp
         """
         I = ti.Matrix.identity(dt=gs.ti_float, n=3)
         eps = 0.5 * (F + F.transpose()) - I
@@ -229,7 +299,46 @@ class Elastic(Base):
         raise NotImplementedError("Hessian computation is not implemented for stable_neohookean model.")
 
     @ti.func
-    def compute_energy_stable_neohookean(self, mu, lam, J, F, actu, m_dir):
+    def compute_energy_gradient_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
+        """
+        Compute the energy, gradient for the stable Neo-Hookean model.
+
+        Parameters
+        ----------
+        mu: float
+            The first Lame parameter (shear modulus).
+        lam: float
+            The second Lame parameter (related to volume change).
+        J: float
+            The determinant of the deformation gradient F.
+        F: ti.Matrix
+            The deformation gradient matrix.
+        actu: ti.Matrix
+            The activation matrix (not used in stable Neo-Hookean).
+        m_dir: ti.Matrix
+            The material direction (not used in stable Neo-Hookean).
+
+        Returns
+        -------
+        energy: float
+            The computed energy.
+        gradient: ti.Matrix
+            The gradient of the energy with respect to the deformation gradient F.
+
+        Raises
+        -------
+        NotImplementedError
+            This implementation does not compute the Gradient for the stable Neo-Hookean model.
+
+        Notes
+        -------
+        This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/SNH.cpp
+        """
+        raise NotImplementedError("Gradient computation is not implemented for stable_neohookean model.")
+
+    @ti.func
+    def compute_energy_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy for the stable Neo-Hookean model.
 
@@ -256,7 +365,7 @@ class Elastic(Base):
         Notes
         -------
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
-        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/SNH.cpp
+        https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/SNH.cpp
         """
         _lambda = lam + mu
         _alpha = 1.0 + mu / _lambda
@@ -264,6 +373,153 @@ class Elastic(Base):
         Ic = F.norm_sqr()
         Jminus1 = J - _alpha
         energy = 0.5 * (mu * (Ic - 3.0) + _lambda * Jminus1**2)
+
+        return energy
+
+    @ti.func
+    def compute_energy_gradient_hessian_linear_corotated(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
+        """
+        Compute the energy, gradient, and Hessian for linear elasticity.
+
+        Parameters
+        ----------
+        mu: float
+            The first Lame parameter (shear modulus).
+        lam: float
+            The second Lame parameter (related to volume change).
+        J: float
+            The determinant of the deformation gradient F.
+        F: ti.Matrix
+            The deformation gradient matrix.
+        actu: ti.Matrix
+            The activation matrix (not used in linear elasticity).
+        m_dir: ti.Matrix
+            The material direction (not used in linear elasticity).
+        hessian_field: ti.Matrix
+            The Hessian of the energy with respect to the deformation gradient F.
+
+        Returns
+        -------
+        energy: float
+            The computed energy.
+        gradient: ti.Matrix
+            The gradient of the energy with respect to the deformation gradient F.
+
+        Notes
+        -------
+        This implementation assumes small deformations and linear stress-strain relationship.
+        It is adapted from the HOBAKv1 implementation for linear elasticity:
+        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
+
+        """
+        R = self.R[i_b, i_e]
+        F_hat = R.transpose() @ F
+        # E = 1/2(F_hat + F_hat.transpose()) - I
+        eps = 0.5 * (F_hat + F_hat.transpose())
+        for i in ti.static(range(3)):
+            eps[i, i] -= 1.0
+        trEps = eps.trace()
+        energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
+
+        gradient = 2.0 * mu * R @ eps + lam * trEps * R
+
+        # Zero out the matrix
+        for i in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            hessian_field[i_b, i, i_e].fill(0.0)
+
+        # Identity part
+        for i, k in ti.static(ti.ndrange(3, 3)):
+            hessian_field[i_b, i, i, i_e][k, k] = mu
+
+        for i, j, alpha, beta in ti.static(ti.ndrange(3, 3, 3, 3)):
+            hessian_field[i_b, j, beta, i_e][i, alpha] += mu * R[i, beta] * R[alpha, j] + lam * R[alpha, beta] * R[i, j]
+
+        return energy, gradient
+
+    @ti.func
+    def compute_energy_gradient_linear_corotated(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
+        """
+        Compute the energy, gradient for linear elasticity.
+
+        Parameters
+        ----------
+        mu: float
+            The first Lame parameter (shear modulus).
+        lam: float
+            The second Lame parameter (related to volume change).
+        J: float
+            The determinant of the deformation gradient F.
+        F: ti.Matrix
+            The deformation gradient matrix.
+        actu: ti.Matrix
+            The activation matrix (not used in linear elasticity).
+        m_dir: ti.Matrix
+            The material direction (not used in linear elasticity).
+
+        Returns
+        -------
+        energy: float
+            The computed energy.
+        gradient: ti.Matrix
+            The gradient of the energy with respect to the deformation gradient F.
+
+        Notes
+        -------
+        This implementation assumes small deformations and linear stress-strain relationship.
+        It is adapted from the HOBAKv1 implementation for linear elasticity:
+        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
+
+        """
+        F_hat = self.R[i_b, i_e].transpose() @ F
+        # E = 1/2(F_hat + F_hat.transpose()) - I
+        eps = 0.5 * (F_hat + F_hat.transpose())
+        for i in ti.static(range(3)):
+            eps[i, i] -= 1.0
+        trEps = eps.trace()
+        energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
+        gradient = 2.0 * mu * self.R[i_b, i_e] @ eps + lam * trEps * self.R[i_b, i_e]
+
+        return energy, gradient
+
+    @ti.func
+    def compute_energy_linear_corotated(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
+        """
+        Compute the energy for linear elasticity.
+
+        Parameters
+        ----------
+        mu: float
+            The first Lame parameter (shear modulus).
+        lam: float
+            The second Lame parameter (related to volume change).
+        J: float
+            The determinant of the deformation gradient F.
+        F: ti.Matrix
+            The deformation gradient matrix.
+        actu: ti.Matrix
+            The activation matrix (not used in linear elasticity).
+        m_dir: ti.Matrix
+            The material direction (not used in linear elasticity).
+
+        Returns
+        -------
+        energy: float
+            The computed energy.
+
+        Notes
+        -------
+        This implementation assumes small deformations and linear stress-strain relationship.
+        It is adapted from the HOBAKv1 implementation for linear elasticity:
+        https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
+
+        """
+        F_hat = self.R[i_b, i_e].transpose() @ F
+        # E = 1/2(F_hat + F_hat.transpose()) - I
+        eps = 0.5 * (F_hat + F_hat.transpose())
+        for i in ti.static(range(3)):
+            eps[i, i] -= 1.0
+        trEps = eps.trace()
+        energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
 
         return energy
 
