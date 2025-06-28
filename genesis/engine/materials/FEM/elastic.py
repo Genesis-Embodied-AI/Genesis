@@ -82,6 +82,7 @@ class Elastic(Base):
 
     @ti.func
     def pre_compute_linear_corotated(self, J, F, i_e, i_b):
+        # Computing Polar Decomposition instead of calling `R, P = ti.polar_decompose(F)` since `P` is not needed here
         U, S, V = ti.svd(F)
         R = U @ V.transpose()
         self.R[i_b, i_e] = R
