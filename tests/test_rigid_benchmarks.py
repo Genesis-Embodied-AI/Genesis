@@ -237,7 +237,7 @@ def stream_writers(backend, printer_session):
         report_path.unlink()
     fd = open(report_path, "w")
 
-    yield (lambda msg: print(msg, file=fd), printer_session)
+    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
 
     fd.close()
 
