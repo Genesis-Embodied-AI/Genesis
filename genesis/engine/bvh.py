@@ -193,7 +193,7 @@ class LBVH(RBC):
         for i_b in ti.ndrange(self.n_batches):
             scale = self.aabb_max[i_b] - self.aabb_min[i_b]
             for i in ti.static(range(3)):
-                self.scale[i_b][i] = ti.select(scale[i] > 1e-7, 1.0 / scale[i], 1)
+                self.scale[i_b][i] = ti.select(scale[i] > gs.EPS, 1.0 / scale[i], 1.0)
 
     @ti.kernel
     def compute_morton_codes(self):

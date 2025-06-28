@@ -936,13 +936,12 @@ class SAPCoupler(RBC):
             )
             self.fem_floor_contact_pairs[i_c].barycentric = barycentric
 
-            deformable_g = ti.static(self.default_deformable_g)
             rigid_g = self.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
             if total_area < gs.EPS or rigid_g < gs.EPS:
                 self.fem_floor_contact_pairs[i_c].active = 0
                 continue
-            g = deformable_g * rigid_g / (deformable_g + rigid_g)  # harmonic average
+            g = self.default_deformable_g * rigid_g / (self.default_deformable_g + rigid_g)  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             rigid_fn0 = total_area * pressure
