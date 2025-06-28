@@ -649,7 +649,7 @@ class SAPCoupler(RBC):
         self._n_linesearch_iterations = options.n_linesearch_iterations
         self._linesearch_c = options.linesearch_c
         self._linesearch_tau = options.linesearch_tau
-        self.default_deformable_g = gs.ti_float(1.0e8)  # default deformable geometry size
+        self.default_deformable_g = 1.0e8  # default deformable geometry size
 
     def build(self) -> None:
         self._B = self.sim._B
