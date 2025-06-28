@@ -212,6 +212,8 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
+            n_newton_iterations=1,
+            n_linesearch_iterations=0,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -260,6 +262,8 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
+            n_newton_iterations=1,
+            n_linesearch_iterations=0,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,
@@ -305,6 +309,8 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
+            n_newton_iterations=1,
+            n_linesearch_iterations=0,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,

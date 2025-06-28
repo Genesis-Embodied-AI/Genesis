@@ -112,7 +112,7 @@ class LBVH(RBC):
         https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf
     """
 
-    def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8):
+    def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
         self.aabbs = aabb.aabbs
         self.n_aabbs = aabb.n_aabbs
         self.n_batches = aabb.n_batches
@@ -130,11 +130,17 @@ class LBVH(RBC):
         # Histogram for radix sort
         self.hist = ti.field(ti.u32, shape=(self.n_batches, 256))
         # Prefix sum for histogram
-        self.prefix_sum = ti.field(ti.u32, shape=(self.n_batches, 256))
+        self.prefix_sum = ti.field(ti.u32, shape=(self.n_batches, 256 + 1))
         # Offset for radix sort
         self.offset = ti.field(ti.u32, shape=(self.n_batches, self.n_aabbs))
         # Temporary storage for radix sort
         self.tmp_morton_codes = ti.field(ti.u64, shape=(self.n_batches, self.n_aabbs))
+
+        self.n_radix_sort_groups = n_radix_sort_groups
+        self.hist_group = ti.field(ti.u32, shape=(self.n_batches, self.n_radix_sort_groups, 256 + 1))
+        self.prefix_sum_group = ti.field(ti.u32, shape=(self.n_batches, self.n_radix_sort_groups + 1, 256))
+        self.group_size = self.n_aabbs // self.n_radix_sort_groups
+        self.visited = ti.field(ti.u8, shape=(self.n_aabbs))
 
         @ti.dataclass
         class Node:
@@ -264,8 +270,12 @@ class LBVH(RBC):
         """
         Radix sort the morton codes, using 8 bits at a time.
         """
-        for i in range(8):
-            self._kernel_radix_sort_morton_codes_one_round(i)
+        # The last 32 bits are the index of the AABB which are already sorted, no need to sort
+        for i in range(4, 8):
+            if self.n_radix_sort_groups == 1:
+                self._kernel_radix_sort_morton_codes_one_round(i)
+            else:
+                self._kernel_radix_sort_morton_codes_one_round_group(i)
 
     @ti.kernel
     def _kernel_radix_sort_morton_codes_one_round(self, i: int):
@@ -292,6 +302,49 @@ class LBVH(RBC):
             idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, ti.i32(code)])
             self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
 
+        # Swap the temporary and original morton codes
+        for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
+            self.morton_codes[i_b, i_a] = self.tmp_morton_codes[i_b, i_a]
+
+    @ti.kernel
+    def _kernel_radix_sort_morton_codes_one_round_group(self, i: int):
+        # Clear histogram
+        self.hist_group.fill(0)
+
+        # Fill histogram
+        for i_b, i_g in ti.ndrange(self.n_batches, self.n_radix_sort_groups):
+            start = i_g * self.group_size
+            end = ti.select(
+                i_g == self.n_radix_sort_groups - 1,
+                self.n_aabbs,
+                (i_g + 1) * self.group_size,
+            )
+            for i_a in range(start, end):
+                code = ti.int32((self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF)
+                self.offset[i_b, i_a] = self.hist_group[i_b, i_g, code]
+                self.hist_group[i_b, i_g, code] = self.hist_group[i_b, i_g, code] + 1
+
+        # Compute prefix sum
+        for i_b, i_c in ti.ndrange(self.n_batches, 256):
+            self.prefix_sum_group[i_b, 0, i_c] = 0
+            for i_g in range(1, self.n_radix_sort_groups + 1):  # sequential prefix sum
+                self.prefix_sum_group[i_b, i_g, i_c] = (
+                    self.prefix_sum_group[i_b, i_g - 1, i_c] + self.hist_group[i_b, i_g - 1, i_c]
+                )
+        for i_b in range(self.n_batches):
+            self.prefix_sum[i_b, 0] = 0
+            for i_c in range(1, 256 + 1):  # sequential prefix sum
+                self.prefix_sum[i_b, i_c] = (
+                    self.prefix_sum[i_b, i_c - 1] + self.prefix_sum_group[i_b, self.n_radix_sort_groups, i_c - 1]
+                )
+
+        # Reorder morton codes
+        for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
+            code = ti.i32((self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF)
+            i_g = ti.min(i_a // self.group_size, self.n_radix_sort_groups - 1)
+            idx = ti.i32(self.prefix_sum[i_b, code] + self.prefix_sum_group[i_b, i_g, code] + self.offset[i_b, i_a])
+            # Use the group prefix sum to find the correct index
+            self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
         # Swap the temporary and original morton codes
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
             self.morton_codes[i_b, i_a] = self.tmp_morton_codes[i_b, i_a]
