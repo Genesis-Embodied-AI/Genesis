@@ -186,6 +186,8 @@ def init(
     if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
         ti_arch = TI_ARCH[platform][gs_backend.cpu]
 
+    taichi_kwargs["cfg_optimization"] = performance_mode
+
     # init taichi
     with patch("builtins.print", fake_print):
         ti.init(
@@ -201,7 +203,6 @@ def init(
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
-            cfg_optimization=performance_mode,
             **taichi_kwargs,
         )
 
