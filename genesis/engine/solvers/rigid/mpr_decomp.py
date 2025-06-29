@@ -402,9 +402,11 @@ class MPR:
                 center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
                 delta = center_a - center_b
 
-                # Skip offset if normal is almost colinear already
+                # Skip offset if normal is roughly pointing in the same direction already.
+                # Note that a threshold of 0.5 would probably make more sense, but this means that the center of each
+                # geometry would significantly affect collision detection, which is undesirable.
                 normal = delta.normalized()
-                if normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
+                if normal_ws.cross(normal).norm() > 0.01:
                     # Compute the target offset
                     offset = delta.dot(normal_ws) * normal_ws - delta
                     offset_norm = offset.norm()
