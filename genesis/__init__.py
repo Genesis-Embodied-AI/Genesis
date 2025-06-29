@@ -50,6 +50,7 @@ def init(
     backend=None,
     theme="dark",
     logger_verbose_time=False,
+    performance_mode: bool = False,  # True: compilation ~6x slower, but runs ~1-10% faster
 ):
     # Consider Genesis as initialized right away
     global _initialized
@@ -197,6 +198,7 @@ def init(
             force_scalarize_matrix=True,
             # Turning off 'advanced_optimization' is causing issues on MacOS
             advanced_optimization=True,
+            cfg_optimization=performance_mode,
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
