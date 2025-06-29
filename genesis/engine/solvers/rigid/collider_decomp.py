@@ -299,23 +299,23 @@ class Collider:
                 self.n_contacts[i_b] = 0
 
     def detection(self) -> None:
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
         self._contacts_info_cache = {}
-        timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs()
-        timer.stamp("func_update_aabbs")
+        # timer.stamp("func_update_aabbs")
         self._func_broad_phase()
-        timer.stamp("func_broad_phase")
+        # timer.stamp("func_broad_phase")
         self._func_narrow_phase_convex_vs_convex()
         self._func_narrow_phase_convex_specializations()
-        timer.stamp("func_narrow_phase")
+        # timer.stamp("func_narrow_phase")
         if self._has_terrain:
             self._func_narrow_phase_any_vs_terrain()
-            timer.stamp("_func_narrow_phase_any_vs_terrain")
+            # timer.stamp("_func_narrow_phase_any_vs_terrain")
         if self._has_nonconvex_nonterrain:
             self._func_narrow_phase_nonconvex_vs_nonterrain()
-            timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
+            # timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
 
     @ti.func
     def _func_point_in_geom_aabb(self, point, i_g, i_b):
