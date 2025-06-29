@@ -389,7 +389,7 @@ class FEMSolver(Solver):
             #       however, this inevitably damp the gravity.
             self.elements_v[f + 1, i_v, i_b].vel *= ti.exp(-dt * self.damping)
             # Add gravity (avoiding damping on gravity)
-            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[None]
+            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[i_b]
 
     @ti.kernel
     def compute_pos(self, f: ti.i32):
@@ -416,7 +416,7 @@ class FEMSolver(Solver):
         dt = self.substep_dt
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             self.elements_v_energy[i_b, i_v].inertia = (
-                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
+                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[i_b] * dt**2
             )
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
 

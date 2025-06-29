@@ -21,13 +21,7 @@ class Solver(RBC):
         self._scene = scene
         self._dt: float = options.dt
         self._substep_dt: float = options.dt / sim.substeps
-
-        if hasattr(options, "gravity"):
-            self._gravity = ti.field(dtype=gs.ti_vec3, shape=())
-            self._gravity.from_numpy(np.array(options.gravity, dtype=gs.np_float))
-        else:
-            self._gravity = None
-
+        self._gravity = sim.gravity
         self._entities: list[Entity] = gs.List()
 
         # force fields

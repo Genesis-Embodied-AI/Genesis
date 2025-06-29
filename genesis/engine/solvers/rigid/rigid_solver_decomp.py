@@ -2932,9 +2932,7 @@ class RigidSolver(Solver):
                         i_p = self.links_info[I_l].parent_idx
 
                         if i_p == -1:
-                            self.links_state[i_l, i_b].cdd_vel = -self._gravity[None] * (
-                                1 - e_info.gravity_compensation
-                            )
+                            self.links_state[i_l, i_b].cdd_vel = -self._gravity[i_b] * (1 - e_info.gravity_compensation)
                             self.links_state[i_l, i_b].cdd_ang = ti.Vector.zero(gs.ti_float, 3)
                             if ti.static(update_cacc):
                                 self.links_state[i_l, i_b].cacc_lin = ti.Vector.zero(gs.ti_float, 3)
@@ -2971,7 +2969,7 @@ class RigidSolver(Solver):
                     i_p = self.links_info[I_l].parent_idx
 
                     if i_p == -1:
-                        self.links_state[i_l, i_b].cdd_vel = -self._gravity[None] * (1 - e_info.gravity_compensation)
+                        self.links_state[i_l, i_b].cdd_vel = -self._gravity[i_b] * (1 - e_info.gravity_compensation)
                         self.links_state[i_l, i_b].cdd_ang = ti.Vector.zero(gs.ti_float, 3)
                         if ti.static(update_cacc):
                             self.links_state[i_l, i_b].cacc_lin = ti.Vector.zero(gs.ti_float, 3)
@@ -4620,7 +4618,7 @@ class RigidSolver(Solver):
             # Mimick IMU accelerometer signal if requested
             if mimick_imu:
                 # Subtract gravity
-                acc_classic_lin -= self._gravity[None]
+                acc_classic_lin -= self._gravity[i_b]
 
                 # Move the resulting linear acceleration in local links frame
                 acc_classic_lin = gu.ti_inv_transform_by_quat(acc_classic_lin, self.links_state[i_l, i_b].quat)
