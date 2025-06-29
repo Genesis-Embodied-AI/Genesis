@@ -478,6 +478,10 @@ class MPR:
                         self.mpr_swap(1, 2, i_ga, i_gb, i_b)
                         direction = -direction
 
+                    # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
+                    # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
+                    # Since this deadlock happens very rarely, a simple fix is to abord computation after a few trials.
+                    num_trials = gs.ti_int(0)
                     while self.simplex_size[i_b] < 4:
                         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
@@ -509,6 +513,10 @@ class MPR:
                             vb = self.simplex_support[2, i_b].v - self.simplex_support[0, i_b].v
                             direction = va.cross(vb)
                             direction = direction.normalized()
+                            num_trials = num_trials + 1
+                            if num_trials == 15:
+                                ret = -1
+                                break
                         else:
                             self.simplex_support[3, i_b].v1 = v1
                             self.simplex_support[3, i_b].v2 = v2

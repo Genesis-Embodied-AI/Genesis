@@ -1296,6 +1296,7 @@ class Collider:
                                 # Because of this, it is necessary to run it twice and take the contact information
                                 # associated with the point of deepest penetration.
                                 try_sdf = True
+
                         ### GJK
                         elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
                             # If it was not the first detection, only detect single contact point.
@@ -1310,12 +1311,11 @@ class Collider:
                                     # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
-                                        if i_c >= self._n_contacts_per_pair:
-                                            # Ignore contact points if the number of contacts exceeds the limit.
-                                            break
-                                        contact_pos = self._gjk.contact_pos[i_b, i_c]
-                                        normal = self._gjk.normal[i_b, i_c]
-                                        self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                                        # Ignore contact points if the number of contacts exceeds the limit.
+                                        if i_c < self._n_contacts_per_pair:
+                                            contact_pos = self._gjk.contact_pos[i_b, i_c]
+                                            normal = self._gjk.normal[i_b, i_c]
+                                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
                                     break
                                 else:
