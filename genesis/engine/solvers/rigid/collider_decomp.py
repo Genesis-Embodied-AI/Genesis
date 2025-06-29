@@ -153,6 +153,12 @@ class Collider:
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
 
+        self._warn_msg_max_collision_pairs = (
+            f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
+            f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
+            f"'max_collision_pairs'.{formats.RESET}"
+        )
+
         ############## broad phase SAP ##############
         # This buffer stores the AABBs along the search axis of all geoms
         struct_sort_buffer = ti.types.struct(value=gs.ti_float, i_g=gs.ti_int, is_max=gs.ti_int)
@@ -770,11 +776,7 @@ class Collider:
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
-                                # print(
-                                #     f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
-                                #     f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
-                                #     f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
-                                # )
+                                ti.static_print(self._warn_msg_max_collision_pairs)
                                 break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
@@ -1107,12 +1109,7 @@ class Collider:
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
-            # print(
-            #     f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            #     f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
-            #     f"'max_collision_pairs'.{formats.RESET}"
-            # )
-            pass
+            ti.static_print(self._warn_msg_max_collision_pairs)
         else:
             ga_info = self._solver.geoms_info[i_ga]
             gb_info = self._solver.geoms_info[i_gb]
