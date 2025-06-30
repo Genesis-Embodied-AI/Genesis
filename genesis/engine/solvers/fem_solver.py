@@ -617,7 +617,7 @@ class FEMSolver(Solver):
                     )
 
             # diagonal 3-by-3 block of hessian
-            for k, i, j in ti.static(ti.ndrange(4, 3, 3)):
+            for k, i, j in ti.ndrange(4, 3, 3):
                 self.pcg_state_v[i_b, i_v[k]].diag3x3 += (
                     V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
                 )

@@ -225,13 +225,13 @@ def stream_writers(backend, printer_session):
         worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
 
         for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
-            _, worker_id = path.stem.rsplit("-", 1)
-            worker_num = int(worker_id[2:])
+            _, worker_id_ = path.stem.rsplit("-", 1)
+            worker_num = int(worker_id_[2:])
             if worker_num >= worker_count:
                 path.unlink()
 
     # Create new empty worker-specific report
-    report_name = "-".join((report_path.stem, worker_id))
+    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
     report_path = report_path.with_name(f"{report_name}.txt")
     if report_path.exists():
         report_path.unlink()
