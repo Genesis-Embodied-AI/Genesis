@@ -225,8 +225,8 @@ def stream_writers(backend, printer_session):
         worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
 
         for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
-            _, worker_id = path.stem.rsplit("-", 1)
-            worker_num = int(worker_id[2:])
+            _, worker_id_ = path.stem.rsplit("-", 1)
+            worker_num = int(worker_id_[2:])
             if worker_num >= worker_count:
                 path.unlink()
 
