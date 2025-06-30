@@ -196,9 +196,10 @@ class MPMSolver(Solver):
             entity.reset_grad()
 
     def build(self):
+        super().build()
+
         # particles and entities
         self._B = self._sim._B
-        super().build(self._B)
 
         self._n_particles = self.n_particles
         self._n_vverts = self.n_vverts

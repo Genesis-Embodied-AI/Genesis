@@ -2205,11 +2205,6 @@ def test_urdf_mimic(show_viewer, tol):
 def test_gravity(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-            substeps=1,
-            gravity=(0.0, 0.0, -9.8),
-        ),
     )
 
     sphere = scene.add_entity(gs.morphs.Sphere())
