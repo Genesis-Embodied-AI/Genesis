@@ -173,6 +173,12 @@ def init(
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
 
+    if not performance_mode:
+        logger.info(
+            "Consider setting 'performance_mode=True' in production to maximise runtime speed, if significantly "
+            "increasing compilation time is not a concern."
+        )
+
     if seed is not None:
         global SEED
         SEED = seed
