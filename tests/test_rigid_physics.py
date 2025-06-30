@@ -2007,6 +2007,7 @@ def test_terrain_generation(show_viewer):
             camera_fov=40,
         ),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(

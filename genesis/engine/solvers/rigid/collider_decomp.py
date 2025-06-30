@@ -572,16 +572,14 @@ class Collider:
                 )
             )
 
-            for i in range(6):
-                i_axis = i % 3
-                i_m = i // 3
-
-                sign = gs.ti_float(1 - i_m * 2)
-                direction = ti.Vector([i_axis == 0, i_axis == 1, i_axis == 2], dt=gs.ti_float)
-                direction = direction * sign
-
+            for i_axis, i_m in ti.ndrange(3, 2):
+                direction = ti.Vector.zero(gs.ti_float, 3)
+                if i_m == 0:
+                    direction[i_axis] = 1.0
+                else:
+                    direction[i_axis] = -1.0
                 v1 = self._mpr.support_driver(direction, i_ga, i_b)
-                self.xyz_max_min[i, i_b] = v1[i_axis]
+                self.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
             for i in ti.static(range(3)):
                 self.prism[i, i_b][2] = self._solver.terrain_xyz_maxmin[5]
@@ -622,24 +620,27 @@ class Collider:
                                     or self.prism[4, i_b][2] >= self.xyz_max_min[5, i_b]
                                     or self.prism[5, i_b][2] >= self.xyz_max_min[5, i_b]
                                 ):
-                                    pos = ti.Vector.zero(gs.ti_float, 3)
+                                    center_a = gu.ti_transform_by_trans_quat(
+                                        self._solver.geoms_info[i_ga].center, ga_pos, ga_quat
+                                    )
+                                    center_b = ti.Vector.zero(gs.ti_float, 3)
                                     for i_p in ti.static(range(6)):
-                                        pos = pos + self.prism[i_p, i_b]
+                                        center_b = center_b + self.prism[i_p, i_b]
+                                    center_b = center_b / 6.0
 
-                                    self._solver.geoms_info[i_gb].center = pos / 6
                                     self._solver.geoms_state[i_gb, i_b].pos = ti.Vector.zero(gs.ti_float, 3)
                                     self._solver.geoms_state[i_gb, i_b].quat = gu.ti_identity_quat()
 
-                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                        i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
+                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact_from_centers(
+                                        i_ga, i_gb, i_b, center_a, center_b
                                     )
                                     if is_col:
                                         normal = gu.ti_transform_by_quat(normal, gb_quat)
                                         contact_pos = gu.ti_transform_by_quat(contact_pos, gb_quat)
                                         contact_pos = contact_pos + gb_pos
 
-                                        i_col = self.n_contacts[i_b]
                                         valid = True
+                                        i_col = self.n_contacts[i_b]
                                         for j in range(cnt):
                                             if (
                                                 contact_pos - self.contact_data[i_col - j - 1, i_b].pos
