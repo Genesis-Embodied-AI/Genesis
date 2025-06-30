@@ -65,7 +65,7 @@ class Timer:
         self.just_reset = True
         if self.level == 0 and not self.skip:
             print("─" * os.get_terminal_size()[0])
-        if self.ti_sync:
+        if self.ti_sync and not self.skip:
             ti.sync()
         self.prev_time = self.init_time = time.perf_counter()
 

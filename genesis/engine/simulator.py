@@ -183,7 +183,6 @@ class Simulator(RBC):
             solver._add_force_field(force_field)
 
     def build(self):
-
         self.n_envs = self.scene.n_envs
         self._B = self.scene._B
         self._para_level = self.scene._para_level

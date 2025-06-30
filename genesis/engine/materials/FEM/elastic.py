@@ -432,7 +432,7 @@ class Elastic(Base):
         for i, k in ti.static(ti.ndrange(3, 3)):
             hessian_field[i_b, i, i, i_e][k, k] = mu
 
-        for i, j, alpha, beta in ti.static(ti.ndrange(3, 3, 3, 3)):
+        for i, j, alpha, beta in ti.ndrange(3, 3, 3, 3):
             hessian_field[i_b, j, beta, i_e][i, alpha] += mu * R[i, beta] * R[alpha, j] + lam * R[alpha, beta] * R[i, j]
 
         return energy, gradient

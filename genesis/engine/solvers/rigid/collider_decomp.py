@@ -153,6 +153,12 @@ class Collider:
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
 
+        self._warn_msg_max_collision_pairs = (
+            f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
+            f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
+            f"'max_collision_pairs'.{formats.RESET}"
+        )
+
         ############## broad phase SAP ##############
         # This buffer stores the AABBs along the search axis of all geoms
         struct_sort_buffer = ti.types.struct(value=gs.ti_float, i_g=gs.ti_int, is_max=gs.ti_int)
@@ -299,23 +305,23 @@ class Collider:
                 self.n_contacts[i_b] = 0
 
     def detection(self) -> None:
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
         self._contacts_info_cache = {}
-        timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs()
-        timer.stamp("func_update_aabbs")
+        # timer.stamp("func_update_aabbs")
         self._func_broad_phase()
-        timer.stamp("func_broad_phase")
+        # timer.stamp("func_broad_phase")
         self._func_narrow_phase_convex_vs_convex()
         self._func_narrow_phase_convex_specializations()
-        timer.stamp("func_narrow_phase")
+        # timer.stamp("func_narrow_phase")
         if self._has_terrain:
             self._func_narrow_phase_any_vs_terrain()
-            timer.stamp("_func_narrow_phase_any_vs_terrain")
+            # timer.stamp("_func_narrow_phase_any_vs_terrain")
         if self._has_nonconvex_nonterrain:
             self._func_narrow_phase_nonconvex_vs_nonterrain()
-            timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
+            # timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
 
     @ti.func
     def _func_point_in_geom_aabb(self, point, i_g, i_b):
@@ -770,11 +776,7 @@ class Collider:
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
-                                # print(
-                                #     f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
-                                #     f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
-                                #     f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
-                                # )
+                                ti.static_print(self._warn_msg_max_collision_pairs)
                                 break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
@@ -1107,12 +1109,7 @@ class Collider:
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
-            # print(
-            #     f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            #     f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
-            #     f"'max_collision_pairs'.{formats.RESET}"
-            # )
-            pass
+            ti.static_print(self._warn_msg_max_collision_pairs)
         else:
             ga_info = self._solver.geoms_info[i_ga]
             gb_info = self._solver.geoms_info[i_gb]
@@ -1299,6 +1296,7 @@ class Collider:
                                 # Because of this, it is necessary to run it twice and take the contact information
                                 # associated with the point of deepest penetration.
                                 try_sdf = True
+
                         ### GJK
                         elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
                             # If it was not the first detection, only detect single contact point.
@@ -1313,12 +1311,11 @@ class Collider:
                                     # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
-                                        if i_c >= self._n_contacts_per_pair:
-                                            # Ignore contact points if the number of contacts exceeds the limit.
-                                            break
-                                        contact_pos = self._gjk.contact_pos[i_b, i_c]
-                                        normal = self._gjk.normal[i_b, i_c]
-                                        self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                                        # Ignore contact points if the number of contacts exceeds the limit.
+                                        if i_c < self._n_contacts_per_pair:
+                                            contact_pos = self._gjk.contact_pos[i_b, i_c]
+                                            normal = self._gjk.normal[i_b, i_c]
+                                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
                                     break
                                 else:

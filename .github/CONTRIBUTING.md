@@ -61,7 +61,7 @@ Thank you for your interest in contributing to Genesis! We welcome contributions
 - (Optional) You can run CI tests locally to ensure you pass the online CI checks.
 
   ```python
-  python -m unittest discover tests
+  pytest -v --forked -m required ./tests
   ```
 
 - In the title of your Pull Request, please include [BUG FIX], [FEATURE] or [MISC] to indicate the purpose.

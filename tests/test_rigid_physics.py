@@ -2082,6 +2082,11 @@ def test_urdf_parsing(show_viewer, tol):
     DOOR_JOINT_DAMPING = 1.5
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            # Must use GJK to make collision detection independent from the center of each geometry.
+            # Note that it is also the case for MPR+SDF most of the time due to warm-start.
+            use_gjk_collision=True,
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
