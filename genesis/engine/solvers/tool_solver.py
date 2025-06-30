@@ -24,7 +24,6 @@ class ToolSolver(Solver):
 
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
-
         # options
         self.floor_height = options.floor_height
 

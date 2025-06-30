@@ -157,7 +157,6 @@ class RigidSolver(Solver):
 
     def build(self):
         super().build()
-
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
         self._para_level = self.sim._para_level

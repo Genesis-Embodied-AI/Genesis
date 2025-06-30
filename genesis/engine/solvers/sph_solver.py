@@ -129,7 +129,6 @@ class SPHSolver(Solver):
 
     def build(self):
         super().build()
-
         self._B = self._sim._B
 
         # particles and entities
