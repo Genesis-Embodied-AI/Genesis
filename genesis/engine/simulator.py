@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
-import torch
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -184,6 +183,7 @@ class Simulator(RBC):
             solver._add_force_field(force_field)
 
     def build(self):
+
         self.n_envs = self.scene.n_envs
         self._B = self.scene._B
         self._para_level = self.scene._para_level
