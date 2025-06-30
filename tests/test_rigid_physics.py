@@ -2208,13 +2208,15 @@ def test_gravity(show_viewer, tol):
         sim_options=gs.options.SimOptions(
             dt=0.01,
             substeps=1,
-            gravity=[(0.0, 0.0, -9.8), (0.0, 0.0, 9.8)],
+            gravity=(0.0, 0.0, -9.8),
         ),
     )
 
     sphere = scene.add_entity(gs.morphs.Sphere())
-
     scene.build(n_envs=2)
+
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, -9.8]), envs_idx=0)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 9.8]), envs_idx=1)
 
     for _ in range(200):
         scene.step()

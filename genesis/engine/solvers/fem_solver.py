@@ -278,6 +278,7 @@ class FEMSolver(Solver):
     def build(self):
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
+        super().build(self._B)
 
         # batch fields
         self.init_batch_fields()

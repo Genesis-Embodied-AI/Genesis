@@ -19,7 +19,7 @@ class Solver(RBC):
         self._scene = scene
         self._dt: float = options.dt
         self._substep_dt: float = options.dt / sim.substeps
-        self._gravity = sim.gravity
+        self._gravity = None
         self._entities: list[Entity] = gs.List()
 
         # force fields
@@ -27,6 +27,21 @@ class Solver(RBC):
 
     def _add_force_field(self, force_field):
         self._ffs.append(force_field)
+
+    def build(self, B: int):
+        self._B = B
+        g_np = np.asarray(self._sim._gravity)
+        g_np = np.repeat(g_np[None], B, axis=0)
+        self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=B)
+        self._gravity.from_numpy(g_np)
+
+    def set_gravity(self, gravity, envs_idx=None):
+        if self._gravity is None:
+            return
+        if envs_idx is None:
+            self._gravity.copy_from(gravity)
+        else:
+            self._gravity[envs_idx] = gravity
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

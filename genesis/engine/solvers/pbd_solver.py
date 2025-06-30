@@ -209,6 +209,7 @@ class PBDSolver(Solver):
 
     def build(self):
         self._B = self._sim._B
+        super().build(self._B)
         self._n_particles = self.n_particles
         self._n_fluid_particles = self.n_fluid_particles
         self._n_edges = self.n_edges

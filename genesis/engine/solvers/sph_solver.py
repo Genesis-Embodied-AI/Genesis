@@ -129,6 +129,7 @@ class SPHSolver(Solver):
 
     def build(self):
         self._B = self._sim._B
+        super().build(self._B)
 
         # particles and entities
         self._n_particles = self.n_particles
