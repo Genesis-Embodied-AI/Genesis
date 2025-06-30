@@ -42,7 +42,6 @@ class SFSolver(Solver):
 
     def build(self):
         super().build()
-
         if self.is_active():
             self.t = 0.0
             self.setup_fields()
