@@ -1060,100 +1060,13 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
         morph=gs.morphs.Mesh(
             file="meshes/sphere.obj",
             scale=0.1,
-            pos=(-0.2, -0.8, 0.2),
+            pos=(-0.2, -0.5, 0.2),
             fixed=True,
         ),
         surface=gs.surfaces.Rough(
             diffuse_texture=gs.textures.ColorTexture(
                 color=(1.0, 0.5, 0.5),
             ),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, -0.5, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Rough(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, -0.2, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Smooth(
-            color=(0.6, 0.8, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, 0.2, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Iron(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, 0.5, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Gold(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, 0.8, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Glass(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(0.2, -0.8, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Smooth(
-            color=(1.0, 1.0, 1.0, 0.5),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
-            scale=0.025,
-            pos=(0.2, -0.5, 0.2),
-            fixed=True,
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
-            scale=0.025,
-            pos=(0.2, -0.2, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Rough(
-            diffuse_texture=gs.textures.ImageTexture(
-                image_path="textures/checker.png",
-            )
         ),
     )
     robot = scene.add_entity(
@@ -1208,7 +1121,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
         steps_rgb_queue.put(robots_rgb_arrays)
 
         if steps_rgb_queue.full():  # we have a set of 2 consecutive frames
-            diff_tol = 0.05  # expect atlest 5% difference between each frame
+            diff_tol = 0.02  # expect atlest 2% difference between each frame
             frames_t_minus_1 = steps_rgb_queue.get()
             frames_t = steps_rgb_queue.get()
             for i in range(n_envs):

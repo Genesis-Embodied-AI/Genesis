@@ -8,6 +8,7 @@ import numpy as np
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
+from genesis.utils.misc import tensor_to_array
 
 
 class Camera(RBC):
@@ -138,7 +139,8 @@ class Camera(RBC):
         offset_T : np.ndarray, shape (4, 4)
             The transformation matrix specifying the camera's pose relative to the rigid link.
         env_idx : int
-            The environment index this camera should be tied to. Offsets the `offset_T` accordingly. Must be specified if running parallel environments
+            The environment index this camera should be tied to. Offsets the `offset_T` accordingly. Must be specified
+            if running parallel environments
 
         Raises
         ------
@@ -182,8 +184,8 @@ class Camera(RBC):
         if self._attached_link is None:
             gs.raise_exception(f"The camera hasn't been mounted!")
 
-        link_pos = self._attached_link.get_pos(envs_idx=self._attached_env_idx).cpu().numpy()
-        link_quat = self._attached_link.get_quat(envs_idx=self._attached_env_idx).cpu().numpy()
+        link_pos = tensor_to_array(self._attached_link.get_pos(envs_idx=self._attached_env_idx))
+        link_quat = tensor_to_array(self._attached_link.get_quat(envs_idx=self._attached_env_idx))
         if self._attached_env_idx is not None:
             link_pos = link_pos[0] + self._visualizer._scene.envs_offset[self._attached_env_idx]
             link_quat = link_quat[0]
