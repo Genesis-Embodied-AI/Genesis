@@ -529,6 +529,32 @@ class FEMSolver(Solver):
 
                 self.elements_el_energy[i_b, i_e].energy += 0.5 * damping_beta_over_dt * St_x_diff.dot(H_St_x_diff)
 
+            # add linearized damping energy
+            if self._damping_beta > gs.EPS:
+                damping_beta_over_dt = self._damping_beta / self._substep_dt
+                i_v = self.elements_i[i_e].el2v
+                S = ti.Matrix.zero(gs.ti_float, 4, 3)
+                B = self.elements_i[i_e].B
+                S[:3, :] = B
+                S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+
+                x_diff = ti.Vector.zero(gs.ti_float, 12)
+                for i in ti.static(range(4)):
+                    x_diff[i * 3 : i * 3 + 3] = (
+                        self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
+                    )
+                St_x_diff = ti.Vector.zero(gs.ti_float, 9)
+                for i, j in ti.static(ti.ndrange(3, 4)):
+                    St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
+
+                H_St_x_diff = ti.Vector.zero(gs.ti_float, 9)
+                for i, j in ti.static(ti.ndrange(3, 3)):
+                    H_St_x_diff[i * 3 : i * 3 + 3] += (
+                        self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
+                    )
+
+                self.elements_el_energy[i_b, i_e].energy += 0.5 * damping_beta_over_dt * St_x_diff.dot(H_St_x_diff)
+
     @ti.kernel
     def accumulate_vertex_force_preconditioner(self, f: ti.i32):
         damping_alpha_dt = self._damping_alpha * self._substep_dt
@@ -592,7 +618,7 @@ class FEMSolver(Solver):
                     )
 
             # diagonal 3-by-3 block of hessian
-            for k, i, j in ti.static(ti.ndrange(4, 3, 3)):
+            for k, i, j in ti.ndrange(4, 3, 3):
                 self.pcg_state_v[i_b, i_v[k]].diag3x3 += (
                     V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
                 )

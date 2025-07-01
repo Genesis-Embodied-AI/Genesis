@@ -1706,18 +1706,15 @@ class RigidSolver(Solver):
         self._func_clear_external_force()
 
     def substep(self):
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
-        timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
+        # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         self._kernel_step_1()
-        timer.stamp("kernel_step_1")
-
-        # constraint force
+        # timer.stamp("kernel_step_1")
         self._func_constraint_force()
-        timer.stamp("constraint_force")
-
+        # timer.stamp("constraint_force")
         self._kernel_step_2()
-        timer.stamp("kernel_step_2")
+        # timer.stamp("kernel_step_2")
 
     @ti.kernel
     def _kernel_step_1(self):
@@ -1801,20 +1798,20 @@ class RigidSolver(Solver):
             self._func_update_geoms(i_b)
 
     def _func_constraint_force(self):
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
-        timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         if self._enable_collision or self._enable_joint_limit or self.n_equalities > 0:
             self._func_constraint_clear()
-            timer.stamp("constraint_solver.clear")
+            # timer.stamp("constraint_solver.clear")
 
         if self._enable_collision:
             self.collider.detection()
-            timer.stamp("detection")
+            # timer.stamp("detection")
 
         if not self._disable_constraint:
             self.constraint_solver.handle_constraints()
-        timer.stamp("constraint_solver.handle_constraints")
+        # timer.stamp("constraint_solver.handle_constraints")
 
     @ti.kernel
     def _func_constraint_clear(self):

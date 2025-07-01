@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING
 import numpy as np
 import taichi as ti
+import torch
+from genesis.utils.misc import ti_field_to_torch
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -42,7 +44,7 @@ class Solver(RBC):
         self._gravity.from_numpy(g_np)
 
         if self._B == 1:
-            self._gravity.to_numpy = lambda _orig=self._gravity.to_numpy: _orig().squeeze(0)  # noqa: E251
+            self._gravity.to_numpy = lambda _orig=self._gravity.to_numpy: _orig().squeeze(0)
 
     def set_gravity(self, gravity, envs_idx=None):
         if self._gravity is None:
@@ -51,6 +53,53 @@ class Solver(RBC):
             self._gravity.copy_from(gravity)
         else:
             self._gravity[envs_idx] = gravity
+            
+    def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
+        arrays: dict[str, np.ndarray] = {}
+
+        for attr_name, field in self.__dict__.items():
+            if not isinstance(field, ti.Field):
+                continue
+
+            key_base = ".".join((self.__class__.__name__, attr_name))
+            data = field.to_numpy()
+
+            # StructField → data is a dict: flatten each member
+            if isinstance(data, dict):
+                for sub_name, sub_arr in data.items():
+                    arrays[f"{key_base}.{sub_name}"] = (
+                        sub_arr if isinstance(sub_arr, np.ndarray) else np.asarray(sub_arr)
+                    )
+            else:
+                arrays[key_base] = data if isinstance(data, np.ndarray) else np.asarray(data)
+
+        return arrays
+
+    def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
+        for attr_name, field in self.__dict__.items():
+            if not isinstance(field, ti.Field):
+                continue
+
+            key_base = ".".join((self.__class__.__name__, attr_name))
+            member_prefix = key_base + "."
+
+            # ---- StructField: gather its members -----------------------------
+            member_items = {}
+            for saved_key, saved_arr in arr_dict.items():
+                if saved_key.startswith(member_prefix):
+                    sub_name = saved_key[len(member_prefix) :]
+                    member_items[sub_name] = saved_arr
+
+            if member_items:  # we found at least one sub-member
+                field.from_numpy(member_items)
+                continue
+
+            # ---- Ordinary field ---------------------------------------------
+            if key_base not in arr_dict:
+                continue  # nothing saved for this attribute
+
+            arr = arr_dict[key_base]
+            field.from_numpy(arr)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
