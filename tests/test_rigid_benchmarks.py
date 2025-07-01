@@ -1,13 +1,14 @@
 import hashlib
 import numbers
 import os
-import pytest
+import tempfile
 import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 import torch
 import wandb
 
@@ -216,12 +217,27 @@ def get_file_morph_options(**kwargs):
 
 @pytest.fixture(scope="session")
 def stream_writers(backend, printer_session):
-    log_path = Path(REPORT_FILE)
-    if os.path.exists(log_path):
-        os.remove(log_path)
-    fd = open(log_path, "w")
+    report_path = Path(REPORT_FILE)
 
-    yield (lambda msg: print(msg, file=fd), printer_session)
+    # Delete old unrelated worker-specific reports
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id == "gw0":
+        worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+
+        for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
+            _, worker_id_ = path.stem.rsplit("-", 1)
+            worker_num = int(worker_id_[2:])
+            if worker_num >= worker_count:
+                path.unlink()
+
+    # Create new empty worker-specific report
+    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
+    report_path = report_path.with_name(f"{report_name}.txt")
+    if report_path.exists():
+        report_path.unlink()
+    fd = open(report_path, "w")
+
+    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
 
     fd.close()
 

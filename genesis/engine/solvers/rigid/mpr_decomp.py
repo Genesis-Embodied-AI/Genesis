@@ -357,74 +357,7 @@ class MPR:
         self.simplex_support[i_s, i_b].v = v
 
     @ti.func
-    def mpr_discover_portal(self, i_ga, i_gb, i_b, normal_ws):
-        # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
-        # proposed to extend its application to collision detection as it can provide the contact normal and penetration
-        # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
-        # portal. Beyond this specific scenario, it only provides an approximation, that gets worst and worst as the
-        # ray casting and portal normal are misaligned.
-        # For convex shape, one can show that everything should be fine for low penetration-to-size ratio for each
-        # geometry, and the probability to accurately estimate the contact point decreases as this ratio increases.
-        #
-        # This issue can be avoided by initializing the algorithm with the good seach direction, basically the one
-        # from the previous simulation timestep would do fine, as the penetration was smaller at that time and so the
-        # likely for this direction to be valid was larger. Alternatively, the direction of the linear velocity would
-        # be a good option.
-        #
-        # Enforcing a specific search direction to vanilla MPR is not straightforward, because the direction of the ray
-        # control by v0, which is defined as the difference between the respective centers of each geometry.
-        # The only option is to change the way the center of each geometry are defined, so as to make the ray casting
-        # from origin to v0 as colinear as possible with the direction we are interested, while remaining included in
-        # their respective geometry.
-        # The idea is to offset the original centers of each geometry by a ratio that corresponds to their respective
-        # (rotated) bounding box size along each axe. Each center cannot be moved more than half of its bound-box size
-        # along each axe. This could lead to a center that is outside the geometries if they do not collide, but
-        # should be fine otherwise. Anyway, this is not a big deal in practice and MPR is robust enough to converge to
-        # a meaningful solution and if the center is slightly off of each geometry. Nevertheless, if it turns out this
-        # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
-        # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
-        # signed distance is computed once again until to find a valid point. This procedure should be cheap.
-
-        g_state_a = self._solver.geoms_state[i_ga, i_b]
-        g_state_b = self._solver.geoms_state[i_gb, i_b]
-        g_info = self._solver.geoms_info[i_ga]
-        center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
-        g_info = self._solver.geoms_info[i_gb]
-        center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
-
-        # Completely different center logics if a normal guess is provided
-        if ti.static(not self._solver._enable_mujoco_compatibility):
-            if (ti.abs(normal_ws) > self.CCD_EPS).any():
-                # Must start from the center of each bounding box
-                center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
-                center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
-                center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
-                center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
-                delta = center_a - center_b
-
-                # Skip offset if normal is almost colinear already
-                normal = delta.normalized()
-                if normal_ws.cross(normal).norm() > self.CCD_TOLERANCE:
-                    # Compute the target offset
-                    offset = delta.dot(normal_ws) * normal_ws - delta
-                    offset_norm = offset.norm()
-
-                    if offset_norm > gs.EPS:
-                        # Compute the size of the bounding boxes along the target offset direction.
-                        # First, move the direction in local box frame
-                        dir_offset = offset / offset_norm
-                        dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_state_a.quat)
-                        dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_state_b.quat)
-                        box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
-                        box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
-                        length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
-                        length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
-
-                        # Shift the center of each geometry
-                        offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
-                        center_a = center_a + dir_offset * length_a * offset_ratio
-                        center_b = center_b - dir_offset * length_b * offset_ratio
-
+    def mpr_discover_portal(self, i_ga, i_gb, i_b, center_a, center_b):
         self.simplex_support[0, i_b].v1 = center_a
         self.simplex_support[0, i_b].v2 = center_b
         self.simplex_support[0, i_b].v = center_a - center_b
@@ -476,6 +409,10 @@ class MPR:
                         self.mpr_swap(1, 2, i_ga, i_gb, i_b)
                         direction = -direction
 
+                    # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
+                    # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
+                    # Since this deadlock happens very rarely, a simple fix is to abord computation after a few trials.
+                    num_trials = gs.ti_int(0)
                     while self.simplex_size[i_b] < 4:
                         v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
@@ -507,6 +444,10 @@ class MPR:
                             vb = self.simplex_support[2, i_b].v - self.simplex_support[0, i_b].v
                             direction = va.cross(vb)
                             direction = direction.normalized()
+                            num_trials = num_trials + 1
+                            if num_trials == 15:
+                                ret = -1
+                                break
                         else:
                             self.simplex_support[3, i_b].v1 = v1
                             self.simplex_support[3, i_b].v2 = v2
@@ -516,8 +457,81 @@ class MPR:
         return ret
 
     @ti.func
-    def func_mpr_contact(self, i_ga, i_gb, i_b, normal_ws):
-        res = self.mpr_discover_portal(i_ga, i_gb, i_b, normal_ws)
+    def guess_geoms_center(self, i_ga, i_gb, i_b, normal_ws):
+        # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
+        # proposed to extend its application to collision detection as it can provide the contact normal and penetration
+        # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
+        # portal. Beyond this specific scenario, it only provides an approximation, that gets worst and worst as the
+        # ray casting and portal normal are misaligned.
+        # For convex shape, one can show that everything should be fine for low penetration-to-size ratio for each
+        # geometry, and the probability to accurately estimate the contact point decreases as this ratio increases.
+        #
+        # This issue can be avoided by initializing the algorithm with the good seach direction, basically the one
+        # from the previous simulation timestep would do fine, as the penetration was smaller at that time and so the
+        # likely for this direction to be valid was larger. Alternatively, the direction of the linear velocity would
+        # be a good option.
+        #
+        # Enforcing a specific search direction to vanilla MPR is not straightforward, because the direction of the ray
+        # control by v0, which is defined as the difference between the respective centers of each geometry.
+        # The only option is to change the way the center of each geometry are defined, so as to make the ray casting
+        # from origin to v0 as colinear as possible with the direction we are interested, while remaining included in
+        # their respective geometry.
+        # The idea is to offset the original centers of each geometry by a ratio that corresponds to their respective
+        # (rotated) bounding box size along each axe. Each center cannot be moved more than half of its bound-box size
+        # along each axe. This could lead to a center that is outside the geometries if they do not collide, but
+        # should be fine otherwise. Anyway, this is not a big deal in practice and MPR is robust enough to converge to
+        # a meaningful solution and if the center is slightly off of each geometry. Nevertheless, if it turns out this
+        # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
+        # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
+        # signed distance is computed once again until to find a valid point. This procedure should be cheap.
+
+        g_state_a = self._solver.geoms_state[i_ga, i_b]
+        g_state_b = self._solver.geoms_state[i_gb, i_b]
+        g_info = self._solver.geoms_info[i_ga]
+        center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
+        g_info = self._solver.geoms_info[i_gb]
+        center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
+
+        # Completely different center logics if a normal guess is provided
+        if ti.static(not self._solver._enable_mujoco_compatibility):
+            if (ti.abs(normal_ws) > self.CCD_EPS).any():
+                # Must start from the center of each bounding box
+                center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
+                center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
+                center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
+                center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
+                delta = center_a - center_b
+
+                # Skip offset if normal is roughly pointing in the same direction already.
+                # Note that a threshold of 0.5 would probably make more sense, but this means that the center of each
+                # geometry would significantly affect collision detection, which is undesirable.
+                normal = delta.normalized()
+                if normal_ws.cross(normal).norm() > 0.01:
+                    # Compute the target offset
+                    offset = delta.dot(normal_ws) * normal_ws - delta
+                    offset_norm = offset.norm()
+
+                    if offset_norm > gs.EPS:
+                        # Compute the size of the bounding boxes along the target offset direction.
+                        # First, move the direction in local box frame
+                        dir_offset = offset / offset_norm
+                        dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_state_a.quat)
+                        dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_state_b.quat)
+                        box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
+                        box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
+                        length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
+                        length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
+
+                        # Shift the center of each geometry
+                        offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
+                        center_a = center_a + dir_offset * length_a * offset_ratio
+                        center_b = center_b - dir_offset * length_b * offset_ratio
+
+        return center_a, center_b
+
+    @ti.func
+    def func_mpr_contact_from_centers(self, i_ga, i_gb, i_b, center_a, center_b):
+        res = self.mpr_discover_portal(i_ga, i_gb, i_b, center_a, center_b)
 
         is_col = False
         pos = gs.ti_vec3([0.0, 0.0, 0.0])
@@ -534,3 +548,8 @@ class MPR:
                 is_col, normal, penetration, pos = self.mpr_find_penetration(i_ga, i_gb, i_b)
 
         return is_col, normal, penetration, pos
+
+    @ti.func
+    def func_mpr_contact(self, i_ga, i_gb, i_b, normal_ws):
+        center_a, center_b = self.guess_geoms_center(i_ga, i_gb, i_b, normal_ws)
+        return self.func_mpr_contact_from_centers(i_ga, i_gb, i_b, center_a, center_b)
