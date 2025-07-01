@@ -3,6 +3,7 @@ import trimesh
 import numpy as np
 import os
 from huggingface_hub import snapshot_download
+from pathlib import Path
 
 import genesis as gs
 import genesis.utils.mesh as mu
@@ -292,3 +293,24 @@ def test_usd_parse(usd_filename):
         check_gs_textures(
             gs_glb_material.emissive_texture, gs_usd_material.emissive_texture, 0.0, material_name, "emissive"
         )
+
+
+@pytest.mark.required
+def test_urdf_with_existing_glb():
+    assets = Path(gs.utils.get_assets_dir())
+    glb_path = assets / "usd" / "sneaker_airforce.glb"
+
+    tmp_path = Path(__file__).parent
+    urdf_path = tmp_path / "model.urdf"
+    urdf_path.write_text(
+        f"""<robot name="shoe">
+               <link name="base">
+                 <visual>
+                   <geometry><mesh filename="{glb_path}"/></geometry>
+                 </visual>
+               </link>
+             </robot>"""
+    )
+    scene = gs.Scene(show_viewer=False)
+    scene.build()
+    scene.step()
