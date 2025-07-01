@@ -13,16 +13,16 @@ from .utils import assert_allclose
 def lbvh():
     """Fixture for a LBVH tree"""
 
-    n_aabbs = 20
+    n_aabbs = 500
     n_batches = 10
     aabb = AABB(n_batches=n_batches, n_aabbs=n_aabbs)
-    min = np.random.rand(n_batches, n_aabbs, 3).astype(np.float32)
+    min = np.random.rand(n_batches, n_aabbs, 3).astype(np.float32) * 20.0
     max = min + np.random.rand(n_batches, n_aabbs, 3).astype(np.float32)
 
     aabb.aabbs.min.from_numpy(min)
     aabb.aabbs.max.from_numpy(max)
 
-    lbvh = LBVH(aabb)
+    lbvh = LBVH(aabb, max_n_query_result_per_aabb=32)
     lbvh.build()
     return lbvh
 
@@ -70,6 +70,7 @@ def test_expand_bits():
         ), f"Expected {str_expanded_x}, got {''.join(f'00{bit}' for bit in str_x)}"
 
 
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_build_tree(lbvh):
     nodes = lbvh.nodes.to_numpy()
     n_aabbs = lbvh.n_aabbs
@@ -116,6 +117,7 @@ def test_build_tree(lbvh):
                 assert_allclose(parent_max, parent_max_expected, atol=1e-6, rtol=1e-5)
 
 
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
     aabbs = lbvh.aabbs
 
@@ -123,6 +125,10 @@ def test_query(lbvh):
     lbvh.query(aabbs)
 
     query_result_count = lbvh.query_result_count.to_numpy()
+    if query_result_count > lbvh.max_n_query_results:
+        raise ValueError(
+            f"Query result count {query_result_count} exceeds max_n_query_results {lbvh.max_n_query_results}"
+        )
     query_result = lbvh.query_result.to_numpy()
 
     n_aabbs = lbvh.n_aabbs
