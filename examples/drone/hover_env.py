@@ -1,5 +1,6 @@
 import torch
 import math
+import copy
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
 
@@ -28,7 +29,7 @@ class HoverEnv:
         self.command_cfg = command_cfg
 
         self.obs_scales = obs_cfg["obs_scales"]
-        self.reward_scales = reward_cfg["reward_scales"]
+        self.reward_scales = copy.deepcopy(reward_cfg["reward_scales"])
 
         # create scene
         self.scene = gs.Scene(
