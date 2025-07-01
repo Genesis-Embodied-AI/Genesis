@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import logging
+from pathlib import Path
 
 from PIL import Image
 import numpy as np
@@ -234,14 +235,17 @@ def replace_asset_symlinks(stage):
 
 
 def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
-    zipfiles = Usd.ZipFile.Open(path) if path.endswith(".usdz") else None
+    path_obj = Path(path)
+    zipfiles = Usd.ZipFile.Open(path) if path_obj.suffix.lower() == ".usdz" else None
 
+    # detect bake file caches
     is_bake_cache_found = False
-    baked_path = f"{os.path.splitext(path)[0]}_baked.{BAKE_EXT}"
-    if bake_cache:
-        if os.path.exists(baked_path):
-            path = baked_path
-            is_bake_cache_found = True
+    baked_path_obj = path_obj.with_name(path_obj.stem + f"_baked.{BAKE_EXT}")
+    baked_path = str(baked_path_obj)
+    if bake_cache and baked_path_obj.exists():
+        path = str(baked_path_obj)
+        is_bake_cache_found = True
+        gs.logger.info(f"Baked assets detected and used: {path}")
 
     stage = Usd.Stage.Open(path)
     scale *= UsdGeom.GetStageMetersPerUnit(stage)
@@ -288,6 +292,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 "--log_level",
                 logging.getLevelName(gs.logger.level).lower(),
             ]
+            gs.logger.debug(f"Execute: {' '.join(commands)}")
 
             # Each material is estimated to bake at most 4s, and boostrap and initialization for 10s.
             result = subprocess.run(
@@ -304,10 +309,9 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
         except subprocess.TimeoutExpired:
             gs.logger.warning(f"Timeout. Terminate baking for USD file {path}.")
         except (subprocess.CalledProcessError, OSError) as e:
-            gs.logger.warning(f"Baking process failed: {e}. (Note that USD baking may only support Python 3.10 now.)")
+            gs.logger.warning(f"Baking process failed: {e} (Note that USD baking may only support Python 3.10 now.)")
 
-        if os.path.exists(baked_path):
-            baked_folder = os.path.dirname(path)
+        if baked_path_obj.exists():
             gs.logger.warning(f"USD materials baked to file {baked_path}")
             stage = Usd.Stage.Open(baked_path)
             for baked_material_id, baked_material_path in baked_materials.items():
@@ -316,10 +320,10 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 materials[baked_material_id] = (baked_material, uv_name)
 
             if not bake_cache:
-                os.remove(baked_path)
-                for file in os.listdir(baked_folder):
-                    if file.startswith("baked_textures"):
-                        shutil.rmtree(os.path.join(baked_folder, file))
+                baked_folder_obj = baked_path_obj.parent
+                baked_path_obj.unlink()
+                for baked_texture_obj in baked_folder_obj.glob("baked_textures*"):
+                    shutil.rmtree(baked_texture_obj)
 
     # parse geometries
     for prim in stage.Traverse():
