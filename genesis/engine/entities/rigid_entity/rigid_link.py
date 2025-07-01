@@ -1,6 +1,7 @@
 import numpy as np
 import taichi as ti
 import torch
+from typing import TYPE_CHECKING
 
 import genesis as gs
 import trimesh
@@ -9,12 +10,25 @@ from genesis.utils import geom as gu
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
+
 
 @ti.data_oriented
 class RigidLink(RBC):
     """
     RigidLink class. One RigidEntity consists of multiple RigidLinks, each of which is a rigid body and could consist of multiple RigidGeoms (`link.geoms`, for collision) and RigidVisGeoms (`link.vgeoms` for visualization).
     """
+
+    # Partial member list
+    _inertial_pos: np.ndarray(dtype=np.float64, shape=(3,))  # COM position at creation time
+    _inertial_quat: np.ndarray(dtype=np.float64, shape=(4,))  # COM rotation at creation time
+    is_fixed: np.int32  # note inconsistent type, while is_built, is_free, is_leaf are bools
+    _name: str
+    _pos: np.ndarray(shape=(3,))  # inconsistent type: int, float64; link position at creation time
+    _quat: np.ndarray(dtype=np.float64, shape=(4,))  # link rotation at creation time
+    _entity: "RigidEntity"
+    _geoms: list[RigidGeom]
 
     def __init__(
         self,
