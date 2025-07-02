@@ -147,8 +147,10 @@ class Emitter(RBC):
             else:
                 gs.raise_exception()
 
-            positions = gu.transform_by_T(
-                positions, gu.trans_R_to_T(pos, gu.z_to_R(direction) @ gu.axis_angle_to_R(np.array([0, 0, 1]), theta))
+            positions = gu.transform_by_trans_R(
+                positions,
+                pos,
+                gu.z_up_to_R(direction) @ gu.axis_angle_to_R(np.array([0, 0, 1]), theta),
             ).astype(gs.np_float)
 
             positions = np.tile(positions[np.newaxis], (self._sim._B, 1, 1))
