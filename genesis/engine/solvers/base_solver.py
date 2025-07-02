@@ -38,8 +38,6 @@ class Solver(RBC):
             g_np = np.repeat(g_np[None], self._B, axis=0)
             self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
             self._gravity.from_numpy(g_np)
-        else:
-            self._gravity = None
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
