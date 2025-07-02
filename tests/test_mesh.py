@@ -296,11 +296,9 @@ def test_usd_parse(usd_filename):
 
 
 @pytest.mark.required
-def test_urdf_with_existing_glb():
+def test_urdf_with_existing_glb(tmp_path, show_viewer):
     assets = Path(gs.utils.get_assets_dir())
     glb_path = assets / "usd" / "sneaker_airforce.glb"
-
-    tmp_path = Path(__file__).parent
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="shoe">
@@ -309,8 +307,81 @@ def test_urdf_with_existing_glb():
                    <geometry><mesh filename="{glb_path}"/></geometry>
                  </visual>
                </link>
-             </robot>"""
+             </robot>
+          """
     )
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_fps=False,
+    )
+    scene.build()
+    scene.step()
+
+
+@pytest.mark.required
+def test_urdf_with_float32_grayscale_glb(tmp_path, show_viewer):
+    glb_path = tmp_path / "gray.glb"
+    img = np.random.rand(16, 16).astype(np.float32)
+    vertices = np.array(
+        [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+    mesh = trimesh.Trimesh(vertices, faces, process=False)
+    mesh.visual = trimesh.visual.texture.TextureVisuals(
+        uv=np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32),
+        material=trimesh.visual.material.SimpleMaterial(image=img),
+    )
+    trimesh.Scene([mesh]).export(glb_path)
+    urdf_path = tmp_path / "model_gray.urdf"
+    urdf_path.write_text(
+        f"""<robot name="gray">
+               <link name="base">
+                 <visual>
+                   <geometry><mesh filename="{glb_path}"/></geometry>
+                 </visual>
+               </link>
+             </robot>
+          """
+    )
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_fps=False,
+    )
+    scene.build()
+    scene.step()
+
+
+@pytest.mark.required
+def test_urdf_with_float64_two_channel_glb(tmp_path, show_viewer):
+    glb_path = tmp_path / "rg.glb"
+    img = np.random.rand(16, 16, 2).astype(np.float64)
+    vertices = np.array(
+        [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+    mesh = trimesh.Trimesh(vertices, faces, process=False)
+    mesh.visual = trimesh.visual.texture.TextureVisuals(
+        uv=np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32),
+        material=trimesh.visual.material.SimpleMaterial(image=img),
+    )
+    trimesh.Scene([mesh]).export(glb_path)
+
+    urdf_path = tmp_path / "model_rg.urdf"
+    urdf_path.write_text(
+        f"""<robot name="rg">
+               <link name="base">
+                 <visual>
+                   <geometry><mesh filename="{glb_path}"/></geometry>
+                 </visual>
+               </link>
+             </robot>
+          """
+    )
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_fps=False,
+    )
     scene.build()
     scene.step()

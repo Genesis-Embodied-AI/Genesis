@@ -140,27 +140,27 @@ class ImageTexture(Texture):
 
         elif self.image_array is not None:
             if not isinstance(self.image_array, np.ndarray):
-                gs.raise_exception("`image_array` needs to be an numpy array.")
-            if self.image_array.dtype != np.uint8:
-                if self.image_array.dtype in (np.float32, np.float64):
-                    if self.image_array.max() <= 1.0:
-                        self.image_array = (self.image_array * 255.0).round()
-                    self.image_array = np.clip(self.image_array, 0.0, 255.0).astype(np.uint8)
-                elif self.image_array.dtype == np.bool_:
-                    self.image_array = self.image_array.astype(np.uint8) * 255
+                gs.raise_exception("`image_array` needs to be a numpy array.")
+            if self.image_array.dtype == np.uint8:
+                pass
+            elif np.issubdtype(self.image_array.dtype, np.floating):
+                if self.image_array.max() <= 1.0:
+                    self.image_array = (self.image_array * 255.0).round()
+                self.image_array = np.clip(self.image_array, 0.0, 255.0).astype(np.uint8)
+            elif self.image_array.dtype == np.bool_:
+                self.image_array = self.image_array.astype(np.uint8) * 255
+            elif np.issubdtype(self.image_array.dtype, np.integer):
+                self.image_array = np.clip(self.image_array, 0, 255).astype(np.uint8)
+            else:
+                gs.raise_exception(
+                    f"Unsupported image dtype {self.image_array.dtype}. "
+                    "Only uint8, integer, floating-point, or bool types are supported."
+                )
 
-                elif np.issubdtype(self.image_array.dtype, np.integer):
-                    self.image_array = np.clip(self.image_array, 0, 255).astype(np.uint8)
-                else:
-                    gs.raise_exception(
-                        f"Unsupported image dtype {self.image_array.dtype}. Only uint8 or float32/64 are supported."
-                    )
             if self.image_array.ndim == 2:
                 self.image_array = np.stack([self.image_array] * 3, axis=-1)
-
             elif self.image_array.shape[2] == 1:
                 self.image_array = np.repeat(self.image_array, 3, axis=2)
-
             elif self.image_array.shape[2] == 2:
                 L = self.image_array[..., 0]
                 A = self.image_array[..., 1]
