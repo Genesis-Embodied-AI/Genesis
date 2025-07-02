@@ -144,7 +144,8 @@ class RigidLink(RBC):
 
                 if inertia_mesh.is_watertight and self._init_mesh.mass > 0:
                     # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
-                    T_inertia = gu.trans_quat_to_T(self._inertial_pos, self._inertial_quat)
+                    dtype = np.result_type(self._inertial_pos, self._inertial_quat)
+                    T_inertia = gu.trans_quat_to_T(self._inertial_pos.astype(dtype), self._inertial_quat.astype(dtype))
                     self._inertial_i = (
                         self._init_mesh.moment_inertia_frame(T_inertia) / self._init_mesh.mass * self._inertial_mass
                     )
