@@ -142,18 +142,26 @@ class BatchRenderer(RBC):
         if segmentation:
             raise NotImplementedError("Segmentation rendering is not implemented")
 
-        if not force_render and self._last_t == self._visualizer.scene.t:
+        # TODO: anti-aliasing is to be implemented
+        dummy_antialiasing = False
+        render_options = np.array([rgb, depth, normal, segmentation, dummy_antialiasing], dtype=np.uint32)
+
+        if (
+            not force_render
+            and self._last_t == self._visualizer.scene.t
+            and np.all(self._last_render_options == render_options)
+        ):
             return self._rgb_torch, self._depth_torch, None, None
 
         # Update last_t to current time to avoid re-rendering if the scene is not updated
         self._last_t = self._visualizer.scene.t
+        self._last_render_options = render_options
         self.update_scene()
 
         rigid = self._visualizer.scene.rigid_solver
         camera_pos = self._visualizer.camera_pos
         camera_quat = self._visualizer.camera_quat
-        # TODO: Control whether to render rgb, depth, segmentation, normal separately
-        rgb_torch, depth_torch = self._renderer.render(rigid, camera_pos, camera_quat)
+        rgb_torch, depth_torch = self._renderer.render(rigid, camera_pos, camera_quat, render_options)
 
         if rgb_torch is not None:
             if rgb_torch.ndim == 4:
