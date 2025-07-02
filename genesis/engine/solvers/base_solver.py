@@ -33,27 +33,26 @@ class Solver(RBC):
 
     def build(self):
         self._B = self._sim._B
+        if self._init_gravity is not None:
+            g_np = np.asarray(self._init_gravity, dtype=np.float32)
+            g_np = np.repeat(g_np[None], self._B, axis=0)
+            self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
+            self._gravity.from_numpy(g_np)
+        else:
+            self._gravity = None
 
-        g_np = np.asarray(
-            self._init_gravity if self._init_gravity is not None else self._sim._gravity,
-            dtype=np.float32,
-        )
-        g_np = np.repeat(g_np[None], self._B, axis=0)
-
-        self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
-        self._gravity.from_numpy(g_np)
-
-        if self._B == 1:
-            self._gravity.to_numpy = lambda _orig=self._gravity.to_numpy: _orig().squeeze(0)
-
+    @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
         if self._gravity is None:
             return
+        g = np.asarray(gravity, dtype=np.float32)
         if envs_idx is None:
-            self._gravity.copy_from(gravity)
+            if g.ndim == 1:
+                g = np.repeat(g[None], self._B, axis=0)
+            self._gravity.from_numpy(g)
         else:
-            self._gravity[envs_idx] = gravity
-            
+            self._gravity[envs_idx] = g
+
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
 

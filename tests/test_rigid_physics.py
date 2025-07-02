@@ -2229,7 +2229,7 @@ def test_gravity(show_viewer, tol):
 
     assert_allclose(first_pos * -1, second_pos, tol=tol)
 
-    
+
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_scene_saver_franka(show_viewer, tol):
