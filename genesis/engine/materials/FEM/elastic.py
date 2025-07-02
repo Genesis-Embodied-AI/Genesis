@@ -82,6 +82,7 @@ class Elastic(Base):
 
     @ti.func
     def pre_compute_linear_corotated(self, J, F, i_e, i_b):
+        # Computing Polar Decomposition instead of calling `R, P = ti.polar_decompose(F)` since `P` is not needed here
         U, S, V = ti.svd(F)
         R = U @ V.transpose()
         self.R[i_b, i_e] = R
@@ -431,7 +432,7 @@ class Elastic(Base):
         for i, k in ti.static(ti.ndrange(3, 3)):
             hessian_field[i_b, i, i, i_e][k, k] = mu
 
-        for i, j, alpha, beta in ti.static(ti.ndrange(3, 3, 3, 3)):
+        for i, j, alpha, beta in ti.ndrange(3, 3, 3, 3):
             hessian_field[i_b, j, beta, i_e][i, alpha] += mu * R[i, beta] * R[alpha, j] + lam * R[alpha, beta] * R[i, j]
 
         return energy, gradient
