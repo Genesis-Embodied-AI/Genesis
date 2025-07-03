@@ -824,18 +824,14 @@ class RigidEntity(Entity):
             gs.raise_exception("Entity has zero dofs.")
 
         if local_point is None:
-            self._kernel_get_jacobian(link.idx, 0.0, 0.0, 0.0)
+            self._kernel_get_jacobian_zero(link.idx)
         else:
-            local_point = torch.as_tensor(
-                local_point,
-                device=gs.device,
-                dtype=torch.float32,
-            )
-            if local_point.shape != (3,):
-                gs.raise_exception("`local_point` must be a 3-vector in link frame.")
-
-            x, y, z = local_point.tolist()
-            self._kernel_get_jacobian(link.idx, x, y, z)
+            if not isinstance(local_point, (list, tuple, np.ndarray)):
+                gs.raise_exception("`local_point` must be length-3 iterable.")
+            if len(local_point) != 3:
+                gs.raise_exception("`local_point` must have 3 elements.")
+            p_local = ti.Vector(local_point, dt=ti.f32)
+            self._kernel_get_jacobian(link.idx, p_local)
 
         jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
         if self._solver.n_envs == 0:
@@ -843,17 +839,26 @@ class RigidEntity(Entity):
 
         return jacobian
 
+    @ti.func
+    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_local):
+        self._func_get_jacobian(
+            tgt_link_idx,
+            i_b,
+            p_local,
+            ti.Vector.one(gs.ti_int, 3),
+            ti.Vector.one(gs.ti_int, 3),
+        )
+
     @ti.kernel
-    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, px: ti.f32, py: ti.f32, pz: ti.f32):
+    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.template()):
         for i_b in range(self._solver._B):
-            p_local = ti.Vector([px, py, pz])  # build once inside Taichi
-            self._func_get_jacobian(
-                tgt_link_idx,
-                i_b,
-                p_local,
-                ti.Vector.one(gs.ti_int, 3),
-                ti.Vector.one(gs.ti_int, 3),
-            )
+            self._impl_get_jacobian(tgt_link_idx, i_b, p_local)
+
+    @ti.kernel
+    def _kernel_get_jacobian_zero(self, tgt_link_idx: ti.i32):
+        zero_vec = ti.Vector.zero(ti.f32, 3)
+        for i_b in range(self._solver._B):
+            self._impl_get_jacobian(tgt_link_idx, i_b, zero_vec)
 
     @ti.func
     def _func_get_jacobian(self, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):

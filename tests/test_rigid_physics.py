@@ -2300,13 +2300,14 @@ def test_urdf_mimic(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_jacobian_arbitrary_point(tmp_path, show_viewer, tol):
+@pytest.mark.merge_fixed_links(False)
+@pytest.mark.parametrize("model_name", ["pendulum"])
+def test_pendulum_links_acc(tmp_path, gs_sim, show_viewer, tol):
     urdf_root = _build_multi_pendulum(n=1)
     urdf_file = tmp_path / "pendulum.urdf"
     ET.ElementTree(urdf_root).write(urdf_file)
 
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene = gs.Scene(sim=gs_sim, show_viewer=show_viewer, show_FPS=False)
     ent = scene.add_entity(gs.morphs.URDF(file=str(urdf_file), fixed=True))
     scene.build()
 
@@ -2330,8 +2331,8 @@ def test_jacobian_arbitrary_point(tmp_path, show_viewer, tol):
     lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
     lin_expected = lin_o + r_cross @ ang_o
 
-    np.testing.assert_allclose(J_p[3:, 0], ang_o, tol=tol)
-    np.testing.assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
+    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
+    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
 
 
 @pytest.mark.required
