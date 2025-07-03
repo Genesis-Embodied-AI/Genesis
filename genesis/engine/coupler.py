@@ -217,7 +217,7 @@ class Coupler(RBC):
                 vel_mpm = (1 / self.mpm_solver.grid[f, I, i_b].mass) * self.mpm_solver.grid[f, I, i_b].vel_in
 
                 # gravity
-                vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[None]
+                vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
 
                 pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
                 mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._p_vol_scale
