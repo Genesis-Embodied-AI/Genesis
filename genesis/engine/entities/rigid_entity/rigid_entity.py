@@ -2762,7 +2762,7 @@ class RigidEntity(Entity):
         if self._solver.n_envs == 0:
             contacts_info = {key: value[valid_mask] for key, value in contacts_info.items()}
         else:
-            contacts_info = {key: value[:, valid_mask] for key, value in contacts_info.items()}
+            contacts_info["valid_mask"] = valid_mask
 
         contacts_info["force_a"] = -contacts_info["force"]
         contacts_info["force_b"] = +contacts_info["force"]

@@ -200,7 +200,7 @@ class Coupler(RBC):
                 vel_mpm = (1 / self.mpm_solver.grid[f, I, i_b].mass) * self.mpm_solver.grid[f, I, i_b].vel_in
 
                 # gravity
-                vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[None]
+                vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
 
                 pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
                 mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._p_vol_scale
@@ -649,6 +649,7 @@ class SAPCoupler(RBC):
         self._n_linesearch_iterations = options.n_linesearch_iterations
         self._linesearch_c = options.linesearch_c
         self._linesearch_tau = options.linesearch_tau
+        self.default_deformable_g = 1.0e8  # default deformable geometry size
 
     def build(self) -> None:
         self._B = self.sim._B
@@ -698,6 +699,7 @@ class SAPCoupler(RBC):
         self.max_fem_floor_contact_pairs = fem_solver.n_surfaces * fem_solver._B
         self.n_fem_floor_contact_pairs = ti.field(gs.ti_int, shape=())
         self.fem_floor_contact_pairs = self.fem_floor_contact_pair_type.field(shape=(self.max_fem_floor_contact_pairs,))
+
         # Lookup table for marching tetrahedra edges
         kMarchingTetsEdgeTable_np = np.array(
             [
@@ -934,15 +936,12 @@ class SAPCoupler(RBC):
             )
             self.fem_floor_contact_pairs[i_c].barycentric = barycentric
 
-            C = ti.static(1.0e8)
-            deformable_g = C
             rigid_g = self.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
             if total_area < gs.EPS or rigid_g < gs.EPS:
                 self.fem_floor_contact_pairs[i_c].active = 0
                 continue
-            g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
-            deformable_k = total_area * C
+            g = self.default_deformable_g * rigid_g / (self.default_deformable_g + rigid_g)  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             rigid_fn0 = total_area * pressure
