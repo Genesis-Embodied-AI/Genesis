@@ -153,6 +153,8 @@ class Collider:
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
 
+        # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
+        # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
             f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
@@ -777,7 +779,7 @@ class Collider:
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
-                                ti.static_print(self._warn_msg_max_collision_pairs)
+                                # print(self._warn_msg_max_collision_pairs)
                                 break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
@@ -1110,7 +1112,10 @@ class Collider:
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
-            ti.static_print(self._warn_msg_max_collision_pairs)
+            # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
+            # condition, while 'print' is slowing down the kernel even if every called in practice...
+            # print(self._warn_msg_max_collision_pairs)
+            pass
         else:
             ga_info = self._solver.geoms_info[i_ga]
             gb_info = self._solver.geoms_info[i_gb]
