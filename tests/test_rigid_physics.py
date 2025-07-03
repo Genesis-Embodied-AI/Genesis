@@ -578,7 +578,7 @@ def test_link_velocity(gs_sim, tol):
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 def test_pendulum_links_acc(gs_sim, tol):
     pendulum = gs_sim.entities[0]
-    g = gs_sim.rigid_solver._gravity.to_numpy()[2]
+    g = gs_sim.rigid_solver._gravity[0][2]
 
     # Make sure that the linear and angular acceleration matches expectation
     theta = np.random.rand()
@@ -1680,7 +1680,7 @@ def test_contact_forces(show_viewer, tol):
     )
     scene.build()
 
-    cube_weight = scene.rigid_solver._gravity.to_numpy()[2] * cube.get_mass()
+    cube_weight = scene.rigid_solver._gravity[0][2] * cube.get_mass()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
     qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
@@ -2297,6 +2297,28 @@ def test_urdf_mimic(show_viewer, tol):
 
     gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_gravity(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    sphere = scene.add_entity(gs.morphs.Sphere())
+    scene.build(n_envs=2)
+
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, -9.8]), envs_idx=0)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 9.8]), envs_idx=1)
+
+    for _ in range(200):
+        scene.step()
+
+    first_pos = sphere.get_dofs_position()[0, 2]
+    second_pos = sphere.get_dofs_position()[1, 2]
+
+    assert_allclose(first_pos * -1, second_pos, tol=tol)
 
 
 @pytest.mark.required
