@@ -211,8 +211,7 @@ class Simulator(RBC):
             if solver.n_entities > 0:
                 solver.set_state(0, solver_state, envs_idx)
 
-        # TODO: keeping as is for now, since coupler is currently for non-batched scenes
-        self.coupler.reset()
+        self.coupler.reset(envs_idx=envs_idx)
 
         # TODO: keeping as is for now
         self.reset_grad()
