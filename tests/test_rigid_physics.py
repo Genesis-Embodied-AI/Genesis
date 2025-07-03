@@ -2202,6 +2202,115 @@ def test_urdf_mimic(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_gravity(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    sphere = scene.add_entity(gs.morphs.Sphere())
+    scene.build(n_envs=2)
+
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, -9.8]), envs_idx=0)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 9.8]), envs_idx=1)
+
+    for _ in range(200):
+        scene.step()
+
+    first_pos = sphere.get_dofs_position()[0, 2]
+    second_pos = sphere.get_dofs_position()[1, 2]
+
+    assert_allclose(first_pos * -1, second_pos, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_scene_saver_franka(show_viewer, tol):
+    scene1 = gs.Scene(show_viewer=show_viewer)
+    franka1 = scene1.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene1.build()
+
+    dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
+
+    franka1.set_dofs_kp(np.full(len(dof_idx), 3000), dof_idx)
+    franka1.set_dofs_kv(np.full(len(dof_idx), 300), dof_idx)
+
+    target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
+    franka1.control_dofs_position(target_pose, dof_idx)
+
+    for _ in range(400):
+        scene1.step()
+
+    pose_ref = franka1.get_dofs_position(dof_idx)
+
+    ckpt_path = Path(tempfile.gettempdir()) / "franka_unit.pkl"
+    scene1.save_checkpoint(ckpt_path)
+
+    scene2 = gs.Scene(show_viewer=show_viewer)
+    franka2 = scene2.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene2.build()
+    scene2.load_checkpoint(ckpt_path)
+
+    pose_loaded = franka2.get_dofs_position(dof_idx)
+
+    assert_allclose(pose_ref, pose_loaded, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_jacobian_arbitrary_point(tmp_path, show_viewer, tol):
+    urdf_path = tmp_path / "one_link.urdf"
+    urdf_path.write_text(
+        r"""
+            <robot name="one_link">
+            <link name="base"/>
+            <link name="tip"/>
+            <joint name="hinge" type="revolute">
+              <parent link="base"/>
+              <child  link="tip"/>
+              <origin xyz="0 0 0" rpy="0 0 0"/>
+              <axis xyz="0 0 1"/>
+              <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+            </joint>
+            </robot>
+        """
+    )
+
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    ent = scene.add_entity(gs.morphs.URDF(file=str(urdf_path), fixed=True))
+    scene.build()
+
+    angle = 0.7  # rad
+    ent.set_qpos(np.array([angle], dtype=np.float32))
+    scene.step()
+
+    link_tip = ent.get_link("tip")
+
+    p_local = np.array([0.05, -0.02, 0.12], dtype=np.float32)
+    J_o = ent.get_jacobian(link_tip).cpu().numpy()  # → np.ndarray
+    J_p = ent.get_jacobian(link_tip, p_local).cpu().numpy()
+
+    c, s = np.cos(angle), np.sin(angle)
+    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    r_world = Rz @ p_local
+
+    r_cross = np.array(
+        [[0, -r_world[2], r_world[1]], [r_world[2], 0, -r_world[0]], [-r_world[1], r_world[0], 0]],
+        dtype=np.float32,
+    )
+
+    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
+    lin_expected = lin_o + r_cross @ ang_o
+
+    np.testing.assert_allclose(J_p[3:, 0], ang_o, tol=tol)
+    np.testing.assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_drone_hover_same_with_and_without_substeps(show_viewer, tol):
     base_rpm = 15000
     scene_ref = gs.Scene(
