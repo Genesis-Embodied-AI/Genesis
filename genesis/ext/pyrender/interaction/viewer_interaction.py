@@ -3,11 +3,9 @@ from typing_extensions import override
 
 import numpy as np
 
-from pyglet.event import EVENT_HANDLE_STATE
-
 from .ray import Plane, Ray, RayHit
 from .vec3 import Vec3
-from .viewer_interaction_base import ViewerInteractionBase
+from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
