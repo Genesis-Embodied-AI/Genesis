@@ -504,45 +504,51 @@ def quat_to_R(quat):
 
 
 def R_to_quat(R):
+    batch_shape = R.shape[:-2]
     if isinstance(R, torch.Tensor):
-        batch = R.shape[:-2]  # Support batch dimension
-        quat_xyzw = torch.zeros((*batch, 4), dtype=R.dtype, device=R.device)
+        quat = torch.zeros((*batch_shape, 4), dtype=R.dtype, device=R.device)
 
-        trace = R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2]
+        diag = torch.diagonal(R, dim1=-2, dim2=-1)
+        trace = diag.sum(-1)
 
         # Compute quaternion based on the trace of the matrix
-        mask1 = trace > 0
-        mask2 = ~mask1 & (R[..., 0, 0] >= R[..., 1, 1]) & (R[..., 0, 0] >= R[..., 2, 2])
-        mask3 = ~mask1 & ~mask2 & (R[..., 1, 1] >= R[..., 2, 2])
-        mask4 = ~mask1 & ~mask2 & ~mask3
+        mask1 = trace > 0.0
+        is_masked = not mask1.all()
+        if is_masked:
+            mask2 = ~mask1 & (diag[..., 0] >= diag[..., 1]) & (diag[..., 0] >= diag[..., 2])
+            mask3 = ~mask1 & ~mask2 & (diag[..., 1] >= diag[..., 2])
+            mask4 = ~mask1 & ~mask2 & ~mask3
+        else:
+            mask1 = slice(0, None)
 
-        S = torch.zeros_like(trace)
+        S = 2.0 * torch.sqrt(trace[mask1] + 1.0)
+        quat[mask1, 0] = 0.25 * S
+        quat[mask1, 1] = (R[mask1, 2, 1] - R[mask1, 1, 2]) / S
+        quat[mask1, 2] = (R[mask1, 0, 2] - R[mask1, 2, 0]) / S
+        quat[mask1, 3] = (R[mask1, 1, 0] - R[mask1, 0, 1]) / S
 
-        S[mask1] = torch.sqrt(trace[mask1] + 1.0) * 2
-        quat_xyzw[mask1, 0] = (R[mask1, 2, 1] - R[mask1, 1, 2]) / S[mask1]
-        quat_xyzw[mask1, 1] = (R[mask1, 0, 2] - R[mask1, 2, 0]) / S[mask1]
-        quat_xyzw[mask1, 2] = (R[mask1, 1, 0] - R[mask1, 0, 1]) / S[mask1]
-        quat_xyzw[mask1, 3] = 0.25 * S[mask1]
+        if is_masked and mask2.any():
+            S = 2.0 * torch.sqrt(1.0 + R[mask2, 0, 0] - R[mask2, 1, 1] - R[mask2, 2, 2])
+            quat[mask2, 0] = (R[mask2, 2, 1] - R[mask2, 1, 2]) / S
+            quat[mask2, 1] = 0.25 * S
+            quat[mask2, 2] = (R[mask2, 0, 1] + R[mask2, 1, 0]) / S
+            quat[mask2, 3] = (R[mask2, 0, 2] + R[mask2, 2, 0]) / S
 
-        S[mask2] = torch.sqrt(1.0 + R[mask2, 0, 0] - R[mask2, 1, 1] - R[mask2, 2, 2]) * 2
-        quat_xyzw[mask2, 0] = 0.25 * S[mask2]
-        quat_xyzw[mask2, 1] = (R[mask2, 0, 1] + R[mask2, 1, 0]) / S[mask2]
-        quat_xyzw[mask2, 2] = (R[mask2, 0, 2] + R[mask2, 2, 0]) / S[mask2]
-        quat_xyzw[mask2, 3] = (R[mask2, 2, 1] - R[mask2, 1, 2]) / S[mask2]
+        if is_masked and mask3.any():
+            S = 2.0 * torch.sqrt(1.0 + R[mask3, 1, 1] - R[mask3, 0, 0] - R[mask3, 2, 2])
+            quat[mask3, 0] = (R[mask3, 0, 2] - R[mask3, 2, 0]) / S
+            quat[mask3, 1] = (R[mask3, 0, 1] + R[mask3, 1, 0]) / S
+            quat[mask3, 2] = 0.25 * S
+            quat[mask3, 3] = (R[mask3, 1, 2] + R[mask3, 2, 1]) / S
 
-        S[mask3] = torch.sqrt(1.0 + R[mask3, 1, 1] - R[mask3, 0, 0] - R[mask3, 2, 2]) * 2
-        quat_xyzw[mask3, 0] = (R[mask3, 0, 1] + R[mask3, 1, 0]) / S[mask3]
-        quat_xyzw[mask3, 1] = 0.25 * S[mask3]
-        quat_xyzw[mask3, 2] = (R[mask3, 1, 2] + R[mask3, 2, 1]) / S[mask3]
-        quat_xyzw[mask3, 3] = (R[mask3, 0, 2] - R[mask3, 2, 0]) / S[mask3]
+        if is_masked and mask4.any():
+            S = 2.0 * torch.sqrt(1.0 + R[mask4, 2, 2] - R[mask4, 0, 0] - R[mask4, 1, 1])
+            quat[mask4, 0] = (R[mask4, 1, 0] - R[mask4, 0, 1]) / S
+            quat[mask4, 1] = (R[mask4, 0, 2] + R[mask4, 2, 0]) / S
+            quat[mask4, 2] = (R[mask4, 1, 2] + R[mask4, 2, 1]) / S
+            quat[mask4, 3] = 0.25 * S
 
-        S[mask4] = torch.sqrt(1.0 + R[mask4, 2, 2] - R[mask4, 0, 0] - R[mask4, 1, 1]) * 2
-        quat_xyzw[mask4, 0] = (R[mask4, 0, 2] + R[mask4, 2, 0]) / S[mask4]
-        quat_xyzw[mask4, 1] = (R[mask4, 1, 2] + R[mask4, 2, 1]) / S[mask4]
-        quat_xyzw[mask4, 2] = 0.25 * S[mask4]
-        quat_xyzw[mask4, 3] = (R[mask4, 1, 0] - R[mask4, 0, 1]) / S[mask4]
-
-        return xyzw_to_wxyz(quat_xyzw)
+        return quat
     elif isinstance(R, np.ndarray):
         quat_xyzw = Rotation.from_matrix(R).as_quat().astype(R.dtype)
         return xyzw_to_wxyz(quat_xyzw)
@@ -968,23 +974,73 @@ def z_up_to_R(z, up=np.array([0, 0, 1])):
     if isinstance(z, torch.Tensor):
         z = normalize(z)
         up = normalize(up)
-        x = torch.cross(up, z)
-        if torch.norm(x) == 0:
-            R = torch.eye(3, device=z.device, dtype=z.dtype)
+
+        # Handle batch dimension properly
+        if z.ndim == 2:
+            # For batch of vectors, process all vectors in parallel
+            # Compute cross products for all vectors at once
+            x = torch.cross(up, z, dim=1)
+
+            # Check norms for all vectors at once
+            x_norm = torch.norm(x, dim=-1, keepdim=True)
+            zero_mask = x_norm < 1e-6
+
+            # Create identity matrices for all vectors
+            R = torch.eye(3, device=z.device, dtype=z.dtype).expand(z.shape[0], 3, 3)
+
+            # For non-zero norm cases, compute proper rotation
+            non_zero_mask = ~zero_mask.squeeze(-1)
+            if non_zero_mask.any():
+                x_valid = normalize(x[non_zero_mask])
+                z_valid = z[non_zero_mask]
+                y_valid = normalize(torch.cross(z_valid, x_valid, dim=1))
+
+                # Stack vectors and transpose for all valid cases at once
+                R[non_zero_mask] = torch.stack([x_valid, y_valid, z_valid], dim=2)
         else:
-            x = normalize(x)
-            y = normalize(torch.cross(z, x))
-            R = torch.stack([x, y, z], dim=1)
+            # Single vector case
+            x = torch.cross(up, z)
+            if torch.norm(x) == 0:
+                R = torch.eye(3, device=z.device, dtype=z.dtype)
+            else:
+                x = normalize(x)
+                y = normalize(torch.cross(z, x))
+                R = torch.vstack([x, y, z]).T
     else:
         z = normalize(z)
         up = normalize(up)
-        x = np.cross(up, z)
-        if np.linalg.norm(x) == 0:
-            R = np.eye(3)
+
+        # Handle batch dimension properly
+        if z.ndim == 2:
+            # For batch of vectors, process all vectors in parallel
+            # Compute cross products for all vectors at once
+            x = np.cross(up, z, axis=1)
+
+            # Check norms for all vectors at once
+            x_norm = np.linalg.norm(x, axis=-1, keepdims=True)
+            zero_mask = x_norm < 1e-6
+
+            # Create identity matrices for all vectors
+            R = np.tile(np.eye(3), (z.shape[0], 1, 1))
+
+            # For non-zero norm cases, compute proper rotation
+            non_zero_mask = ~zero_mask.squeeze(-1)
+            if non_zero_mask.any():
+                x_valid = normalize(x[non_zero_mask])
+                z_valid = z[non_zero_mask]
+                y_valid = normalize(np.cross(z_valid, x_valid))
+
+                # Stack vectors and transpose for all valid cases at once
+                R[non_zero_mask] = np.stack([x_valid, y_valid, z_valid], axis=2)
         else:
-            x = normalize(x)
-            y = normalize(np.cross(z, x))
-            R = np.vstack([x, y, z]).T
+            # Single vector case
+            x = np.cross(up, z)
+            if np.linalg.norm(x) == 0:
+                R = np.eye(3)
+            else:
+                x = normalize(x)
+                y = normalize(np.cross(z, x))
+                R = np.vstack([x, y, z]).T
     return R
 
 
