@@ -2138,7 +2138,7 @@ class Collider:
         )
 
         # Cache contact information before returning
-        self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
+        self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info.copy()
 
         return contacts_info
 
