@@ -708,6 +708,7 @@ class Scene(RBC):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        gs.logger.debug(f"Resetting Scene ~~~<{self._uid}>~~~.")
         self._reset(state, envs_idx=envs_idx)
 
     def _reset(self, state: SimState | None = None, *, envs_idx=None):
