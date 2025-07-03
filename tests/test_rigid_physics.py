@@ -2348,7 +2348,9 @@ def test_jacobian_arbitrary_point(tmp_path, show_viewer, tol):
     np.testing.assert_allclose(J_p[3:, 0], ang_o, tol=tol)
     np.testing.assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
 
-    
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_gravity(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
