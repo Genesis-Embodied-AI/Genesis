@@ -22,6 +22,7 @@ from genesis.repr_base import RBC
 
 from .coupler import Coupler, SAPCoupler
 from .entities import HybridEntity
+from .solvers.base_solver import Solver
 from .solvers import (
     AvatarSolver,
     FEMSolver,
@@ -205,9 +206,10 @@ class Simulator(RBC):
             if isinstance(entity, HybridEntity):
                 entity.build()
 
-    def reset(self, state, envs_idx=None):
+    def reset(self, state: SimState, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):
-            solver.set_state(0, solver_state, envs_idx)
+            if solver.n_entities > 0:
+                solver.set_state(0, solver_state, envs_idx)
 
         # TODO: keeping as is for now, since coupler is currently for non-batched scenes
         self.coupler.reset()

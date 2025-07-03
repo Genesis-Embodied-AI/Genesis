@@ -12,6 +12,7 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
 from genesis.engine.entities import Emitter
+from genesis.engine.states.solvers import SimState
 from genesis.engine.simulator import Simulator
 from genesis.options import (
     AvatarOptions,
@@ -695,23 +696,26 @@ class Scene(RBC):
             self._para_level = gs.PARA_LEVEL.ALL
 
     @gs.assert_built
-    def reset(self, state: dict | None = None, envs_idx=None):
+    def reset(self, state: SimState | None = None, envs_idx=None):
         """
         Resets the scene to its initial state.
 
         Parameters
         ----------
-        state : dict | None
-            The state to reset the scene to. If None, the scene will be reset to its initial state. If this is given, the scene's registerered initial state will be updated to this state.
+        state : SimState | None
+            The state to reset the scene to. If None, the scene will be reset to its initial state.
+            If this is given, the scene's registerered initial state will be updated to this state.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        gs.logger.info(f"Resetting Scene ~~~<{self._uid}>~~~.")
-        self._reset(state, envs_idx)
+        self._reset(state, envs_idx=envs_idx)
 
-    def _reset(self, state=None, envs_idx=None):
+    def _reset(self, state: SimState | None = None, *, envs_idx=None):
         if self._is_built:
             if state is None:
                 state = self._init_state
             else:
+                assert isinstance(state, SimState), "state must be a SimState object"
                 self._init_state = state
             self._sim.reset(state, envs_idx)
         else:
