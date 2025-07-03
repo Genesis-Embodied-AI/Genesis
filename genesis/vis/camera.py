@@ -182,13 +182,24 @@ class Camera(RBC):
         self.set_pose(transform=transform)
 
     @gs.assert_built
-    def _batch_render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
+    def _batch_render(
+        self,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
+        force_render=False,
+        antialiasing=False,
+    ):
         """
         Render the camera view with batch renderer.
         """
         assert self._visualizer._use_batch_renderer, "Batch renderer is not enabled."
 
-        rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(rgb, depth)
+        rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(
+            rgb, depth, segmentation, normal, force_render, antialiasing
+        )
         # The first dimension of the array is camera.
         # If n_envs > 0, the second dimension of the output is env.
         # If n_envs == 0, the second dimension of the output is camera.
@@ -204,7 +215,16 @@ class Camera(RBC):
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
-    def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
+    def render(
+        self,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
+        force_render=False,
+        antialiasing=False,
+    ):
         """
         Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
         If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `len(rendered_envs_idx)`.
@@ -221,6 +241,10 @@ class Camera(RBC):
             If True, the segmentation mask will be colorized.
         normal : bool, optional
             Whether to render the surface normal.
+        force_render : bool, optional
+            Whether to force rendering even if the scene has not changed.
+        antialiasing : bool, optional
+            Whether to apply anti-aliasing.
 
         Returns
         -------
@@ -243,7 +267,7 @@ class Camera(RBC):
             self.update_following()
 
         if self._visualizer._use_batch_renderer:
-            return self._batch_render(rgb, depth, segmentation, colorize_seg, normal)
+            return self._batch_render(rgb, depth, segmentation, colorize_seg, normal, force_render, antialiasing)
 
         if self._raytracer is not None:
             if rgb:
