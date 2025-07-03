@@ -101,12 +101,12 @@ class Coupler(RBC):
 
     @ti.kernel
     def _kernel_reset_mpm(self, envs_idx: ti.types.ndarray()):
-        for i_p, i_g, i_b_ in ti.ndrange(self.mpm_solver.n_particles, self.rigid_solver.n_geoms, len(envs_idx)):
+        for i_p, i_g, i_b_ in ti.ndrange(self.mpm_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
             self.mpm_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
 
     @ti.kernel
     def _kernel_reset_sph(self, envs_idx: ti.types.ndarray()):
-        for i_p, i_g, i_b_ in ti.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, len(envs_idx)):
+        for i_p, i_g, i_b_ in ti.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
             self.sph_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
 
     @ti.func
