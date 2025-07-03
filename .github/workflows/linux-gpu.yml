@@ -53,7 +53,8 @@ jobs:
             --partition=hpc-mid ${NODELIST} --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
-              pip install -e '.[dev,render]' && \
+              pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
+              pip install -e '.[dev,render,usd]' && \
               pytest -v --forked ./tests
             "
 

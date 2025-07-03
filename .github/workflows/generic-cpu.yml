@@ -89,8 +89,16 @@ jobs:
           black --line-length 120 --check .
 
       - name: Install Genesis
+        # TODO: USD baking does not currently support Python 3.11 since
+        # the extension `omni.replicator.core` in Python 3.11 requires `omniverse-kit==107.3`.
+        # NVIDIA does not currently release version 107.3 on PyPI, and only 107.2 is available.
+        # If the new version is released in the future, we can proceed to support Python 3.11.
+        # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
         run: |
-          pip install -e '.[dev,render]'
+          pip install -e '.[dev,render,usd]'
+          if [[ "${{ matrix.PYTHON_VERSION }}" == '3.10' ]] ; then
+            pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit
+          fi
 
       - name: Run unit tests
         run: |

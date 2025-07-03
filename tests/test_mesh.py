@@ -2,7 +2,8 @@ import pytest
 import trimesh
 import numpy as np
 import os
-from huggingface_hub import snapshot_download
+import shutil
+import sys
 
 import genesis as gs
 import genesis.utils.mesh as mu
@@ -144,10 +145,11 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_assets(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
@@ -171,10 +173,11 @@ def test_glb_parse_geometry(glb_file):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/chopper.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/chopper.glb"])
 def test_glb_parse_material(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_assets(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
@@ -292,3 +295,32 @@ def test_usd_parse(usd_filename):
         check_gs_textures(
             gs_glb_material.emissive_texture, gs_usd_material.emissive_texture, 0.0, material_name, "emissive"
         )
+
+
+@pytest.mark.skipif(sys.version_info[:2] != (3, 10), reason="USD Baking works only in Python == 3.10")
+@pytest.mark.parametrize(
+    "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
+)
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_usd_bake(usd_file):
+    asset_path = get_hf_assets(
+        num_retry=1,
+        pattern=os.path.join(os.path.dirname(usd_file), "*"),
+    )
+    usd_file = os.path.join(asset_path, usd_file)
+    gs_usd_meshes = usda_utils.parse_mesh_usd(
+        usd_file,
+        group_by_material=True,
+        scale=1.0,
+        surface=gs.surfaces.Default(),
+    )
+    gs_usd_meshes = [gs_usd_mesh for gs_usd_mesh in gs_usd_meshes if gs_usd_mesh.metadata["baked"]]
+    usd_dir = os.path.dirname(usd_file)
+    texture_folders = [folder for folder in os.listdir(usd_dir) if folder.startswith("baked_textures")]
+    assert len(texture_folders) == len(gs_usd_meshes)
+
+    baked_usd_file = f"{os.path.splitext(usd_file)[0]}_baked.{usda_utils.BAKE_EXT}"
+    os.remove(baked_usd_file)
+    for file in os.listdir(usd_dir):
+        if file.startswith("baked_textures"):
+            shutil.rmtree(os.path.join(usd_dir, file))

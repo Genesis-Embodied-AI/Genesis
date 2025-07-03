@@ -1,11 +1,25 @@
+import io
+import os
+import shutil
+import subprocess
+import logging
+from pathlib import Path
+
+from PIL import Image
+import numpy as np
+import trimesh
+
+try:
+    from pxr import Usd, UsdGeom, UsdShade, Sdf
+except ImportError as e:
+    gs.raise_exception_from(
+        "Failed to import USD related libs. Please make sure that installing Genesis with [usd] option.", e
+    )
+
+
 import genesis as gs
 from . import mesh as mu
-
-from pxr import Usd, UsdGeom, UsdShade
-import trimesh
-import numpy as np
-from PIL import Image
-import io
+from .usda_bake import BAKE_EXT
 
 cs_encode = {
     "raw": "linear",
@@ -31,10 +45,11 @@ def get_input_attribute_value(shader, input_name, input_type=None):
 
 
 def get_texture_image(image_path, zipfiles):
-    if zipfiles is None:
-        return np.array(Image.open(image_path.resolvedPath))
-    else:
-        return np.array(Image.open(io.BytesIO(zipfiles.GetFile(image_path.path))))
+    if zipfiles is not None:
+        image_data = zipfiles.GetFile(image_path.path)
+        if image_data is not None:
+            return np.asarray(Image.open(io.BytesIO(image_data)))
+    return np.asarray(Image.open(image_path.resolvedPath))
 
 
 def parse_preview_surface(shader, output_name, zipfiles):
@@ -74,6 +89,8 @@ def parse_preview_surface(shader, output_name, zipfiles):
 
         # parse emissive
         emissive_texture, emissive_uvname = parse_component("emissiveColor", "srgb")
+        if emissive_texture is not None and emissive_texture.is_black():
+            emissive_texture = None
         if emissive_uvname is not None and uvname is None:
             uvname = emissive_uvname
 
@@ -96,9 +113,11 @@ def parse_preview_surface(shader, output_name, zipfiles):
         if normal_uvname is not None and uvname is None:
             uvname = normal_uvname
 
-        # parse io
+        # parse ior
         ior = get_input_attribute_value(shader, "ior", "value")[0]
 
+        if uvname is None:
+            uvname = "st"
         return {
             "color_texture": color_texture,
             "opacity_texture": opacity_texture,
@@ -140,160 +159,28 @@ def parse_preview_surface(shader, output_name, zipfiles):
         return primvar_name
 
 
-def parse_gltf_surface(shader, source_type, output_name, zipfiles):
-    shader_subid = shader.GetSourceAssetSubIdentifier(source_type)
-    if shader_subid == "gltf_material":
-        # Parse color
-        color_factor = get_input_attribute_value(shader, "base_color_factor", "value")[0]  # Gf.Vec3f(1.0, 1.0, 1.0)
-        color_texture_shader, color_texture_output = get_input_attribute_value(
-            shader, "base_color_texture", "attribute"
-        )
-        if color_texture_shader is not None:
-            color_image = parse_gltf_surface(color_texture_shader, source_type, color_texture_output, zipfiles)
-        else:
-            color_image = None
-        color_texture = mu.create_texture(color_image, color_factor, "srgb")
-
-        # parse opacity
-        opacity_factor = get_input_attribute_value(shader, "base_alpha", "value")[0]
-        opacity_texture = mu.create_texture(None, opacity_factor, "linear")
-        alpha_cutoff = get_input_attribute_value(shader, "alpha_cutoff", "value")[0]
-        alpha_mode = get_input_attribute_value(shader, "alpha_mode", "value")[0]
-        alpha_cutoff = mu.adjust_alpha_cutoff(alpha_cutoff, alpha_mode)
-        opacity_texture.apply_cutoff(alpha_cutoff)
-
-        # parse roughness and metaillic
-        metallic_factor = get_input_attribute_value(shader, "metallic_factor", "value")[0]
-        roughness_factor = get_input_attribute_value(shader, "roughness_factor", "value")[0]
-        combined_texture_shader, combined_texture_output = get_input_attribute_value(
-            shader, "metallic_roughness_texture", "attribute"
-        )
-        if combined_texture_shader is not None:
-            combined_image = parse_gltf_surface(combined_texture_shader, source_type, combined_texture_output, zipfiles)
-            roughness_image = combined_image[:, :, 1]
-            metallic_image = combined_image[:, :, 2]
-        else:
-            roughness_image, metallic_image = None, None
-        metallic_texture = mu.create_texture(metallic_image, metallic_factor, "linear")
-        roughness_texture = mu.create_texture(roughness_image, roughness_factor, "linear")
-
-        # parse emissive
-        emissive_strength = get_input_attribute_value(shader, "emissive_strength", "value")[0]
-        emissive_texture = mu.create_texture(None, emissive_strength, "srgb") if emissive_strength else None
-
-        occlusion_texture_shader, occlusion_texture_output = get_input_attribute_value(
-            shader, "occlusion_texture", "attribute"
-        )
-        if occlusion_texture_shader is not None:
-            occlusion_image = parse_gltf_surface(
-                occlusion_texture_shader, source_type, occlusion_texture_output, zipfiles
-            )
-
-        return {
-            "color_texture": color_texture,
-            "opacity_texture": opacity_texture,
-            "roughness_texture": roughness_texture,
-            "metallic_texture": metallic_texture,
-            "emissive_texture": emissive_texture,
-        }, "st"
-
-    elif shader_subid == "gltf_texture_lookup":
-        texture = get_input_attribute_value(shader, "texture", "value")[0]
-        if texture is not None:
-            texture_image = get_texture_image(texture, zipfiles)
-        else:
-            texture_image = None
-        return texture_image
-
-    else:
-        raise Exception(f"Fail to parse gltf Shader {shader_subid}.")
-
-
-def parse_omni_surface(shader, source_type, output_name, zipfiles):
-
-    def parse_component(component_name, component_encode, adjust=None):
-        component_usetex = get_input_attribute_value(shader, f"Is{component_name}Tex", "value")[0] == 1
-        if component_usetex:
-            component_tex_name = f"{component_name}_Tex"
-            component_tex = get_input_attribute_value(shader, component_tex_name, "value")[0]
-            if component_tex is not None:
-                component_image = get_texture_image(component_tex, zipfiles)
-                if adjust is not None:
-                    component_image = (adjust(component_image / 255.0) * 255.0).astype(np.uint8)
-            component_cs = shader.GetInput(component_tex_name).GetAttr().GetColorSpace()
-            component_overencode = cs_encode[component_cs]
-            if component_overencode is not None:
-                component_encode = component_overencode
-            component_factor = None
-        else:
-            component_color_name = f"{component_name}_Color"
-            component_factor = get_input_attribute_value(shader, component_color_name, "value")[0]
-            if adjust is not None and component_factor is not None:
-                component_factor = tuple([adjust(c) for c in component_factor])
-            component_image = None
-
-        component_texture = mu.create_texture(component_image, component_factor, component_encode)
-        return component_texture
-
-    color_texture = parse_component("BaseColor", "srgb")
-    opacity_texture = color_texture.check_dim(3) if color_texture else None
-    emissive_intensity = get_input_attribute_value(shader, "EmissiveIntensity", "value")[0]
-    emissive_texture = (
-        parse_component("Emissive", "srgb", lambda x: x * emissive_intensity) if emissive_intensity else None
-    )
-    if emissive_texture is not None:
-        emissive_texture.check_dim(3)
-    metallic_texture = parse_component("Metallic", "linear")
-    normal_texture = parse_component("Normal", "linear")
-    roughness_texture = parse_component("Gloss", "linear", lambda x: (2 / (x + 2)) ** (1.0 / 4.0))
-
-    return {
-        "color_texture": color_texture,
-        "opacity_texture": opacity_texture,
-        "roughness_texture": roughness_texture,
-        "metallic_texture": metallic_texture,
-        "emissive_texture": emissive_texture,
-        "normal_texture": normal_texture,
-    }, "st"
-
-
 def parse_usd_material(material, surface, zipfiles):
     surface_outputs = material.GetSurfaceOutputs()
     material_dict, uv_name = None, None
     material_surface = None
+
+    require_bake = False
+    material_candidates = []
     for surface_output in surface_outputs:
         if not surface_output.HasConnectedSource():
             continue
         surface_output_connectable, surface_output_name, _ = surface_output.GetConnectedSource()
         surface_shader = UsdShade.Shader(surface_output_connectable.GetPrim())
         surface_shader_implement = surface_shader.GetImplementationSource()
+        surface_shader_id = surface_shader.GetShaderId()
 
-        if surface_shader_implement == "id":
-            shader_id = surface_shader.GetShaderId()
-            if shader_id == "UsdPreviewSurface":
-                material_dict, uv_name = parse_preview_surface(surface_shader, surface_output_name, zipfiles)
-                break
-            gs.logger.warning(f"Fail to parse Shader {surface_shader.GetPath()} with ID {shader_id}.")
-            continue
+        if surface_shader_implement == "id" and surface_shader_id == "UsdPreviewSurface":
+            material_dict, uv_name = parse_preview_surface(surface_shader, surface_output_name, zipfiles)
+            require_bake = False
+            break
 
-        elif surface_shader_implement == "sourceAsset":
-            source_types = surface_shader.GetSourceTypes()
-            for source_type in source_types:
-                source_asset = surface_shader.GetSourceAsset(source_type).resolvedPath
-                if "gltf/pbr" in source_asset:
-                    material_dict, uv_name = parse_gltf_surface(
-                        surface_shader, source_type, surface_output_name, zipfiles
-                    )
-                    break
-                try:
-                    material_dict, uv_name = parse_omni_surface(
-                        surface_shader, source_type, surface_output_name, zipfiles
-                    )
-                except Exception as e:
-                    gs.logger.warning(
-                        f"Fail to parse Shader {surface_shader.GetPath()} of asset {source_asset} with message: {e}."
-                    )
-                    continue
+        require_bake = True
+        material_candidates.append((surface_shader.GetPath(), surface_shader_id, surface_shader_implement))
 
     if material_dict is not None:
         material_surface = surface.copy()
@@ -306,19 +193,139 @@ def parse_usd_material(material, surface, zipfiles):
             emissive_texture=material_dict.get("emissive_texture"),
             ior=material_dict.get("ior"),
         )
-    return material_surface, uv_name
+
+    if require_bake:
+        candidates_str = "\n".join(
+            [
+                f"\tShader at {shader_path} with implement {shader_impl} and ID {shader_id}."
+                for shader_path, shader_id, shader_impl in material_candidates
+            ]
+        )
+        gs.logger.warning(f"Material require baking:\n{candidates_str}")
+    return material_surface, uv_name, require_bake
 
 
-def parse_mesh_usd(path, group_by_material, scale, surface):
-    zipfiles = Usd.ZipFile.Open(path) if path.endswith(".usdz") else None
+def replace_asset_symlinks(stage):
+    asset_paths = set()
+
+    for prim in stage.TraverseAll():
+        for attr in prim.GetAttributes():
+            value = attr.Get()
+            if isinstance(value, Sdf.AssetPath):
+                asset_paths.add(value.resolvedPath)
+            elif isinstance(value, list):
+                for v in value:
+                    if isinstance(v, Sdf.AssetPath):
+                        asset_paths.add(v.resolvedPath)
+
+    for asset_path in asset_paths:
+        if not os.path.islink(asset_path):
+            return
+
+        real_path = os.path.realpath(asset_path)
+        path_ext = os.path.splitext(asset_path)[1]
+        real_path_ext = os.path.splitext(real_path)[1]
+        if path_ext.lower() == real_path_ext.lower():
+            return
+
+        os.unlink(asset_path)
+        if os.path.isfile(real_path):
+            shutil.copy2(real_path, asset_path)
+            gs.logger.warning(f"Replace symlink {asset_path} with real file {real_path}.")
+
+
+def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
+    path_obj = Path(path)
+    zipfiles = Usd.ZipFile.Open(path) if path_obj.suffix.lower() == ".usdz" else None
+
+    # detect bake file caches
+    is_bake_cache_found = False
+    baked_path_obj = path_obj.with_name(path_obj.stem + f"_baked.{BAKE_EXT}")
+    baked_path = str(baked_path_obj)
+    if bake_cache and baked_path_obj.exists():
+        path = str(baked_path_obj)
+        is_bake_cache_found = True
+        gs.logger.info(f"Baked assets detected and used: {path}")
+
     stage = Usd.Stage.Open(path)
     scale *= UsdGeom.GetStageMetersPerUnit(stage)
     yup = UsdGeom.GetStageUpAxis(stage) == "Y"
     xform_cache = UsdGeom.XformCache()
 
     mesh_infos = mu.MeshInfoGroup()
-    materials = dict()
+    materials = {}
+    baked_materials = {}
 
+    # parse materials
+    for prim in stage.Traverse():
+        if prim.IsA(UsdShade.Material):
+            material_usd = UsdShade.Material(prim)
+            material_spec = prim.GetPrimStack()[-1]
+            material_id = material_spec.layer.identifier + material_spec.path.pathString
+            material_pack = materials.get(material_id, None)
+
+            if material_pack is None:
+                material, uv_name, require_bake = parse_usd_material(material_usd, surface, zipfiles)
+                materials[material_id] = (material, uv_name)
+                if not is_bake_cache_found and require_bake:
+                    baked_materials[material_id] = material_usd.GetPath()
+
+    if baked_materials:
+        baked_material_paths = list(map(str, baked_materials.values()))
+        baker_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usda_bake.py")
+
+        try:
+            if gs.device.type == "cpu":
+                raise OSError("USD baking does not support backend CPU.")
+
+            replace_asset_symlinks(stage)
+
+            commands = [
+                "python",
+                baker_file,
+                "--usd_file",
+                path,
+                "--usd_material_paths",
+                *baked_material_paths,
+                "--device",
+                str(gs.device.index),
+                "--log_level",
+                logging.getLevelName(gs.logger.level).lower(),
+            ]
+            gs.logger.debug(f"Execute: {' '.join(commands)}")
+
+            # Each material is estimated to bake at most 4s, and boostrap and initialization for 10s.
+            result = subprocess.run(
+                commands,
+                timeout=len(baked_material_paths) * 4 + 10,
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+            if result.stdout:
+                gs.logger.debug(result.stdout)
+            if result.stderr:
+                gs.logger.warning(result.stderr)
+        except subprocess.TimeoutExpired:
+            gs.logger.warning(f"Timeout. Terminate baking for USD file {path}.")
+        except (subprocess.CalledProcessError, OSError) as e:
+            gs.logger.warning(f"Baking process failed: {e} (Note that USD baking may only support Python 3.10 now.)")
+
+        if baked_path_obj.exists():
+            gs.logger.warning(f"USD materials baked to file {baked_path}")
+            stage = Usd.Stage.Open(baked_path)
+            for baked_material_id, baked_material_path in baked_materials.items():
+                baked_material_usd = UsdShade.Material(stage.GetPrimAtPath(baked_material_path))
+                baked_material, uv_name, require_bake = parse_usd_material(baked_material_usd, surface, zipfiles)
+                materials[baked_material_id] = (baked_material, uv_name)
+
+            if not bake_cache:
+                baked_folder_obj = baked_path_obj.parent
+                baked_path_obj.unlink()
+                for baked_texture_obj in baked_folder_obj.glob("baked_textures*"):
+                    shutil.rmtree(baked_texture_obj)
+
+    # parse geometries
     for prim in stage.Traverse():
         if prim.HasRelationship("material:binding"):
             if not prim.HasAPI(UsdShade.MaterialBindingAPI):
@@ -355,18 +362,16 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             material_usd = prim_bindings.ComputeBoundMaterial()[0]
             if material_usd.GetPrim().IsValid():
                 material_spec = material_usd.GetPrim().GetPrimStack()[-1]
-                material_id = material_spec.layer.identifier + material_spec.path.pathString
+                material_file = material_spec.layer.identifier
+                material_file = path if material_file == baked_path else material_file
+                material_id = material_file + material_spec.path.pathString
                 material, uv_name = materials.get(material_id, (None, "st"))
-                if material is None:
-                    material, uv_name = materials.setdefault(
-                        material_id, parse_usd_material(material_usd, surface, zipfiles)
-                    )
             else:
                 material, uv_name, material_id = None, "st", None
 
             # parse uvs
-            uv_var = UsdGeom.PrimvarsAPI(prim).GetPrimvar(uv_name)
             uvs = None
+            uv_var = UsdGeom.PrimvarsAPI(prim).GetPrimvar(uv_name)
             if uv_var.IsDefined() and uv_var.HasValue():
                 uvs = np.array(uv_var.ComputeFlattened(), dtype=np.float32)
                 if uvs.shape[0] != points.shape[0]:
@@ -417,7 +422,12 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
             mesh_info, first_created = mesh_infos.get(group_idx)
             if first_created:
                 mesh_info.set_property(
-                    surface=material, metadata={"path": path, "name": material_id if group_by_material else mesh_id}
+                    surface=material,
+                    metadata={
+                        "path": path,
+                        "name": material_id if group_by_material else mesh_id,
+                        "baked": material_id in baked_materials,
+                    },
                 )
             mesh_info.append(points, triangles, normals, uvs)
 
