@@ -49,7 +49,7 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build(n_envs=args.n_envs, env_spacing=(1,1))
+    scene.build(n_envs=args.n_envs, env_spacing=(1, 1))
 
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
@@ -75,10 +75,10 @@ def main():
     # move to pre-grasp pose
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos =np.array([0.65, 0.0, 0.25]) if args.n_envs == 0 else np.array([[0.65, 0.0, 0.25]] * args.n_envs),
+        pos=np.array([0.65, 0.0, 0.25]) if args.n_envs == 0 else np.array([[0.65, 0.0, 0.25]] * args.n_envs),
         quat=np.array([0, 1, 0, 0]) if args.n_envs == 0 else np.array([[0, 1, 0, 0]] * args.n_envs),
     )
-    qpos[...,-2:] = 0.04
+    qpos[..., -2:] = 0.04
 
     path = franka.plan_path(qpos)
     for waypoint in path:
@@ -90,18 +90,17 @@ def main():
     # reach
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos= np.array([0.65, 0.0, 0.142]) if args.n_envs == 0 else np.array([[0.65, 0.0, 0.142]] * args.n_envs),
+        pos=np.array([0.65, 0.0, 0.142]) if args.n_envs == 0 else np.array([[0.65, 0.0, 0.142]] * args.n_envs),
         quat=np.array([0, 1, 0, 0]) if args.n_envs == 0 else np.array([[0, 1, 0, 0]] * args.n_envs),
     )
-    franka.control_dofs_position(qpos[...,:-2], motors_dof)
+    franka.control_dofs_position(qpos[..., :-2], motors_dof)
     for i in range(100):
         scene.step()
 
     # grasp
-    franka.control_dofs_position(qpos[...,:-2], motors_dof)
+    franka.control_dofs_position(qpos[..., :-2], motors_dof)
     franka.control_dofs_position(
-        np.array([0, 0]) if args.n_envs == 0 else np.array([[0, 0]] * args.n_envs), 
-        fingers_dof
+        np.array([0, 0]) if args.n_envs == 0 else np.array([[0, 0]] * args.n_envs), fingers_dof
     )  # you can use position control
     for i in range(100):
         scene.step()
@@ -112,10 +111,9 @@ def main():
         pos=np.array([0.65, 0.0, 0.3]) if args.n_envs == 0 else np.array([[0.65, 0.0, 0.3]] * args.n_envs),
         quat=np.array([0, 1, 0, 0]) if args.n_envs == 0 else np.array([[0, 1, 0, 0]] * args.n_envs),
     )
-    franka.control_dofs_position(qpos[...,:-2], motors_dof)
+    franka.control_dofs_position(qpos[..., :-2], motors_dof)
     franka.control_dofs_force(
-        np.array([-20, -20]) if args.n_envs == 0 else np.array([[-20, -20]] * args.n_envs),
-        fingers_dof
+        np.array([-20, -20]) if args.n_envs == 0 else np.array([[-20, -20]] * args.n_envs), fingers_dof
     )  # can also use force control
     for i in range(1000):
         scene.step()

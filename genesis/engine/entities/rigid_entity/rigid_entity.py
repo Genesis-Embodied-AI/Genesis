@@ -750,8 +750,6 @@ class RigidEntity(Entity):
             friction = g_info.get("friction", self.material.friction)
             if friction is None:
                 friction = gu.default_friction()
-            pos = g_info.get("pos", gu.zero_pos())
-            quat = g_info.get("quat", gu.identity_quat())
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
@@ -1561,7 +1559,10 @@ class RigidEntity(Entity):
         planner="RRTConnect",
         envs_idx=None,
         return_valid_mask=False,
-        **kwargs
+        *,
+        ee_link_name=None,
+        with_entity=None,
+        **kwargs,
     ):
         """
         Plan a path from `qpos_start` to `qpos_goal`.
@@ -1593,11 +1594,15 @@ class RigidEntity(Entity):
             The indices of the environments to set. If None, all environments will be set. Defaults to None.
         return_valid_mask: bool
             Obtain valid mask of the succesful planed path over batch.
+        ee_link_name: str
+            The name of the link, which we "attach" the object during the planning
+        with_entity: RigidEntity
+            The (non-articulated) object to "attach" during the planning
 
         Returns
         -------
         path : torch.Tensor
-            A tensor of waypoints representing the planned path. 
+            A tensor of waypoints representing the planned path.
             Each waypoint is an array storing the entity's qpos of a single time step.
         is_valid: torch.Tensor
             A tensor of boolean mask indicating the batch indices with successful plan.
@@ -1606,6 +1611,14 @@ class RigidEntity(Entity):
             gs.logger.warning("`timeout` is deprecated")
         if "ignore_joint_limit" in kwargs:
             gs.logger.warning("`ignore_joint_limit` is deprecated")
+
+        ee_link_idx = None
+        if ee_link_name is not None:
+            assert with_entity is not None, "`with_entity` must be specified."
+            ee_link_idx = self.get_link(ee_link_name).idx
+        if with_entity is not None:
+            assert ee_link_name is not None, "reference link of the robot must be specified."
+            assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
         match planner:
             case "RRT":
@@ -1623,7 +1636,9 @@ class RigidEntity(Entity):
             smooth_path=smooth_path,
             num_waypoints=num_waypoints,
             ignore_collision=ignore_collision,
-            envs_idx=envs_idx
+            envs_idx=envs_idx,
+            ee_link_idx=ee_link_idx,
+            obj_entity=with_entity,
         )
 
         for i in range(max_retry):
@@ -1635,18 +1650,20 @@ class RigidEntity(Entity):
                     smooth_path=smooth_path,
                     num_waypoints=num_waypoints,
                     ignore_collision=ignore_collision,
-                    envs_idx=envs_idx
+                    envs_idx=envs_idx,
+                    ee_link_idx=ee_link_idx,
+                    obj_entity=with_entity,
                 )
                 path[:, ~is_valid] = retry_path[:, ~is_valid]
                 is_valid = is_valid | retry_is_valid
 
         if self._solver.n_envs == 0:
             return path.squeeze(1)
-        
+
         if return_valid_mask:
             return path, is_valid
-        return path    
- 
+        return path
+
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
