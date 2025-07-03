@@ -1551,6 +1551,7 @@ class RigidEntity(Entity):
         self,
         qpos_goal,
         qpos_start=None,
+        max_nodes=2000,
         resolution=0.05,
         max_retry=1,
         smooth_path=True,
@@ -1632,7 +1633,7 @@ class RigidEntity(Entity):
             qpos_goal,
             qpos_start=qpos_start,
             resolution=resolution,
-            max_nodes=2000,
+            max_nodes=max_nodes,
             smooth_path=smooth_path,
             num_waypoints=num_waypoints,
             ignore_collision=ignore_collision,
@@ -1643,10 +1644,12 @@ class RigidEntity(Entity):
 
         for i in range(max_retry):
             if not is_valid.all():
+                gs.logger.info("planning failed. retrying...")
                 retry_path, retry_is_valid = p.plan(
                     qpos_goal,
                     qpos_start=qpos_start,
                     resolution=resolution,
+                    max_nodes=max_nodes,
                     smooth_path=smooth_path,
                     num_waypoints=num_waypoints,
                     ignore_collision=ignore_collision,
@@ -1658,6 +1661,8 @@ class RigidEntity(Entity):
                 is_valid = is_valid | retry_is_valid
 
         if self._solver.n_envs == 0:
+            if return_valid_mask:
+                return path.squeeze(1), is_valid[0]
             return path.squeeze(1)
 
         if return_valid_mask:

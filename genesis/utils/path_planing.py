@@ -477,7 +477,7 @@ class RRT(PathPlanner):
 
         gs.logger.info(f"rrt planning time: {time.time() - start}")
 
-        is_active = self._rrt_is_active.to_torch()
+        is_active = self._rrt_is_active.to_torch().bool()
         ts = self._rrt_tree_size.to_torch(device=gs.device)
         g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)  # B
 
@@ -493,8 +493,15 @@ class RRT(PathPlanner):
                 break
         res_idx = torch.stack(list(reversed(res)), dim=0)
         sol = configurations[res_idx, torch.arange(len(envs_idx))]  # N, B, DoF
-        mask = rrt_valid_mask(res_idx)
 
+        if is_active.all():
+            if self._solver.n_envs > 0:
+                self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
+            else:
+                self._entity.set_qpos(qpos_cur)
+            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), ~is_active
+
+        mask = rrt_valid_mask(res_idx)
         sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
         if smooth_path:
             if is_plan_with_obj:
@@ -791,6 +798,7 @@ class RRTConnect(PathPlanner):
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
+                # self._solver._scene.visualizer.update()
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_connect_step2(
                     forward_pass=forward_pass,
@@ -806,7 +814,7 @@ class RRTConnect(PathPlanner):
                 break
 
         gs.logger.info(f"rrt connect planning time: {time.time() - start}")
-        is_active = self._rrt_is_active.to_torch()
+        is_active = self._rrt_is_active.to_torch().bool()
         ts = self._rrt_tree_size.to_torch(device=gs.device)
         g_n = self._rrt_goal_reached_node_idx.to_torch(device=gs.device)  # B
 
@@ -832,8 +840,15 @@ class RRTConnect(PathPlanner):
                 break
         res_idx = torch.cat([res_idx, torch.stack(res, dim=0)], dim=0)
         sol = configurations[res_idx, torch.arange(len(envs_idx))]  # N, B, DoF
-        mask = rrt_connect_valid_mask(res_idx)
 
+        if is_active.all():
+            if self._solver.n_envs > 0:
+                self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
+            else:
+                self._entity.set_qpos(qpos_cur)
+            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), ~is_active
+
+        mask = rrt_connect_valid_mask(res_idx)
         sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
         if smooth_path:
             if is_plan_with_obj:

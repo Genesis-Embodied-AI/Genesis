@@ -1467,24 +1467,26 @@ def test_path_planning_avoidance(show_viewer):
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos[-2:] = 0.04
 
-    avoidance_path = franka.plan_path(
-        qpos_goal=qpos,
-        num_waypoints=300,
-        ignore_collision=False,
-        resolution=0.01,
-        max_retry=10,
-    )
-    assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
-    assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
     free_path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=300,
-        resolution=0.01,
+        resolution=0.05,
         ignore_collision=True,
     )
     assert_allclose(free_path[0].cpu(), 0, tol=gs.EPS)
     assert_allclose(free_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
 
+    avoidance_path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=300,
+        ignore_collision=False,
+        resolution=0.05,
+        max_nodes=10000,
+        max_retry=10,
+    )
+    assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
+    
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
         max_penetration = float("-inf")
         for waypoint in path:
