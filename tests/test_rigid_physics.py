@@ -1486,7 +1486,7 @@ def test_path_planning_avoidance(show_viewer):
     )
     assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
     assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
-    
+
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
         max_penetration = float("-inf")
         for waypoint in path:
