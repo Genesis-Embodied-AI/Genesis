@@ -1,17 +1,19 @@
+from unittest.mock import patch
+
 import pytest
 import torch
 import numpy as np
-from unittest.mock import patch
-import pytest
+from scipy.spatial.transform import Rotation
 
 import genesis as gs
 from genesis.utils.geom import *
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
-from scipy.spatial.transform import Rotation as R
+
 from .utils import (
     assert_allclose,
 )
+
 
 TOL = 1e-7
 

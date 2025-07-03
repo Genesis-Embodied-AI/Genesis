@@ -1,4 +1,4 @@
-# import taichi while suppressing its output
+import io
 import os
 import sys
 import site
@@ -6,18 +6,14 @@ import atexit
 import logging as _logging
 import traceback
 from platform import system
-from unittest.mock import patch
+from contextlib import redirect_stdout
 
+# Import taichi while collecting its output without printing directly
+_ti_outputs = io.StringIO()
 
-_ti_outputs = []
+os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
-
-def fake_print(*args, **kwargs):
-    output = "".join(args)
-    _ti_outputs.append(output)
-
-
-with patch("builtins.print", fake_print):
+with redirect_stdout(_ti_outputs):
     import taichi as ti
 
 try:
@@ -52,11 +48,9 @@ def init(
     logger_verbose_time=False,
     performance_mode: bool = False,  # True: compilation up to 6x slower (GJK), but runs ~1-5% faster
 ):
-    # Consider Genesis as initialized right away
     global _initialized
     if _initialized:
         raise_exception("Genesis already initialized.")
-    _initialized = True
 
     # genesis._theme
     global _theme
@@ -193,7 +187,7 @@ def init(
         ti_arch = TI_ARCH[platform][gs_backend.cpu]
 
     # init taichi
-    with patch("builtins.print", fake_print):
+    with redirect_stdout(_ti_outputs):
         ti.init(
             arch=ti_arch,
             # debug is causing segfault on some machines
@@ -227,9 +221,10 @@ def init(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
     )
 
-    for ti_output in _ti_outputs:
+    for ti_output in _ti_outputs.getvalue().splitlines():
         logger.debug(ti_output)
-    _ti_outputs.clear()
+    _ti_outputs.truncate(0)
+    _ti_outputs.seek(0)
 
     global exit_callbacks
     exit_callbacks = []
@@ -237,6 +232,8 @@ def init(
     logger.info(
         f"🚀 Genesis initialized. 🔖 version: ~~<{__version__}>~~, 🌱 seed: ~~<{seed}>~~, 📏 precision: '~~<{precision}>~~', 🐛 debug: ~~<{debug}>~~, 🎨 theme: '~~<{theme}>~~'."
     )
+
+    _initialized = True
 
 
 ########################## init ##########################
