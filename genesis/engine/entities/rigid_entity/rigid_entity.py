@@ -1644,7 +1644,7 @@ class RigidEntity(Entity):
 
         for i in range(max_retry):
             if not is_valid.all():
-                gs.logger.info("planning failed. retrying...")
+                gs.logger.info(f"planning failed. retrying for {(~is_valid).sum()} environments")
                 retry_path, retry_is_valid = p.plan(
                     qpos_goal,
                     qpos_start=qpos_start,
