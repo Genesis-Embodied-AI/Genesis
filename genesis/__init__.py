@@ -50,6 +50,7 @@ def init(
     backend=None,
     theme="dark",
     logger_verbose_time=False,
+    performance_mode: bool = False,  # True: compilation up to 6x slower (GJK), but runs ~1-5% faster
 ):
     # Consider Genesis as initialized right away
     global _initialized
@@ -172,6 +173,12 @@ def init(
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
 
+    if not performance_mode:
+        logger.info(
+            "Consider setting 'performance_mode=True' in production to maximise runtime speed, if significantly "
+            "increasing compilation time is not a concern."
+        )
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -197,6 +204,7 @@ def init(
             force_scalarize_matrix=True,
             # Turning off 'advanced_optimization' is causing issues on MacOS
             advanced_optimization=True,
+            cfg_optimization=performance_mode,
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
