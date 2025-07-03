@@ -2302,44 +2302,29 @@ def test_urdf_mimic(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_jacobian_arbitrary_point(tmp_path, show_viewer, tol):
-    urdf_path = tmp_path / "one_link.urdf"
-    urdf_path.write_text(
-        r"""
-            <robot name="one_link">
-            <link name="base"/>
-            <link name="tip"/>
-            <joint name="hinge" type="revolute">
-              <parent link="base"/>
-              <child  link="tip"/>
-              <origin xyz="0 0 0" rpy="0 0 0"/>
-              <axis xyz="0 0 1"/>
-              <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
-            </joint>
-            </robot>
-        """
-    )
+    urdf_root = _build_multi_pendulum(n=1)
+    urdf_file = tmp_path / "pendulum.urdf"
+    ET.ElementTree(urdf_root).write(urdf_file)
 
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
-    ent = scene.add_entity(gs.morphs.URDF(file=str(urdf_path), fixed=True))
+    ent = scene.add_entity(gs.morphs.URDF(file=str(urdf_file), fixed=True))
     scene.build()
 
-    angle = 0.7  # rad
+    angle = 0.7
     ent.set_qpos(np.array([angle], dtype=np.float32))
     scene.step()
 
-    link_tip = ent.get_link("tip")
+    link = ent.get_link("PendulumArm_0")
 
     p_local = np.array([0.05, -0.02, 0.12], dtype=np.float32)
-    J_o = ent.get_jacobian(link_tip).cpu().numpy()  # → np.ndarray
-    J_p = ent.get_jacobian(link_tip, p_local).cpu().numpy()
+    J_o = ent.get_jacobian(link).cpu().numpy()
+    J_p = ent.get_jacobian(link, p_local).cpu().numpy()
 
     c, s = np.cos(angle), np.sin(angle)
-    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
-    r_world = Rz @ p_local
-
+    Rx = np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float32)
+    r_world = Rx @ p_local
     r_cross = np.array(
-        [[0, -r_world[2], r_world[1]], [r_world[2], 0, -r_world[0]], [-r_world[1], r_world[0], 0]],
-        dtype=np.float32,
+        [[0, -r_world[2], r_world[1]], [r_world[2], 0, -r_world[0]], [-r_world[1], r_world[0], 0]], dtype=np.float32
     )
 
     lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]

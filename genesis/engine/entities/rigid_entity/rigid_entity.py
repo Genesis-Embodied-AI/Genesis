@@ -824,15 +824,18 @@ class RigidEntity(Entity):
             gs.raise_exception("Entity has zero dofs.")
 
         if local_point is None:
-            local_point = torch.zeros(3, device=gs.device, dtype=torch.float32)
-        elif isinstance(local_point, np.ndarray):
-            local_point = torch.as_tensor(local_point, device=gs.device, dtype=torch.float32)
+            self._kernel_get_jacobian(link.idx, 0.0, 0.0, 0.0)
+        else:
+            local_point = torch.as_tensor(
+                local_point,
+                device=gs.device,
+                dtype=torch.float32,
+            )
+            if local_point.shape != (3,):
+                gs.raise_exception("`local_point` must be a 3-vector in link frame.")
 
-        if local_point.shape != (3,):
-            gs.raise_exception("`local_point` must be a (3,) vector in link space.")
-
-        p_local_ti = ti.Vector(local_point.tolist(), dt=ti.f32)
-        self._kernel_get_jacobian(link.idx, p_local_ti)
+            x, y, z = local_point.tolist()
+            self._kernel_get_jacobian(link.idx, x, y, z)
 
         jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
         if self._solver.n_envs == 0:
@@ -841,9 +844,9 @@ class RigidEntity(Entity):
         return jacobian
 
     @ti.kernel
-    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.types.vector(3, ti.f32)):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, px: ti.f32, py: ti.f32, pz: ti.f32):
         for i_b in range(self._solver._B):
+            p_local = ti.Vector([px, py, pz])  # build once inside Taichi
             self._func_get_jacobian(
                 tgt_link_idx,
                 i_b,
