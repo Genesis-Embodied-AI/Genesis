@@ -9,6 +9,8 @@ import genesis as gs
 from . import geom as gu
 from . import mesh as mu
 
+import igl
+
 
 def box_to_elements(pos=(0, 0, 0), size=(1, 1, 1), tet_cfg=dict()):
     trimesh_obj = trimesh.creation.box(extents=size)
@@ -59,4 +61,35 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
 
     verts += np.array(pos)
 
+    return verts, elems
+
+
+def split_all_surface_tets(verts, elems):
+    """
+    Splits tetrahedras that have 4 vertices on the surface into 4 smaller tetrahedras.
+    This is useful for the hydroelastic contact model.
+    """
+    F, *_ = igl.boundary_facets(elems)
+    on_surface = np.zeros(verts.shape[0], dtype=bool)
+    on_surface[F.flatten()] = True
+    all_on_surface = np.all(on_surface[elems], axis=1)
+    bad_elems = elems[all_on_surface]
+    if len(bad_elems) == 0:
+        return verts, elems
+    new_elems = []
+    new_verts = []
+    for elem in bad_elems:
+        v0, v1, v2, v3 = elem
+        idx = len(verts) + len(new_verts)
+        new_verts.append(0.25 * (verts[v0] + verts[v1] + verts[v2] + verts[v3]))
+        new_elems.append([v0, v1, v2, idx])
+        new_elems.append([v0, v1, idx, v3])
+        new_elems.append([v0, idx, v2, v3])
+        new_elems.append([idx, v1, v2, v3])
+    new_elems = np.array(new_elems, dtype=np.int32)
+    new_verts = np.array(new_verts, dtype=np.float32)
+    verts = np.concatenate([verts, new_verts], axis=0)
+    # remove the bad elements from the original elements
+    elems = elems[~all_on_surface]
+    elems = np.concatenate([elems, new_elems], axis=0)
     return verts, elems

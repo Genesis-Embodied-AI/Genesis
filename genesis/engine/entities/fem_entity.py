@@ -358,6 +358,7 @@ class FEMEntity(Entity):
         else:
             gs.raise_exception(f"Unsupported morph: {self.morph}.")
 
+        verts, elems = eu.split_all_surface_tets(verts, elems)
         self.instantiate(verts, elems)
 
     def _add_to_solver(self, in_backward=False):

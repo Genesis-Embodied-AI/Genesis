@@ -560,11 +560,11 @@ class FEMOptions(Options):
         Whether to use the implicit solver. Defaults to False.
         Implicit solver is a more stable solver for FEM. It can be used with a large time step.
     n_newton_iterations : int, optional
-        Maximum number of Newton iterations. Defaults to 5. Only used when `use_implicit_solver` is True.
+        Maximum number of Newton iterations. Defaults to 1. Only used when `use_implicit_solver` is True.
     n_pcg_iterations : int, optional
-        Maximum number of PCG iterations. Defaults to 100. Only used when `use_implicit_solver` is True.
+        Maximum number of PCG iterations. Defaults to 500. Only used when `use_implicit_solver` is True.
     n_linesearch_iterations : int, optional
-        Maximum number of line search iterations. Defaults to 10. Only used when `use_implicit_solver` is True.
+        Maximum number of line search iterations. Defaults to 0. Only used when `use_implicit_solver` is True.
     newton_dx_threshold : float, optional
         Threshold for the Newton solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
     pcg_threshold : float, optional
@@ -576,7 +576,7 @@ class FEMOptions(Options):
     damping_alpha : float, optional
         Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_beta : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is True.
 
     Note
     ----
@@ -591,15 +591,15 @@ class FEMOptions(Options):
     damping: Optional[float] = 0.0
     floor_height: float = None
     use_implicit_solver: bool = False
-    n_newton_iterations: int = 5
-    n_pcg_iterations: int = 100
-    n_linesearch_iterations: int = 10
+    n_newton_iterations: int = 1
+    n_pcg_iterations: int = 500
+    n_linesearch_iterations: int = 0
     newton_dx_threshold: float = 1e-6
     pcg_threshold: float = 1e-6
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.5
     damping_alpha: float = 0.5
-    damping_beta: float = 1e-4
+    damping_beta: float = 5e-4
 
 
 class SFOptions(Options):

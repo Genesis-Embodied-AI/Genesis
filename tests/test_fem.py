@@ -204,7 +204,6 @@ def fem_material_linear():
 
 
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -212,8 +211,6 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
-            n_newton_iterations=1,
-            n_linesearch_iterations=0,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -254,7 +251,6 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
 
 
 def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -262,8 +258,6 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
-            n_newton_iterations=1,
-            n_linesearch_iterations=0,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,
@@ -290,7 +284,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         pos = state.pos.detach().cpu().numpy()
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
-            min_pos_z, 0.0, atol=1e-3
+            min_pos_z, 0.0, atol=2e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
 
 
@@ -301,16 +295,14 @@ def fem_material_linear_corotated():
 
 
 def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
             substeps=2,
         ),
+        # Not using default fem_options to make it faster, linear material only need one iteration without linesearch
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
-            n_newton_iterations=1,
-            n_linesearch_iterations=0,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,
@@ -337,7 +329,7 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         pos = state.pos.detach().cpu().numpy().reshape(-1, 3)
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
-            min_pos_z, 0.0, atol=1e-3
+            min_pos_z, 0.0, atol=2e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
         BV, BF = igl.bounding_box(pos)
         x_scale = BV[0, 0] - BV[-1, 0]

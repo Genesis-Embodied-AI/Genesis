@@ -8,6 +8,7 @@ from genesis.engine.states.solvers import FEMSolverState
 
 from .base_solver import Solver
 import numpy as np
+import igl
 
 
 @ti.data_oriented
@@ -155,6 +156,7 @@ class FEMSolver(Solver):
         element_v_info = ti.types.struct(
             mass=gs.ti_float,  # mass of the vertex
             mass_over_dt2=gs.ti_float,  # scaled mass of the vertex over dt^2
+            friction_mu=gs.ti_float,  # friction coefficient for contact
         )
 
         pcg_state_v = ti.types.struct(
@@ -272,6 +274,13 @@ class FEMSolver(Solver):
         self.compute_surface_elements()
         self.vertices_on_surface_np = self.vertices_on_surface.to_numpy()
         self.elements_on_surface_np = self.elements_on_surface.to_numpy()
+        self.surface_vertices_np = np.where(self.vertices_on_surface_np)[0].flatten()
+        self.surface_vertices = ti.field(
+            dtype=ti.i32,
+            shape=(self.surface_vertices_np.shape[0]),
+            needs_grad=False,
+        )
+        self.surface_vertices.from_numpy(self.surface_vertices_np)
         self.surface_elements_np = np.where(self.elements_on_surface_np)[0].flatten()
         self.surface_elements = ti.field(
             dtype=ti.i32,
@@ -279,6 +288,17 @@ class FEMSolver(Solver):
             needs_grad=False,
         )
         self.surface_elements.from_numpy(self.surface_elements_np)
+
+        self.surface_triangles_np = self.surface.tri2v.to_numpy().reshape(-1, 3)
+        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :].reshape(-1, 3)
+        mass = igl.massmatrix(pos_np, self.surface_triangles_np)
+        self.surface_vert_mass_np = mass.diagonal()
+        self.surface_vert_mass = ti.field(
+            dtype=gs.ti_float,
+            shape=(self.surface_vertices_np.shape[0]),
+            needs_grad=False,
+        )
+        self.surface_vert_mass.from_numpy(self.surface_vert_mass_np)
 
     @ti.kernel
     def compute_surface_vertices(self):
@@ -673,12 +693,12 @@ class FEMSolver(Solver):
             # Other options for preconditioner:
             # Uncomment one of the following lines to test different preconditioners
             # Use identity for preconditioner
-            # self.pcg_state[i_v, i_b].prec = ti.Matrix.identity(gs.ti_float, 3)
+            # self.pcg_state_v[i_b, i_v].prec = ti.Matrix.identity(gs.ti_float, 3)
 
             # Use diagonal for preconditioner
-            # self.pcg_state[i_v, i_b].prec = ti.Matrix([[1 / self.pcg_state[i_v, i_b].diag3x3[0, 0], 0, 0],
-            #                                            [0, 1 / self.pcg_state[i_v, i_b].diag3x3[1, 1], 0],
-            #                                            [0, 0, 1 / self.pcg_state[i_v, i_b].diag3x3[2, 2]]])
+            # self.pcg_state_v[i_b, i_v].prec = ti.Matrix([[1 / self.pcg_state_v[i_b, i_v].diag3x3[0, 0], 0, 0],
+            #                                            [0, 1 / self.pcg_state_v[i_b, i_v].diag3x3[1, 1], 0],
+            #                                            [0, 0, 1 / self.pcg_state_v[i_b, i_v].diag3x3[2, 2]]])
 
     @ti.func
     def compute_Ap(self):
@@ -795,7 +815,7 @@ class FEMSolver(Solver):
         for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
-            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTr_new / self.pcg_state[i_b].rTr
+            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
             self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
             self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
 
@@ -808,6 +828,7 @@ class FEMSolver(Solver):
             )
 
     def pcg_solve(self):
+        # print("PCG solve started")
         self.init_pcg_solve()
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
@@ -1111,6 +1132,7 @@ class FEMSolver(Solver):
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
             self.elements_v_info[i_global].mass = 0.0
             self.elements_v_info[i_global].mass_over_dt2 = 0.0
+            self.elements_v_info[i_global].friction_mu = mat_friction_mu
 
         one_over_dt2 = 1.0 / (self.substep_dt**2)
         n_elems_local = elems.shape[0]
@@ -1372,6 +1394,10 @@ class FEMSolver(Solver):
     @property
     def vol_scale(self):
         return self._vol_scale
+
+    @property
+    def n_surface_vertices(self):
+        return self.surface_vertices_np.shape[0]
 
     @property
     def n_surface_elements(self):
