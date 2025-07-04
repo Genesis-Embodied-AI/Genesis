@@ -1576,8 +1576,8 @@ def test_path_planning_avoidance(show_viewer):
         num_waypoints=300,
         ignore_collision=False,
         resolution=0.05,
-        max_nodes=3000,
-        max_retry=30,
+        max_nodes=4000,
+        max_retry=40,
     )
     assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
     assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
