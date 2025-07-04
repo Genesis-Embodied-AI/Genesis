@@ -237,13 +237,12 @@ class Camera(RBC):
             gs.raise_exception("No renderer was found.")
 
         if seg_idxc_arr is not None:
-            seg_idx_arr = self._rasterizer._context.seg_idxc_to_idx(seg_idxc_arr)
             if colorize_seg or (self._GUI and self._visualizer.connected_to_display):
                 seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
             if colorize_seg:
                 seg_arr = seg_color_arr
             else:
-                seg_arr = seg_idx_arr
+                seg_arr = seg_idxc_arr
 
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
@@ -289,6 +288,29 @@ class Camera(RBC):
             self._recorded_imgs.append(rgb_arr)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
+
+    @gs.assert_built
+    def get_segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+
+        Raises
+        ------
+        Exception
+            If the rasterizer has not been created.
+        """
+        if self._rasterizer is not None:
+            return self._rasterizer._context.seg_idxc_map
+        else:
+            gs.raise_exception("No renderer was found.")
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
