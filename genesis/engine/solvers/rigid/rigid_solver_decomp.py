@@ -493,52 +493,6 @@ class RigidSolver(Solver):
         # just in case
         self.dofs_state.force.fill(0)
 
-    @ti.kernel
-    def _kernel_init_dof_fields(
-        self,
-        dofs_motion_ang: ti.types.ndarray(),
-        dofs_motion_vel: ti.types.ndarray(),
-        dofs_limit: ti.types.ndarray(),
-        dofs_invweight: ti.types.ndarray(),
-        dofs_stiffness: ti.types.ndarray(),
-        dofs_damping: ti.types.ndarray(),
-        dofs_armature: ti.types.ndarray(),
-        dofs_kp: ti.types.ndarray(),
-        dofs_kv: ti.types.ndarray(),
-        dofs_force_range: ti.types.ndarray(),
-    ):
-        for I in ti.grouped(self.dofs_info):
-            i = I[0]  # batching (if any) will be the second dim
-
-            for j in ti.static(range(3)):
-                self.dofs_info[I].motion_ang[j] = dofs_motion_ang[i, j]
-                self.dofs_info[I].motion_vel[j] = dofs_motion_vel[i, j]
-
-            for j in ti.static(range(2)):
-                self.dofs_info[I].limit[j] = dofs_limit[i, j]
-                self.dofs_info[I].force_range[j] = dofs_force_range[i, j]
-
-            self.dofs_info[I].armature = dofs_armature[i]
-            self.dofs_info[I].invweight = dofs_invweight[i]
-            self.dofs_info[I].stiffness = dofs_stiffness[i]
-            self.dofs_info[I].damping = dofs_damping[i]
-            self.dofs_info[I].kp = dofs_kp[i]
-            self.dofs_info[I].kv = dofs_kv[i]
-
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i, b in ti.ndrange(self.n_dofs, self._B):
-            self.dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
-
-        if ti.static(self._use_hibernation):
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i, b in ti.ndrange(self.n_dofs, self._B):
-                self.dofs_state[i, b].hibernated = False
-                self.awake_dofs[i, b] = i
-
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for b in range(self._B):
-                self.n_awake_dofs[b] = self.n_dofs
-
     def _init_link_fields(self):
         if self._use_hibernation:
             self.n_awake_links = ti.field(dtype=gs.ti_int, shape=self._B)
