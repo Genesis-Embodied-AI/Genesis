@@ -1,4 +1,5 @@
 from typing import Literal, TYPE_CHECKING
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -13,6 +14,7 @@ from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TEN
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.styles import colors, formats
+import genesis.engine.solvers.rigid.imp_dynamics as _impl
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
@@ -65,6 +67,11 @@ class RigidSolver(Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
+    @dataclass(frozen=True)
+    class StaticArgs:
+        # store static arguments here
+        para_level: int = 0
+        use_hibernation: bool = False
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -160,6 +167,11 @@ class RigidSolver(Solver):
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
         self._para_level = self.sim._para_level
+
+        self._static_args = self.StaticArgs(
+            para_level=self.sim._para_level,
+            use_hibernation=getattr(self, "_use_hibernation", False),
+        )
 
         for entity in self._entities:
             entity._build()
@@ -407,9 +419,8 @@ class RigidSolver(Solver):
         self.meaninertia.fill(0)
 
     def _init_dof_fields(self):
-        if self._use_hibernation:
-            self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=self._B)
-            self.awake_dofs = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_dofs_))
+        self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=self._B)
+        self.awake_dofs = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_dofs_))
 
         struct_dof_info = ti.types.struct(
             stiffness=gs.ti_float,
@@ -461,7 +472,7 @@ class RigidSolver(Solver):
         joints = self.joints
         has_dofs = sum(joint.n_dofs for joint in joints) > 0
         if has_dofs:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
-            self._kernel_init_dof_fields(
+            _impl._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
@@ -472,6 +483,11 @@ class RigidSolver(Solver):
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
                 dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
                 dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
+                dofs_info=self.dofs_info,
+                dofs_state=self.dofs_state,
+                awake_dofs=self.awake_dofs,
+                n_awake_dofs=self.n_awake_dofs,
+                static_args=self._static_args,
             )
 
         # just in case
