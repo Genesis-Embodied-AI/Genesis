@@ -1,13 +1,14 @@
 import hashlib
 import numbers
 import os
-import pytest
+import tempfile
 import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 import torch
 import wandb
 
@@ -216,12 +217,27 @@ def get_file_morph_options(**kwargs):
 
 @pytest.fixture(scope="session")
 def stream_writers(backend, printer_session):
-    log_path = Path(REPORT_FILE)
-    if os.path.exists(log_path):
-        os.remove(log_path)
-    fd = open(log_path, "w")
+    report_path = Path(REPORT_FILE)
 
-    yield (lambda msg: print(msg, file=fd), printer_session)
+    # Delete old unrelated worker-specific reports
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id == "gw0":
+        worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+
+        for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
+            _, worker_id_ = path.stem.rsplit("-", 1)
+            worker_num = int(worker_id_[2:])
+            if worker_num >= worker_count:
+                path.unlink()
+
+    # Create new empty worker-specific report
+    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
+    report_path = report_path.with_name(f"{report_name}.txt")
+    if report_path.exists():
+        report_path.unlink()
+    fd = open(report_path, "w")
+
+    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
 
     fd.close()
 
@@ -307,13 +323,14 @@ def factory_logger(stream_writers):
 
 
 @pytest.fixture
-def anymal_c(solver, n_envs):
+def anymal_c(solver, n_envs, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 constraint_solver=solver,
                 enable_self_collision=False,
+                use_gjk_collision=gjk,
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -379,13 +396,14 @@ def anymal_c(solver, n_envs):
 
 
 @pytest.fixture
-def batched_franka(solver, n_envs):
+def batched_franka(solver, n_envs, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 constraint_solver=solver,
                 enable_self_collision=False,
+                use_gjk_collision=gjk,
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -430,13 +448,14 @@ def batched_franka(solver, n_envs):
 
 
 @pytest.fixture
-def random(solver, n_envs):
+def random(solver, n_envs, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 constraint_solver=solver,
                 enable_self_collision=False,
+                use_gjk_collision=gjk,
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -487,13 +506,14 @@ def random(solver, n_envs):
 
 
 @pytest.fixture
-def cubes(solver, n_envs, n_cubes, enable_island):
+def cubes(solver, n_envs, n_cubes, enable_island, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 constraint_solver=solver,
                 use_contact_island=enable_island,
+                use_gjk_collision=gjk,
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -536,32 +556,127 @@ def cubes(solver, n_envs, n_cubes, enable_island):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.mark.parametrize("runnable", ["random", "anymal_c", "batched_franka"])
+@pytest.fixture
+def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compatibility):
+    x_pos = 0.0
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                constraint_solver=solver,
+                use_contact_island=enable_island,
+                use_gjk_collision=gjk,
+                box_box_detection=False,
+                enable_mujoco_compatibility=enable_mujoco_compatibility,
+            )
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(x_pos, -3.5, 2.5),
+            camera_lookat=(x_pos, 0.0, 0.5),
+            camera_fov=30,
+            max_FPS=60,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    scene.add_entity(gs.morphs.Plane(pos=(x_pos, 0, 0)))
+    # create pyramid of boxes
+    box_size = 0.25
+    box_spacing = box_size
+    vec_one = np.array([1.0, 1.0, 1.0])
+    box_pos_offset = (x_pos - 0.5, 1, 0.0) + 0.5 * box_size * vec_one
+    for i in range(n_cubes):
+        for j in range(n_cubes - i):
+            scene.add_entity(
+                gs.morphs.Box(
+                    size=box_size * vec_one,
+                    pos=box_pos_offset + box_spacing * np.array([i + 0.5 * j, 0.0, j]),
+                ),
+            )
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
+        scene.step()
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = num_steps * n_envs / time_elapsed
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
+@pytest.mark.parametrize("runnable", ["anymal_c", "batched_franka"])
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_envs", [30000])
-def test_speed(factory_logger, request, runnable, solver, n_envs):
+@pytest.mark.parametrize("gjk", [False, True])
+def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
     with factory_logger(
         {
             "env": runnable,
             "batch_size": n_envs,
             "constraint_solver": solver,
             "use_contact_island": False,
+            "gjk_collision": gjk,
         }
     ) as logger:
         logger.write(request.getfixturevalue(runnable))
 
 
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
-@pytest.mark.parametrize("n_cubes", [1, 10])
+@pytest.mark.parametrize("n_cubes", [10])
 @pytest.mark.parametrize("enable_island", [False, True])
 @pytest.mark.parametrize("n_envs", [8192])
-def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs):
+@pytest.mark.parametrize("gjk", [False, True])
+def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, gjk):
     with factory_logger(
         {
             "env": f"cube#{n_cubes}",
             "batch_size": n_envs,
             "constraint_solver": solver,
             "use_contact_island": enable_island,
+            "gjk_collision": gjk,
         }
     ) as logger:
         logger.write(request.getfixturevalue("cubes"))
+
+
+# FIXME:Increasing the batch size triggers CUDA out-of-memory error (Nvidia H100)
+# FIXME:Increasing # cubes triggers CUDA illegal memory access error for all collision methods (Nvidia RTX 5900)
+@pytest.mark.parametrize("solver", [gs.constraint_solver.Newton])
+@pytest.mark.parametrize("n_cubes", [5])
+@pytest.mark.parametrize("enable_island", [False])
+@pytest.mark.parametrize("n_envs", [2048])
+@pytest.mark.parametrize(
+    "gjk, enable_mujoco_compatibility",
+    [
+        (False, True),  # MPR
+        (False, False),  # MPR+SDF
+        (True, False),  # GJK
+    ],
+)
+def test_box_pyramid(factory_logger, request, n_cubes, solver, enable_island, n_envs, gjk, enable_mujoco_compatibility):
+    with factory_logger(
+        {
+            "env": f"box_pyramid#{n_cubes}",
+            "batch_size": n_envs,
+            "constraint_solver": solver,
+            "use_contact_island": enable_island,
+            "gjk_collision": gjk,
+            "enable_mujoco_compatibility": enable_mujoco_compatibility,
+        }
+    ) as logger:
+        logger.write(request.getfixturevalue("box_pyramid"))

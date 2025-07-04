@@ -693,24 +693,18 @@ class BVHTree:
                         self.contact_aggregate[ga, gb].penetration = penetration
 
     def collision_detection(self):
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
-        timer = create_timer(name="solve_quadratic", level=4, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="solve_quadratic", level=4, ti_sync=True, skip_first_call=True)
         self.cd_init()
-        timer.stamp("cd_init")
+        # timer.stamp("cd_init")
         self.refit_func()
-        timer.stamp("refit_func")
+        # timer.stamp("refit_func")
         self.cd_tree_phase()  # 18 ms
-        timer.stamp("cd_tree_phase")
+        # timer.stamp("cd_tree_phase")
         self.cd_aggregate()
-        timer.stamp("cd_aggregate")
+        # timer.stamp("cd_aggregate")
         # print("overlapped_face, overlapped_node", self.cd_counter[0], self.cd_counter[1])
-
-        # exit()
-        # self.cd_candidate_phase() # not too much
-        # print("self.cd_counter 2", self.cd_counter)
-        # self.cd_impact_phase() # 1 ms
-        # print("self.cd_counter 3", self.cd_counter)
 
     @ti.kernel
     def compute_constraint_system(self, n_con: int, n_dof: int):

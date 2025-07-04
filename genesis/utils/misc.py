@@ -46,12 +46,10 @@ def raise_exception_from(msg="Something went wrong.", cause=None):
 
 class redirect_libc_stderr:
     """
-    Context-manager that temporarily redirects C / C++ std::cerr
-    (i.e. the C `stderr` file descriptor 2) to a given Python
-    file-like object’s fd.
+    Context-manager that temporarily redirects C / C++ std::cerr (i.e. the C `stderr` file descriptor 2) to a given
+    Python file-like object's fd.
 
-    Works on macOS, Linux (glibc / musl), and Windows (MSVCRT /
-    Universal CRT ≥ VS2015).
+    Works on macOS, Linux (glibc / musl), and Windows (MSVCRT / Universal CRT ≥ VS2015).
     """
 
     def __init__(self, fd):
@@ -64,31 +62,30 @@ class redirect_libc_stderr:
     # --------------------------------------------------
     def __enter__(self):
         self.stderr_fileno = sys.stderr.fileno()
-        # Keep a copy so we can restore later
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
-        sys.stderr.flush()  # Flush Python buffers first
+        sys.stderr.flush()
 
         if os.name == "posix":  # macOS, Linux, *BSD, …
             libc = ctypes.CDLL(None)
-            libc.fflush(None)  # Flush all C stdio streams
+            libc.fflush(None)
             libc.dup2(self.fd.fileno(), self.stderr_fileno)
         elif os.name == "nt":  # Windows
-            msvcrt = ctypes.CDLL("msvcrt")
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            # FIXME: Do not redirect stderr on Windows OS when running pytest, otherwise it will raise this exception:
+            # "OSError: [WinError 6] The handle is invalid"
+            if "PYTEST_VERSION" not in os.environ:
+                msvcrt = ctypes.CDLL("msvcrt")
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-            msvcrt.fflush(None)  # Flush CRT buffers
-            # Duplicate: _dup2(new_fd, old_fd)
-            msvcrt._dup2(self.fd.fileno(), self.stderr_fileno)
+                msvcrt.fflush(None)
+                msvcrt._dup2(self.fd.fileno(), self.stderr_fileno)
 
-            # Tell the OS so child APIs that use GetStdHandle( … )
-            # see the new handle as well.
-            STDERR_HANDLE = -12  # (DWORD) -12 == STD_ERROR_HANDLE
-            new_os_handle = msvcrt._get_osfhandle(self.fd.fileno())
-            kernel32.SetStdHandle(STDERR_HANDLE, new_os_handle)
+                STDERR_HANDLE = -12
+                new_os_handle = msvcrt._get_osfhandle(self.fd.fileno())
+                kernel32.SetStdHandle(STDERR_HANDLE, new_os_handle)
         else:
             gs.logger.warning(f"Unsupported platform for redirecting libc stderr: {sys.platform}")
 
-        return self  # Optional, enables `as` clause
+        return self
 
     # --------------------------------------------------
     # Exit: restore previous stderr, close the temp copy
@@ -103,16 +100,17 @@ class redirect_libc_stderr:
             libc.fflush(None)
             libc.dup2(self.original_stderr_fileno, self.stderr_fileno)
         elif os.name == "nt":
-            msvcrt = ctypes.CDLL("msvcrt")
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            if "PYTEST_VERSION" not in os.environ:
+                msvcrt = ctypes.CDLL("msvcrt")
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-            sys.stderr.flush()
-            msvcrt.fflush(None)
-            msvcrt._dup2(self.original_stderr_fileno, self.stderr_fileno)
+                sys.stderr.flush()
+                msvcrt.fflush(None)
+                msvcrt._dup2(self.original_stderr_fileno, self.stderr_fileno)
 
-            STDERR_HANDLE = -12
-            orig_os_handle = msvcrt._get_osfhandle(self.original_stderr_fileno)
-            kernel32.SetStdHandle(STDERR_HANDLE, orig_os_handle)
+                STDERR_HANDLE = -12
+                orig_os_handle = msvcrt._get_osfhandle(self.original_stderr_fileno)
+                kernel32.SetStdHandle(STDERR_HANDLE, orig_os_handle)
 
         os.close(self.original_stderr_fileno)
         self.stderr_fileno = None
@@ -184,8 +182,8 @@ def get_device(backend: gs_backend):
             gs.raise_exception("torch cuda not available")
 
         device_idx = torch.cuda.current_device()
-        device = torch.device(f"cuda:{device_idx}")
-        device_property = torch.cuda.get_device_properties(device_idx)
+        device = torch.device("cuda", device_idx)
+        device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
         total_mem = device_property.total_memory / 1024**3
 
@@ -195,14 +193,14 @@ def get_device(backend: gs_backend):
 
         # on mac, cpu and gpu are in the same device
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps:0")
+        device = torch.device("mps", 0)
 
     elif backend == gs_backend.vulkan:
         if torch.cuda.is_available():
             device, device_name, total_mem, _ = get_device(gs_backend.cuda)
         elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
             device_idx = torch.xpu.current_device()
-            device = torch.device(f"xpu:{device_idx}")
+            device = torch.device("xpu", device_idx)
             device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3

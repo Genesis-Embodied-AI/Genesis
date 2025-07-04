@@ -8,6 +8,7 @@ import numpy as np
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
+from genesis.utils.misc import tensor_to_array
 
 
 class Camera(RBC):
@@ -91,6 +92,7 @@ class Camera(RBC):
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
+        self._attached_env_idx = None
 
         self._in_recording = False
         self._recorded_imgs = []
@@ -124,7 +126,7 @@ class Camera(RBC):
         self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
 
-    def attach(self, rigid_link, offset_T):
+    def attach(self, rigid_link, offset_T, env_idx: int | None = None):
         """
         Attach the camera to a rigid link in the scene.
 
@@ -136,9 +138,26 @@ class Camera(RBC):
             The rigid link to which the camera should be attached.
         offset_T : np.ndarray, shape (4, 4)
             The transformation matrix specifying the camera's pose relative to the rigid link.
+        env_idx : int
+            The environment index this camera should be tied to. Offsets the `offset_T` accordingly. Must be specified
+            if running parallel environments
+
+        Raises
+        ------
+        Exception
+            If running parallel simulations but env_idx is not specified.
+        Exception
+            If invalid env_idx is specified (env_idx >= n_envs)
         """
         self._attached_link = rigid_link
         self._attached_offset_T = offset_T
+        if self._visualizer._scene.n_envs > 0 and env_idx is None:
+            gs.raise_exception("Must specify env_idx when running parallel simulations")
+        if env_idx is not None:
+            n_envs = self._visualizer._scene.n_envs
+            if env_idx >= n_envs:
+                gs.raise_exception(f"Invalid env_idx {env_idx} for camera, configured for {n_envs} environments")
+            self._attached_env_idx = env_idx
 
     def detach(self):
         """
@@ -148,6 +167,7 @@ class Camera(RBC):
         """
         self._attached_link = None
         self._attached_offset_T = None
+        self._attached_env_idx = None
 
     @gs.assert_built
     def move_to_attach(self):
@@ -160,16 +180,15 @@ class Camera(RBC):
         ------
         Exception
             If the camera has not been mounted using `attach()`.
-        Exception
-            If the simulation is running in parallel (`n_envs > 0`), which is currently unsupported for mounted cameras.
         """
         if self._attached_link is None:
             gs.raise_exception(f"The camera hasn't been mounted!")
-        if self._visualizer._scene.n_envs > 0:
-            gs.raise_exception(f"Mounted camera not supported in parallel simulation!")
 
-        link_pos = self._attached_link.get_pos().cpu().numpy()
-        link_quat = self._attached_link.get_quat().cpu().numpy()
+        link_pos = tensor_to_array(self._attached_link.get_pos(envs_idx=self._attached_env_idx))
+        link_quat = tensor_to_array(self._attached_link.get_quat(envs_idx=self._attached_env_idx))
+        if self._attached_env_idx is not None:
+            link_pos = link_pos[0] + self._visualizer._scene.envs_offset[self._attached_env_idx]
+            link_quat = link_quat[0]
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = link_T @ self._attached_offset_T
         self.set_pose(transform=transform)

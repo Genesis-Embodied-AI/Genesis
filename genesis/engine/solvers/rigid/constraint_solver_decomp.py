@@ -750,17 +750,17 @@ class ConstraintSolver:
             self.resolve()
 
     def resolve(self):
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
-        timer = create_timer(name="resolve", level=3, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="resolve", level=3, ti_sync=True, skip_first_call=True)
         self._func_init_solver()
-        timer.stamp("_func_init_solver")
+        # timer.stamp("_func_init_solver")
         self._func_solve()
-        timer.stamp("_func_solve")
+        # timer.stamp("_func_solve")
         self._func_update_qacc()
-        timer.stamp("_func_update_qacc")
+        # timer.stamp("_func_update_qacc")
         self._func_update_contact_force()
-        timer.stamp("compute force")
+        # timer.stamp("compute force")
 
     @ti.kernel
     def _func_update_contact_force(self):

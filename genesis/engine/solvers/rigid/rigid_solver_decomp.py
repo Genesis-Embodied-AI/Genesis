@@ -44,10 +44,11 @@ def _sanitize_sol_params(
     if (timeconst < gs.EPS).any():
         # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
         gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
-    if ((timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)).any():
+    invalid_mask = (timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)
+    if invalid_mask.any():
         gs.logger.warning(
-            "Constraint solver time constant should be greater than 2*subste_dt. timeconst is changed from "
-            f"`{timeconst.min():0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
+            "Constraint solver time constant should be greater than 2*substep_dt. timeconst is changed from "
+            f"`{min(timeconst[invalid_mask]):0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
             "increase timeconst to avoid altering the original value."
         )
     timeconst[:] = timeconst.clip(min_timeconst)
@@ -155,6 +156,7 @@ class RigidSolver(Solver):
         return entity
 
     def build(self):
+        super().build()
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
         self._para_level = self.sim._para_level
@@ -239,10 +241,11 @@ class RigidSolver(Solver):
             return
 
         # Compute mass matrix without any implicit damping terms
-        self._kernel_compute_mass_matrix()
+        self._kernel_compute_mass_matrix(decompose=True)
 
         # Define some proxies for convenience
-        mass_mat = self.mass_mat.to_numpy()[:, :, 0]
+        mass_mat_D_inv = self.mass_mat_D_inv.to_numpy()[:, 0]
+        mass_mat_L = self.mass_mat_L.to_numpy()[:, :, 0]
         offsets = self.links_state.i_pos.to_numpy()[:, 0]
         cdof_ang = self.dofs_state.cdof_ang.to_numpy()[:, 0]
         cdof_vel = self.dofs_state.cdof_vel.to_numpy()[:, 0]
@@ -265,6 +268,13 @@ class RigidSolver(Solver):
             joints_dof_start = joints_dof_start[:, 0]
             joints_n_dofs = joints_n_dofs[:, 0]
 
+        # Compute the inverted mass matrix efficiently
+        mass_mat_L_inv = np.eye(self.n_dofs_)
+        for i in range(self.n_dofs_):
+            for j in range(i):
+                mass_mat_L_inv[i] -= mass_mat_L[i, j] * mass_mat_L_inv[j]
+        mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv) @ mass_mat_L_inv.T
+
         # Compute links invweight
         links_invweight = np.zeros((self._n_links, 2), dtype=gs.np_float)
         for i_l in range(self._n_links):
@@ -283,7 +293,7 @@ class RigidSolver(Solver):
 
             jac = np.concatenate((jacp, jacr), axis=0)
 
-            A = jac @ np.linalg.inv(mass_mat) @ jac.T
+            A = jac @ mass_mat_inv @ jac.T
             A_diag = np.diag(A)
 
             links_invweight[i_l, 0] = A_diag[:3].mean()
@@ -303,7 +313,7 @@ class RigidSolver(Solver):
                 for i_d_ in range(n_dofs):
                     jac[i_d_, dof_start + i_d_] = 1.0
 
-                A = jac @ np.linalg.inv(mass_mat) @ jac.T
+                A = jac @ mass_mat_inv @ jac.T
                 A_diag = np.diag(A)
 
                 if joint_type == gs.JOINT_TYPE.FREE:
@@ -318,8 +328,10 @@ class RigidSolver(Solver):
         self._kernel_init_invweight(links_invweight, dofs_invweight)
 
     @ti.kernel
-    def _kernel_compute_mass_matrix(self):
+    def _kernel_compute_mass_matrix(self, decompose: ti.u1):
         self._func_compute_mass_matrix(implicit_damping=False)
+        if decompose:
+            self._func_factor_mass(implicit_damping=False)
 
     @ti.kernel
     def _kernel_init_invweight(
@@ -1310,7 +1322,6 @@ class RigidSolver(Solver):
         equalities_eq_type: ti.types.ndarray(),
         equalities_sol_params: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(self.n_equalities, self._B):
             self.equalities_info[i, b].eq_obj1id = equalities_eq_obj1id[i]
@@ -1695,18 +1706,15 @@ class RigidSolver(Solver):
         self._func_clear_external_force()
 
     def substep(self):
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
-        timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
+        # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         self._kernel_step_1()
-        timer.stamp("kernel_step_1")
-
-        # constraint force
+        # timer.stamp("kernel_step_1")
         self._func_constraint_force()
-        timer.stamp("constraint_force")
-
+        # timer.stamp("constraint_force")
         self._kernel_step_2()
-        timer.stamp("kernel_step_2")
+        # timer.stamp("kernel_step_2")
 
     @ti.kernel
     def _kernel_step_1(self):
@@ -1790,20 +1798,20 @@ class RigidSolver(Solver):
             self._func_update_geoms(i_b)
 
     def _func_constraint_force(self):
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
-        timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         if self._enable_collision or self._enable_joint_limit or self.n_equalities > 0:
             self._func_constraint_clear()
-            timer.stamp("constraint_solver.clear")
+            # timer.stamp("constraint_solver.clear")
 
         if self._enable_collision:
             self.collider.detection()
-            timer.stamp("detection")
+            # timer.stamp("detection")
 
         if not self._disable_constraint:
             self.constraint_solver.handle_constraints()
-        timer.stamp("constraint_solver.handle_constraints")
+        # timer.stamp("constraint_solver.handle_constraints")
 
     @ti.kernel
     def _func_constraint_clear(self):
@@ -2922,9 +2930,7 @@ class RigidSolver(Solver):
                         i_p = self.links_info[I_l].parent_idx
 
                         if i_p == -1:
-                            self.links_state[i_l, i_b].cdd_vel = -self._gravity[None] * (
-                                1 - e_info.gravity_compensation
-                            )
+                            self.links_state[i_l, i_b].cdd_vel = -self._gravity[i_b] * (1 - e_info.gravity_compensation)
                             self.links_state[i_l, i_b].cdd_ang = ti.Vector.zero(gs.ti_float, 3)
                             if ti.static(update_cacc):
                                 self.links_state[i_l, i_b].cacc_lin = ti.Vector.zero(gs.ti_float, 3)
@@ -2961,7 +2967,7 @@ class RigidSolver(Solver):
                     i_p = self.links_info[I_l].parent_idx
 
                     if i_p == -1:
-                        self.links_state[i_l, i_b].cdd_vel = -self._gravity[None] * (1 - e_info.gravity_compensation)
+                        self.links_state[i_l, i_b].cdd_vel = -self._gravity[i_b] * (1 - e_info.gravity_compensation)
                         self.links_state[i_l, i_b].cdd_ang = ti.Vector.zero(gs.ti_float, 3)
                         if ti.static(update_cacc):
                             self.links_state[i_l, i_b].cacc_lin = ti.Vector.zero(gs.ti_float, 3)
@@ -3404,7 +3410,7 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_update_geoms_render_T(self, geoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
             geom_T = gu.ti_trans_quat_to_T(
                 self.geoms_state[i_g, i_b].pos + self.envs_offset[i_b],
@@ -3418,7 +3424,7 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_update_vgeoms_render_T(self, vgeoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_g, i_b in ti.ndrange(self.n_vgeoms, self._B):
             geom_T = gu.ti_trans_quat_to_T(
                 self.vgeoms_state[i_g, i_b].pos + self.envs_offset[i_b],
@@ -4610,7 +4616,7 @@ class RigidSolver(Solver):
             # Mimick IMU accelerometer signal if requested
             if mimick_imu:
                 # Subtract gravity
-                acc_classic_lin -= self._gravity[None]
+                acc_classic_lin -= self._gravity[i_b]
 
                 # Move the resulting linear acceleration in local links frame
                 acc_classic_lin = gu.ti_inv_transform_by_quat(acc_classic_lin, self.links_state[i_l, i_b].quat)
