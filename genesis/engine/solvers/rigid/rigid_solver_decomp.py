@@ -14,7 +14,7 @@ from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TEN
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.styles import colors, formats
-import genesis.engine.solvers.rigid.imp_dynamics as _impl
+import genesis.engine.solvers.rigid.array_class as array_class
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
@@ -168,11 +168,6 @@ class RigidSolver(Solver):
         self._B = self.sim._B
         self._para_level = self.sim._para_level
 
-        self._static_args = self.StaticArgs(
-            para_level=self.sim._para_level,
-            use_hibernation=getattr(self, "_use_hibernation", False),
-        )
-
         for entity in self._entities:
             entity._build()
 
@@ -224,6 +219,19 @@ class RigidSolver(Solver):
         self.n_entities_ = max(1, self.n_entities)
 
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
+
+        self._static_args = self.StaticArgs(
+            para_level=self.sim._para_level,
+            use_hibernation=getattr(self, "_use_hibernation", False),
+        )
+        # when the migration is finished, we will remove the about two lines
+        # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
+        self._rigid_global_info = array_class.RigidGlobalInfo(
+            n_dofs=self.n_dofs_,
+            n_entities=self.n_entities_,
+            n_geoms=self.n_geoms_,
+            f_batch=self._batch_shape,
+        )
 
         if self.is_active():
             self._init_mass_mat()
@@ -419,8 +427,11 @@ class RigidSolver(Solver):
         self.meaninertia.fill(0)
 
     def _init_dof_fields(self):
-        self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=self._B)
-        self.awake_dofs = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_dofs_))
+        # we are going to move n_awake_dofs and awake_dofs to _rigid_global_info completely after migration.
+        # But right now, other kernels are still using self.n_awake_dofs and self.awake_dofs
+        # so we need to keep them in self for now.
+        self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
+        self.awake_dofs = self._rigid_global_info.awake_dofs
 
         struct_dof_info = ti.types.struct(
             stiffness=gs.ti_float,
@@ -472,7 +483,7 @@ class RigidSolver(Solver):
         joints = self.joints
         has_dofs = sum(joint.n_dofs for joint in joints) > 0
         if has_dofs:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
-            _impl._kernel_init_dof_fields(
+            self._kernel_init_dof_fields(
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
@@ -485,13 +496,65 @@ class RigidSolver(Solver):
                 dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
                 dofs_info=self.dofs_info,
                 dofs_state=self.dofs_state,
-                awake_dofs=self.awake_dofs,
-                n_awake_dofs=self.n_awake_dofs,
+                rigid_global_info=self._rigid_global_info,
                 static_args=self._static_args,
             )
 
         # just in case
         self.dofs_state.force.fill(0)
+
+    @ti.kernel
+    def _kernel_init_dof_fields(
+        self_unused,
+        # input np array
+        dofs_motion_ang: ti.types.ndarray(),
+        dofs_motion_vel: ti.types.ndarray(),
+        dofs_limit: ti.types.ndarray(),
+        dofs_invweight: ti.types.ndarray(),
+        dofs_stiffness: ti.types.ndarray(),
+        dofs_damping: ti.types.ndarray(),
+        dofs_armature: ti.types.ndarray(),
+        dofs_kp: ti.types.ndarray(),
+        dofs_kv: ti.types.ndarray(),
+        dofs_force_range: ti.types.ndarray(),
+        # taichi variables
+        dofs_info: array_class.DofsInfo,
+        dofs_state: array_class.DofsState,
+        # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
+        rigid_global_info: ti.template(),
+        static_args: ti.template(),
+    ):
+        for I in ti.grouped(dofs_info):
+            i = I[0]  # batching (if any) will be the second dim
+
+            for j in ti.static(range(3)):
+                dofs_info[I].motion_ang[j] = dofs_motion_ang[i, j]
+                dofs_info[I].motion_vel[j] = dofs_motion_vel[i, j]
+
+            for j in ti.static(range(2)):
+                dofs_info[I].limit[j] = dofs_limit[i, j]
+                dofs_info[I].force_range[j] = dofs_force_range[i, j]
+
+            dofs_info[I].armature = dofs_armature[i]
+            dofs_info[I].invweight = dofs_invweight[i]
+            dofs_info[I].stiffness = dofs_stiffness[i]
+            dofs_info[I].damping = dofs_damping[i]
+            dofs_info[I].kp = dofs_kp[i]
+            dofs_info[I].kv = dofs_kv[i]
+
+        ti.loop_config(serialize=ti.static(static_args.para_level) < gs.PARA_LEVEL.PARTIAL)
+        for i, b in ti.ndrange(dofs_state.shape[0], dofs_state.shape[1]):
+            dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
+
+        if ti.static(static_args.use_hibernation):
+            ti.loop_config(serialize=static_args.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i, b in ti.ndrange(dofs_info.shape[0], dofs_info.shape[1]):
+                dofs_state[i, b].hibernated = False
+                rigid_global_info.awake_dofs[i, b] = i
+
+            ti.loop_config(serialize=static_args.para_level < gs.PARA_LEVEL.PARTIAL)
+            for b in range(dofs_info.shape[1]):
+                rigid_global_info.n_awake_dofs[b] = dofs_info.shape[0]
 
     def _init_link_fields(self):
         if self._use_hibernation:
