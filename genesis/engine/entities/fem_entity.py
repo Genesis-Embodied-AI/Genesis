@@ -11,6 +11,7 @@ import genesis.utils.mesh as mu
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor
+from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 
 from .base_entity import Entity
 from genesis.engine.coupler import SAPCoupler
@@ -371,7 +372,7 @@ class FEMEntity(Entity):
         elems_np = self.elems.astype(gs.np_int)
         verts_numpy = self.init_positions.cpu().numpy().astype(gs.np_float)
 
-        self._solver._kernel_add_elements(
+        self.solver._kernel_add_elements(
             f=self._sim.cur_substep_local,
             mat_idx=self._material.idx,
             mat_mu=self._material.mu,
@@ -750,6 +751,113 @@ class FEMEntity(Entity):
             muscle_direction=muscle_direction,
         )
 
+    def set_vertex_constraints(
+        self, vertex_indices, target_positions=None, link=None, constraint_type="hard", stiffness=0.0, damping=0.0
+    ):
+        """
+        Set vertex constraints for specified vertices.
+
+        Parameters
+        ----------
+            vertex_indices : array_like
+                List of vertex indices to constrain.
+            target_positions : array_like, shape (len(vertex_indices), 3), optional
+                List of target positions [x, y, z] for each vertex. If not provided, the initial positions are used.
+            link : RigidLink
+                Optional rigid link for the vertices to follow, maintaining relative position.
+            constraint_type: str
+                A "hard" constraint directly set position and zero velocity.
+                A "soft" constraint uses a spring force to pull the vertex towards the target position.
+            stiffness : float
+                Specify a spring stiffness for a soft constraint.
+        """
+        if self.solver._use_implicit_solver:
+            gs.logger.warning("Ignoring vertex constraint; unsupported with FEM implicit solver.")
+            return
+
+        if not self.solver._constraints_initialized:
+            self.solver.init_constraints()
+
+        assert constraint_type in ["hard", "soft"], "constraint_type must be 'hard' or 'soft'."
+        constraint_type_int = 0 if constraint_type == "hard" else 1
+        vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device) + self._v_start
+        self._assert_vertex_idx_in_bounds(vertex_indices)
+
+        if target_positions is None:
+            target_positions = self.init_positions[vertex_indices]
+        target_positions = torch.as_tensor(target_positions, dtype=gs.tc_float, device=gs.device)
+
+        if link is None:
+            link_idx = -1
+            link_init_pos = np.zeros((3,))
+            link_init_quat = np.zeros((4,))
+        else:
+            assert hasattr(link, "get_pos") and hasattr(
+                link, "get_quat"
+            ), "Link must have get_pos() and get_quat() methods, e.g. RigidLink"
+            link_init_pos = link.get_pos().detach().cpu().numpy()
+            link_init_quat = link.get_quat().detach().cpu().numpy()
+
+            def link_func():
+                pos = link.get_pos()
+                quat = link.get_quat()
+                return pos, quat
+
+            link_idx = self.solver._add_link_func(link_func)
+
+        self.solver._kernel_set_vertex_constraints(
+            vertex_indices,
+            target_positions,
+            constraint_type_int,
+            stiffness,
+            damping,
+            link_idx,
+            link_init_pos,
+            link_init_quat,
+        )
+
+    def _sanitize_input_to_tensor(self, arr, dtype):
+        if np.isscalar(arr):
+            arr = [arr]
+        if not isinstance(arr, torch.Tensor):
+            arr = torch.as_tensor(arr, dtype=dtype, device=gs.device)
+        return arr
+
+    def update_constraint_targets(self, vertex_indices, target_positions):
+        """Update target positions for existing constraints."""
+        if not self.solver._constraints_initialized:
+            gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
+            return
+
+        vertex_indices = self._sanitize_input_to_tensor(vertex_indices, dtype=gs.tc_int) + self._v_start
+        target_positions = self._sanitize_input_to_tensor(target_positions, gs.tc_float)
+
+        assert target_positions.shape[0] == vertex_indices.shape[0]
+        self._assert_vertex_idx_in_bounds(vertex_indices)
+
+        self.solver._kernel_update_constraint_targets(vertex_indices, target_positions)
+
+    def remove_vertex_constraints(self, vertex_indices=None):
+        """Remove constraints from specified vertices, or all if None."""
+        if not self.solver._constraints_initialized:
+            gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
+            return
+
+        if vertex_indices is None:
+            vertex_indices = self._v_start + np.arange(self.n_vertices, dtype=gs.np_int)
+        else:
+            vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device) + self._v_start
+
+        self._assert_vertex_idx_in_bounds(vertex_indices)
+        self.solver._kernel_remove_specific_constraints(vertex_indices)
+
+    def _assert_vertex_idx_in_bounds(self, vertex_indices):
+        """
+        Assert that all vertex indices are within the valid range.
+        """
+        out_of_bounds = torch.any(torch.logical_or(vertex_indices >= self.solver.n_vertices, vertex_indices < 0))
+        assert not out_of_bounds, "Vertex indices out of bounds in set_vertex_constraints."
+
     def get_el2v(self):
         """
         Retrieve the element-to-vertex mapping.
@@ -792,12 +900,12 @@ class FEMEntity(Entity):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
             for j in ti.static(range(3)):
-                pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
-                vel[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].vel[j]
+                pos[i_b, i_v, j] = self.solver.elements_v[f, i_global, i_b].pos[j]
+                vel[i_b, i_v, j] = self.solver.elements_v[f, i_global, i_b].vel[j]
 
         for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
-            active[i_b, i_v] = self._solver.elements_el_ng[f, i_global, i_b].active
+            active[i_b, i_v] = self.solver.elements_el_ng[f, i_global, i_b].active
 
     @ti.kernel
     def clear_grad(self, f: ti.i32):
@@ -817,12 +925,12 @@ class FEMEntity(Entity):
         # TODO: not well-tested
         for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
-            self._solver.elements_v.grad[f, i_global, i_b].pos = 0
-            self._solver.elements_v.grad[f, i_global, i_b].vel = 0
+            self.solver.elements_v.grad[f, i_global, i_b].pos = 0
+            self.solver.elements_v.grad[f, i_global, i_b].vel = 0
 
         for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
-            self._solver.elements_el.grad[f, i_global, i_b].actu = 0
+            self.solver.elements_el.grad[f, i_global, i_b].actu = 0
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
