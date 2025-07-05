@@ -1,3 +1,5 @@
+# pylint: disable=no-value-for-parameter
+
 import taichi as ti
 import torch
 
@@ -5,9 +7,10 @@ import genesis as gs
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
+from genesis.utils.misc import ti_field_to_torch
+from genesis.utils.geom import ti_transform_by_quat, ti_inv_quat, ti_quat_mul
 
 from .base_solver import Solver
-import numpy as np
 
 
 @ti.data_oriented
@@ -45,6 +48,9 @@ class FEMSolver(Solver):
 
         # boundary
         self.setup_boundary()
+
+        # lazy initialization
+        self._constraints_initialized = False
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
@@ -268,6 +274,30 @@ class FEMSolver(Solver):
     def init_ckpt(self):
         self._ckpt = dict()
 
+    def init_constraints(self):
+        self._constraints_initialized = True
+        self.link_funcs = []
+
+        vertex_constraint_info = ti.types.struct(
+            is_constrained=ti.u1,  # boolean flag indicating if vertex is constrained
+            target_pos=gs.ti_vec3,  # target position for the constraint
+            stiffness=gs.ti_float,  # spring stiffness (for soft constraints)
+            damping=gs.ti_float,  # spring damping   (for soft constraints)
+            constraint_type=ti.u1,  # 0: hard constraint, 1: soft constraint
+            link_idx=gs.ti_int,  # index of the rigid link (-1 if not linked)
+            link_offset_pos=gs.ti_vec3,  # offset position of link
+            link_init_quat=gs.ti_vec4,  # offset rotation of link
+        )
+
+        self.vertex_constraints = vertex_constraint_info.field(
+            shape=(self.n_vertices),
+            needs_grad=False,
+            layout=ti.Layout.AOS,
+        )
+
+        self.vertex_constraints.is_constrained.fill(0)
+        self.vertex_constraints.link_idx.fill(-1)
+
     def reset_grad(self):
         self.elements_v.grad.fill(0)
         self.elements_el.grad.fill(0)
@@ -375,6 +405,10 @@ class FEMSolver(Solver):
             dt = self.substep_dt
             for k in ti.static(range(3)):
                 force_scaled = ti.Vector([H_scaled[j, k] for j in range(3)])
+
+                # store so forces can be read out
+                self.elements_v_energy[i_b, verts[k]].force = force_scaled
+
                 dv = dt * force_scaled / mass_scaled
                 self.elements_v[f + 1, verts[k], i_b].vel += dv
                 self.elements_v[f + 1, verts[3], i_b].vel -= dv
@@ -611,7 +645,6 @@ class FEMSolver(Solver):
                 S_H_St_x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i, j in ti.static(ti.ndrange(4, 3)):
                     S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
-                # print("S_H_St_x_diff", S_H_St_x_diff)
                 for i in ti.static(range(4)):
                     self.elements_v_energy[i_b, i_v[i]].force += (
                         -damping_beta_over_dt * V * S_H_St_x_diff[i * 3 : i * 3 + 3]
@@ -853,6 +886,7 @@ class FEMSolver(Solver):
 
     def batch_solve(self, f: ti.i32):
         self.batch_active.fill(True)
+        print("Batch solve for frame", f)
 
         for i in range(self._n_newton_iterations):
             # compute element energy and gradient
@@ -903,6 +937,9 @@ class FEMSolver(Solver):
                 self.init_pos_and_vel(f)
                 self.compute_vel(f)
                 self.apply_uniform_force(f)
+                if self._constraints_initialized:
+                    self.update_linked_vertex_constraints()
+                    self.apply_soft_constraints(f)
 
     def substep_pre_coupling_grad(self, f):
         if self.is_active():
@@ -915,6 +952,8 @@ class FEMSolver(Solver):
     def substep_post_coupling(self, f):
         if self.is_active():
             self.compute_pos(f)
+            if self._constraints_initialized and not self._use_implicit_solver:
+                self.apply_hard_constraints(f)
 
     def substep_post_coupling_grad(self, f):
         if self.is_active():
@@ -1033,6 +1072,18 @@ class FEMSolver(Solver):
         indices = self.surface_render_f.indices
 
         return vertices, indices
+
+    def get_forces(self):
+        """
+        Get forces on all vertices.
+
+        Returns:
+            torch.Tensor : shape (B, n_vertices, 3) where B is batch size
+        """
+        if not self.is_active():
+            return None
+
+        return ti_field_to_torch(self.elements_v_energy.force)
 
     @ti.kernel
     def _kernel_add_elements(
@@ -1317,3 +1368,110 @@ class FEMSolver(Solver):
     @property
     def vol_scale(self):
         return self._vol_scale
+
+    # ------------------------------------------------------------------------------------
+    # -------------------------------- vertex constraints --------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def remove_all_vertex_constraints(self):
+        """Remove all vertex constraints."""
+        self.vertex_constraints.is_constrained.fill(0)
+
+    def update_linked_vertex_constraints(self):
+        if len(self.link_funcs) == 0:
+            return
+
+        link_poses = [f() for f in self.link_funcs]
+        poss, quats = zip(*link_poses)
+        poss = torch.stack(poss, dim=0)
+        quats = torch.stack(quats, dim=0)
+
+        self._kernel_update_linked_vertex_constraints(poss, quats)
+
+    def _add_link_func(self, func):
+        """Returns the index of the added link."""
+        self.link_funcs.append(func)
+        return len(self.link_funcs) - 1
+
+    @ti.kernel
+    def _kernel_update_linked_vertex_constraints(
+        self,
+        poss: ti.types.ndarray(),
+        quats: ti.types.ndarray(),
+    ):
+        for i_v in range(self.n_vertices):
+            if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].link_idx >= 0:
+                i_l = self.vertex_constraints[i_v].link_idx
+                pos = gs.ti_vec3([poss[i_l, 0], poss[i_l, 1], poss[i_l, 2]])
+                quat = gs.ti_vec4([quats[i_l, 0], quats[i_l, 1], quats[i_l, 2], quats[i_l, 3]])
+                offset_pos = self.vertex_constraints[i_v].link_offset_pos
+                offset_quat = ti_quat_mul(quat, ti_inv_quat(self.vertex_constraints[i_v].link_init_quat))
+                self.vertex_constraints[i_v].target_pos = pos + ti_transform_by_quat(offset_pos, offset_quat)
+
+    @ti.kernel
+    def apply_hard_constraints(self, f: ti.i32):
+        """Apply hard constraints by directly overriding positions and velocities."""
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].constraint_type == 0:
+                self.elements_v[f + 1, i_v, i_b].pos = self.vertex_constraints[i_v].target_pos
+                self.elements_v[f + 1, i_v, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+    @ti.kernel
+    def apply_soft_constraints(self, f: ti.i32):
+        """Apply soft constraints as spring forces for explicit solver."""
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].constraint_type == 1:
+                pos_error = self.elements_v[f, i_v, i_b].pos - self.vertex_constraints[i_v].target_pos
+                vel_error = self.elements_v[f + 1, i_v, i_b].vel - self.elements_v[f, i_v, i_b].vel
+                spring_force = -self.vertex_constraints[i_v].stiffness * pos_error
+                damping_force = -self.vertex_constraints[i_v].damping * vel_error
+
+                dt = self.substep_dt
+                mass = self.elements_v_info[i_v].mass
+                if mass > gs.EPS:
+                    dv = dt * (spring_force + damping_force) / mass
+                    self.elements_v[f + 1, i_v, i_b].vel += dv
+
+    @ti.kernel
+    def _kernel_set_vertex_constraints(
+        self,
+        vertex_indices: ti.types.ndarray(),
+        target_positions: ti.types.ndarray(),
+        constraint_type: ti.u1,
+        stiffness: ti.f32,
+        damping: ti.f32,
+        link_idx: ti.i32,
+        link_init_pos: ti.types.vector(3, ti.f32),
+        link_init_quat: ti.types.vector(4, ti.f32),
+    ):
+        for i in range(vertex_indices.shape[0]):
+            v_idx = vertex_indices[i]
+            self.vertex_constraints[v_idx].is_constrained = ti.cast(1, ti.u1)
+            self.vertex_constraints[v_idx].constraint_type = constraint_type
+            self.vertex_constraints[v_idx].stiffness = stiffness
+            self.vertex_constraints[v_idx].damping = damping
+            self.vertex_constraints[v_idx].link_idx = link_idx
+            self.vertex_constraints[v_idx].link_init_quat = link_init_quat
+
+            # use first batch; per-batch constraints not supported since it would take a lot of memory
+            cur_pos = self.elements_v[0, v_idx, 0].pos
+            for j in ti.static(range(3)):
+                self.vertex_constraints[v_idx].target_pos[j] = target_positions[i, j]
+                self.vertex_constraints[v_idx].link_offset_pos[j] = cur_pos[j] - link_init_pos[j]
+
+    @ti.kernel
+    def _kernel_update_constraint_targets(
+        self,
+        vertex_indices: ti.types.ndarray(),
+        new_target_positions: ti.types.ndarray(),
+    ):
+        for i in range(vertex_indices.shape[0]):
+            v_idx = vertex_indices[i]
+            for j in ti.static(range(3)):
+                self.vertex_constraints[v_idx].target_pos[j] = new_target_positions[i, j]
+
+    @ti.kernel
+    def _kernel_remove_specific_constraints(self, vertex_indices: ti.types.ndarray()):
+        for i in range(vertex_indices.shape[0]):
+            v_idx = vertex_indices[i]
+            self.vertex_constraints[v_idx].is_constrained = 0
