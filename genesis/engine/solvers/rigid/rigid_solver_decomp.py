@@ -427,11 +427,12 @@ class RigidSolver(Solver):
         self.meaninertia.fill(0)
 
     def _init_dof_fields(self):
-        # we are going to move n_awake_dofs and awake_dofs to _rigid_global_info completely after migration.
-        # But right now, other kernels are still using self.n_awake_dofs and self.awake_dofs
-        # so we need to keep them in self for now.
-        self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
-        self.awake_dofs = self._rigid_global_info.awake_dofs
+        if self._use_hibernation:
+            # we are going to move n_awake_dofs and awake_dofs to _rigid_global_info completely after migration.
+            # But right now, other kernels are still using self.n_awake_dofs and self.awake_dofs
+            # so we need to keep them in self for now.
+            self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
+            self.awake_dofs = self._rigid_global_info.awake_dofs
 
         struct_dof_info = ti.types.struct(
             stiffness=gs.ti_float,
