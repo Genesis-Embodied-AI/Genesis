@@ -19,7 +19,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
-
+from genesis.utils.path_planing import RRT, RRTConnect
 from ..base_entity import Entity
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
@@ -750,8 +750,6 @@ class RigidEntity(Entity):
             friction = g_info.get("friction", self.material.friction)
             if friction is None:
                 friction = gu.default_friction()
-            pos = g_info.get("pos", gu.zero_pos())
-            quat = g_info.get("quat", gu.identity_quat())
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
@@ -1548,20 +1546,24 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
     # ------------------------------------------------------------------------------------
-
     @gs.assert_built
     def plan_path(
         self,
         qpos_goal,
         qpos_start=None,
-        resolution=0.01,
-        timeout=5.0,
+        max_nodes=2000,
+        resolution=0.05,
         max_retry=1,
         smooth_path=True,
-        num_waypoints=100,
+        num_waypoints=300,
         ignore_collision=False,
-        ignore_joint_limit=False,
         planner="RRTConnect",
+        envs_idx=None,
+        return_valid_mask=False,
+        *,
+        ee_link_name=None,
+        with_entity=None,
+        **kwargs,
     ):
         """
         Plan a path from `qpos_start` to `qpos_goal`.
@@ -1569,14 +1571,14 @@ class RigidEntity(Entity):
         Parameters
         ----------
         qpos_goal : array_like
-            The goal state.
+            The goal state. [B, Nq] or [1, Nq]
         qpos_start : None | array_like, optional
-            The start state. If None, the current state of the rigid entity will be used. Defaults to None.
+            The start state. If None, the current state of the rigid entity will be used. Defaults to None. [B, Nq] or [1, Nq]
         resolution : float, optiona
             Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
             for validity along a path segment. Default to 1%.
         timeout : float, optional
-            The maximum time (in seconds) allowed for the motion planning algorithm to find a solution. Defaults to 5.0.
+            This option has been deprecated and is not longer doing anything.
         max_retry : float, optional
             Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
@@ -1588,184 +1590,84 @@ class RigidEntity(Entity):
         ignore_joint_limit : bool, optional
             This option has been deprecated and is not longer doing anything.
         planner : str, optional
-            The name of the motion planning algorithm to use. Supported planners: 'PRM', 'RRT', 'RRTConnect', 'RRTstar', 'EST', 'FMT', 'BITstar', 'ABITstar'. Defaults to 'RRTConnect'.
+            The name of the motion planning algorithm to use. Supported planners: 'RRT', 'RRTConnect'. Defaults to 'RRTConnect'.
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+        return_valid_mask: bool
+            Obtain valid mask of the succesful planed path over batch.
+        ee_link_name: str
+            The name of the link, which we "attach" the object during the planning
+        with_entity: RigidEntity
+            The (non-articulated) object to "attach" during the planning
 
         Returns
         -------
-        waypoints : list
-            A list of waypoints representing the planned path. Each waypoint is an array storing the entity's qpos of a single time step.
+        path : torch.Tensor
+            A tensor of waypoints representing the planned path.
+            Each waypoint is an array storing the entity's qpos of a single time step.
+        is_valid: torch.Tensor
+            A tensor of boolean mask indicating the batch indices with successful plan.
         """
+        if "timeout" in kwargs:
+            gs.logger.warning("`timeout` is deprecated")
+        if "ignore_joint_limit" in kwargs:
+            gs.logger.warning("`ignore_joint_limit` is deprecated")
 
-        ########## validate ##########
-        try:
-            from ompl import base as ob
-            from ompl import geometric as og
-            from ompl import util as ou
-        except ImportError as e:
-            if gs.platform == "Windows":
-                gs.raise_exception_from("No pre-compiled binaries of OMPL are not distributed on Windows OS.", e)
-            else:
-                raise
+        ee_link_idx = None
+        if ee_link_name is not None:
+            assert with_entity is not None, "`with_entity` must be specified."
+            ee_link_idx = self.get_link(ee_link_name).idx
+        if with_entity is not None:
+            assert ee_link_name is not None, "reference link of the robot must be specified."
+            assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
-        assert timeout > 0.0 and math.isfinite(timeout)
-        assert max_retry > 0
+        match planner:
+            case "RRT":
+                p = RRT(self)
+            case "RRTConnect":
+                p = RRTConnect(self)
+            case _:
+                gs.raise_exception(f"invalid planner {planner} specified.")
 
-        if self._solver.n_envs > 0:
-            gs.raise_exception("Motion planning is not supported for batched envs (yet).")
-
-        if self.n_qs != self.n_dofs:
-            gs.raise_exception("Motion planning is not yet supported for rigid entities with free joints.")
-
-        if qpos_start is None:
-            qpos_start = self.get_qpos()
-        qpos_start = tensor_to_array(qpos_start)
-        qpos_goal = tensor_to_array(qpos_goal)
-
-        if qpos_start.shape != (self.n_qs,) or qpos_goal.shape != (self.n_qs,):
-            gs.raise_exception("Invalid shape for `qpos_start` or `qpos_goal`.")
-
-        ######### process joint limit ##########
-        if ignore_joint_limit:
-            gs.logger.warning("This option is deprecated and is no longer doing anything.")
-        q_limit_lower, q_limit_upper = self.q_limit[0], self.q_limit[1]
-
-        if (qpos_start < q_limit_lower).any() or (qpos_start > q_limit_upper).any():
-            gs.logger.warning(
-                "`qpos_start` exceeds joint limit. Relaxing joint limit to contain `qpos_start` for planning."
-            )
-            q_limit_lower = np.minimum(q_limit_lower, qpos_start)
-            q_limit_upper = np.maximum(q_limit_upper, qpos_start)
-
-        if (qpos_goal < q_limit_lower).any() or (qpos_goal > q_limit_upper).any():
-            gs.logger.warning(
-                "`qpos_goal` exceeds joint limit. Relaxing joint limit to contain `qpos_goal` for planning."
-            )
-            q_limit_lower = np.minimum(q_limit_lower, qpos_goal)
-            q_limit_upper = np.maximum(q_limit_upper, qpos_goal)
-
-        ######### setup OMPL ##########
-        ou.setLogLevel(ou.LOG_ERROR)
-        space = ob.RealVectorStateSpace(self.n_qs)
-        bounds = ob.RealVectorBounds(self.n_qs)
-
-        for i_q in range(self.n_qs):
-            bounds.setLow(i_q, q_limit_lower[i_q])
-            bounds.setHigh(i_q, q_limit_upper[i_q])
-        space.setBounds(bounds)
-        ss = og.SimpleSetup(space)
-
-        geoms_idx = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
-        mask_collision_pairs = set(
-            (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geoms_idx or i_gb in geoms_idx
+        path, is_valid = p.plan(
+            qpos_goal,
+            qpos_start=qpos_start,
+            resolution=resolution,
+            max_nodes=max_nodes,
+            smooth_path=smooth_path,
+            num_waypoints=num_waypoints,
+            ignore_collision=ignore_collision,
+            envs_idx=envs_idx,
+            ee_link_idx=ee_link_idx,
+            obj_entity=with_entity,
         )
-        if not ignore_collision and mask_collision_pairs:
-            gs.logger.info("Ignoring collision pairs already active for starting pos.")
 
-        def is_ompl_state_valid(state):
-            if ignore_collision:
-                return True
-            qpos = torch.tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-            self.set_qpos(qpos, zero_velocity=False)
-            collision_pairs = set(map(tuple, self.detect_collision()))
-            return not (collision_pairs - mask_collision_pairs)
-
-        ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
-
-        si = ss.getSpaceInformation()
-        si.setStateValidityCheckingResolution(resolution)
-
-        def allocOBValidStateSampler(si):
-            vss = ob.UniformValidStateSampler(si)
-            vss.setNrAttempts(100)
-            return vss
-
-        si.setValidStateSamplerAllocator(ob.ValidStateSamplerAllocator(allocOBValidStateSampler))
-
-        try:
-            planner_cls = getattr(og, planner)
-            if not issubclass(planner_cls, ob.Planner):
-                raise ValueError
-            planner = planner_cls(si)
-        except (AttributeError, ValueError) as e:
-            gs.raise_exception_from(f"'{planner}' is not a valid planner. See OMPL documentation for details.", e)
-        ss.setPlanner(planner)
-
-        state_start = ob.State(space)
-        state_goal = ob.State(space)
-        for i_q in range(self.n_qs):
-            state_start[i_q] = float(qpos_start[i_q])
-            state_goal[i_q] = float(qpos_goal[i_q])
-        ss.setStartAndGoalStates(state_start, state_goal)
-
-        ######### solve ##########
-        waypoints = []
         for i in range(max_retry):
-            # Try solve the motion planning problem
-            if ss.getPlanner():
-                ss.getPlanner().clear()
-            status = ss.solve(timeout)
-            status_type = status.getStatus()
+            if not is_valid.all():
+                gs.logger.info(f"planning failed. retrying for {(~is_valid).sum()} environments")
+                retry_path, retry_is_valid = p.plan(
+                    qpos_goal,
+                    qpos_start=qpos_start,
+                    resolution=resolution,
+                    max_nodes=max_nodes,
+                    smooth_path=smooth_path,
+                    num_waypoints=num_waypoints,
+                    ignore_collision=ignore_collision,
+                    envs_idx=envs_idx,
+                    ee_link_idx=ee_link_idx,
+                    obj_entity=with_entity,
+                )
+                path[:, ~is_valid] = retry_path[:, ~is_valid]
+                is_valid = is_valid | retry_is_valid
 
-            # Check if there was some unrecoverable failure
-            if status_type in (
-                ob.PlannerStatus.StatusType.UNKNOWN,
-                ob.PlannerStatus.StatusType.CRASH,
-                ob.PlannerStatus.StatusType.ABORT,
-            ):
-                gs.raise_exception("Unknown error.")
-            if status_type in (
-                ob.PlannerStatus.StatusType.INVALID_START,
-                ob.PlannerStatus.StatusType.INVALID_GOAL,
-                ob.PlannerStatus.StatusType.UNRECOGNIZED_GOAL_TYPE,
-                ob.PlannerStatus.StatusType.INFEASIBLE,
-            ):
-                gs.logger.warning("Path planning infeasible. Returning empty path.")
-                break
+        if self._solver.n_envs == 0:
+            if return_valid_mask:
+                return path.squeeze(1), is_valid[0]
+            return path.squeeze(1)
 
-            # Extract solution if any
-            if status:
-                # ss.simplifySolution()
-                path = ss.getSolutionPath()
-
-                # Simplify path
-                if smooth_path:
-                    ps = og.PathSimplifier(si)
-                    try:
-                        # ps.simplifyMax(path)
-                        ps.partialShortcutPath(path)
-                        ps.ropeShortcutPath(path)
-                    except:
-                        ps.shortcutPath(path)
-                    ps.smoothBSpline(path)
-
-                # Interpolate path
-                if num_waypoints is not None:
-                    path.interpolate(num_waypoints)
-
-                # Extract waypoints
-                waypoints = [
-                    torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-                    for state in path.getStates()
-                ]
-
-            # Return once an exact solution was found or maximum number of iterations was reached
-            if status_type in (ob.PlannerStatus.StatusType.TIMEOUT, ob.PlannerStatus.StatusType.APPROXIMATE_SOLUTION):
-                if i + 1 < max_retry:
-                    gs.logger.warning("Path planning did not converge. Trying again...")
-                    continue
-                else:
-                    if waypoints:
-                        gs.logger.warning("Path planning did not converge. Returning approximation path.")
-                    else:
-                        gs.logger.warning("Path planning did not converge. Returning empty path.")
-                    break
-            gs.logger.info("Path solution found successfully.")
-            break
-
-        ########## restore original state #########
-        self.set_qpos(qpos_start, zero_velocity=False)
-
-        return waypoints
+        if return_valid_mask:
+            return path, is_valid
+        return path
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
