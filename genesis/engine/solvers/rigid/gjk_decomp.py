@@ -6,20 +6,39 @@ from .support_field_decomp import SupportField
 
 
 class RETURN_CODE(IntEnum):
+    """
+    Return codes for the general subroutines used in GJK and EPA algorithms.
+    """
+
     SUCCESS = 0
     FAIL = 1
-    GJK_SEPARATED = 2
-    GJK_INTERSECT = 3
-    GJK_NUM_ERROR = 4
-    EPA_P2_NONCONVEX = 5
-    EPA_P2_FALLBACK3 = 6
-    EPA_P3_BAD_NORMAL = 7
-    EPA_P3_INVALID_V4 = 8
-    EPA_P3_INVALID_V5 = 9
-    EPA_P3_MISSING_ORIGIN = 10
-    EPA_P3_ORIGIN_ON_FACE = 11
-    EPA_P4_MISSING_ORIGIN = 12
-    EPA_P4_FALLBACK3 = 13
+
+
+class GJK_RETURN_CODE(IntEnum):
+    """
+    Return codes for the GJK algorithm.
+    """
+
+    SEPARATED = 0
+    INTERSECT = 1
+    NUM_ERROR = 2
+
+
+class EPA_POLY_INIT_RETURN_CODE(IntEnum):
+    """
+    Return codes for the EPA polytope initialization.
+    """
+
+    SUCCESS = 0
+    P2_NONCONVEX = 1
+    P2_FALLBACK3 = 2
+    P3_BAD_NORMAL = 3
+    P3_INVALID_V4 = 4
+    P3_INVALID_V5 = 5
+    P3_MISSING_ORIGIN = 6
+    P3_ORIGIN_ON_FACE = 7
+    P4_MISSING_ORIGIN = 8
+    P4_FALLBACK3 = 9
 
 
 @ti.func
@@ -48,6 +67,7 @@ class GJK:
     def __init__(self, rigid_solver):
         self._solver = rigid_solver
         self._B = rigid_solver._B
+        self._enable_mujoco_compatibility = rigid_solver._enable_mujoco_compatibility
 
         # Maximum number of contact points to find per pair.
         self.max_contacts_per_pair = 1
@@ -57,38 +77,40 @@ class GJK:
         self.epa_max_iterations = 50
 
         # When using larger minimum values (e.g. gs.EPS), unstability could occur for some examples (e.g. box pyramid).
+        # Also, since different backends could have different precisions (e.g. computing vector norm), we use a very
+        # small value, so that there is no discrepancy between backends.
         self.FLOAT_MIN = gs.np_float(1e-15)
-        self.FLOAT_MIN_SQ = self.FLOAT_MIN * self.FLOAT_MIN
+        self.FLOAT_MIN_SQ = self.FLOAT_MIN**2
 
         self.FLOAT_MAX = gs.np_float(1e15)
-        self.FLOAT_MAX_SQ = self.FLOAT_MAX * self.FLOAT_MAX
+        self.FLOAT_MAX_SQ = self.FLOAT_MAX**2
 
-        # Tolerance for stopping GJK and EPA algorithms when they converge.
+        # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
         self.tolerance = gs.np_float(1e-6)
 
         # If the distance between two objects is smaller than this value, we consider them colliding.
         self.collision_eps = gs.np_float(1e-6)
 
         ### Supports for GJK-EPA
-        # Cache for support points
-        self.support_vertex_id = ti.field(dtype=gs.ti_int, shape=(self._B, 2))
-        # Support field to find support points
         self.support_field = SupportField(rigid_solver)
+        # Cache to store the previous support points for support mesh function.
+        self.support_mesh_prev_vertex_id = ti.field(dtype=gs.ti_int, shape=(self._B, 2))
 
-        ### GJK
+        ### GJK simplex
         struct_simplex_vertex = ti.types.struct(
             # Support points on the two objects
             obj1=gs.ti_vec3,
             obj2=gs.ti_vec3,
-            # Vertex on Minkowski difference
-            mink=gs.ti_vec3,
-            # Vertex ID
+            # Support point IDs on the two objects
             id1=gs.ti_int,
             id2=gs.ti_int,
+            # Vertex on Minkowski difference
+            mink=gs.ti_vec3,
         )
         struct_simplex = ti.types.struct(
             # Number of vertices in the simplex
             nverts=gs.ti_int,
+            # Distance from the origin to the simplex
             dist=gs.ti_float,
         )
         struct_simplex_buffer = ti.types.struct(
@@ -98,12 +120,27 @@ class GJK:
             sdist=gs.ti_float,
         )
         self.simplex_vertex = struct_simplex_vertex.field(shape=(self._B, 4))
+        self.simplex_buffer = struct_simplex_buffer.field(shape=(self._B, 4))
         self.simplex = struct_simplex.field(shape=(self._B,))
-        self.simplex_vertex_intersect = struct_simplex_vertex.field(shape=(self._B, 4))
-        self.simplex_buffer_intersect = struct_simplex_buffer.field(shape=(self._B, 4))
-        self.nsimplex = ti.field(dtype=gs.ti_int, shape=(self._B,))
 
-        ### EPA
+        # Only when we enable MuJoCo compatibility, we use the simplex vertex and buffer for intersection checks.
+        if self._enable_mujoco_compatibility:
+            self.simplex_vertex_intersect = struct_simplex_vertex.field(shape=(self._B, 4))
+            self.simplex_buffer_intersect = struct_simplex_buffer.field(shape=(self._B, 4))
+            self.nsimplex = ti.field(dtype=gs.ti_int, shape=(self._B,))
+
+        # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
+        # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
+        # coplanarity) than this threshold.
+        self.simplex_max_degeneracy = gs.np_float(1e-5)
+
+        # In safe GJK, if the initial simplex is degenerate and the geometries are discrete, we go through vertices
+        # on the Minkowski difference to find a vertex that would make a valid simplex. To prevent iterating through
+        # the same vertices again during initial simplex construction, we keep the vertex ID of the last vertex that
+        # we searched, so that we can start searching from the next vertex.
+        self.last_searched_simplex_vertex_id = ti.field(dtype=gs.ti_int, shape=(self._B,))
+
+        ### EPA polytope
         struct_polytope_vertex = struct_simplex_vertex
         struct_polytope_face = ti.types.struct(
             # Indices of the vertices forming the face on the polytope
@@ -150,35 +187,40 @@ class GJK:
         # because a face has 3 edges.
         self.polytope_horizon_stack = struct_polytope_horizon_data.field(shape=(self._B, self.polytope_max_faces * 3))
 
-        ### Multi-contact
-        # Whether or not to use MuJoCo's multi-contact detection algorithm. Only when the MuJoCo compatibility is
-        # enabled and the multi-contact detection is enabled, we use the algorithm.
-        self.enable_mujoco_multi_contact = (
-            self._solver._enable_multi_contact and self._solver._enable_mujoco_compatibility
-        )
-        if self.enable_mujoco_multi_contact:
-            # When we use MuJoCo's multi-contact detection algorithm, the maximum number of contacts per pair is related
-            # to the maximum number of contact polygon vertices.
-            self.max_contacts_per_pair = 50
-            self.max_contact_polygon_verts = 150
+        # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
+        # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
+        # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
+        # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
+        # we consider the projection invalid, because it means numerical errors are too large.
+        self.polytope_max_reprojection_error = gs.np_float(1e-5)
 
-            # Tolerance for normal alignment between (face-face) or (edge-face) during MuJoCo's multi-contact detection.
-            # The normals should align within this tolerance to be considered as a valid parallel contact. The values
-            # are cosine and sine of 1.6e-3, respectively.
-            # TODO: These parameters are from MuJoCo, but seem to be very strict. Need some tests to verify if they are
-            # the best values.
+        ### Multi-contect detection from MuJoCo based on contact manifold detection algorithm.
+        # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
+        # However, we keep the code here for compatibility with MuJoCo and for possible future use.
+        self.enable_mujoco_multi_contact = False
+        if self.enable_mujoco_multi_contact:
+            # The maximum number of contacts per pair is related to the maximum number of contact manifold vertices.
+            # MuJoCo sets [max_contacts_per_pair] to 50 and [max_contact_polygon_verts] to 150, assuming that the faces
+            # could have more than 4 vertices. However, we set them to smaller values, because we do not expect the
+            # faces to have more than 4 vertices in most cases, and we want to keep the memory usage low.
+            self.max_contacts_per_pair = 8
+            self.max_contact_polygon_verts = 30
+
+            # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
+            # tolerance to be considered as a valid parallel contact. The values are cosine and sine of 1.6e-3,
+            # respectively, and brought from MuJoCo's implementation. Also keep them for compatibility with MuJoCo.
             self.contact_face_tol = 0.99999872
             self.contact_edge_tol = 0.00159999931
 
             struct_contact_face = ti.types.struct(
-                # Face vertices
-                face1=gs.ti_vec3,
-                face2=gs.ti_vec3,
+                # Vertices from the two colliding faces
+                vert1=gs.ti_vec3,
+                vert2=gs.ti_vec3,
                 endverts=gs.ti_vec3,
-                # Normals of face collisions
+                # Normals of the two colliding faces
                 normal1=gs.ti_vec3,
                 normal2=gs.ti_vec3,
-                # Face ID
+                # Face ID of the two colliding faces
                 id1=gs.ti_int,
                 id2=gs.ti_int,
             )
@@ -201,7 +243,7 @@ class GJK:
             self.contact_halfspaces = struct_contact_halfspace.field(shape=(self._B, self.max_contact_polygon_verts))
             self.contact_clipped_polygons = gs.ti_vec3.field(shape=(self._B, 2, self.max_contact_polygon_verts))
 
-        # Whether or not the MuJoCo's multi-contact detection algorithm is used for the current pair.
+        # Whether or not the MuJoCo's contact manifold detection algorithm was used for the current pair.
         self.multi_contact_flag = ti.field(dtype=gs.ti_int, shape=(self._B,))
 
         ### Final results
@@ -214,7 +256,8 @@ class GJK:
         self.witness = struct_witness.field(shape=(self._B, self.max_contacts_per_pair))
         self.n_witness = ti.field(dtype=gs.ti_int, shape=(self._B,))
 
-        # Contact information
+        # Contact information, the namings are the same as those from the calling function. Even if they could be
+        # redundant, we keep them for easier use from the calling function.
         self.n_contacts = ti.field(dtype=gs.ti_int, shape=(self._B,))
         self.contact_pos = gs.ti_vec3.field(shape=(self._B, self.max_contacts_per_pair))
         self.normal = gs.ti_vec3.field(shape=(self._B, self.max_contacts_per_pair))
@@ -229,118 +272,132 @@ class GJK:
     @ti.func
     def clear_cache(self, i_b):
         """
-        Clear the cache information.
+        Clear the cache information to prepare for the next GJK-EPA run.
+
+        The cache includes the temporary information about simplex consturction or multi-contact detection.
         """
-        self.support_vertex_id[i_b, 0] = -1
-        self.support_vertex_id[i_b, 1] = -1
+        self.support_mesh_prev_vertex_id[i_b, 0] = -1
+        self.support_mesh_prev_vertex_id[i_b, 1] = -1
         self.multi_contact_flag[i_b] = 0
+        self.last_searched_simplex_vertex_id[i_b] = 0
 
     @ti.func
-    def func_gjk_contact(self, i_ga, i_gb, i_b, multi_contact):
+    def func_gjk_contact(self, i_ga, i_gb, i_b):
         """
         Detect (possibly multiple) contact between two geometries using GJK and EPA algorithms.
 
         We first run the GJK algorithm to find the minimum distance between the two geometries. If the distance is
         smaller than the collision epsilon, we consider the geometries colliding. If they are colliding, we run the EPA
-        algorithm to find the exact contact points and normals. Afterwards, if we want to detect multiple contacts using
-        the MuJoCo's multi-contact detection algorithm, we run the algorithm to find multiple contact points.
-
-        Parameters
-        ----------
-        multi_contact: bool
-            Whether to use MuJoCo's multi-contact detection algorithm.
+        algorithm to find the exact contact points and normals.
 
         .. seealso::
-        MuJoCo's original implementation:
+        MuJoCo's implementation:
         https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L2259
         """
+        # Clear the cache to prepare for this GJK-EPA run.
         self.clear_cache(i_b)
 
-        # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives, we can shrink them
-        # to a point or line to detect shallow penetration faster.
-        is_sphere_swept_geom_a, is_sphere_swept_geom_b = (
-            self.func_is_sphere_swept_geom(i_ga, i_b),
-            self.func_is_sphere_swept_geom(i_gb, i_b),
-        )
-        shrink_sphere = is_sphere_swept_geom_a or is_sphere_swept_geom_b
+        # We use MuJoCo's GJK implementation when the compatibility mode is enabled. When it is disabled, we use more
+        # robust GJK implementation which has the same overall structure as MuJoCo.
+        if ti.static(self._enable_mujoco_compatibility):
+            # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives, we can shrink them
+            # to a point or line to detect shallow penetration faster.
+            is_sphere_swept_geom_a, is_sphere_swept_geom_b = (
+                self.func_is_sphere_swept_geom(i_ga, i_b),
+                self.func_is_sphere_swept_geom(i_gb, i_b),
+            )
+            shrink_sphere = is_sphere_swept_geom_a or is_sphere_swept_geom_b
 
-        # Run GJK.
-        for i_gjk in range(2 if shrink_sphere else 1):
-            distance = self.func_gjk(i_ga, i_gb, i_b, shrink_sphere)
+            # Run GJK
+            for _ in range(2 if shrink_sphere else 1):
+                distance = self.func_gjk(i_ga, i_gb, i_b, shrink_sphere)
 
-            if shrink_sphere:
-                # If we shrinked the sphere and capsule to point and line and the distance is larger than the collision
-                # epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and the capsule to
-                # get the actual distance. If the distance is smaller than the collision epsilon, it means a deep
-                # penetration, which requires the default GJK handling.
-                if distance > self.collision_eps:
-                    radius_a, radius_b = 0.0, 0.0
-                    if is_sphere_swept_geom_a:
-                        radius_a = self._solver.geoms_info[i_ga].data[0]
-                    if is_sphere_swept_geom_b:
-                        radius_b = self._solver.geoms_info[i_gb].data[0]
+                if shrink_sphere:
+                    # If we shrinked the sphere and capsule to point and line and the distance is larger than the
+                    # collision epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and
+                    # the capsule to get the actual distance. If the distance is smaller than the collision epsilon, it
+                    # means a deep penetration, which requires the default GJK handling.
+                    if distance > self.collision_eps:
+                        radius_a, radius_b = 0.0, 0.0
+                        if is_sphere_swept_geom_a:
+                            radius_a = self._solver.geoms_info[i_ga].data[0]
+                        if is_sphere_swept_geom_b:
+                            radius_b = self._solver.geoms_info[i_gb].data[0]
 
-                    wa = self.witness[i_b, 0].point_obj1
-                    wb = self.witness[i_b, 0].point_obj2
-                    n = self.func_safe_normalize(wb - wa)
+                        wa = self.witness[i_b, 0].point_obj1
+                        wb = self.witness[i_b, 0].point_obj2
+                        n = self.func_safe_normalize(wb - wa)
 
-                    self.distance[i_b] = distance - (radius_a + radius_b)
-                    self.witness[i_b, 0].point_obj1 = wa + (radius_a * n)
-                    self.witness[i_b, 0].point_obj2 = wb - (radius_b * n)
+                        self.distance[i_b] = distance - (radius_a + radius_b)
+                        self.witness[i_b, 0].point_obj1 = wa + (radius_a * n)
+                        self.witness[i_b, 0].point_obj2 = wb - (radius_b * n)
 
-                    break
+                        break
 
-            # Only try shrinking the sphere once
-            shrink_sphere = False
+                # Only try shrinking the sphere once
+                shrink_sphere = False
 
-        distance = self.distance[i_b]
-        nsimplex = self.nsimplex[i_b]
-        collided = distance < self.collision_eps
-
-        # To run EPA, we need following conditions:
-        # 1. We did not find min. distance with shrink_sphere flag
-        # 2. We have a valid GJK simplex (nsimplex > 0)
-        # 3. We have a collision (distance < collision_epsilon)
-        do_epa = (not shrink_sphere) and collided and (nsimplex > 0)
-
-        if do_epa:
-            # Assume touching
-            self.distance[i_b] = 0
-
-            # Initialize polytope
-            self.polytope[i_b].nverts = 0
-            self.polytope[i_b].nfaces = 0
-            self.polytope[i_b].nfaces_map = 0
-            self.polytope[i_b].horizon_nedges = 0
-
-            # Construct the initial polytope from the GJK simplex
-            polytope_flag = RETURN_CODE.SUCCESS
-            if nsimplex == 2:
-                polytope_flag = self.func_epa_init_polytope_2d(i_ga, i_gb, i_b)
-            elif nsimplex == 4:
-                polytope_flag = self.func_epa_init_polytope_4d(i_ga, i_gb, i_b)
-
-            # Polytope 3D could be used as a fallback for 2D and 4D cases, but it is not necessary
-            if (
-                nsimplex == 3
-                or (polytope_flag == RETURN_CODE.EPA_P2_FALLBACK3)
-                or (polytope_flag == RETURN_CODE.EPA_P4_FALLBACK3)
-            ):
-                polytope_flag = self.func_epa_init_polytope_3d(i_ga, i_gb, i_b)
-
-            # Run EPA from the polytope
-            if polytope_flag == RETURN_CODE.SUCCESS:
-                i_f = self.func_epa(i_ga, i_gb, i_b)
                 distance = self.distance[i_b]
+                nsimplex = self.nsimplex[i_b]
+                collided = distance < self.collision_eps
 
-                if ti.static(self.enable_mujoco_multi_contact):
-                    # To use MuJoCo's multi-contact detection algorithm,
-                    # (1) [i_f] should be a valid face index in the polytope (>= 0),
-                    # (2) Both of the geometries should be discrete,
-                    # (3) [multi_contact] should be True.
-                    if i_f >= 0 and self.func_is_discrete_geoms(i_ga, i_gb, i_b) and multi_contact:
-                        self.func_multi_contact(i_ga, i_gb, i_b, i_f)
-                        self.multi_contact_flag[i_b] = 1
+                # To run EPA, we need following conditions:
+                # 1. We did not find min. distance with shrink_sphere flag
+                # 2. We have a valid GJK simplex (nsimplex > 0)
+                # 3. We have a collision (distance < collision_epsilon)
+                do_epa = (not shrink_sphere) and collided and (nsimplex > 0)
+
+                if do_epa:
+                    # Assume touching
+                    self.distance[i_b] = 0
+
+                    # Initialize polytope
+                    self.polytope[i_b].nverts = 0
+                    self.polytope[i_b].nfaces = 0
+                    self.polytope[i_b].nfaces_map = 0
+                    self.polytope[i_b].horizon_nedges = 0
+
+                    # Construct the initial polytope from the GJK simplex
+                    polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
+                    if nsimplex == 2:
+                        polytope_flag = self.func_epa_init_polytope_2d(i_ga, i_gb, i_b)
+                    elif nsimplex == 4:
+                        polytope_flag = self.func_epa_init_polytope_4d(i_ga, i_gb, i_b)
+
+                    # Polytope 3D could be used as a fallback for 2D and 4D cases, but it is not necessary
+                    if (
+                        nsimplex == 3
+                        or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3)
+                        or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
+                    ):
+                        polytope_flag = self.func_epa_init_polytope_3d(i_ga, i_gb, i_b)
+
+                    # Run EPA from the polytope
+                    if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+                        i_f = self.func_epa(i_ga, i_gb, i_b)
+
+                        if ti.static(self.enable_mujoco_multi_contact):
+                            # To use MuJoCo's multi-contact detection algorithm,
+                            # (1) [i_f] should be a valid face index in the polytope (>= 0),
+                            # (2) Both of the geometries should be discrete,
+                            # (3) [enable_mujoco_multi_contact] should be True. Default to False.
+                            if i_f >= 0 and self.func_is_discrete_geoms(i_ga, i_gb, i_b):
+                                self.func_multi_contact(i_ga, i_gb, i_b, i_f)
+                                self.multi_contact_flag[i_b] = 1
+        else:
+            gjk_flag = self.func_safe_gjk(i_ga, i_gb, i_b)
+            if gjk_flag == GJK_RETURN_CODE.INTERSECT:
+                # Initialize polytope
+                self.polytope[i_b].nverts = 0
+                self.polytope[i_b].nfaces = 0
+                self.polytope[i_b].nfaces_map = 0
+                self.polytope[i_b].horizon_nedges = 0
+
+                # Construct the initial polytope from the GJK simplex
+                self.func_safe_epa_init(i_ga, i_gb, i_b)
+
+                # Run EPA from the polytope
+                self.func_safe_epa(i_ga, i_gb, i_b)
 
         # Compute the final contact points and normals.
         n_contacts = 0
@@ -355,7 +412,7 @@ class GJK:
 
                 normal = w2 - w1
                 normal_len = normal.norm()
-                if normal_len < gs.EPS:
+                if normal_len < self.FLOAT_MIN:
                     continue
 
                 normal = normal / normal_len
@@ -366,9 +423,8 @@ class GJK:
 
         self.n_contacts[i_b] = n_contacts
         # If there are no contacts, we set the penetration and is_col to 0.
-        if n_contacts == 0:
-            self.is_col[i_b] = 0
-            self.penetration[i_b] = 0.0
+        self.is_col[i_b] = 0 if n_contacts == 0 else self.is_col[i_b]
+        self.penetration[i_b] = 0.0 if n_contacts == 0 else self.penetration[i_b]
 
     @ti.func
     def func_gjk(self, i_ga, i_gb, i_b, shrink_sphere):
@@ -412,16 +468,15 @@ class GJK:
         dist = gs.ti_float(0.0)
         # Lambda for barycentric coordinates
         _lambda = gs.ti_vec4(1.0, 0.0, 0.0, 0.0)
-        # Final return code
-        return_code = RETURN_CODE.SUCCESS
         # Whether or not we need to compute the exact distance.
-        # If we shrink the sphere, we need to compute the distance.
         get_dist = shrink_sphere
         # We can use GJK intersection algorithm only for collision detection if we do not have to compute the distance.
         backup_gjk = not get_dist
         # Support vector to compute the next support point.
         support_vector = gs.ti_vec3(0.0, 0.0, 0.0)
         support_vector_norm = gs.ti_float(0.0)
+        # Whether or not the main loop finished early because intersection or seperation was detected.
+        early_stop = False
 
         # Set initial guess of support vector using the positions, which should be a non-zero vector.
         approx_witness_point_obj1 = self._solver.geoms_state[i_ga, i_b].pos
@@ -478,32 +533,31 @@ class GJK:
                     nsimplex = 0
                     nx = 0
                     dist = self.FLOAT_MAX
-                    return_code = RETURN_CODE.GJK_SEPARATED
+                    early_stop = True
                     break
 
             if n == 3 and backup_gjk:
                 # Tetrahedron is generated, try to detect collision if possible.
                 intersect_code = self.func_gjk_intersect(i_ga, i_gb, i_b)
-                if intersect_code == RETURN_CODE.GJK_SEPARATED:
+                if intersect_code == GJK_RETURN_CODE.SEPARATED:
                     # No intersection, objects are separated
                     nx = 0
                     dist = self.FLOAT_MAX
                     nsimplex = 0
-                    return_code = RETURN_CODE.GJK_SEPARATED
+                    early_stop = True
                     break
-                elif intersect_code == RETURN_CODE.GJK_INTERSECT:
+                elif intersect_code == GJK_RETURN_CODE.INTERSECT:
                     # Intersection found
                     nx = 0
                     dist = 0.0
                     nsimplex = 4
-                    return_code = RETURN_CODE.GJK_INTERSECT
+                    early_stop = True
                     break
                 else:
                     # Since gjk_intersect failed (e.g. origin is on the simplex face), fallback to distance computation
                     backup_gjk = False
 
-            # Run the distance subalgorithm to compute the barycentric
-            # coordinates of the closest point to the origin in the simplex
+            # Compute the barycentric coordinates of the closest point to the origin in the simplex
             _lambda = self.func_gjk_subdistance(i_b, n + 1)
 
             # Remove vertices from the simplex with zero barycentric coordinates
@@ -519,7 +573,7 @@ class GJK:
                 nsimplex = 0
                 nx = 0
                 dist = self.FLOAT_MAX
-                return_code = RETURN_CODE.GJK_NUM_ERROR
+                early_stop = True
                 break
 
             # Get the next support vector
@@ -538,7 +592,7 @@ class GJK:
                 support_vector_norm = 0
                 break
 
-        if return_code == RETURN_CODE.SUCCESS:
+        if not early_stop:
             # If [get_dist] was True and there was no numerical error, [return_code] would be SUCCESS.
             nx = 1
             nsimplex = n
@@ -573,7 +627,7 @@ class GJK:
         # Simplex index
         si = ti.Vector([0, 1, 2, 3], dt=gs.ti_int)
 
-        flag = RETURN_CODE.FAIL
+        flag = GJK_RETURN_CODE.NUM_ERROR
         for i in range(self.gjk_max_iterations):
             # Compute normal and signed distance of the triangle faces of the simplex with respect to the origin.
             # These normals are supposed to point outwards from the simplex.
@@ -613,7 +667,7 @@ class GJK:
             # If origin is inside the simplex, the signed distances will all be positive
             if min_sdist >= 0:
                 # Origin is inside the simplex, so we can stop
-                flag = RETURN_CODE.GJK_INTERSECT
+                flag = GJK_RETURN_CODE.INTERSECT
 
                 # Copy the temporary simplex to the main simplex
                 for j in ti.static(range(4)):
@@ -634,7 +688,7 @@ class GJK:
 
             is_no_collision = new_minkowski.dot(min_normal) < 0
             if is_no_collision:
-                flag = RETURN_CODE.GJK_SEPARATED
+                flag = GJK_RETURN_CODE.SEPARATED
                 break
 
             # Swap vertices in the simplex to retain orientation
@@ -950,7 +1004,7 @@ class GJK:
                 nearest_i_f = prev_nearest_i_f
                 break
 
-            if lower2 <= self.FLOAT_MIN:
+            if lower2 <= self.FLOAT_MIN_SQ:
                 # Invalid lower bound (0), stop the algorithm (origin is on the affine hull of face)
                 break
 
@@ -1122,6 +1176,8 @@ class GJK:
             # Pop the top face from the stack
             i_f = self.polytope_horizon_stack[i_b, top - 1].face_idx
             i_e = self.polytope_horizon_stack[i_b, top - 1].edge_idx
+            i_v = self.polytope_faces[i_b, i_f].verts_idx[0]
+            v = self.polytope_verts[i_b, i_v].mink
             top -= 1
 
             # If the face is already deleted, skip it
@@ -1134,7 +1190,7 @@ class GJK:
             # Check visibility of the face. Two requirements for the face to be visible:
             # 1. The face normal should point towards the vertex w
             # 2. The vertex w should be on the other side of the face to the origin
-            is_visible = face.normal.dot(w) - face.dist2 > self.FLOAT_MIN
+            is_visible = face.normal.dot(w - v) > self.FLOAT_MIN
 
             # The first face is always considered visible.
             if is_visible or is_first:
@@ -1238,7 +1294,7 @@ class GJK:
         int
             0 when successful, or a flag indicating an error.
         """
-        flag = RETURN_CODE.SUCCESS
+        flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
         # Get the simplex vertices
         v1 = self.simplex_vertex[i_b, 0].mink
@@ -1319,13 +1375,13 @@ class GJK:
 
             if self.func_attach_face_to_polytope(i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3) < self.FLOAT_MIN_SQ:
                 self.func_replace_simplex_3(i_b, i_v1, i_v2, i_v3)
-                flag = RETURN_CODE.EPA_P2_FALLBACK3
+                flag = EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
                 break
 
         if flag == RETURN_CODE.SUCCESS:
-            if self.func_ray_triangle_intersection(v1, v2, v3, v4, v5) == RETURN_CODE.FAIL:
+            if not self.func_ray_triangle_intersection(v1, v2, v3, v4, v5):
                 # The hexahedron should be convex by definition, but somehow if it is not, we return non-convex flag
-                flag = RETURN_CODE.EPA_P2_NONCONVEX
+                flag = EPA_POLY_INIT_RETURN_CODE.P2_NONCONVEX
 
         if flag == RETURN_CODE.SUCCESS:
             # Initialize face map
@@ -1346,7 +1402,7 @@ class GJK:
         int
             0 when successful, or a flag indicating an error.
         """
-        flag = RETURN_CODE.SUCCESS
+        flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
         # Get the simplex vertices
         v1 = self.simplex_vertex[i_b, 0].mink
@@ -1357,7 +1413,7 @@ class GJK:
         n = (v2 - v1).cross(v3 - v1)
         n_norm = n.norm()
         if n_norm < self.FLOAT_MIN:
-            flag = RETURN_CODE.EPA_P3_BAD_NORMAL
+            flag = EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
         n_neg = -n
 
         # Save vertices in the polytope
@@ -1385,11 +1441,11 @@ class GJK:
         # If so, we do not proceed anymore.
         for i in range(2):
             v = v4 if i == 0 else v5
-            if self.func_point_triangle_intersection(v, v1, v2, v3) == RETURN_CODE.SUCCESS:
-                flag = RETURN_CODE.EPA_P3_INVALID_V4 if i == 0 else RETURN_CODE.EPA_P3_INVALID_V5
+            if self.func_point_triangle_intersection(v, v1, v2, v3):
+                flag = EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
                 break
 
-        if flag == RETURN_CODE.SUCCESS:
+        if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
             # If origin does not lie inside the triangle, we need to
             # check if the hexahedron contains the origin.
 
@@ -1404,7 +1460,7 @@ class GJK:
             # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but
             # there is penetration depth.
             if self.simplex[i_b].dist > 10 * self.FLOAT_MIN and (not tets_has_origin[0]) and (not tets_has_origin[1]):
-                flag = RETURN_CODE.EPA_P3_MISSING_ORIGIN
+                flag = EPA_POLY_INIT_RETURN_CODE.P3_MISSING_ORIGIN
             else:
                 # Build hexahedron (6 faces) from the five vertices.
                 for i in range(6):
@@ -1430,10 +1486,10 @@ class GJK:
 
                     dist2 = self.func_attach_face_to_polytope(i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
                     if dist2 < self.FLOAT_MIN_SQ:
-                        flag = RETURN_CODE.EPA_P3_ORIGIN_ON_FACE
+                        flag = EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
                         break
 
-        if flag == RETURN_CODE.SUCCESS:
+        if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
             # Initialize face map
             for i in ti.static(range(6)):
                 self.polytope_faces_map[i_b][i] = i
@@ -1452,7 +1508,7 @@ class GJK:
         int
             0 when successful, or a flag indicating an error.
         """
-        flag = RETURN_CODE.SUCCESS
+        flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
         # Insert simplex vertices into the polytope
         vi = ti.Vector([0, 0, 0, 0], dt=ti.i32)
@@ -1486,10 +1542,10 @@ class GJK:
 
             if dist2 < self.FLOAT_MIN_SQ:
                 self.func_replace_simplex_3(i_b, v1, v2, v3)
-                flag = RETURN_CODE.EPA_P4_FALLBACK3
+                flag = EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3
                 break
 
-        if flag == RETURN_CODE.SUCCESS:
+        if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
             # If the tetrahedron does not contain the origin, we do not proceed anymore.
             if (
                 self.func_origin_tetra_intersection(
@@ -1500,9 +1556,9 @@ class GJK:
                 )
                 == RETURN_CODE.FAIL
             ):
-                flag = RETURN_CODE.EPA_P4_MISSING_ORIGIN
+                flag = EPA_POLY_INIT_RETURN_CODE.P4_MISSING_ORIGIN
 
-        if flag == RETURN_CODE.SUCCESS:
+        if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
             # Initialize face map
             for i in ti.static(range(4)):
                 self.polytope_faces_map[i_b][i] = i
@@ -1595,7 +1651,7 @@ class GJK:
         Returns
         -------
         int
-            Non-Zero value if the ray intersects the triangle, otherwise 0.
+            True if the ray intersects the triangle, otherwise False.
         """
         ray = ray_v2 - ray_v1
 
@@ -1611,14 +1667,14 @@ class GJK:
                 v1, v2 = tri_v3 - ray_v1, tri_v1 - ray_v1
             vols[i] = self.func_det3(v1, v2, ray)
 
-        return RETURN_CODE.SUCCESS if (vols >= 0).all() or (vols <= 0).all() else RETURN_CODE.FAIL
+        return (vols >= 0).all() or (vols <= 0).all()
 
     @ti.func
     def func_point_triangle_intersection(self, point, tri_v1, tri_v2, tri_v3):
         """
         Check if the point is inside the triangle.
         """
-        flag = RETURN_CODE.FAIL
+        is_inside = False
         # Compute the affine coordinates of the point with respect to the triangle
         _lambda = self.func_triangle_affine_coords(point, tri_v1, tri_v2, tri_v3)
 
@@ -1627,9 +1683,9 @@ class GJK:
             # Check if the point predicted by the affine coordinates is equal to the point itself
             pred = tri_v1 * _lambda[0] + tri_v2 * _lambda[1] + tri_v3 * _lambda[2]
             diff = pred - point
-            flag = RETURN_CODE.SUCCESS if diff.norm() < self.FLOAT_MIN else RETURN_CODE.FAIL
+            is_inside = diff.norm_sqr() < self.FLOAT_MIN_SQ
 
-        return flag
+        return is_inside
 
     @ti.func
     def func_triangle_affine_coords(self, point, tri_v1, tri_v2, tri_v3):
@@ -1735,6 +1791,10 @@ class GJK:
         ----------
         i_f: int
             Index of the face in the EPA polytope where the minimum distance is found.
+
+        .. seealso::
+        MuJoCo's original implementation:
+        https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L2112
         """
         # Get vertices of the nearest face from EPA
         v11i = self.polytope_verts[i_b, self.polytope_faces[i_b, i_f].verts_idx[0]].id1
@@ -1867,15 +1927,15 @@ class GJK:
                 nface = 0
                 if edgecon:
                     if k == 0:
-                        self.contact_faces[i_b, 0].face1 = self.polytope_verts[
+                        self.contact_faces[i_b, 0].vert1 = self.polytope_verts[
                             i_b, self.polytope_faces[i_b, i_f].verts_idx[0]
                         ].obj1
-                        self.contact_faces[i_b, 1].face1 = self.contact_faces[i_b, i].endverts
+                        self.contact_faces[i_b, 1].vert1 = self.contact_faces[i_b, i].endverts
                     else:
-                        self.contact_faces[i_b, 0].face2 = self.polytope_verts[
+                        self.contact_faces[i_b, 0].vert2 = self.polytope_verts[
                             i_b, self.polytope_faces[i_b, i_f].verts_idx[0]
                         ].obj2
-                        self.contact_faces[i_b, 1].face2 = self.contact_faces[i_b, j].endverts
+                        self.contact_faces[i_b, 1].vert2 = self.contact_faces[i_b, j].endverts
 
                     nface = 2
                 else:
@@ -2400,9 +2460,9 @@ class GJK:
             v = gs.ti_vec3(vs[3 * i + 0], vs[3 * i + 1], vs[3 * i + 2]) * 0.5
             v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
             if i_o == 0:
-                self.contact_faces[i_b, i].face1 = v
+                self.contact_faces[i_b, i].vert1 = v
             else:
-                self.contact_faces[i_b, i].face2 = v
+                self.contact_faces[i_b, i].vert2 = v
 
         return nface
 
@@ -2422,9 +2482,9 @@ class GJK:
             v = self._solver.verts_info[i_v].init_pos
             v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
             if i_o == 0:
-                self.contact_faces[i_b, i].face1 = v
+                self.contact_faces[i_b, i].vert1 = v
             else:
-                self.contact_faces[i_b, i].face2 = v
+                self.contact_faces[i_b, i].vert2 = v
 
         return nvert
 
@@ -2445,18 +2505,17 @@ class GJK:
 
         # The clipping polygon should be at least a triangle
         if clipping_polygon_nface >= 3:
-            # For each edge of the clipping polygon, find the half-plane
-            # that is defined by the edge and the normal. The normal of
-            # half-plane is perpendicular to the edge and face normal.
+            # For each edge of the clipping polygon, find the half-plane that is defined by the edge and the normal.
+            # The normal of half-plane is perpendicular to the edge and face normal.
             for i in range(clipping_polygon_nface):
-                v1 = self.contact_faces[i_b, i].face1
-                v2 = self.contact_faces[i_b, (i + 1) % clipping_polygon_nface].face1
-                v3 = self.contact_faces[i_b, (i + 2) % clipping_polygon_nface].face1
+                v1 = self.contact_faces[i_b, i].vert1
+                v2 = self.contact_faces[i_b, (i + 1) % clipping_polygon_nface].vert1
+                v3 = self.contact_faces[i_b, (i + 2) % clipping_polygon_nface].vert1
 
                 if clipping_polygon == 2:
-                    v1 = self.contact_faces[i_b, i].face2
-                    v2 = self.contact_faces[i_b, (i + 1) % clipping_polygon_nface].face2
-                    v3 = self.contact_faces[i_b, (i + 2) % clipping_polygon_nface].face2
+                    v1 = self.contact_faces[i_b, i].vert2
+                    v2 = self.contact_faces[i_b, (i + 1) % clipping_polygon_nface].vert2
+                    v3 = self.contact_faces[i_b, (i + 2) % clipping_polygon_nface].vert2
 
                 # Plane normal
                 res = (v2 - v1).cross(normal)
@@ -2480,18 +2539,18 @@ class GJK:
 
             for i in range(nclipped[pi]):
                 if clipping_polygon == 1:
-                    self.contact_clipped_polygons[i_b, pi, i] = self.contact_faces[i_b, i].face2
+                    self.contact_clipped_polygons[i_b, pi, i] = self.contact_faces[i_b, i].vert2
                 else:
-                    self.contact_clipped_polygons[i_b, pi, i] = self.contact_faces[i_b, i].face1
+                    self.contact_clipped_polygons[i_b, pi, i] = self.contact_faces[i_b, i].vert1
 
             # For each edge of the clipping polygon, clip the subject polygon against it.
             # Here we use the Sutherland-Hodgman algorithm.
             for e in range(clipping_polygon_nface):
                 # Get the point [a] on the clipping polygon edge,
                 # and the normal [n] of the half-plane defined by the edge.
-                a = self.contact_faces[i_b, e].face1
+                a = self.contact_faces[i_b, e].vert1
                 if clipping_polygon == 2:
-                    a = self.contact_faces[i_b, e].face2
+                    a = self.contact_faces[i_b, e].vert2
                 n = self.contact_halfspaces[i_b, e].normal
                 d = self.contact_halfspaces[i_b, e].dist
 
@@ -2873,7 +2932,7 @@ class GJK:
         vert_end = self._solver.geoms_info.vert_end[i_g]
 
         # Use the previous maximum vertex if it is within the current range
-        prev_imax = self.support_vertex_id[i_b, i_o]
+        prev_imax = self.support_mesh_prev_vertex_id[i_b, i_o]
         if (prev_imax >= vert_start) and (prev_imax < vert_end):
             pos = self._solver.verts_info[prev_imax].init_pos
             fmax = d_mesh.dot(pos)
@@ -2889,7 +2948,7 @@ class GJK:
         v = self._solver.verts_info[imax].init_pos
         vid = imax
 
-        self.support_vertex_id[i_b, i_o] = vid
+        self.support_mesh_prev_vertex_id[i_b, i_o] = vid
 
         v_ = gu.ti_transform_by_trans_quat(v, g_state.pos, g_state.quat)
         return v_, vid
@@ -2914,9 +2973,839 @@ class GJK:
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
             if ti.static(self._solver.collider._has_terrain):
                 v, vid = self.support_field._func_support_prism(direction, i_g, i_b)
-        elif geom_type == gs.GEOM_TYPE.MESH and self._solver._enable_mujoco_compatibility:
+        elif geom_type == gs.GEOM_TYPE.MESH and self._enable_mujoco_compatibility:
             # If mujoco-compatible, do exhaustive search for the vertex
             v, vid = self.support_mesh(direction, i_g, i_b, i_o)
         else:
             v, vid = self.support_field._func_support_world(direction, i_g, i_b)
         return v, vid
+
+    @ti.func
+    def func_safe_gjk(self, i_ga, i_gb, i_b):
+        """
+        Safe GJK algorithm to compute the minimum distance between two convex objects.
+
+        This implementation is safer than the one based on the MuJoCo implementation for the following reasons:
+        1) It guarantees that the origin is strictly inside the tetrahedron when the intersection is detected.
+        2) It guarantees to generate a non-degenerate tetrahedron if there is no numerical error, which is necessary
+        for the following EPA algorithm to work correctly.
+        3) When computing the face normals on the simplex, it uses a more robust method than using the origin.
+
+        TODO: This implementation could be improved by using shrink_sphere option as the MuJoCo implementation does.
+        TODO: This implementation could be further improved by referencing the follow-up work shown below.
+
+        .. seealso::
+        Original paper:
+        Gilbert, Elmer G., Daniel W. Johnson, and S. Sathiya Keerthi.
+        "A fast procedure for computing the distance between complex objects in three-dimensional space."
+        IEEE Journal on Robotics and Automation 4.2 (2002): 193-203.
+
+        Further improvements:
+        Cameron, Stephen. "Enhancing GJK: Computing minimum and penetration distances between convex polyhedra."
+        Proceedings of international conference on robotics and automation. Vol. 4. IEEE, 1997.
+        https://www.cs.ox.ac.uk/people/stephen.cameron/distances/gjk2.4/
+
+        Montaut, Louis, et al. "Collision detection accelerated: An optimization perspective."
+        https://arxiv.org/abs/2205.09663
+        """
+        dir0 = gs.ti_vec3(0, 0, 1)
+        dir1 = gs.ti_vec3(0, 1, 0)
+
+        # Compute the initial tetrahedron using two random directions
+        init_flag = RETURN_CODE.SUCCESS
+        self.simplex[i_b].nverts = 0
+        for i in range(4):
+            dir = gs.ti_vec3(0.0, 0.0, 0.0)
+            if i // 2 == 0:
+                dir = dir0 if i % 2 == 0 else -dir0
+            else:
+                dir = dir1 if i % 2 == 0 else -dir1
+
+            obj1, obj2, id1, id2, minkowski = self.func_safe_gjk_support(i_ga, i_gb, i_b, dir)
+
+            # Check if the new vertex would make a valid simplex.
+            valid = self.func_is_new_simplex_vertex_valid(i_b, id1, id2, minkowski)
+
+            # If this is not a valid vertex, fall back to a brute-force routine to find a valid vertex.
+            if not valid:
+                obj1, obj2, id1, id2, minkowski, init_flag = self.func_search_valid_simplex_vertex(i_ga, i_gb, i_b)
+                # If the brute-force search failed, we cannot proceed with GJK.
+                if init_flag == RETURN_CODE.FAIL:
+                    break
+
+            self.simplex_vertex[i_b, i].obj1 = obj1
+            self.simplex_vertex[i_b, i].obj2 = obj2
+            self.simplex_vertex[i_b, i].id1 = id1
+            self.simplex_vertex[i_b, i].id2 = id2
+            self.simplex_vertex[i_b, i].mink = minkowski
+            self.simplex[i_b].nverts += 1
+
+        gjk_flag = GJK_RETURN_CODE.SEPARATED
+        if init_flag == RETURN_CODE.SUCCESS:
+            # Simplex index
+            si = ti.Vector([0, 1, 2, 3], dt=gs.ti_int)
+
+            for i in range(self.gjk_max_iterations):
+                # Compute normal and signed distance of the triangle faces of the simplex with respect to the origin.
+                # These normals are supposed to point outwards from the simplex. If the origin is inside the plane,
+                # [sdist] will be positive.
+                for j in range(4):
+                    s0, s1, s2, ap = si[2], si[1], si[3], si[0]
+                    if j == 1:
+                        s0, s1, s2, ap = si[0], si[2], si[3], si[1]
+                    elif j == 2:
+                        s0, s1, s2, ap = si[1], si[0], si[3], si[2]
+                    elif j == 3:
+                        s0, s1, s2, ap = si[0], si[1], si[2], si[3]
+
+                    n, s = self.func_safe_gjk_triangle_info(i_b, s0, s1, s2, ap)
+
+                    self.simplex_buffer[i_b, j].normal = n
+                    self.simplex_buffer[i_b, j].sdist = s
+
+                # Find the face with the smallest signed distance. We need to find [min_i] for the next iteration.
+                min_i = 0
+                for j in ti.static(range(1, 4)):
+                    if self.simplex_buffer[i_b, j].sdist < self.simplex_buffer[i_b, min_i].sdist:
+                        min_i = j
+
+                min_si = si[min_i]
+                min_normal = self.simplex_buffer[i_b, min_i].normal
+                min_sdist = self.simplex_buffer[i_b, min_i].sdist
+
+                # If origin is inside the simplex, the signed distances will all be positive
+                if min_sdist >= 0:
+                    # Origin is inside the simplex, so we can stop
+                    gjk_flag = GJK_RETURN_CODE.INTERSECT
+                    break
+
+                # Check if the new vertex would make a valid simplex.
+                self.simplex[i_b].nverts = 3
+                if min_si != 3:
+                    self.simplex_vertex[i_b, min_si] = self.simplex_vertex[i_b, 3]
+
+                # Find a new candidate vertex to replace the worst vertex (which has the smallest signed distance)
+                obj1, obj2, id1, id2, minkowski = self.func_safe_gjk_support(i_ga, i_gb, i_b, min_normal)
+
+                duplicate = self.func_is_new_simplex_vertex_duplicate(i_b, id1, id2)
+                if duplicate:
+                    # If the new vertex is a duplicate, it means separation.
+                    gjk_flag = GJK_RETURN_CODE.SEPARATED
+                    break
+
+                degenerate = self.func_is_new_simplex_vertex_degenerate(i_b, minkowski)
+                if degenerate:
+                    # If the new vertex is degenerate, we cannot proceed with GJK.
+                    gjk_flag = GJK_RETURN_CODE.NUM_ERROR
+                    break
+
+                # Check if the origin is strictly outside of the Minkowski difference (which means there is no collision)
+                is_no_collision = minkowski.dot(min_normal) < 0
+                if is_no_collision:
+                    gjk_flag = GJK_RETURN_CODE.SEPARATED
+                    break
+
+                self.simplex_vertex[i_b, 3].obj1 = obj1
+                self.simplex_vertex[i_b, 3].obj2 = obj2
+                self.simplex_vertex[i_b, 3].id1 = id1
+                self.simplex_vertex[i_b, 3].id2 = id2
+                self.simplex_vertex[i_b, 3].mink = minkowski
+                self.simplex[i_b].nverts = 4
+
+        if gjk_flag == GJK_RETURN_CODE.INTERSECT:
+            self.distance[i_b] = 0.0
+        else:
+            gjk_flag = GJK_RETURN_CODE.SEPARATED
+            self.distance[i_b] = self.FLOAT_MAX
+
+        return gjk_flag
+
+    @ti.func
+    def func_is_new_simplex_vertex_valid(self, i_b, id1, id2, mink):
+        """
+        Check validity of the incoming simplex vertex (defined by id1, id2 and mink).
+
+        To be a new valid simplex vertex, it should satisfy the following conditions:
+        1) The vertex should not be already in the simplex.
+        2) The simplex should not be degenerate after insertion.
+        """
+        return (not self.func_is_new_simplex_vertex_duplicate(i_b, id1, id2)) and (
+            not self.func_is_new_simplex_vertex_degenerate(i_b, mink)
+        )
+
+    @ti.func
+    def func_is_new_simplex_vertex_duplicate(self, i_b, id1, id2):
+        """
+        Check if the incoming simplex vertex is already in the simplex.
+        """
+        nverts = self.simplex[i_b].nverts
+        found = False
+        for i in range(nverts):
+            if id1 == -1 or (self.simplex_vertex[i_b, i].id1 != id1):
+                continue
+            if id2 == -1 or (self.simplex_vertex[i_b, i].id2 != id2):
+                continue
+            found = True
+            break
+        return found
+
+    @ti.func
+    def func_is_new_simplex_vertex_degenerate(self, i_b, mink):
+        """
+        Check if the simplex becomes degenerate after inserting a new vertex, assuming that the current simplex is okay.
+        """
+        is_degenerate = False
+
+        # Check if the new vertex is not very close to the existing vertices
+        nverts = self.simplex[i_b].nverts
+        for i in range(nverts):
+            if (self.simplex_vertex[i_b, i].mink - mink).norm_sqr() < (self.simplex_max_degeneracy**2):
+                is_degenerate = True
+                break
+
+        if not is_degenerate:
+            # Check the validity based on the simplex dimension
+            if nverts == 2:
+                # Becomes a triangle if valid, check if the three vertices are not collinear
+                is_degenerate = self.func_is_colinear(
+                    self.simplex_vertex[i_b, 0].mink, self.simplex_vertex[i_b, 1].mink, mink
+                )
+            elif nverts == 3:
+                # Becomes a tetrahedron if valid, check if the four vertices are not coplanar
+                is_degenerate = self.func_is_coplanar(
+                    self.simplex_vertex[i_b, 0].mink,
+                    self.simplex_vertex[i_b, 1].mink,
+                    self.simplex_vertex[i_b, 2].mink,
+                    mink,
+                )
+
+        return is_degenerate
+
+    @ti.func
+    def func_is_colinear(self, v1, v2, v3):
+        """
+        Check if three points are collinear.
+
+        This function assumes that every pair of points is non-degenerate, i.e. no pair of points is identical.
+        """
+        e1 = v2 - v1
+        e2 = v3 - v1
+        normal = e1.cross(e2)
+        return normal.norm_sqr() < (self.simplex_max_degeneracy**2) * e1.norm_sqr() * e2.norm_sqr()
+
+    @ti.func
+    def func_is_coplanar(self, v1, v2, v3, v4):
+        """
+        Check if four points are coplanar.
+
+        This function assumes that every triplet of points is non-degenerate, i.e. no triplet of points is collinear.
+        """
+        e1 = (v2 - v1).normalized()
+        e2 = (v3 - v1).normalized()
+        normal = e1.cross(e2)
+        diff = v4 - v1
+        return (normal.dot(diff) ** 2) < (self.simplex_max_degeneracy**2) * normal.norm_sqr() * diff.norm_sqr()
+
+    @ti.func
+    def func_search_valid_simplex_vertex(self, i_ga, i_gb, i_b):
+        """
+        Search for a valid simplex vertex (non-duplicate, non-degenerate) in the Minkowski difference.
+        """
+        obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
+        obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
+        id1 = -1
+        id2 = -1
+        minkowski = gs.ti_vec3(0.0, 0.0, 0.0)
+        flag = RETURN_CODE.FAIL
+
+        # If both geometries are discrete, we can use a brute-force search to find a valid simplex vertex.
+        if self.func_is_discrete_geoms(i_ga, i_gb, i_b):
+            geom_nverts = gs.ti_ivec2(0, 0)
+            for i in range(2):
+                geom_nverts[i] = self.func_num_discrete_geom_vertices(i_ga if i == 0 else i_gb, i_b)
+
+            num_cases = geom_nverts[0] * geom_nverts[1]
+            for k in range(num_cases):
+                m = (k + self.last_searched_simplex_vertex_id[i_b]) % num_cases
+                i = m // geom_nverts[1]
+                j = m % geom_nverts[1]
+
+                id1 = self._solver.geoms_info.vert_start[i_ga] + i
+                id2 = self._solver.geoms_info.vert_start[i_gb] + j
+                for p in range(2):
+                    obj = self.func_get_discrete_geom_vertex(i_ga if p == 0 else i_gb, i_b, i if p == 0 else j)
+                    if p == 0:
+                        obj1 = obj
+                    else:
+                        obj2 = obj
+                minkowski = obj1 - obj2
+
+                # Check if the new vertex is valid
+                if self.func_is_new_simplex_vertex_valid(i_b, id1, id2, minkowski):
+                    flag = RETURN_CODE.SUCCESS
+                    # Update buffer
+                    self.last_searched_simplex_vertex_id[i_b] = (m + 1) % num_cases
+                    break
+        else:
+            # Try search direction based on the current simplex.
+            nverts = self.simplex[i_b].nverts
+            if nverts == 3:
+                # If we have a triangle, use its normal as the search direction.
+                v1 = self.simplex_vertex[i_b, 0].mink
+                v2 = self.simplex_vertex[i_b, 1].mink
+                v3 = self.simplex_vertex[i_b, 2].mink
+                dir = (v3 - v1).cross(v2 - v1).normalized()
+
+                for i in range(2):
+                    d = dir if i == 0 else -dir
+                    obj1, obj2, id1, id2, minkowski = self.func_safe_gjk_support(i_ga, i_gb, i_b, d)
+
+                    # Check if the new vertex is valid
+                    if self.func_is_new_simplex_vertex_valid(i_b, id1, id2, minkowski):
+                        flag = RETURN_CODE.SUCCESS
+                        break
+
+        return obj1, obj2, id1, id2, minkowski, flag
+
+    @ti.func
+    def func_num_discrete_geom_vertices(self, i_g, i_b):
+        """
+        Count the number of discrete vertices in the geometry.
+        """
+        vert_start = self._solver.geoms_info.vert_start[i_g]
+        vert_end = self._solver.geoms_info.vert_end[i_g]
+        count = vert_end - vert_start
+        return count
+
+    @ti.func
+    def func_get_discrete_geom_vertex(self, i_g, i_b, i_v):
+        """
+        Get the discrete vertex of the geometry for the given index [i_v].
+        """
+        geom_type = self._solver.geoms_info[i_g].type
+        geom_state = self._solver.geoms_state[i_g, i_b]
+
+        # Get the vertex position in the local frame of the geometry.
+        v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+        if geom_type == gs.GEOM_TYPE.BOX:
+            # For the consistency with the [func_support_box] function of [SupportField] class, we handle the box
+            # vertex positions in a different way than the general mesh.
+            v = ti.Vector(
+                [
+                    (1.0 if (i_v & 1 == 1) else -1.0) * self._solver.geoms_info[i_g].data[0] * 0.5,
+                    (1.0 if (i_v & 2 == 2) else -1.0) * self._solver.geoms_info[i_g].data[1] * 0.5,
+                    (1.0 if (i_v & 4 == 4) else -1.0) * self._solver.geoms_info[i_g].data[2] * 0.5,
+                ],
+                dt=gs.ti_float,
+            )
+        elif geom_type == gs.GEOM_TYPE.MESH:
+            vert_start = self._solver.geoms_info.vert_start[i_g]
+            v = self._solver.verts_info[vert_start + i_v].init_pos
+
+        # Transform the vertex position to the world frame
+        v = gu.ti_transform_by_trans_quat(v, geom_state.pos, geom_state.quat)
+
+        return v
+
+    @ti.func
+    def func_safe_gjk_triangle_info(self, i_b, i_ta, i_tb, i_tc, i_apex):
+        """
+        Compute normal and signed distance of the triangle face on the simplex from the origin.
+
+        The triangle is defined by the vertices [i_ta], [i_tb], and [i_tc], and the apex is used to orient the triangle
+        normal, so that it points outward from the simplex. Thus, if the origin is inside the simplex in terms of this
+        triangle, the signed distance will be positive.
+        """
+        vertex_1 = self.simplex_vertex[i_b, i_ta].mink
+        vertex_2 = self.simplex_vertex[i_b, i_tb].mink
+        vertex_3 = self.simplex_vertex[i_b, i_tc].mink
+        apex_vertex = self.simplex_vertex[i_b, i_apex].mink
+
+        # This normal is guaranteed to be non-zero because we build the simplex avoiding degenerate vertices.
+        normal = (vertex_3 - vertex_1).cross(vertex_2 - vertex_1).normalized()
+
+        # Reorient the normal to point outward from the simplex
+        if normal.dot(apex_vertex - vertex_1) > 0.0:
+            normal = -normal
+
+        # Compute the signed distance from the origin to the triangle plane
+        sdist = normal.dot(vertex_1)
+
+        return normal, sdist
+
+    @ti.func
+    def func_safe_gjk_support(self, i_ga, i_gb, i_b, dir):
+        """
+        Find support points on the two objects using [dir] to use in the [safe_gjk] algorithm.
+
+        This is a more robust version of the support function that finds only one pair of support points, because this
+        function perturbs the support direction to find the best support points that guarantee non-degenerate simplex
+        in the GJK algorithm.
+
+        Parameters:
+        ----------
+        dir: gs.ti_vec3
+            The unit direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
+        """
+        obj1 = gs.ti_vec3(0, 0, 0)
+        obj2 = gs.ti_vec3(0, 0, 0)
+        id1 = -1
+        id2 = -1
+        mink = obj1 - obj2
+
+        for i in range(9):
+            # px, py, pz = gs.ti_float(0.0), gs.ti_float(0.0), gs.ti_float(0.0)
+            # if i > 0:
+            #     j = i - 1
+            #     px = -1.0 if (j & 1) == 0 else 1.0
+            #     py = -1.0 if (j & 2) == 0 else 1.0
+            #     pz = -1.0 if (j & 4) == 0 else 1.0
+
+            # n_dir = (dir + (gs.ti_vec3(px, py, pz) * gs.EPS)).normalized()
+
+            n_dir = dir
+            if i > 0:
+                j = i - 1
+                n_dir[0] += -gs.EPS if (j & 1) == 0 else gs.EPS
+                n_dir[1] += -gs.EPS if (j & 2) == 0 else gs.EPS
+                n_dir[2] += -gs.EPS if (j & 4) == 0 else gs.EPS
+
+            num_supports = self.func_count_support(i_ga, i_gb, i_b, n_dir)
+            if i > 0 and num_supports > 1:
+                # If this is a perturbed direction and we have more than one support point, we skip this iteration. If
+                # it was the original direction, we continue to find the support points to keep it as the baseline.
+                continue
+
+            # Use the current direction to find the support points.
+            for j in range(2):
+                d = n_dir if j == 0 else -n_dir
+                i_g = i_ga if j == 0 else i_gb
+
+                sp, si = self.support_driver(d, i_g, i_b, j, False)
+                if j == 0:
+                    obj1 = sp
+                    id1 = si
+                else:
+                    obj2 = sp
+                    id2 = si
+
+            mink = obj1 - obj2
+
+            if i == 0:
+                if num_supports > 1:
+                    # If there were multiple valid support points, we move on to the next iteration to perturb the
+                    # direction and find better support points.
+                    continue
+                else:
+                    break
+
+            # If it was a perturbed direction, check if the support points have been found before.
+            if i == 8:
+                # If this was the last iteration, we don't check if it has been found before.
+                break
+
+            # Check if the updated simplex would be a degenerate simplex.
+            if self.func_is_new_simplex_vertex_valid(i_b, id1, id2, mink):
+                break
+
+        return obj1, obj2, id1, id2, mink
+
+    @ti.func
+    def count_support_driver(self, d, i_g, i_b):
+        """
+        Count the number of possible support points in the given direction.
+        """
+        geom_type = self._solver.geoms_info[i_g].type
+        count = 1
+        if geom_type == gs.GEOM_TYPE.BOX:
+            count = self.support_field._func_count_supports_box(d, i_g, i_b)
+        elif geom_type == gs.GEOM_TYPE.MESH:
+            count = self.support_field._func_count_supports_world(d, i_g, i_b)
+        return count
+
+    @ti.func
+    def func_count_support(self, i_ga, i_gb, i_b, d):
+        """
+        Count the number of possible pairs of support points on the two objects in the given direction [d].
+        """
+        count = 1
+        for i in range(2):
+            dir = d if i == 0 else -d
+            i_g = i_ga if i == 0 else i_gb
+            count *= self.count_support_driver(dir, i_g, i_b)
+
+        return count
+
+    @ti.func
+    def func_safe_epa(self, i_ga, i_gb, i_b):
+        """
+        Safe EPA algorithm to find the exact penetration depth and contact normal using the simplex constructed by GJK.
+
+        This implementation is more robust than the one based on MuJoCo's implementation for the following reasons:
+        1) It guarantees that the lower bound of the depth is always smaller than the upper bound, within the tolerance.
+        2) This is because we acknowledge that polytope face normal could be unstable when the face is degenerate. Even
+        in that case, we can robustly estimate the lower bound of the depth, which gives us more robust results.
+        3) In determining the normal direction of a polytope face, we use origin and the polytope vertices altogether
+        to get a more stable normal direction, rather than just the origin.
+        """
+        upper = self.FLOAT_MAX
+        upper2 = self.FLOAT_MAX_SQ
+        lower = 0.0
+        tolerance = self.tolerance
+
+        # Index of the nearest face
+        nearest_i_f = -1
+        prev_nearest_i_f = -1
+
+        discrete = self.func_is_discrete_geoms(i_ga, i_gb, i_b)
+        if discrete:
+            # If the objects are discrete, we do not use tolerance.
+            tolerance = gs.EPS
+
+        k_max = self.epa_max_iterations
+        for k in range(k_max):
+            prev_nearest_i_f = nearest_i_f
+
+            # Find the polytope face with the smallest distance to the origin
+            lower2 = self.FLOAT_MAX_SQ
+
+            for i in range(self.polytope[i_b].nfaces_map):
+                i_f = self.polytope_faces_map[i_b][i]
+                face_dist2 = self.polytope_faces[i_b, i_f].dist2
+
+                if face_dist2 < lower2:
+                    lower2 = face_dist2
+                    nearest_i_f = i_f
+
+            if lower2 > upper2 or nearest_i_f < 0:
+                # Invalid face found, stop the algorithm (lower bound of depth is larger than upper bound)
+                nearest_i_f = prev_nearest_i_f
+                break
+
+            # Find a new support point w from the nearest face's normal
+            lower = ti.sqrt(lower2)
+            dir = self.polytope_faces[i_b, nearest_i_f].normal
+            wi = self.func_epa_support(i_ga, i_gb, i_b, dir, 1.0)
+            w = self.polytope_verts[i_b, wi].mink
+
+            # The upper bound of depth at k-th iteration
+            upper_k = w.dot(dir)
+            if upper_k < upper:
+                upper = upper_k
+                upper2 = upper**2
+
+            # If the upper bound and lower bound are close enough, we can stop the algorithm
+            if (upper - lower) < tolerance:
+                break
+
+            if discrete:
+                repeated = False
+                for i in range(self.polytope[i_b].nverts):
+                    if i == wi:
+                        continue
+                    elif (
+                        self.polytope_verts[i_b, i].id1 == self.polytope_verts[i_b, wi].id1
+                        and self.polytope_verts[i_b, i].id2 == self.polytope_verts[i_b, wi].id2
+                    ):
+                        # The vertex w is already in the polytope, so we do not need to add it again.
+                        repeated = True
+                        break
+                if repeated:
+                    break
+
+            self.polytope[i_b].horizon_w = w
+
+            # Compute horizon
+            horizon_flag = self.func_epa_horizon(i_b, nearest_i_f)
+
+            if horizon_flag:
+                # There was an error in the horizon construction, so the horizon edge is not a closed loop.
+                nearest_i_f = -1
+                break
+
+            if self.polytope[i_b].horizon_nedges < 3:
+                # Should not happen, because at least three edges should be in the horizon from one deleted face.
+                nearest_i_f = -1
+                break
+
+            # Check if the memory space is enough for attaching new faces
+            nfaces = self.polytope[i_b].nfaces
+            nedges = self.polytope[i_b].horizon_nedges
+            if nfaces + nedges >= self.polytope_max_faces:
+                # If the polytope is full, we cannot insert new faces
+                break
+
+            # Attach the new faces
+            # print("Attaching new faces to the polytope")
+            attach_flag = RETURN_CODE.SUCCESS
+            for i in range(nedges):
+                # Face id of the current face to attach
+                i_f0 = nfaces + i
+                # Face id of the next face to attach
+                i_f1 = nfaces + (i + 1) % nedges
+
+                horizon_i_f = self.polytope_horizon_data[i_b, i].face_idx
+                horizon_i_e = self.polytope_horizon_data[i_b, i].edge_idx
+                horizon_face = self.polytope_faces[i_b, horizon_i_f]
+                horizon_v1 = horizon_face.verts_idx[horizon_i_e]
+                horizon_v2 = horizon_face.verts_idx[(horizon_i_e + 1) % 3]
+
+                # Change the adjacent face index of the existing face
+                self.polytope_faces[i_b, horizon_i_f].adj_idx[horizon_i_e] = i_f0
+
+                # Attach the new face.
+                # If this if the first face, will be adjacent to the face that will be attached last.
+                adj_i_f_0 = i_f0 - 1 if (i > 0) else nfaces + nedges - 1
+                adj_i_f_1 = horizon_i_f
+                adj_i_f_2 = i_f1
+
+                attach_flag = self.func_safe_attach_face_to_polytope(
+                    i_b,
+                    wi,
+                    horizon_v2,
+                    horizon_v1,
+                    adj_i_f_2,  # Previous face id
+                    adj_i_f_1,
+                    adj_i_f_0,  # Next face id
+                )
+                if attach_flag != RETURN_CODE.SUCCESS:
+                    # Unrecoverable numerical issue
+                    break
+
+                dist2 = self.polytope_faces[i_b, self.polytope[i_b].nfaces - 1].dist2
+                if (dist2 >= lower2 - gs.EPS) and (dist2 <= upper2 + gs.EPS):
+                    # Store face in the map
+                    nfaces_map = self.polytope[i_b].nfaces_map
+                    self.polytope_faces_map[i_b][nfaces_map] = i_f0
+                    self.polytope_faces[i_b, i_f0].map_idx = nfaces_map
+                    self.polytope[i_b].nfaces_map += 1
+
+            if attach_flag != RETURN_CODE.SUCCESS:
+                break
+
+            # Clear the horizon data for the next iteration
+            self.polytope[i_b].horizon_nedges = 0
+
+            if (self.polytope[i_b].nfaces_map == 0) or (nearest_i_f == -1):
+                # No face candidate left
+                break
+
+        if nearest_i_f != -1:
+            # Nearest face found
+            dist2 = self.polytope_faces[i_b, nearest_i_f].dist2
+            flag = self.func_safe_epa_witness(i_ga, i_gb, i_b, nearest_i_f)
+            if flag == RETURN_CODE.SUCCESS:
+                self.n_witness[i_b] = 1
+                self.distance[i_b] = -ti.sqrt(dist2)
+            else:
+                # Failed to compute witness points, so the objects are not colliding
+                self.n_witness[i_b] = 0
+                self.distance[i_b] = 0.0
+        else:
+            # No face found, so the objects are not colliding
+            self.n_witness[i_b] = 0
+            self.distance[i_b] = 0.0
+
+        return nearest_i_f
+
+    @ti.func
+    def func_safe_epa_witness(self, i_ga, i_gb, i_b, i_f):
+        """
+        Compute the witness points from the geometries for the face i_f of the polytope.
+        """
+        flag = RETURN_CODE.SUCCESS
+
+        # Find the affine coordinates of the origin's projection on the face i_f
+        face = self.polytope_faces[i_b, i_f]
+        face_v1 = self.polytope_verts[i_b, face.verts_idx[0]].mink
+        face_v2 = self.polytope_verts[i_b, face.verts_idx[1]].mink
+        face_v3 = self.polytope_verts[i_b, face.verts_idx[2]].mink
+
+        # Project origin onto the face plane to get the barycentric coordinates
+        proj_o, _ = self.func_project_origin_to_plane(face_v1, face_v2, face_v3)
+        _lambda = self.func_triangle_affine_coords(proj_o, face_v1, face_v2, face_v3)
+
+        # Check validity of affine coordinates through reprojection
+        v1 = self.polytope_verts[i_b, face.verts_idx[0]].mink
+        v2 = self.polytope_verts[i_b, face.verts_idx[1]].mink
+        v3 = self.polytope_verts[i_b, face.verts_idx[2]].mink
+
+        proj_o_lambda = v1 * _lambda[0] + v2 * _lambda[1] + v3 * _lambda[2]
+        reprojection_error = (proj_o - proj_o_lambda).norm()
+
+        # Take into account the face magnitude, as the error is relative to the face size.
+        max_edge_len_inv = ti.rsqrt(
+            max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), self.FLOAT_MIN_SQ)
+        )
+        rel_reprojection_error = reprojection_error * max_edge_len_inv
+        if rel_reprojection_error > self.polytope_max_reprojection_error:
+            flag = RETURN_CODE.FAIL
+
+        if flag == RETURN_CODE.SUCCESS:
+            # Point on geom 1
+            v1 = self.polytope_verts[i_b, face.verts_idx[0]].obj1
+            v2 = self.polytope_verts[i_b, face.verts_idx[1]].obj1
+            v3 = self.polytope_verts[i_b, face.verts_idx[2]].obj1
+            witness1 = v1 * _lambda[0] + v2 * _lambda[1] + v3 * _lambda[2]
+
+            # Point on geom 2
+            v1 = self.polytope_verts[i_b, face.verts_idx[0]].obj2
+            v2 = self.polytope_verts[i_b, face.verts_idx[1]].obj2
+            v3 = self.polytope_verts[i_b, face.verts_idx[2]].obj2
+            witness2 = v1 * _lambda[0] + v2 * _lambda[1] + v3 * _lambda[2]
+
+            self.witness[i_b, 0].point_obj1 = witness1
+            self.witness[i_b, 0].point_obj2 = witness2
+
+        return flag
+
+    @ti.func
+    def func_safe_epa_init(self, i_ga, i_gb, i_b):
+        """
+        Create the polytope for safe EPA from a 3-simplex (tetrahedron).
+
+        Assume the tetrahedron is a non-degenerate simplex.
+        """
+
+        # Insert simplex vertices into the polytope
+        vi = ti.Vector([0, 0, 0, 0], dt=ti.i32)
+        for i in range(4):
+            vi[i] = self.func_epa_insert_vertex_to_polytope(
+                i_b,
+                self.simplex_vertex[i_b, i].obj1,
+                self.simplex_vertex[i_b, i].obj2,
+                self.simplex_vertex[i_b, i].id1,
+                self.simplex_vertex[i_b, i].id2,
+                self.simplex_vertex[i_b, i].mink,
+            )
+
+        for i in range(4):
+            # Vertex indices for the faces in the hexahedron
+            v1, v2, v3 = vi[0], vi[1], vi[2]
+            # Adjacent face indices for the faces in the hexahedron
+            a1, a2, a3 = 1, 3, 2
+            if i == 1:
+                v1, v2, v3 = vi[0], vi[3], vi[1]
+                a1, a2, a3 = 2, 3, 0
+            elif i == 2:
+                v1, v2, v3 = vi[0], vi[2], vi[3]
+                a1, a2, a3 = 0, 3, 1
+            elif i == 3:
+                v1, v2, v3 = vi[3], vi[2], vi[1]
+                a1, a2, a3 = 2, 0, 1
+
+            self.func_safe_attach_face_to_polytope(i_b, v1, v2, v3, a1, a2, a3)
+
+        # Initialize face map
+        for i in ti.static(range(4)):
+            self.polytope_faces_map[i_b][i] = i
+            self.polytope_faces[i_b, i].map_idx = i
+        self.polytope[i_b].nfaces_map = 4
+
+    @ti.func
+    def func_safe_attach_face_to_polytope(self, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3):
+        """
+        Attach a face to the polytope.
+
+        While attaching the face, 1) determine its normal direction, and 2) estimate the lower bound of the penetration
+        depth in robust manner.
+
+        [i_v1, i_v2, i_v3] are the vertices of the face, [i_a1, i_a2, i_a3] are the adjacent faces.
+        """
+        n = self.polytope[i_b].nfaces
+        self.polytope_faces[i_b, n].verts_idx[0] = i_v1
+        self.polytope_faces[i_b, n].verts_idx[1] = i_v2
+        self.polytope_faces[i_b, n].verts_idx[2] = i_v3
+        self.polytope_faces[i_b, n].adj_idx[0] = i_a1
+        self.polytope_faces[i_b, n].adj_idx[1] = i_a2
+        self.polytope_faces[i_b, n].adj_idx[2] = i_a3
+        self.polytope[i_b].nfaces += 1
+
+        # Compute the normal of the plane
+        normal, flag = self.func_plane_normal(
+            self.polytope_verts[i_b, i_v3].mink,
+            self.polytope_verts[i_b, i_v2].mink,
+            self.polytope_verts[i_b, i_v1].mink,
+        )
+        if flag == RETURN_CODE.SUCCESS:
+            face_center = (
+                self.polytope_verts[i_b, i_v1].mink
+                + self.polytope_verts[i_b, i_v2].mink
+                + self.polytope_verts[i_b, i_v3].mink
+            ) / 3.0
+
+            # Use origin for initialization
+            max_orient = -normal.dot(face_center)
+            max_abs_orient = ti.abs(max_orient)
+
+            # Consider other vertices in the polytope to reorient the normal
+            nverts = self.polytope[i_b].nverts
+            for i_v in range(nverts):
+                if i_v != i_v1 and i_v != i_v2 and i_v != i_v3:
+                    diff = self.polytope_verts[i_b, i_v].mink - face_center
+                    orient = normal.dot(diff)
+                    if ti.abs(orient) > max_abs_orient:
+                        max_abs_orient = ti.abs(orient)
+                        max_orient = orient
+
+            if max_orient > 0.0:
+                normal = -normal
+
+            self.polytope_faces[i_b, n].normal = normal
+
+            # Compute the safe lower bound of the penetration depth. We can do this by taking the minimum dot product
+            # between the face normal and the vertices of the polytope face. This is safer than selecting one of the
+            # vertices, because the face normal could be unstable, which ends up in significantly different dot product
+            # values for different vertices.
+            min_dist2 = self.FLOAT_MAX
+            for i in ti.static(range(3)):
+                i_v = i_v1
+                if i == 1:
+                    i_v = i_v2
+                elif i == 2:
+                    i_v = i_v3
+                v = self.polytope_verts[i_b, i_v].mink
+                dist2 = normal.dot(v) ** 2
+                if dist2 < min_dist2:
+                    min_dist2 = dist2
+            dist2 = min_dist2
+            self.polytope_faces[i_b, n].dist2 = dist2
+            self.polytope_faces[i_b, n].map_idx = -1  # No map index yet
+
+        return flag
+
+    @ti.func
+    def func_plane_normal(self, v1, v2, v3):
+        """
+        Compute the reliable normal of the plane defined by three points.
+        """
+        normal, flag = gs.ti_vec3(0.0, 0.0, 0.0), RETURN_CODE.FAIL
+        finished = False
+
+        d21 = v2 - v1
+        d31 = v3 - v1
+        d32 = v3 - v2
+
+        for i in ti.static(range(3)):
+            if not finished:
+                n = gs.ti_vec3(0.0, 0.0, 0.0)
+                if i == 0:
+                    # Normal = (v1 - v2) x (v3 - v2)
+                    n = d32.cross(d21)
+                elif i == 1:
+                    # Normal = (v2 - v1) x (v3 - v1)
+                    n = d21.cross(d31)
+                else:
+                    # Normal = (v1 - v3) x (v2 - v3)
+                    n = d31.cross(d32)
+                nn = n.norm()
+                if nn == 0:
+                    # Zero normal, cannot project.
+                    flag = RETURN_CODE.FAIL
+                    finished = True
+                elif nn > self.FLOAT_MIN:
+                    normal = n.normalized()
+                    flag = RETURN_CODE.SUCCESS
+                    finished = True
+
+        return normal, flag

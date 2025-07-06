@@ -22,9 +22,14 @@ if TYPE_CHECKING:
 
 
 class CCD_ALGORITHM_CODE(IntEnum):
+    # Our MPR (with SDF)
     MPR = 0
-    MPR_SDF = 1
+    # MuJoCo MPR
+    MJ_MPR = 1
+    # Our GJK
     GJK = 2
+    # MuJoCo GJK
+    MJ_GJK = 3
 
 
 @ti.func
@@ -54,15 +59,19 @@ class Collider:
 
         # Identify the convex collision detection (ccd) algorithm
         if self._solver._options.use_gjk_collision:
-            self.ccd_algorithm = CCD_ALGORITHM_CODE.GJK
-        elif self._solver._enable_mujoco_compatibility:
-            self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR
+            if self._solver._enable_mujoco_compatibility:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.MJ_GJK
+            else:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.GJK
         else:
-            self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR_SDF
+            if self._solver._enable_mujoco_compatibility:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.MJ_MPR
+            else:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
-        self._gjk = GJK(rigid_solver) if self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK else None
+        self._gjk = GJK(rigid_solver) if self._solver._options.use_gjk_collision else None
 
         # multi contact perturbation and tolerance
         if self._solver._enable_mujoco_compatibility:
@@ -1107,6 +1116,7 @@ class Collider:
 
     @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
+        # print(f"Adding contact {i_ga} {i_gb}, normal:", normal, "contact_pos:", contact_pos, "penetration:", penetration)
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
@@ -1262,8 +1272,8 @@ class Collider:
                         contact_pos = v1 - 0.5 * penetration * normal
                         is_col = penetration > 0
                     else:
-                        ### MPR, MPR + SDF
-                        if ti.static(self.ccd_algorithm != CCD_ALGORITHM_CODE.GJK):
+                        ### MPR, MJ_MPR
+                        if ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)):
                             # Try using MPR before anything else
                             is_mpr_updated = False
                             is_mpr_guess_direction_available = True
@@ -1298,10 +1308,9 @@ class Collider:
                                 # associated with the point of deepest penetration.
                                 try_sdf = True
 
-                        ### GJK
-                        elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
-                            # If it was not the first detection, only detect single contact point.
-                            self._gjk.func_gjk_contact(i_ga, i_gb, i_b, i_detection == 0)
+                        ### GJK, MJ_GJK
+                        elif ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)):
+                            self._gjk.func_gjk_contact(i_ga, i_gb, i_b)
 
                             is_col = self._gjk.is_col[i_b] == 1
                             penetration = self._gjk.penetration[i_b]
@@ -1323,7 +1332,7 @@ class Collider:
                                     contact_pos = self._gjk.contact_pos[i_b, 0]
                                     normal = self._gjk.normal[i_b, 0]
 
-                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR_SDF):
+                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         if try_sdf:
                             is_col_a = False
                             is_col_b = False
@@ -1389,7 +1398,7 @@ class Collider:
                             axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal, i_b)
                             n_con = 1
 
-                        if ti.static(not self._solver._enable_mujoco_compatibility):
+                        if ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                             self.contact_cache[i_ga, i_gb, i_b].normal = normal
                     else:
                         # Clear collision normal cache if not in contact
@@ -1397,7 +1406,7 @@ class Collider:
                         self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR_SDF):
+                    if ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                         # 1. Project the contact point on both geometries
                         # 2. Revert the effect of small rotation
                         # 3. Update contact point
@@ -1434,9 +1443,9 @@ class Collider:
                         # dynamics since zero-penetration contact points should not induce any force.
                         penetration = normal.dot(contact_point_b - contact_point_a)
 
-                    elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
+                    elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         # Only change penetration to the initial one, because the normal vector could change abruptly
-                        # under GJK-EPA as the nearest simplex is determined by discrete logic, unlike MPR.
+                        # under MuJoCo's GJK-EPA.
                         penetration = penetration_0
 
                     # Discard contact point is repeated
@@ -1454,10 +1463,10 @@ class Collider:
                             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
                             n_con = n_con + 1
 
-                    self._solver.geoms_state[i_ga, i_b].pos = ga_pos
-                    self._solver.geoms_state[i_ga, i_b].quat = ga_quat
-                    self._solver.geoms_state[i_gb, i_b].pos = gb_pos
-                    self._solver.geoms_state[i_gb, i_b].quat = gb_quat
+                self._solver.geoms_state[i_ga, i_b].pos = ga_pos
+                self._solver.geoms_state[i_ga, i_b].quat = ga_quat
+                self._solver.geoms_state[i_gb, i_b].pos = gb_pos
+                self._solver.geoms_state[i_gb, i_b].quat = gb_quat
 
     @ti.func
     def _func_rotate_frame(self, i_g, contact_pos, qrot, i_b):
