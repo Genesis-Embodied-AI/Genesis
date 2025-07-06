@@ -460,7 +460,7 @@ class RasterizerContext:
                     self.add_static_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs))
 
                 elif mpm_entity.surface.vis_mode == "visual":
-                    # self.add_static_node(mpm_entity.uid, pyrender.Mesh.from_trimesh(mesh, smooth=mpm_entity.surface.smooth))
+                    # self.add_static_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=mpm_entity.surface.smooth))
                     self.add_dynamic_node(
                         mpm_entity,
                         pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
@@ -483,7 +483,7 @@ class RasterizerContext:
         if self.sim.mpm_solver.is_active():
             idx = self.rendered_envs_idx[0]
             particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, idx]
-            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[idx]
+            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
             vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, idx, :]
 
             for mpm_entity in self.sim.mpm_solver.entities:
@@ -543,10 +543,9 @@ class RasterizerContext:
 
     def update_sph(self, buffer_updates):
         if self.sim.sph_solver.is_active():
-            particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
-            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[
-                :, self.rendered_envs_idx[0]
-            ]
+            idx = self.rendered_envs_idx[0]
+            particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()[:, idx]
+            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
 
             for sph_entity in self.sim.sph_solver.entities:
                 if sph_entity.surface.vis_mode == "recon":
