@@ -561,7 +561,8 @@ class RRT(PathPlanner):
             self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
 
         if is_invalid.any():
-            gs.logger.warning(f"rrt planning failed in {int(is_invalid.sum().cpu())} environments")
+            num_failure = int(is_invalid.sum().cpu())
+            gs.logger.warning(f"rrt planning failed in {num_failure} environments")
         return sol, is_invalid
 
 
@@ -909,7 +910,8 @@ class RRTConnect(PathPlanner):
             self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
 
         if is_invalid.any():
-            gs.logger.warning(f"rrt connect planning failed in {int(is_invalid.sum().cpu())} environments")
+            num_failure = int(is_invalid.sum().cpu())
+            gs.logger.warning(f"rrt connect planning failed in {num_failure} environments")
         return sol, is_invalid
 
 
