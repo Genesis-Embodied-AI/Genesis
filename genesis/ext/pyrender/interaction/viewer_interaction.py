@@ -9,7 +9,7 @@ from pyglet.event import EVENT_HANDLE_STATE
 import genesis as gs
 from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 
-from .aabb import Aabb
+from .aabb import AABB
 from .ray import Plane, Ray, RayHit
 from .vec3 import Pose, Quat, Vec3, Color
 from .viewer_interaction_base import ViewerInteractionBase
@@ -132,7 +132,7 @@ class ViewerInteraction(ViewerInteractionBase):
             box: gs.morphs.Box = entity.morph
             size = Vec3.from_xyz(*box.size)
             pose = self.get_pose_of_first_geom(entity)
-            aabb = Aabb.from_center_and_size(Vec3.zero(), size)
+            aabb = AABB.from_center_and_size(Vec3.zero(), size)
             ray_hit = aabb.raycast_oobb(pose, ray)
             return ray_hit
         else:
@@ -167,7 +167,7 @@ class ViewerInteraction(ViewerInteractionBase):
             gquat = geom.get_quat()  # squeezed if n_envs == 0
             pos = Vec3.from_any_array(gpos.cpu().numpy())
             quat = Quat.from_any_array(gquat.cpu().numpy())
-            aabb = Aabb.from_center_and_size(pos, size)
+            aabb = AABB.from_center_and_size(pos, size)
             aabb.expand(0.01)
             self.scene.draw_debug_box(aabb.v, color=Color.red().with_alpha(0.5).tuple(), wireframe=False)
 

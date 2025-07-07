@@ -16,9 +16,10 @@ from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
-    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
+
+    from .rigid_entity import RigidEntity
+    from .rigid_link import RigidLink
 
 
 @ti.data_oriented
@@ -26,11 +27,6 @@ class RigidGeom(RBC):
     """
     A `RigidGeom` is the basic building block of a `RigidEntity` for collision checking. It is usually constructed from a single mesh. This can be accessed via `link.geoms`.
     """
-
-    # partial member list
-    _entity: "RigidEntity"
-    _link: "RigidLink"
-    _material: "RigidMaterial"
 
     def __init__(
         self,
@@ -53,9 +49,9 @@ class RigidGeom(RBC):
         center_init=None,
         data=None,
     ):
-        self._link = link
-        self._entity = link.entity
-        self._material = link.entity.material
+        self._link: "RigidLink" = link
+        self._entity: "RigidEntity" = link.entity
+        self._material: "RigidMaterial" = link.entity.material
         self._solver = link.entity.solver
         self._mesh = mesh
 

@@ -1,10 +1,10 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from .ray import Ray, RayHit, EPSILON2
+from .ray import Ray, RayHit, EPSILON
 from .vec3 import Pose, Vec3
 
-class Aabb:
+class AABB:
     v: NDArray[np.float32]
 
     def __init__(self, v: NDArray[np.float32]):
@@ -29,7 +29,7 @@ class Aabb:
         Standard AABB slab implementation. Early-exits and returns no-hit for rays withing the XY, XZ, or YZ planes.
         Ignores hits for rays originating inside the AABB.
         """
-        if ray.direction.v[0]**2 < EPSILON2 or ray.direction.v[1]**2 < EPSILON2 or ray.direction.v[2]**2 < EPSILON2:
+        if (np.abs(ray.direction.v) < EPSILON).any():
             # unhandled ray case: early-exit
             return RayHit.no_hit()
 
@@ -69,12 +69,12 @@ class Aabb:
         return f"Min({self.min.x}, {self.min.y}, {self.min.z}) Max({self.max.x}, {self.max.y}, {self.max.z})"
 
     @classmethod
-    def from_min_max(cls, min: Vec3, max: Vec3) -> 'Aabb':
+    def from_min_max(cls, min: Vec3, max: Vec3) -> 'AABB':
         bounds = np.stack((min.v, max.v))
         return cls(bounds)
 
     @classmethod
-    def from_center_and_size(cls, center: Vec3, size: Vec3) -> 'Aabb':
+    def from_center_and_size(cls, center: Vec3, size: Vec3) -> 'AABB':
         min = center - 0.5 * size
         max = center + 0.5 * size
         bounds = np.stack((min.v, max.v))
