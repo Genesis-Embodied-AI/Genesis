@@ -12,7 +12,7 @@ from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 from .aabb import AABB
 from .ray import Plane, Ray, RayHit
 from .vec3 import Pose, Quat, Vec3, Color
-from .viewer_interaction_base import ViewerInteractionBase
+from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom

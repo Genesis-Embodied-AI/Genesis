@@ -1,6 +1,9 @@
-from pyglet.event import EVENT_HANDLE_STATE
+from typing import Union, Literal
 
 import genesis as gs
+
+
+EVENT_HANDLE_STATE = Union[Literal[True], None]
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 

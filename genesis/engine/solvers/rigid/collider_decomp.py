@@ -2072,7 +2072,7 @@ class Collider:
         # Early return if already pre-computed
         contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
-            return contacts_info
+            return contacts_info.copy()
 
         # Find out how much dynamic memory must be allocated
         n_contacts = tuple(self.n_contacts.to_numpy())
@@ -2140,7 +2140,7 @@ class Collider:
         # Cache contact information before returning
         self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
 
-        return contacts_info
+        return contacts_info.copy()
 
     @ti.kernel
     def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):
