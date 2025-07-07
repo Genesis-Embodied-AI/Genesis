@@ -499,7 +499,7 @@ class RRT(PathPlanner):
                 self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
             else:
                 self._entity.set_qpos(qpos_cur)
-            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), ~is_active
+            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), is_active
 
         mask = rrt_valid_mask(res_idx)
         sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
@@ -525,10 +525,10 @@ class RRT(PathPlanner):
         sol = align_weypoints_length(sol, torch.ones_like(sol[..., 0]).bool(), num_waypoints)
 
         if ignore_collision:
-            is_valid = ~is_active
+            is_invalid = is_active
         else:
             if is_plan_with_obj:
-                is_valid = ~torch.logical_or(
+                is_invalid = torch.logical_or(
                     is_active,
                     self.check_collision(
                         sol,
@@ -543,7 +543,7 @@ class RRT(PathPlanner):
                     ),
                 )
             else:
-                is_valid = ~torch.logical_or(
+                is_invalid = torch.logical_or(
                     is_active,
                     self.check_collision(
                         sol,
@@ -560,9 +560,9 @@ class RRT(PathPlanner):
         if is_plan_with_obj:
             self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
 
-        if not is_valid.all():
-            gs.logger.warning(f"rrt planning failed in {int((~is_valid).sum().cpu())} environments")
-        return sol, is_valid
+        if is_invalid.any():
+            gs.logger.warning(f"rrt planning failed in {int(is_invalid.sum().cpu())} environments")
+        return sol, is_invalid
 
 
 @ti.data_oriented
@@ -846,7 +846,7 @@ class RRTConnect(PathPlanner):
                 self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
             else:
                 self._entity.set_qpos(qpos_cur)
-            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), ~is_active
+            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), is_active
 
         mask = rrt_connect_valid_mask(res_idx)
         sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
@@ -873,10 +873,10 @@ class RRTConnect(PathPlanner):
         sol = align_weypoints_length(sol, torch.ones_like(sol[..., 0]).bool(), num_waypoints)
 
         if ignore_collision:
-            is_valid = ~is_active
+            is_invalid = is_active
         else:
             if is_plan_with_obj:
-                is_valid = ~torch.logical_or(
+                is_invalid = torch.logical_or(
                     is_active,
                     self.check_collision(
                         sol,
@@ -891,7 +891,7 @@ class RRTConnect(PathPlanner):
                     ),
                 )
             else:
-                is_valid = ~torch.logical_or(
+                is_invalid = torch.logical_or(
                     is_active,
                     self.check_collision(
                         sol,
@@ -908,9 +908,9 @@ class RRTConnect(PathPlanner):
         if is_plan_with_obj:
             self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
 
-        if not is_valid.all():
-            gs.logger.warning(f"rrt connect planning failed in {int((~is_valid).sum().cpu())} environments")
-        return sol, is_valid
+        if is_invalid.any():
+            gs.logger.warning(f"rrt connect planning failed in {int(is_invalid.sum().cpu())} environments")
+        return sol, is_invalid
 
 
 # ------------------------------------------------------------------------------------
@@ -941,9 +941,10 @@ def align_weypoints_length(
     for i_b in range(path.shape[1]):
         if mask[:, i_b].sum() == 0:
             continue
-        res[i_b] = torch.nn.functional.interpolate(
+        interpolated_path = torch.nn.functional.interpolate(
             path[mask[:, i_b], i_b].T.unsqueeze(0), size=num_points, mode="linear", align_corners=True
         )[0].T
+        res[i_b] = interpolated_path
     return res.transpose(1, 0)
 
 
@@ -956,8 +957,8 @@ def rrt_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
     tensor: torch.Tensor
         path tensor in [N, B]
     """
-    mask = tensor > 0
-    mask_float = mask.float().T.unsqueeze(1)
+    mask = (tensor > 0.0).to(gs.tc_float)  # N, B
+    mask_float = mask.T.unsqueeze(1)  # B 1, N
     kernel = torch.ones(1, 1, 3, device=tensor.device, dtype=gs.tc_float)
     dilated_mask_float = F.conv1d(mask_float, kernel.to(mask_float.dtype), padding="same")
     dilated_mask = (dilated_mask_float > 0).squeeze(1).T
@@ -973,8 +974,8 @@ def rrt_connect_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
     tensor: torch.Tensor
         path tensor in [N, B]
     """
-    mask = tensor > 1
-    mask_float = mask.float().T.unsqueeze(1)
+    mask = (tensor > 0.0).to(gs.tc_float)  # N, B
+    mask_float = mask.T.unsqueeze(1)  # B 1, N
     kernel = torch.ones(1, 1, 3, device=tensor.device, dtype=gs.tc_float)
     dilated_mask_float = F.conv1d(mask_float, kernel.to(mask_float.dtype), padding="same")
     dilated_mask = (dilated_mask_float > 0).squeeze(1).T

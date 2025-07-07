@@ -1629,7 +1629,7 @@ class RigidEntity(Entity):
             case _:
                 gs.raise_exception(f"invalid planner {planner} specified.")
 
-        path, is_valid = p.plan(
+        path, is_invalid = p.plan(
             qpos_goal,
             qpos_start=qpos_start,
             resolution=resolution,
@@ -1643,9 +1643,9 @@ class RigidEntity(Entity):
         )
 
         for i in range(max_retry):
-            if not is_valid.all():
-                gs.logger.info(f"planning failed. retrying for {(~is_valid).sum()} environments")
-                retry_path, retry_is_valid = p.plan(
+            if is_invalid.any():
+                gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
+                retry_path, retry_is_invalid = p.plan(
                     qpos_goal,
                     qpos_start=qpos_start,
                     resolution=resolution,
@@ -1657,16 +1657,16 @@ class RigidEntity(Entity):
                     ee_link_idx=ee_link_idx,
                     obj_entity=with_entity,
                 )
-                path[:, ~is_valid] = retry_path[:, ~is_valid]
-                is_valid = is_valid | retry_is_valid
+                path[:, is_invalid] = retry_path[:, is_invalid]
+                is_invalid = torch.logical_and(is_invalid, retry_is_invalid)
 
         if self._solver.n_envs == 0:
             if return_valid_mask:
-                return path.squeeze(1), is_valid[0]
+                return path.squeeze(1), is_invalid[0]
             return path.squeeze(1)
 
         if return_valid_mask:
-            return path, is_valid
+            return path, is_invalid
         return path
 
     # ------------------------------------------------------------------------------------

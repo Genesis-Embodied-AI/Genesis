@@ -1561,15 +1561,15 @@ def test_path_planning_avoidance(show_viewer):
     hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos[-2:] = 0.04
-    
+
     free_path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=300,
         resolution=0.05,
         ignore_collision=True,
     )
-    assert_allclose(free_path[0].cpu(), 0, tol=gs.EPS)
-    assert_allclose(free_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
+    assert_allclose(free_path[0], 0, tol=gs.EPS)
+    assert_allclose(free_path[-1], qpos, tol=gs.EPS)
 
     avoidance_path = franka.plan_path(
         qpos_goal=qpos,
@@ -1579,8 +1579,8 @@ def test_path_planning_avoidance(show_viewer):
         max_nodes=4000,
         max_retry=40,
     )
-    assert_allclose(avoidance_path[0].cpu(), 0, tol=gs.EPS)
-    assert_allclose(avoidance_path[-1].cpu(), qpos.cpu(), tol=gs.EPS)
+    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
 
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
         max_penetration = float("-inf")
