@@ -793,13 +793,9 @@ class FEMEntity(Entity):
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
             link_init_pos = tensor_to_array(link.get_pos())
             link_init_quat = tensor_to_array(link.get_quat())
-
-            def link_func():
-                pos = link.get_pos()
-                quat = link.get_quat()
-                return pos, quat
-
-            link_idx = self._solver._add_link_func(link_func)
+            link_idx = self._solver._add_constraint_link(link)
+            if self._solver._rigid_solver is None:        # TEMPORARY
+                self._solver._rigid_solver = link._solver # TEMPORARY
 
         self._solver._kernel_set_vertex_constraints(
             vertex_indices,

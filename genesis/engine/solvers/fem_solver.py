@@ -51,6 +51,7 @@ class FEMSolver(Solver):
 
         # lazy initialization
         self._constraints_initialized = False
+        self._rigid_solver = None  # TEMPORARY
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
@@ -276,17 +277,17 @@ class FEMSolver(Solver):
 
     def init_constraints(self):
         self._constraints_initialized = True
-        self.link_funcs = []
+        self.constraint_links = []
 
         vertex_constraint_info = ti.types.struct(
-            is_constrained=ti.u1,  # boolean flag indicating if vertex is constrained
+            is_constrained=ti.u1,   # boolean flag indicating if vertex is constrained
             target_pos=gs.ti_vec3,  # target position for the constraint
             stiffness=gs.ti_float,  # spring stiffness (for soft constraints)
-            damping=gs.ti_float,  # spring damping   (for soft constraints)
+            damping=gs.ti_float,    # spring damping   (for soft constraints)
             constraint_type=ti.u1,  # 0: hard constraint, 1: soft constraint
-            link_idx=gs.ti_int,  # index of the rigid link (-1 if not linked)
+            link_idx=gs.ti_int,     # local index of the rigid link (-1 if not linked)
             link_offset_pos=gs.ti_vec3,  # offset position of link
-            link_init_quat=gs.ti_vec4,  # offset rotation of link
+            link_init_quat=gs.ti_vec4,   # offset rotation of link
         )
 
         self.vertex_constraints = vertex_constraint_info.field(
@@ -1377,20 +1378,24 @@ class FEMSolver(Solver):
         self.vertex_constraints.is_constrained.fill(0)
 
     def update_linked_vertex_constraints(self):
-        if len(self.link_funcs) == 0:
+        if len(self.constraint_links) == 0:
             return
 
-        link_poses = [f() for f in self.link_funcs]
-        poss, quats = zip(*link_poses)
-        poss = torch.stack(poss, dim=0)
-        quats = torch.stack(quats, dim=0)
+        poss = torch.zeros((len(self.constraint_links), 3), dtype=gs.tc_float, device=gs.device)
+        quats = torch.zeros((len(self.constraint_links), 4), dtype=gs.tc_float, device=gs.device)
+        for i, link_idx in enumerate(self.constraint_links):
+            poss[i] = self._rigid_solver.get_links_pos([link_idx], 0).squeeze(-2)
+            quats[i] = self._rigid_solver.get_links_quat([link_idx], 0).squeeze(-2)
 
         self._kernel_update_linked_vertex_constraints(poss, quats)
 
-    def _add_link_func(self, func):
-        """Returns the index of the added link."""
-        self.link_funcs.append(func)
-        return len(self.link_funcs) - 1
+    def _add_constraint_link(self, link):
+        """Returns the local index of the added constraint link."""
+        if link._idx in self.constraint_links:
+            return self.constraint_links.index(link._idx)
+        else:
+            self.constraint_links.append(link._idx)
+            return len(self.constraint_links) - 1
 
     @ti.kernel
     def _kernel_update_linked_vertex_constraints(
@@ -1443,7 +1448,7 @@ class FEMSolver(Solver):
     ):
         for i in range(vertex_indices.shape[0]):
             v_idx = vertex_indices[i]
-            self.vertex_constraints[v_idx].is_constrained = ti.cast(1, ti.u1)
+            self.vertex_constraints[v_idx].is_constrained = True
             self.vertex_constraints[v_idx].constraint_type = constraint_type
             self.vertex_constraints[v_idx].stiffness = stiffness
             self.vertex_constraints[v_idx].link_idx = link_idx
