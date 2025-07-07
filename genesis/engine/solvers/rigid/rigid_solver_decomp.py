@@ -4966,6 +4966,19 @@ class RigidSolver(Solver):
                         ]
                     self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] - 1
 
+    def get_weld_constraints(self, envs_idx=None):
+        if envs_idx is None:
+            envs_idx = np.arange(self.n_envs, dtype=np.int32)
+
+        rows = []
+        for env in np.atleast_1d(envs_idx):
+            n_eq = int(self.constraint_solver.ti_n_equalities[env])
+            for i in range(n_eq):
+                rec = self.equalities_info[i, env]
+                if rec.eq_type == gs.EQUALITY_TYPE.WELD:
+                    rows.append((env, int(rec.eq_obj1id), int(rec.eq_obj2id)))
+        return np.asarray(rows, dtype=np.int32)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------

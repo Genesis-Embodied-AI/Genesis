@@ -2168,6 +2168,27 @@ def test_terrain_size(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_weld_constraints_basic(show_viewer, tol):
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    cube1 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.0, 0.0, 0.05)))
+    cube2 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.2, 0.0, 0.05)))
+
+    scene.build(n_envs=1)
+
+    rigid = scene.sim.rigid_solver
+    link1 = np.array([cube1.base_link.idx], dtype=gs.np_int)
+    link2 = np.array([cube2.base_link.idx], dtype=gs.np_int)
+
+    rigid.add_weld_constraint(link1, link2)
+    scene.step()
+
+    welds = rigid.get_weld_constraints()
+    assert_allclose(tuple(welds[0]), (0, link1[0], link2[0]), tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
