@@ -889,22 +889,27 @@ class Collider:
                 i_ga = self.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
+                if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+                    i_ga, i_gb = i_gb, i_ga
+
                 if (
                     self._solver.geoms_info[i_ga].is_convex
                     and self._solver.geoms_info[i_gb].is_convex
                     and not self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
-                    and not (
-                        self._solver._enable_multi_contact
-                        and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    )
                     and not (
                         self._solver._box_box_detection
                         and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
                         and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                     )
                 ):
-                    self._func_convex_convex_contact(i_ga, i_gb, i_b)
+                    if ti.static(sys.platform == "darwin"):
+                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
+                    else:
+                        if not (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            self._func_convex_convex_contact(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_convex_specializations(self):
@@ -917,15 +922,11 @@ class Collider:
                 if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
                     i_ga, i_gb = i_gb, i_ga
 
-                if (
-                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                    and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                ):
-                    if ti.static(sys.platform == "darwin"):
-                        # FIXME: It seems redundant, why don't we just call _func_plane_box_contact directly?
-                        # Anyway in this function, we will call _func_plane_box_contact.
-                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
-                    else:
+                if ti.static(sys.platform != "darwin"):
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
                         self._func_plane_box_contact(i_ga, i_gb, i_b)
 
                 if ti.static(self._solver._box_box_detection):
@@ -1199,9 +1200,6 @@ class Collider:
 
     @ti.func
     def _func_convex_convex_contact(self, i_ga, i_gb, i_b):
-        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
-            i_ga, i_gb = i_gb, i_ga
-
         if (
             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
             and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
