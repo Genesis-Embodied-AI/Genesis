@@ -14,7 +14,7 @@ import mujoco
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array, get_assets_dir
 
 from .utils import (
     get_hf_assets,
@@ -1404,14 +1404,14 @@ def move_cube(use_suction, mode, show_viewer):
     # move to pre-grasp pose
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.25]),
+        pos=np.array([0.65, 0.0, 0.22]),
         quat=np.array([0, 1, 0, 0]),
     )
     # gripper open pos
     qpos[-2:] = 0.04
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=100,  # 1s duration
+        num_waypoints=120,  # 1s duration
         resolution=0.05,
         timeout=30.0,
     )
@@ -1423,7 +1423,7 @@ def move_cube(use_suction, mode, show_viewer):
         scene.step()
 
     # Get more time to the robot to reach the last waypoint
-    for i in range(100):
+    for i in range(120):
         scene.step()
 
     # reach
@@ -1433,7 +1433,7 @@ def move_cube(use_suction, mode, show_viewer):
         quat=np.array([0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(50):
+    for i in range(60):
         scene.step()
 
     # grasp
@@ -1465,7 +1465,7 @@ def move_cube(use_suction, mode, show_viewer):
     )
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=150,
+        num_waypoints=80,
         resolution=0.05,
         timeout=30.0,
     )
@@ -1488,7 +1488,7 @@ def move_cube(use_suction, mode, show_viewer):
         scene.step()
         if i > 550:
             qvel = cube.get_dofs_velocity()
-            assert_allclose(qvel, 0, atol=0.06)
+            assert_allclose(qvel, 0, atol=0.02)
 
     qpos = cube.get_dofs_position()
     assert_allclose(qpos[2], 0.075, atol=2e-3)
@@ -2715,10 +2715,18 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_mesh_to_heightfield(show_viewer):
+def test_mesh_to_heightfield(tmp_path, show_viewer):
+    horizontal_scale = 2.0
+    path_terrain = os.path.join(get_assets_dir(), "meshes", "terrain_45.obj")
+
+    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
+
+    # default heightfield starts at 0, 0, 0
+    # translate to the center of the mesh
+    translation = np.array([np.nanmin(xs), np.nanmin(ys), 0])
+
     ########################## create a scene ##########################
     scene = gs.Scene(
-        show_viewer=show_viewer,
         sim_options=gs.options.SimOptions(
             gravity=(2, 0, -2),
         ),
@@ -2726,16 +2734,9 @@ def test_mesh_to_heightfield(show_viewer):
             camera_pos=(0, -50, 0),
             camera_lookat=(0, 0, 0),
         ),
+        show_viewer=show_viewer,
+        show_FPS=False,
     )
-
-    horizontal_scale = 2.0
-    gs_root = os.path.dirname(os.path.abspath(gs.__file__))
-    path_terrain = os.path.join(gs_root, "assets", "meshes", "terrain_45.obj")
-    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
-
-    # default heightfield starts at 0, 0, 0
-    # translate to the center of the mesh
-    translation = np.array([np.nanmin(xs), np.nanmin(ys), 0])
 
     terrain_heightfield = scene.add_entity(
         morph=gs.morphs.Terrain(
@@ -2746,7 +2747,6 @@ def test_mesh_to_heightfield(show_viewer):
         ),
         vis_mode="collision",
     )
-
     ball = scene.add_entity(
         gs.morphs.Sphere(
             pos=(10, 15, 10),
@@ -2754,7 +2754,6 @@ def test_mesh_to_heightfield(show_viewer):
         ),
         vis_mode="collision",
     )
-
     scene.build()
 
     for i in range(1000):
