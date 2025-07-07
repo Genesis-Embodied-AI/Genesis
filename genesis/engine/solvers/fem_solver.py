@@ -276,7 +276,6 @@ class FEMSolver(Solver):
             entity.reset_grad()
 
     def build(self):
-        super().build()
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
 
@@ -293,9 +292,6 @@ class FEMSolver(Solver):
 
             for entity in self._entities:
                 entity._add_to_solver()
-
-        for mat in self._mats:
-            mat.build(self)
 
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
@@ -390,7 +386,7 @@ class FEMSolver(Solver):
             #       however, this inevitably damp the gravity.
             self.elements_v[f + 1, i_v, i_b].vel *= ti.exp(-dt * self.damping)
             # Add gravity (avoiding damping on gravity)
-            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[i_b]
+            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[None]
 
     @ti.kernel
     def compute_pos(self, f: ti.i32):
@@ -401,23 +397,11 @@ class FEMSolver(Solver):
             )
 
     @ti.kernel
-    def precompute_material_data(self, f: ti.i32):
-        for i_b, i_e in ti.ndrange(self._B, self.n_elements):
-            if not self.batch_active[i_b]:
-                continue
-
-            J, F = self._compute_ele_J_F(f, i_e, i_b)  # use last time step's pos to compute
-
-            for mat_idx in ti.static(self._mats_idx):
-                if self.elements_i[i_e].mat_idx == mat_idx:
-                    self._mats[mat_idx].pre_compute(J=J, F=F, i_e=i_e, i_b=i_b)
-
-    @ti.kernel
     def init_pos_and_inertia(self, f: ti.i32):
         dt = self.substep_dt
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             self.elements_v_energy[i_b, i_v].inertia = (
-                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[i_b] * dt**2
+                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
             )
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
 
@@ -427,10 +411,10 @@ class FEMSolver(Solver):
         Compute the determinant (J) and deformation gradient (F) for an element.
         """
         i_v0, i_v1, i_v2, i_v3 = self.elements_i[i_e].el2v
-        pos_v0 = self.elements_v[f, i_v0, i_b].pos
-        pos_v1 = self.elements_v[f, i_v1, i_b].pos
-        pos_v2 = self.elements_v[f, i_v2, i_b].pos
-        pos_v3 = self.elements_v[f, i_v3, i_b].pos
+        pos_v0 = self.elements_v[f + 1, i_v0, i_b].pos
+        pos_v1 = self.elements_v[f + 1, i_v1, i_b].pos
+        pos_v2 = self.elements_v[f + 1, i_v2, i_b].pos
+        pos_v3 = self.elements_v[f + 1, i_v3, i_b].pos
         D = ti.Matrix.cols([pos_v0 - pos_v3, pos_v1 - pos_v3, pos_v2 - pos_v3])
 
         B = self.elements_i[i_e].B
@@ -445,7 +429,7 @@ class FEMSolver(Solver):
             if not self.batch_active[i_b]:
                 continue
 
-            J, F = self._compute_ele_J_F(f + 1, i_e, i_b)
+            J, F = self._compute_ele_J_F(f, i_e, i_b)
 
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
@@ -488,7 +472,7 @@ class FEMSolver(Solver):
             if not self.batch_linesearch_active[i_b]:
                 continue
 
-            J, F = self._compute_ele_J_F(f + 1, i_e, i_b)
+            J, F = self._compute_ele_J_F(f, i_e, i_b)
 
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
@@ -499,35 +483,7 @@ class FEMSolver(Solver):
                         F=F,
                         actu=self.elements_el[f, i_e, i_b].actu,
                         m_dir=self.elements_i[i_e].muscle_direction,
-                        i_e=i_e,
-                        i_b=i_b,
                     )
-
-            # add linearized damping energy
-            if self._damping_beta > gs.EPS:
-                damping_beta_over_dt = self._damping_beta / self._substep_dt
-                i_v = self.elements_i[i_e].el2v
-                S = ti.Matrix.zero(gs.ti_float, 4, 3)
-                B = self.elements_i[i_e].B
-                S[:3, :] = B
-                S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-
-                x_diff = ti.Vector.zero(gs.ti_float, 12)
-                for i in ti.static(range(4)):
-                    x_diff[i * 3 : i * 3 + 3] = (
-                        self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
-                    )
-                St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i, j in ti.static(ti.ndrange(3, 4)):
-                    St_x_diff[i * 3 : i * 3 + 3] += S[j, i] * x_diff[j * 3 : j * 3 + 3]
-
-                H_St_x_diff = ti.Vector.zero(gs.ti_float, 9)
-                for i, j in ti.static(ti.ndrange(3, 3)):
-                    H_St_x_diff[i * 3 : i * 3 + 3] += (
-                        self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
-                    )
-
-                self.elements_el_energy[i_b, i_e].energy += 0.5 * damping_beta_over_dt * St_x_diff.dot(H_St_x_diff)
 
             # add linearized damping energy
             if self._damping_beta > gs.EPS:
@@ -618,7 +574,7 @@ class FEMSolver(Solver):
                     )
 
             # diagonal 3-by-3 block of hessian
-            for k, i, j in ti.ndrange(4, 3, 3):
+            for k, i, j in ti.static(ti.ndrange(4, 3, 3)):
                 self.pcg_state_v[i_b, i_v[k]].diag3x3 += (
                     V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
                 )
@@ -895,7 +851,6 @@ class FEMSolver(Solver):
     def substep_pre_coupling(self, f):
         if self.is_active():
             if self._use_implicit_solver:
-                self.precompute_material_data(f)
                 self.init_pos_and_inertia(f)
                 self.batch_solve(f)
                 self.setup_pos_vel(f)

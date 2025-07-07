@@ -208,7 +208,6 @@ class PBDSolver(Solver):
         self._ckpt = dict()
 
     def build(self):
-        super().build()
         self._B = self._sim._B
         self._n_particles = self.n_particles
         self._n_fluid_particles = self.n_fluid_particles
@@ -372,7 +371,7 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles[i_p, i_b].free:
                 # gravity
-                self.particles[i_p, i_b].vel = self.particles[i_p, i_b].vel + self._gravity[i_b] * self._substep_dt
+                self.particles[i_p, i_b].vel = self.particles[i_p, i_b].vel + self._gravity[None] * self._substep_dt
 
                 # external force fields
                 acc = ti.Vector.zero(gs.ti_float, 3)

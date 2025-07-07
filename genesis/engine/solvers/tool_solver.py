@@ -32,7 +32,6 @@ class ToolSolver(Solver):
         self.setup_boundary()
 
     def build(self):
-        super().build()
         for entity in self._entities:
             entity.build()
 

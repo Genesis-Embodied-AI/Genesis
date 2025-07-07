@@ -37,7 +37,7 @@ def test_torch_round_trip(batch_size):
     d6 = R_to_rot6d(R_torch)
     R_recon = rot6d_to_R(d6)
 
-    assert_allclose(R_torch, R_recon, tol=TOL)
+    assert_allclose(R_torch.cpu(), R_recon.cpu(), tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
@@ -73,16 +73,16 @@ def test_torch_identity_transform(batch_size, func):
         batched_identity = torch.eye(4).reshape(1, 4, 4).repeat(batch_size, 1, 1)
         transform = transform_by_T
 
-    transformed = transform(pos, identity)
-    assert_allclose(pos, transformed, tol=TOL)
-    transformed = transform(b_pos, identity)
-    assert_allclose(b_pos, transformed, tol=TOL)
+    transformed = transform(pos, identity).cpu()
+    assert_allclose(pos.cpu(), transformed, tol=TOL)
+    transformed = transform(b_pos, identity).cpu()
+    assert_allclose(b_pos.cpu(), transformed, tol=TOL)
 
     if batch_size > 0:
-        transformed = transform(pos, batched_identity)
-        assert_allclose(pos, transformed, tol=TOL)
-        transformed = transform(b_pos, batched_identity)
-        assert_allclose(b_pos, transformed, tol=TOL)
+        transformed = transform(pos, batched_identity).cpu()
+        assert_allclose(pos.cpu(), transformed, tol=TOL)
+        transformed = transform(b_pos, batched_identity).cpu()
+        assert_allclose(b_pos.cpu(), transformed, tol=TOL)
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 100])

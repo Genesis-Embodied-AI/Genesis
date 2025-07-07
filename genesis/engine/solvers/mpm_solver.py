@@ -196,7 +196,6 @@ class MPMSolver(Solver):
             entity.reset_grad()
 
     def build(self):
-        super().build()
         # particles and entities
         self._B = self._sim._B
 

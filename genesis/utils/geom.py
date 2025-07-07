@@ -734,7 +734,11 @@ def quat_to_xyz(quat, rpy=False, degrees=False):
             sinp = 2 * (qw * qy - qz * qx)
         else:
             sinp = 2 * (qx * qz + qw * qy)
-        pitch = torch.where(torch.abs(sinp) >= 1, torch.sign(sinp) * (torch.pi / 2), torch.asin(sinp))
+        pitch = torch.where(
+            torch.abs(sinp) >= 1,
+            torch.sign(sinp) * torch.tensor(torch.pi / 2),
+            torch.asin(sinp),
+        )
 
         # Yaw (z-axis rotation)
         if rpy:

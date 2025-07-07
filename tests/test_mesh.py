@@ -1,15 +1,15 @@
-import os
-from pathlib import Path
-import numpy as np
 import pytest
 import trimesh
+import numpy as np
+import os
+from huggingface_hub import snapshot_download
 
 import genesis as gs
-import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
+import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
 
-from .utils import assert_allclose, assert_array_equal, get_hf_assets
+from .utils import get_hf_assets, assert_allclose, assert_array_equal
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
 NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
@@ -292,73 +292,3 @@ def test_usd_parse(usd_filename):
         check_gs_textures(
             gs_glb_material.emissive_texture, gs_usd_material.emissive_texture, 0.0, material_name, "emissive"
         )
-
-
-@pytest.mark.required
-def test_urdf_with_existing_glb(tmp_path, show_viewer):
-    assets = Path(gs.utils.get_assets_dir())
-    glb_path = assets / "usd" / "sneaker_airforce.glb"
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="shoe">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{glb_path}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    scene.build()
-    scene.step()
-
-
-@pytest.mark.required
-@pytest.mark.parametrize(
-    "n_channels, float_type",
-    [
-        (1, np.float32),  # grayscale → H×W
-        (2, np.float64),  # L+A       → H×W×2
-    ],
-)
-def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_type):
-    vertices = np.array(
-        [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]],
-        dtype=np.float32,
-    )
-    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
-
-    mesh = trimesh.Trimesh(vertices, faces, process=False)
-
-    H = W = 16
-    if n_channels == 1:
-        img = np.random.rand(H, W).astype(float_type)
-    else:
-        img = np.random.rand(H, W, n_channels).astype(float_type)
-
-    mesh.visual = trimesh.visual.texture.TextureVisuals(
-        uv=np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32),
-        material=trimesh.visual.material.SimpleMaterial(image=img),
-    )
-
-    glb_path = tmp_path / f"tex_{n_channels}c.glb"
-    urdf_path = tmp_path / f"tex_{n_channels}c.urdf"
-    trimesh.Scene([mesh]).export(glb_path)
-
-    urdf_path.write_text(
-        f"""<robot name="tex{n_channels}c">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{glb_path}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
-    scene.build()
-    scene.step()

@@ -22,7 +22,6 @@ from genesis.repr_base import RBC
 
 from .coupler import Coupler, SAPCoupler
 from .entities import HybridEntity
-from .solvers.base_solver import Solver
 from .solvers import (
     AvatarSolver,
     FEMSolver,
@@ -184,6 +183,7 @@ class Simulator(RBC):
             solver._add_force_field(force_field)
 
     def build(self):
+
         self.n_envs = self.scene.n_envs
         self._B = self.scene._B
         self._para_level = self.scene._para_level
@@ -206,12 +206,12 @@ class Simulator(RBC):
             if isinstance(entity, HybridEntity):
                 entity.build()
 
-    def reset(self, state: SimState, envs_idx=None):
+    def reset(self, state, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):
-            if solver.n_entities > 0:
-                solver.set_state(0, solver_state, envs_idx)
+            solver.set_state(0, solver_state, envs_idx)
 
-        self.coupler.reset(envs_idx=envs_idx)
+        # TODO: keeping as is for now, since coupler is currently for non-batched scenes
+        self.coupler.reset()
 
         # TODO: keeping as is for now
         self.reset_grad()
@@ -395,10 +395,6 @@ class Simulator(RBC):
         self._queried_states.append(state)
 
         return state
-
-    def set_gravity(self, gravity, envs_idx=None):
-        for solver in self._solvers:
-            solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

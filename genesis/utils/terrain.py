@@ -150,12 +150,10 @@ def parse_terrain(morph: Terrain, surface):
                         i * subterrain_rows : (i + 1) * subterrain_rows, j * subterrain_cols : (j + 1) * subterrain_cols
                     ] = subterrain_height_field
 
-        need_uvs = getattr(surface, "diffuse_texture", None) is not None
         tmesh, sdf_tmesh = convert_heightfield_to_watertight_trimesh(
             heightfield,
             horizontal_scale=morph.horizontal_scale,
             vertical_scale=morph.vertical_scale,
-            uv_scale=morph.uv_scale if need_uvs else None,
         )
 
         terrain_dir = os.path.join(get_assets_dir(), f"terrain/{morph.name}")
@@ -171,7 +169,7 @@ def parse_terrain(morph: Terrain, surface):
             }
             pickle.dump(info, f)
 
-    vmesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=surface, metadata={})
+    vmesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=surface)
     mesh = gs.Mesh.from_trimesh(
         mesh=tmesh,
         surface=gs.surfaces.Collision(),
@@ -213,9 +211,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
     return terrain
 
 
-def convert_heightfield_to_watertight_trimesh(
-    height_field_raw, horizontal_scale, vertical_scale, slope_threshold=None, uv_scale=None
-):
+def convert_heightfield_to_watertight_trimesh(height_field_raw, horizontal_scale, vertical_scale, slope_threshold=None):
     """
     Adapted from Issac Gym's `convert_heightfield_to_trimesh` function.
     Convert a heightfield array to a triangle mesh represented by vertices and triangles.
@@ -267,8 +263,8 @@ def convert_heightfield_to_watertight_trimesh(
 
     # create triangle mesh vertices and triangles from the heightfield grid
     vertices_top = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
-    vertices_top[:, 0] = xx.flat
-    vertices_top[:, 1] = yy.flat
+    vertices_top[:, 0] = xx.flatten()
+    vertices_top[:, 1] = yy.flatten()
     vertices_top[:, 2] = hf.flatten() * vertical_scale
     triangles_top = -np.ones((2 * (num_rows - 1) * (num_cols - 1), 3), dtype=np.uint32)
     for i in range(num_rows - 1):
@@ -289,8 +285,8 @@ def convert_heightfield_to_watertight_trimesh(
     z_min = np.min(vertices_top[:, 2]) - 1.0
 
     vertices_bottom = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
-    vertices_bottom[:, 0] = xx.flat
-    vertices_bottom[:, 1] = yy.flat
+    vertices_bottom[:, 0] = xx.flatten()
+    vertices_bottom[:, 1] = yy.flatten()
     vertices_bottom[:, 2] = z_min
     triangles_bottom = -np.ones((2 * (num_rows - 1) * (num_cols - 1), 3), dtype=np.uint32)
     for i in range(num_rows - 1):
@@ -351,44 +347,14 @@ def convert_heightfield_to_watertight_trimesh(
         axis=0,
     )
 
-    if uv_scale is not None:
-        uv_top = np.zeros((num_rows * num_cols, 2), dtype=np.float32)
-        uv_top[:, 0] = (xx.flat - xx.min()) / (xx.max() - xx.min()) * uv_scale
-        uv_top[:, 1] = (yy.flat - yy.min()) / (yy.max() - yy.min()) * uv_scale
-
-        uvs = np.concatenate([uv_top, uv_top], axis=0)
-        visual = trimesh.visual.TextureVisuals(uv=uvs)
-    else:
-        uvs = None
-        visual = None
-
-    sdf_mesh = trimesh.Trimesh(vertices, triangles, process=False, visual=visual)
+    # This a uniformly-distributed full mesh, which gives faster sdf generation
+    sdf_mesh = trimesh.Trimesh(vertices, triangles, process=False)
 
     # This is the mesh used for non-sdf purposes.
     # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
-
-    v_simp, f_simp = fast_simplification.simplify(
-        sdf_mesh.vertices,
-        sdf_mesh.faces,
-        target_count=0,
-        lossless=True,
+    mesh = trimesh.Trimesh(
+        *fast_simplification.simplify(sdf_mesh.vertices, sdf_mesh.faces, target_count=0, lossless=True)
     )
-
-    if uvs is not None:
-        idx_map = np.empty(len(v_simp), dtype=np.int64)
-        for i, v in enumerate(v_simp):
-            dists = np.square(vertices - v).sum(axis=1)
-            idx_map[i] = np.argmin(dists)
-
-        uv_simp = uvs[idx_map]
-
-        mesh = trimesh.Trimesh(
-            v_simp,
-            f_simp,
-            visual=trimesh.visual.TextureVisuals(uv=uv_simp),
-        )
-    else:
-        mesh = trimesh.Trimesh(v_simp, f_simp)
 
     return mesh, sdf_mesh
 

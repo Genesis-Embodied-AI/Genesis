@@ -1,5 +1,4 @@
 from typing import TYPE_CHECKING
-
 import numpy as np
 import taichi as ti
 
@@ -84,30 +83,14 @@ class Coupler(RBC):
         self._dx = 1 / 1024
         self._stencil_size = int(np.floor(self._dx / self.sph_solver.hash_grid_cell_size) + 2)
 
-        self.reset(envs_idx=self.sim.scene._envs_idx)
+        self.reset()
 
-    def reset(self, envs_idx=None) -> None:
+    def reset(self) -> None:
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
-            if envs_idx is None:
-                self.mpm_rigid_normal.fill(0)
-            else:
-                self._kernel_reset_mpm(envs_idx)
+            self.mpm_rigid_normal.fill(0)
 
         if self._rigid_sph:
-            if envs_idx is None:
-                self.sph_rigid_normal.fill(0)
-            else:
-                self._kernel_reset_sph(envs_idx)
-
-    @ti.kernel
-    def _kernel_reset_mpm(self, envs_idx: ti.types.ndarray()):
-        for i_p, i_g, i_b_ in ti.ndrange(self.mpm_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
-            self.mpm_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
-
-    @ti.kernel
-    def _kernel_reset_sph(self, envs_idx: ti.types.ndarray()):
-        for i_p, i_g, i_b_ in ti.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
-            self.sph_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
+            self.sph_rigid_normal.fill(0)
 
     @ti.func
     def _func_collide_with_rigid(self, f, pos_world, vel, mass, i_b):
@@ -217,7 +200,7 @@ class Coupler(RBC):
                 vel_mpm = (1 / self.mpm_solver.grid[f, I, i_b].mass) * self.mpm_solver.grid[f, I, i_b].vel_in
 
                 # gravity
-                vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
+                vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[None]
 
                 pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
                 mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._p_vol_scale
@@ -666,7 +649,6 @@ class SAPCoupler(RBC):
         self._n_linesearch_iterations = options.n_linesearch_iterations
         self._linesearch_c = options.linesearch_c
         self._linesearch_tau = options.linesearch_tau
-        self.default_deformable_g = 1.0e8  # default deformable geometry size
 
     def build(self) -> None:
         self._B = self.sim._B
@@ -684,7 +666,7 @@ class SAPCoupler(RBC):
         self.init_pcg_fields()
         self.init_linesearch_fields()
 
-    def reset(self, envs_idx=None) -> None:
+    def reset(self):
         pass
 
     def init_fem_fields(self):
@@ -716,7 +698,6 @@ class SAPCoupler(RBC):
         self.max_fem_floor_contact_pairs = fem_solver.n_surfaces * fem_solver._B
         self.n_fem_floor_contact_pairs = ti.field(gs.ti_int, shape=())
         self.fem_floor_contact_pairs = self.fem_floor_contact_pair_type.field(shape=(self.max_fem_floor_contact_pairs,))
-
         # Lookup table for marching tetrahedra edges
         kMarchingTetsEdgeTable_np = np.array(
             [
@@ -953,12 +934,15 @@ class SAPCoupler(RBC):
             )
             self.fem_floor_contact_pairs[i_c].barycentric = barycentric
 
+            C = ti.static(1.0e8)
+            deformable_g = C
             rigid_g = self.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
             if total_area < gs.EPS or rigid_g < gs.EPS:
                 self.fem_floor_contact_pairs[i_c].active = 0
                 continue
-            g = self.default_deformable_g * rigid_g / (self.default_deformable_g + rigid_g)  # harmonic average
+            g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
+            deformable_k = total_area * C
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             rigid_fn0 = total_area * pressure

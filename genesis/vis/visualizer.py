@@ -32,7 +32,6 @@ class Visualizer(RBC):
         self._viewer = None
         self._rasterizer = None
         self._raytracer = None
-        self.viewer_lock = None  # check if null to know if the Visualizer has been built
 
         # Rasterizer context is shared by viewer and rasterizer
         try:

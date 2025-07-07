@@ -350,7 +350,6 @@ class RasterizerContext:
 
             contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
             contact_normal_scaled = contacts_info["normal"] * normal_scale[:, None]
-            contact_force = contacts_info["force"]
 
             for i_c in range(n_contacts):
                 for link_idx, sign in (
@@ -360,7 +359,7 @@ class RasterizerContext:
                     if self.sim.rigid_solver.links[link_idx].visualize_contact:
                         self.draw_contact_arrow(
                             pos=contact_pos[i_c],
-                            force=sign * contact_force[i_c],
+                            force=sign * contact_normal_scaled[i_c],
                         )
                         self.draw_debug_arrow(
                             pos=contact_pos[i_c],

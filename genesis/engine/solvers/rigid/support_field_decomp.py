@@ -190,7 +190,9 @@ class SupportField:
             res = gu.ti_transform_by_trans_quat(res, capsule_center, g_state.quat)
         else:
             capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_state.quat)
-            capsule_endpoint_side = -1.0 if d.dot(capsule_axis) < 0.0 else 1.0
+            capsule_endpoint_side = ti.math.sign(d.dot(capsule_axis))
+            if capsule_endpoint_side == 0.0:
+                capsule_endpoint_side = 1.0
             capsule_endpoint = capsule_center + capsule_halflength * capsule_endpoint_side * capsule_axis
             res = capsule_endpoint + d * capsule_radius
         return res
@@ -214,17 +216,21 @@ class SupportField:
     @ti.func
     def _func_support_box(self, d, i_g, i_b):
         g_state = self.solver.geoms_state[i_g, i_b]
-        d_box = gu.ti_inv_transform_by_quat(d, g_state.quat)
+        d_box = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_state.quat))
+        d_box_sign = ti.math.sign(d_box)
+        for i in range(3):
+            if d_box_sign[i] == 0.0:
+                d_box_sign[i] = 1.0
 
         v_ = ti.Vector(
             [
-                (-1.0 if d_box[0] < 0.0 else 1.0) * self.solver.geoms_info[i_g].data[0] * 0.5,
-                (-1.0 if d_box[1] < 0.0 else 1.0) * self.solver.geoms_info[i_g].data[1] * 0.5,
-                (-1.0 if d_box[2] < 0.0 else 1.0) * self.solver.geoms_info[i_g].data[2] * 0.5,
+                d_box_sign[0] * self.solver.geoms_info[i_g].data[0] * 0.5,
+                d_box_sign[1] * self.solver.geoms_info[i_g].data[1] * 0.5,
+                d_box_sign[2] * self.solver.geoms_info[i_g].data[2] * 0.5,
             ],
             dt=gs.ti_float,
         )
-        vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
+        vid = (v_[0] > 0) * 1 + (v_[1] > 0) * 2 + (v_[2] > 0) * 4
         vid += self.solver.geoms_info[i_g].vert_start
         v = gu.ti_transform_by_trans_quat(v_, g_state.pos, g_state.quat)
         return v, vid

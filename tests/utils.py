@@ -22,7 +22,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
-from genesis.utils.misc import tensor_to_array
 
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
@@ -209,6 +208,8 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
 
 def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
+    if all(isinstance(e, np.ndarray) and e.size == 0 for e in (actual, desired)):
+        return
     if tol is not None:
         atol = tol
         rtol = tol
@@ -216,17 +217,6 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
         rtol = 0.0
     if atol is None:
         atol = 0.0
-
-    if isinstance(actual, torch.Tensor):
-        actual = tensor_to_array(actual)
-    actual = np.asanyarray(actual)
-    if isinstance(desired, torch.Tensor):
-        desired = tensor_to_array(desired)
-    desired = np.asanyarray(desired)
-
-    if all(e.size == 0 for e in (actual, desired)):
-        return
-
     np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
 
 

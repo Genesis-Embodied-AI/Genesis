@@ -1,14 +1,13 @@
 import hashlib
 import numbers
 import os
-import tempfile
+import pytest
 import time
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pytest
 import torch
 import wandb
 
@@ -217,27 +216,12 @@ def get_file_morph_options(**kwargs):
 
 @pytest.fixture(scope="session")
 def stream_writers(backend, printer_session):
-    report_path = Path(REPORT_FILE)
+    log_path = Path(REPORT_FILE)
+    if os.path.exists(log_path):
+        os.remove(log_path)
+    fd = open(log_path, "w")
 
-    # Delete old unrelated worker-specific reports
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-    if worker_id == "gw0":
-        worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
-
-        for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
-            _, worker_id_ = path.stem.rsplit("-", 1)
-            worker_num = int(worker_id_[2:])
-            if worker_num >= worker_count:
-                path.unlink()
-
-    # Create new empty worker-specific report
-    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
-    report_path = report_path.with_name(f"{report_name}.txt")
-    if report_path.exists():
-        report_path.unlink()
-    fd = open(report_path, "w")
-
-    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
+    yield (lambda msg: print(msg, file=fd), printer_session)
 
     fd.close()
 
@@ -591,8 +575,7 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
         for j in range(n_cubes - i):
             scene.add_entity(
                 gs.morphs.Box(
-                    size=box_size * vec_one,
-                    pos=box_pos_offset + box_spacing * np.array([i + 0.5 * j, 0.0, j]),
+                    size=box_size * vec_one, pos=box_pos_offset + box_spacing * np.array([i + 0.5 * j, 0, j])
                 ),
             )
 
@@ -619,7 +602,7 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.mark.parametrize("runnable", ["anymal_c", "batched_franka"])
+@pytest.mark.parametrize("runnable", ["random", "anymal_c", "batched_franka"])
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_envs", [30000])
 @pytest.mark.parametrize("gjk", [False, True])
@@ -637,7 +620,7 @@ def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
 
 
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
-@pytest.mark.parametrize("n_cubes", [10])
+@pytest.mark.parametrize("n_cubes", [1, 10])
 @pytest.mark.parametrize("enable_island", [False, True])
 @pytest.mark.parametrize("n_envs", [8192])
 @pytest.mark.parametrize("gjk", [False, True])
@@ -654,20 +637,12 @@ def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, 
         logger.write(request.getfixturevalue("cubes"))
 
 
-# FIXME:Increasing the batch size triggers CUDA out-of-memory error (Nvidia H100)
-# FIXME:Increasing # cubes triggers CUDA illegal memory access error for all collision methods (Nvidia RTX 5900)
-@pytest.mark.parametrize("solver", [gs.constraint_solver.Newton])
-@pytest.mark.parametrize("n_cubes", [5])
+@pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("n_cubes", [5, 10])
 @pytest.mark.parametrize("enable_island", [False])
-@pytest.mark.parametrize("n_envs", [2048])
-@pytest.mark.parametrize(
-    "gjk, enable_mujoco_compatibility",
-    [
-        (False, True),  # MPR
-        (False, False),  # MPR+SDF
-        (True, False),  # GJK
-    ],
-)
+@pytest.mark.parametrize("n_envs", [4096])
+@pytest.mark.parametrize("gjk", [False, True])
+@pytest.mark.parametrize("enable_mujoco_compatibility", [False, True])
 def test_box_pyramid(factory_logger, request, n_cubes, solver, enable_island, n_envs, gjk, enable_mujoco_compatibility):
     with factory_logger(
         {

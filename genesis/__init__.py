@@ -8,7 +8,6 @@ import traceback
 from platform import system
 from unittest.mock import patch
 
-
 _ti_outputs = []
 
 
@@ -50,7 +49,6 @@ def init(
     backend=None,
     theme="dark",
     logger_verbose_time=False,
-    performance_mode: bool = False,  # True: compilation up to 6x slower (GJK), but runs ~1-5% faster
 ):
     # Consider Genesis as initialized right away
     global _initialized
@@ -173,12 +171,6 @@ def init(
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
 
-    if not performance_mode:
-        logger.info(
-            "Consider setting 'performance_mode=True' in production to maximise runtime speed, if significantly "
-            "increasing compilation time is not a concern."
-        )
-
     if seed is not None:
         global SEED
         SEED = seed
@@ -204,7 +196,6 @@ def init(
             force_scalarize_matrix=True,
             # Turning off 'advanced_optimization' is causing issues on MacOS
             advanced_optimization=True,
-            cfg_optimization=performance_mode,
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
@@ -299,7 +290,6 @@ def _display_greeting(INFO_length):
     wave_width = max(0, min(38, wave_width))
     bar_width = wave_width * 2 + 9
     wave = ("┈┉" * wave_width)[:wave_width]
-    global logger
     logger.info(f"~<╭{'─'*(bar_width)}╮>~")
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─'*(bar_width)}╯>~")
@@ -323,10 +313,9 @@ def _custom_excepthook(exctype, value, tb):
     print("".join(traceback.format_exception(exctype, value, tb)))
 
     # Logger the exception right before exit if possible
-    global logger
     try:
         logger.error(f"{exctype.__name__}: {value}")
-    except (AttributeError, NameError):
+    except AttributeError:
         # Logger may not be configured at this point
         pass
 
