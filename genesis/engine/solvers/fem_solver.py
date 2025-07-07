@@ -8,7 +8,7 @@ from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
 from genesis.utils.misc import ti_field_to_torch
-from genesis.utils.geom import ti_transform_by_quat, ti_inv_quat, ti_quat_mul
+from genesis.utils.geom import ti_transform_by_quat, ti_transform_quat_by_quat
 
 from .base_solver import Solver
 
@@ -886,7 +886,6 @@ class FEMSolver(Solver):
 
     def batch_solve(self, f: ti.i32):
         self.batch_active.fill(True)
-        print("Batch solve for frame", f)
 
         for i in range(self._n_newton_iterations):
             # compute element energy and gradient
@@ -1405,8 +1404,9 @@ class FEMSolver(Solver):
                 pos = gs.ti_vec3([poss[i_l, 0], poss[i_l, 1], poss[i_l, 2]])
                 quat = gs.ti_vec4([quats[i_l, 0], quats[i_l, 1], quats[i_l, 2], quats[i_l, 3]])
                 offset_pos = self.vertex_constraints[i_v].link_offset_pos
-                offset_quat = ti_quat_mul(quat, ti_inv_quat(self.vertex_constraints[i_v].link_init_quat))
+                offset_quat = ti_transform_quat_by_quat(self.vertex_constraints[i_v].link_init_quat, quat)
                 self.vertex_constraints[i_v].target_pos = pos + ti_transform_by_quat(offset_pos, offset_quat)
+
 
     @ti.kernel
     def apply_hard_constraints(self, f: ti.i32):
@@ -1414,7 +1414,7 @@ class FEMSolver(Solver):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].constraint_type == 0:
                 self.elements_v[f + 1, i_v, i_b].pos = self.vertex_constraints[i_v].target_pos
-                self.elements_v[f + 1, i_v, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+                self.elements_v[f + 1, i_v, i_b].vel.fill(0.0)
 
     @ti.kernel
     def apply_soft_constraints(self, f: ti.i32):
@@ -1424,13 +1424,11 @@ class FEMSolver(Solver):
                 pos_error = self.elements_v[f, i_v, i_b].pos - self.vertex_constraints[i_v].target_pos
                 vel_error = self.elements_v[f + 1, i_v, i_b].vel - self.elements_v[f, i_v, i_b].vel
                 spring_force = -self.vertex_constraints[i_v].stiffness * pos_error
-                damping_force = -self.vertex_constraints[i_v].damping * vel_error
+                damping_force = -2.0 * ti.math.sqrt(self.vertex_constraints[i_v].stiffness) * vel_error
 
                 dt = self.substep_dt
-                mass = self.elements_v_info[i_v].mass
-                if mass > gs.EPS:
-                    dv = dt * (spring_force + damping_force) / mass
-                    self.elements_v[f + 1, i_v, i_b].vel += dv
+                dv = dt * (spring_force + damping_force)
+                self.elements_v[f + 1, i_v, i_b].vel += dv
 
     @ti.kernel
     def _kernel_set_vertex_constraints(
@@ -1439,7 +1437,6 @@ class FEMSolver(Solver):
         target_positions: ti.types.ndarray(),
         constraint_type: ti.u1,
         stiffness: ti.f32,
-        damping: ti.f32,
         link_idx: ti.i32,
         link_init_pos: ti.types.vector(3, ti.f32),
         link_init_quat: ti.types.vector(4, ti.f32),
@@ -1449,7 +1446,6 @@ class FEMSolver(Solver):
             self.vertex_constraints[v_idx].is_constrained = ti.cast(1, ti.u1)
             self.vertex_constraints[v_idx].constraint_type = constraint_type
             self.vertex_constraints[v_idx].stiffness = stiffness
-            self.vertex_constraints[v_idx].damping = damping
             self.vertex_constraints[v_idx].link_idx = link_idx
             self.vertex_constraints[v_idx].link_init_quat = link_init_quat
 

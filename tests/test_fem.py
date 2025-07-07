@@ -377,9 +377,9 @@ def test_box_hard_vertex_constraint(show_viewer):
     if show_viewer:
         scene.draw_debug_spheres(poss=initial_target_positions, radius=0.02, color=(1, 0, 1, 0.8))
 
-    # Set initial hard constraints
     box.set_vertex_constraints(
-        vertex_indices=vertex_indices, target_positions=initial_target_positions, constraint_type="hard"
+        vertex_indices=vertex_indices,
+        target_positions=initial_target_positions
     )
 
     for _ in range(100):
@@ -447,9 +447,8 @@ def test_box_soft_vertex_constraint(show_viewer):
     box.set_vertex_constraints(
         vertex_indices=vertex_indices,
         target_positions=target_positions,
-        constraint_type="soft",
+        is_soft_constraint=True,
         stiffness=1.0e3,
-        damping=1.0e1,
     )
 
     for _ in range(100):
