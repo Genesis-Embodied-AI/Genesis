@@ -1404,14 +1404,14 @@ def move_cube(use_suction, mode, show_viewer):
     # move to pre-grasp pose
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.25]),
+        pos=np.array([0.65, 0.0, 0.22]),
         quat=np.array([0, 1, 0, 0]),
     )
     # gripper open pos
     qpos[-2:] = 0.04
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=100,  # 1s duration
+        num_waypoints=120,  # 1s duration
         resolution=0.05,
         timeout=30.0,
     )
@@ -1423,7 +1423,7 @@ def move_cube(use_suction, mode, show_viewer):
         scene.step()
 
     # Get more time to the robot to reach the last waypoint
-    for i in range(100):
+    for i in range(120):
         scene.step()
 
     # reach
@@ -1433,7 +1433,7 @@ def move_cube(use_suction, mode, show_viewer):
         quat=np.array([0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(50):
+    for i in range(60):
         scene.step()
 
     # grasp
@@ -1465,7 +1465,7 @@ def move_cube(use_suction, mode, show_viewer):
     )
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=150,
+        num_waypoints=80,
         resolution=0.05,
         timeout=30.0,
     )
@@ -1488,7 +1488,7 @@ def move_cube(use_suction, mode, show_viewer):
         scene.step()
         if i > 550:
             qvel = cube.get_dofs_velocity()
-            assert_allclose(qvel, 0, atol=0.06)
+            assert_allclose(qvel, 0, atol=0.02)
 
     qpos = cube.get_dofs_position()
     assert_allclose(qpos[2], 0.075, atol=2e-3)
