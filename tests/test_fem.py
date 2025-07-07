@@ -347,8 +347,10 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
 
 
 def test_box_hard_vertex_constraint(show_viewer):
-    """Test if a box with hard vertex constraints has those vertices fixed,
-    and verify updating and removing constraints works correctly."""
+    """
+        Test if a box with hard vertex constraints has those vertices fixed, 
+        and that updating and removing constraints works correctly.
+    """
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-3,
@@ -371,11 +373,15 @@ def test_box_hard_vertex_constraint(show_viewer):
     )
     vertex_indices = [0, 3]
     initial_target_positions = box.init_positions[vertex_indices]
-
+    
     scene.build()
 
     if show_viewer:
-        scene.draw_debug_spheres(poss=initial_target_positions, radius=0.02, color=(1, 0, 1, 0.8))
+        scene.draw_debug_spheres(
+            poss=initial_target_positions,
+            radius=0.02,
+            color=(1, 0, 1, 0.8)
+        )
 
     box.set_vertex_constraints(
         vertex_indices=vertex_indices,
@@ -385,37 +391,44 @@ def test_box_hard_vertex_constraint(show_viewer):
     for _ in range(100):
         scene.step()
 
-    positions = box.solver.get_state(0).pos.cpu()
+    positions = box.get_state().pos[0][vertex_indices]
     assert_allclose(
-        positions[0, vertex_indices, :], initial_target_positions.cpu(), atol=1e-5, rtol=1e-5
+        positions, initial_target_positions, tol=0.0
     ), "Vertices should stay at initial target positions with hard constraints"
-
     new_target_positions = initial_target_positions + gs.tensor(
-        [[0.1, 0.1, 0.1], [0.1, 0.1, 0.1]],
+        [[0.1, 0.1, 0.1], [0.1, 0.1, 0.1]], 
     )
-    box.update_constraint_targets(vertex_indices=vertex_indices, target_positions=new_target_positions)
+    box.update_constraint_targets(
+        vertex_indices=vertex_indices,
+        target_positions=new_target_positions
+    )
 
-    for _ in range(10):
+    for _ in range(100):
         scene.step()
 
-    positions_after_update = box.solver.get_state(0).pos.cpu()
+    positions_after_update = box.get_state().pos[0][vertex_indices]
     assert_allclose(
-        positions_after_update[0, vertex_indices, :], new_target_positions.cpu(), atol=1e-5, rtol=1e-5
+        positions_after_update,
+        new_target_positions,
+        tol=0.0
     ), "Vertices should be at new target positions after updating constraints"
 
     box.remove_vertex_constraints(vertex_indices)
 
-    for _ in range(10):
+    for _ in range(100):
         scene.step()
 
-    positions_after_removal = box.solver.get_state(0).pos.cpu()
+    positions_after_removal = box.get_state().pos[0][vertex_indices]
 
-    distance_moved = np.linalg.norm(positions_after_removal[0, vertex_indices, :] - new_target_positions.cpu())
-    assert np.any(distance_moved > 1e-3), "Vertices should have moved after removing constraints"
-
+    with np.testing.assert_raises(AssertionError):
+        assert_allclose(
+            positions_after_removal,
+            new_target_positions,
+            tol=1e-3
+        ), "Vertices should have moved after removing constraints"
 
 def test_box_soft_vertex_constraint(show_viewer):
-    """Test if box with strong soft vertex constraints keeps those vertices near target."""
+    """Test if a box with strong soft vertex constraints has those vertices near."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-3,
@@ -442,20 +455,26 @@ def test_box_soft_vertex_constraint(show_viewer):
     scene.build()
 
     if show_viewer:
-        scene.draw_debug_spheres(poss=target_positions, radius=0.02, color=(1, 0, 1, 0.8))
+        scene.draw_debug_spheres(
+            poss=target_positions,
+            radius=0.02,
+            color=(1, 0, 1, 0.8)
+        )
 
     box.set_vertex_constraints(
         vertex_indices=vertex_indices,
         target_positions=target_positions,
         is_soft_constraint=True,
-        stiffness=1.0e3,
+        stiffness=1.e6
     )
 
-    for _ in range(100):
+    for _ in range(1000):
         scene.step()
 
-    positions = box.solver.get_state(0).pos.cpu()
+    positions = box.get_state().pos[0][vertex_indices]
 
     assert_allclose(
-        positions[0, vertex_indices, :], target_positions.cpu(), atol=1e-2, rtol=1e-1
-    ), "Soft vertex constraints should keep vertices near target positions"
+        positions,
+        target_positions,
+        tol=5e-3
+    ), "Vertices should be near target positions with strong soft constraints"
