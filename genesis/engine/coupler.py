@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import taichi as ti
 
@@ -83,14 +84,30 @@ class Coupler(RBC):
         self._dx = 1 / 1024
         self._stencil_size = int(np.floor(self._dx / self.sph_solver.hash_grid_cell_size) + 2)
 
-        self.reset()
+        self.reset(envs_idx=self.sim.scene._envs_idx)
 
-    def reset(self) -> None:
+    def reset(self, envs_idx=None) -> None:
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
-            self.mpm_rigid_normal.fill(0)
+            if envs_idx is None:
+                self.mpm_rigid_normal.fill(0)
+            else:
+                self._kernel_reset_mpm(envs_idx)
 
         if self._rigid_sph:
-            self.sph_rigid_normal.fill(0)
+            if envs_idx is None:
+                self.sph_rigid_normal.fill(0)
+            else:
+                self._kernel_reset_sph(envs_idx)
+
+    @ti.kernel
+    def _kernel_reset_mpm(self, envs_idx: ti.types.ndarray()):
+        for i_p, i_g, i_b_ in ti.ndrange(self.mpm_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
+            self.mpm_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
+
+    @ti.kernel
+    def _kernel_reset_sph(self, envs_idx: ti.types.ndarray()):
+        for i_p, i_g, i_b_ in ti.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
+            self.sph_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
 
     @ti.func
     def _func_collide_with_rigid(self, f, pos_world, vel, mass, i_b):
@@ -667,7 +684,7 @@ class SAPCoupler(RBC):
         self.init_pcg_fields()
         self.init_linesearch_fields()
 
-    def reset(self):
+    def reset(self, envs_idx=None) -> None:
         pass
 
     def init_fem_fields(self):

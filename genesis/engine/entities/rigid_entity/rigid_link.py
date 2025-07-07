@@ -1,4 +1,7 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
+from numpy.typing import ArrayLike
 import taichi as ti
 import torch
 
@@ -8,6 +11,9 @@ from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 
 from .rigid_geom import RigidGeom, RigidVisGeom
+
+if TYPE_CHECKING:
+    from .rigid_entity import RigidEntity
 
 
 @ti.data_oriented
@@ -43,8 +49,8 @@ class RigidLink(RBC):
         invweight,
         visualize_contact,
     ):
-        self._name = name
-        self._entity = entity
+        self._name: str = name
+        self._entity: "RigidEntity" = entity
         self._solver = entity.solver
         self._entity_idx_in_solver = entity.idx
 
@@ -68,16 +74,18 @@ class RigidLink(RBC):
         self._vvert_start = vvert_start
         self._vface_start = vface_start
 
-        self._pos = pos
-        self._quat = quat
-        self._inertial_pos = inertial_pos
-        self._inertial_quat = inertial_quat
+        # Link position & rotation at creation time:
+        self._pos: ArrayLike = pos
+        self._quat: ArrayLike = quat
+        # Link's center-of-mass position & principal axes frame rotation at creation time:
+        self._inertial_pos: ArrayLike = inertial_pos
+        self._inertial_quat: ArrayLike = inertial_quat
         self._inertial_mass = inertial_mass
         self._inertial_i = inertial_i
 
         self._visualize_contact = visualize_contact
 
-        self._geoms = gs.List()
+        self._geoms: list[RigidGeom] = gs.List()
         self._vgeoms = gs.List()
 
     def _build(self):
@@ -99,7 +107,7 @@ class RigidLink(RBC):
                 is_fixed = False
         if self._root_idx is None:
             self._root_idx = gs.np_int(link.idx)
-        self.is_fixed = gs.np_int(is_fixed)
+        self.is_fixed: np.int32 = gs.np_int(is_fixed)  # note: type inconsistent with is_built, is_free, is_leaf: bool
 
         # inertial_mass and inertia_i
         if self._inertial_mass is None:
