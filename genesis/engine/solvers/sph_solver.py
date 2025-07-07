@@ -128,6 +128,7 @@ class SPHSolver(Solver):
         pass
 
     def build(self):
+        super().build()
         self._B = self._sim._B
 
         # particles and entities
@@ -275,7 +276,7 @@ class SPHSolver(Solver):
     def _kernel_compute_non_pressure_forces(self, f: ti.i32, t: ti.f32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng_reordered[i_p, i_b].active:
-                acc = self._gravity[None]
+                acc = self._gravity[i_b]
                 self.sh.for_all_neighbors(
                     i_p,
                     self.particles_reordered.pos,

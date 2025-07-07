@@ -1,5 +1,6 @@
 import math
 import os
+import queue
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -13,7 +14,7 @@ import mujoco
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array, get_assets_dir
 
 from .utils import (
     get_hf_assets,
@@ -577,7 +578,7 @@ def test_link_velocity(gs_sim, tol):
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 def test_pendulum_links_acc(gs_sim, tol):
     pendulum = gs_sim.entities[0]
-    g = gs_sim.rigid_solver._gravity.to_numpy()[2]
+    g = gs_sim.rigid_solver._gravity[0][2]
 
     # Make sure that the linear and angular acceleration matches expectation
     theta = np.random.rand()
@@ -1039,6 +1040,96 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
+@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
+def test_batched_mounted_camera_rendering(show_viewer, tol):
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            env_separate_rigid=False,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ColorTexture(
+                color=(1.0, 0.5, 0.5),
+            ),
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    n_envs = 3
+    env_spacing = (2.0, 2.0)
+    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_envs)]
+    scene.build(n_envs=n_envs, env_spacing=env_spacing)
+
+    T = np.eye(4)
+    T[:3, :3] = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    T[:3, 3] = np.array([0.1, 0.0, 0.1])
+    for nenv, cam in enumerate(cams):
+        cam.attach(robot.get_link("hand"), T, nenv)
+
+    target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
+    center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
+    rng = np.random.default_rng(42)
+    angular_speed = rng.uniform(-10, 10, n_envs)
+    r = 0.25
+
+    ee_link = robot.get_link("hand")
+
+    steps_rgb_queue: queue.Queue[list[np.ndarray]] = queue.Queue(maxsize=2)
+
+    for i in range(50):
+        target_pos = np.zeros([n_envs, 3])
+        target_pos[:, 0] = center[:, 0] + np.cos(i / 360 * np.pi * angular_speed) * r
+        target_pos[:, 1] = center[:, 1] + np.sin(i / 360 * np.pi * angular_speed) * r
+        target_pos[:, 2] = center[:, 2]
+
+        q = robot.inverse_kinematics(
+            link=ee_link,
+            pos=target_pos,
+            quat=target_quat,
+            rot_mask=[False, False, True],  # for demo purpose: only restrict direction of z-axis
+        )
+
+        robot.set_qpos(q)
+        scene.step()
+        if i < 10:
+            # skip the first few frames because the robots start off with the same state
+            for cam in cams:
+                cam.render()
+            continue
+        robots_rgb_arrays = []
+        for cam in cams:
+            rgb_array, *_ = cam.render()
+            assert np.std(rgb_array) > 10.0
+            robots_rgb_arrays.append(rgb_array)
+        steps_rgb_queue.put(robots_rgb_arrays)
+
+        if steps_rgb_queue.full():  # we have a set of 2 consecutive frames
+            diff_tol = 0.02  # expect atlest 2% difference between each frame
+            frames_t_minus_1 = steps_rgb_queue.get()
+            frames_t = steps_rgb_queue.get()
+            for i in range(n_envs):
+                diff = frames_t[i] - frames_t_minus_1[i]
+                assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_pd_control(show_viewer):
     scene = gs.Scene(
@@ -1313,14 +1404,14 @@ def move_cube(use_suction, mode, show_viewer):
     # move to pre-grasp pose
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.25]),
+        pos=np.array([0.65, 0.0, 0.22]),
         quat=np.array([0, 1, 0, 0]),
     )
     # gripper open pos
     qpos[-2:] = 0.04
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=100,  # 1s duration
+        num_waypoints=120,  # 1s duration
         resolution=0.05,
         timeout=30.0,
     )
@@ -1332,7 +1423,7 @@ def move_cube(use_suction, mode, show_viewer):
         scene.step()
 
     # Get more time to the robot to reach the last waypoint
-    for i in range(100):
+    for i in range(120):
         scene.step()
 
     # reach
@@ -1342,7 +1433,7 @@ def move_cube(use_suction, mode, show_viewer):
         quat=np.array([0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(50):
+    for i in range(60):
         scene.step()
 
     # grasp
@@ -1374,7 +1465,7 @@ def move_cube(use_suction, mode, show_viewer):
     )
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=150,
+        num_waypoints=80,
         resolution=0.05,
         timeout=30.0,
     )
@@ -1397,7 +1488,7 @@ def move_cube(use_suction, mode, show_viewer):
         scene.step()
         if i > 550:
             qvel = cube.get_dofs_velocity()
-            assert_allclose(qvel, 0, atol=0.06)
+            assert_allclose(qvel, 0, atol=0.02)
 
     qpos = cube.get_dofs_position()
     assert_allclose(qpos[2], 0.075, atol=2e-3)
@@ -1589,7 +1680,7 @@ def test_contact_forces(show_viewer, tol):
     )
     scene.build()
 
-    cube_weight = scene.rigid_solver._gravity.to_numpy()[2] * cube.get_mass()
+    cube_weight = scene.rigid_solver._gravity[0][2] * cube.get_mass()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
     qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
@@ -2210,6 +2301,28 @@ def test_urdf_mimic(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_gravity(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    sphere = scene.add_entity(gs.morphs.Sphere())
+    scene.build(n_envs=2)
+
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, -9.8]), envs_idx=0)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 9.8]), envs_idx=1)
+
+    for _ in range(200):
+        scene.step()
+
+    first_pos = sphere.get_dofs_position()[0, 2]
+    second_pos = sphere.get_dofs_position()[1, 2]
+
+    assert_allclose(first_pos * -1, second_pos, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_scene_saver_franka(show_viewer, tol):
     scene1 = gs.Scene(show_viewer=show_viewer)
     franka1 = scene1.add_entity(
@@ -2602,10 +2715,18 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_mesh_to_heightfield(show_viewer):
+def test_mesh_to_heightfield(tmp_path, show_viewer):
+    horizontal_scale = 2.0
+    path_terrain = os.path.join(get_assets_dir(), "meshes", "terrain_45.obj")
+
+    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
+
+    # default heightfield starts at 0, 0, 0
+    # translate to the center of the mesh
+    translation = np.array([np.nanmin(xs), np.nanmin(ys), 0])
+
     ########################## create a scene ##########################
     scene = gs.Scene(
-        show_viewer=show_viewer,
         sim_options=gs.options.SimOptions(
             gravity=(2, 0, -2),
         ),
@@ -2613,16 +2734,9 @@ def test_mesh_to_heightfield(show_viewer):
             camera_pos=(0, -50, 0),
             camera_lookat=(0, 0, 0),
         ),
+        show_viewer=show_viewer,
+        show_FPS=False,
     )
-
-    horizontal_scale = 2.0
-    gs_root = os.path.dirname(os.path.abspath(gs.__file__))
-    path_terrain = os.path.join(gs_root, "assets", "meshes", "terrain_45.obj")
-    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
-
-    # default heightfield starts at 0, 0, 0
-    # translate to the center of the mesh
-    translation = np.array([np.nanmin(xs), np.nanmin(ys), 0])
 
     terrain_heightfield = scene.add_entity(
         morph=gs.morphs.Terrain(
@@ -2633,7 +2747,6 @@ def test_mesh_to_heightfield(show_viewer):
         ),
         vis_mode="collision",
     )
-
     ball = scene.add_entity(
         gs.morphs.Sphere(
             pos=(10, 15, 10),
@@ -2641,7 +2754,6 @@ def test_mesh_to_heightfield(show_viewer):
         ),
         vis_mode="collision",
     )
-
     scene.build()
 
     for i in range(1000):
