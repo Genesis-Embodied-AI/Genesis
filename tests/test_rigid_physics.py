@@ -2302,34 +2302,29 @@ def test_urdf_mimic(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.merge_fixed_links(False)
 @pytest.mark.parametrize("model_name", ["pendulum"])
-def test_pendulum_links_acc(tmp_path, gs_sim, show_viewer, tol):
-    urdf_root = _build_multi_pendulum(n=1)
-    urdf_file = tmp_path / "pendulum.urdf"
-    ET.ElementTree(urdf_root).write(urdf_file)
-
-    scene = gs.Scene(sim=gs_sim, show_viewer=show_viewer, show_FPS=False)
-    ent = scene.add_entity(gs.morphs.URDF(file=str(urdf_file), fixed=True))
-    scene.build()
-
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_jacobian(gs_sim, tol):
+    pendulum = gs_sim.entities[0]
     angle = 0.7
-    ent.set_qpos(np.array([angle], dtype=np.float32))
-    scene.step()
+    pendulum.set_qpos(np.array([angle], dtype=np.float64))
+    gs_sim.scene.step()
 
-    link = ent.get_link("PendulumArm_0")
+    link = pendulum.get_link("PendulumArm_0")
 
-    p_local = np.array([0.05, -0.02, 0.12], dtype=np.float32)
-    J_o = ent.get_jacobian(link).cpu().numpy()
-    J_p = ent.get_jacobian(link, p_local).cpu().numpy()
+    p_local = np.array([0.05, -0.02, 0.12], dtype=np.float64)
+    J_o = pendulum.get_jacobian(link).cpu().numpy()
+    J_p = pendulum.get_jacobian(link, p_local).cpu().numpy()
 
     c, s = np.cos(angle), np.sin(angle)
-    Rx = np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float32)
+    Rx = np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64)
     r_world = Rx @ p_local
     r_cross = np.array(
-        [[0, -r_world[2], r_world[1]], [r_world[2], 0, -r_world[0]], [-r_world[1], r_world[0], 0]], dtype=np.float32
+        [[0, -r_world[2], r_world[1]], [r_world[2], 0, -r_world[0]], [-r_world[1], r_world[0], 0]], dtype=np.float64
     )
 
     lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
-    lin_expected = lin_o + r_cross @ ang_o
+    lin_expected = lin_o - r_cross @ ang_o
 
     assert_allclose(J_p[3:, 0], ang_o, tol=tol)
     assert_allclose(J_p[:3, 0], lin_expected, tol=tol)

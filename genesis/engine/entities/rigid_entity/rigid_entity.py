@@ -826,11 +826,10 @@ class RigidEntity(Entity):
         if local_point is None:
             self._kernel_get_jacobian_zero(link.idx)
         else:
-            if not isinstance(local_point, (list, tuple, np.ndarray)):
-                gs.raise_exception("`local_point` must be length-3 iterable.")
-            if len(local_point) != 3:
-                gs.raise_exception("`local_point` must have 3 elements.")
-            p_local = ti.Vector(local_point, dt=ti.f32)
+            p_local = torch.as_tensor(local_point, device=gs.device, dtype=gs.tc_float)
+            if p_local.numel() != 3:
+                gs.raise_exception("`local_point` must have exactly 3 elements.")
+            p_local = ti.Vector([float(p_local[0]), float(p_local[1]), float(p_local[2])])
             self._kernel_get_jacobian(link.idx, p_local)
 
         jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
@@ -856,9 +855,8 @@ class RigidEntity(Entity):
 
     @ti.kernel
     def _kernel_get_jacobian_zero(self, tgt_link_idx: ti.i32):
-        zero_vec = ti.Vector.zero(ti.f32, 3)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, zero_vec)
+            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(ti.f32, 3))
 
     @ti.func
     def _func_get_jacobian(self, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
@@ -886,7 +884,7 @@ class RigidEntity(Entity):
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
                     rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
-                    translation = (tgt_link_pos - l_state.pos).cross(rotation)
+                    translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -919,7 +917,7 @@ class RigidEntity(Entity):
                         i_d_jac = i_d + dof_offset - self._dof_start
                         I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                         rotation = self._solver.dofs_info[I_d].motion_ang
-                        translation = (tgt_link_pos - l_state.pos).cross(rotation)
+                        translation = rotation.cross(tgt_link_pos - l_state.pos)
 
                         self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                         self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -1342,7 +1340,7 @@ class RigidEntity(Entity):
                         # update jacobian for ee link
                         i_l_ee = links_idx[i_ee]
                         self._func_get_jacobian(
-                            i_l_ee, i_b, pos_mask, rot_mask
+                            i_l_ee, i_b, ti.Vector.zero(gs.ti_float, 3), pos_mask, rot_mask
                         )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                         # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
