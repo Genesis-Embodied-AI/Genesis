@@ -68,7 +68,7 @@ class RigidSolver(Solver):
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
     @dataclass(frozen=True)
-    class StaticArgs:
+    class StaticRigidSimConfig:
         # store static arguments here
         para_level: int = 0
         use_hibernation: bool = False
@@ -220,7 +220,7 @@ class RigidSolver(Solver):
 
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
-        self._static_args = self.StaticArgs(
+        self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
             use_hibernation=getattr(self, "_use_hibernation", False),
         )
@@ -498,7 +498,7 @@ class RigidSolver(Solver):
                 dofs_info=self.dofs_info,
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
-                static_args=self._static_args,
+                static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
         # just in case
@@ -523,8 +523,10 @@ class RigidSolver(Solver):
         dofs_state: array_class.DofsState,
         # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
         rigid_global_info: ti.template(),
-        static_args: ti.template(),
+        static_rigid_sim_config: ti.template(),
     ):
+        n_dofs = dofs_state.shape[0]
+        _B = dofs_state.shape[1]
         for I in ti.grouped(dofs_info):
             i = I[0]  # batching (if any) will be the second dim
 
@@ -543,19 +545,19 @@ class RigidSolver(Solver):
             dofs_info[I].kp = dofs_kp[i]
             dofs_info[I].kv = dofs_kv[i]
 
-        ti.loop_config(serialize=ti.static(static_args.para_level) < gs.PARA_LEVEL.PARTIAL)
-        for i, b in ti.ndrange(dofs_state.shape[0], dofs_state.shape[1]):
+        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level) < gs.PARA_LEVEL.PARTIAL)
+        for i, b in ti.ndrange(n_dofs, _B):
             dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
 
-        if ti.static(static_args.use_hibernation):
-            ti.loop_config(serialize=static_args.para_level < gs.PARA_LEVEL.PARTIAL)
-            for i, b in ti.ndrange(dofs_info.shape[0], dofs_info.shape[1]):
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i, b in ti.ndrange(n_dofs, _B):
                 dofs_state[i, b].hibernated = False
                 rigid_global_info.awake_dofs[i, b] = i
 
-            ti.loop_config(serialize=static_args.para_level < gs.PARA_LEVEL.PARTIAL)
-            for b in range(dofs_info.shape[1]):
-                rigid_global_info.n_awake_dofs[b] = dofs_info.shape[0]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for b in range(_B):
+                rigid_global_info.n_awake_dofs[b] = n_dofs
 
     def _init_link_fields(self):
         if self._use_hibernation:
