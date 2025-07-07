@@ -51,7 +51,9 @@ class FEMSolver(Solver):
 
         # lazy initialization
         self._constraints_initialized = False
-        self._rigid_solver = None  # TEMPORARY
+        self._constraint_links = []
+        self._constraint_link_poss = []
+        self._constraint_link_quats = []
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
@@ -277,7 +279,6 @@ class FEMSolver(Solver):
 
     def init_constraints(self):
         self._constraints_initialized = True
-        self.constraint_links = []
 
         vertex_constraint_info = ti.types.struct(
             is_constrained=ti.u1,   # boolean flag indicating if vertex is constrained
@@ -938,7 +939,6 @@ class FEMSolver(Solver):
                 self.compute_vel(f)
                 self.apply_uniform_force(f)
                 if self._constraints_initialized:
-                    self.update_linked_vertex_constraints()
                     self.apply_soft_constraints(f)
 
     def substep_pre_coupling_grad(self, f):
@@ -1377,25 +1377,13 @@ class FEMSolver(Solver):
         """Remove all vertex constraints."""
         self.vertex_constraints.is_constrained.fill(0)
 
-    def update_linked_vertex_constraints(self):
-        if len(self.constraint_links) == 0:
-            return
-
-        poss = torch.zeros((len(self.constraint_links), 3), dtype=gs.tc_float, device=gs.device)
-        quats = torch.zeros((len(self.constraint_links), 4), dtype=gs.tc_float, device=gs.device)
-        for i, link_idx in enumerate(self.constraint_links):
-            poss[i] = self._rigid_solver.get_links_pos([link_idx], 0).squeeze(-2)
-            quats[i] = self._rigid_solver.get_links_quat([link_idx], 0).squeeze(-2)
-
-        self._kernel_update_linked_vertex_constraints(poss, quats)
-
     def _add_constraint_link(self, link):
         """Returns the local index of the added constraint link."""
-        if link._idx in self.constraint_links:
-            return self.constraint_links.index(link._idx)
+        if link._idx in self._constraint_links:
+            return self._constraint_links.index(link._idx)
         else:
-            self.constraint_links.append(link._idx)
-            return len(self.constraint_links) - 1
+            self._constraint_links.append(link._idx)
+            return len(self._constraint_links) - 1
 
     @ti.kernel
     def _kernel_update_linked_vertex_constraints(

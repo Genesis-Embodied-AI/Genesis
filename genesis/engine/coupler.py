@@ -345,6 +345,16 @@ class Coupler(RBC):
                         if sdf_normal.dot(self.mpm_rigid_normal[i_p, i_g, i_b]) >= 0:
                             self.mpm_rigid_normal[i_p, i_g, i_b] = sdf_normal
 
+    def fem_rigid_link_constraints(self):
+        links = self.fem_solver._constraint_links
+        if len(links) > 0:
+            poss = gs.zeros((len(links), 3), dtype=float)
+            quats = gs.zeros((len(links), 4), dtype=float)
+            for i, link_idx in enumerate(links):
+                poss[i] = self.rigid_solver.get_links_pos([link_idx], 0).squeeze(-2)
+                quats[i] = self.rigid_solver.get_links_quat([link_idx], 0).squeeze(-2)
+            self.fem_solver._kernel_update_linked_vertex_constraints(poss, quats)
+
     @ti.kernel
     def fem_surface_force(self, f: ti.i32):
         # TODO: all collisions are on vertices instead of surface and edge
@@ -592,6 +602,7 @@ class Coupler(RBC):
 
         if self.fem_solver.is_active():
             self.fem_surface_force(f)
+            self.fem_rigid_link_constraints()
 
     def couple_grad(self, f):
         if self.mpm_solver.is_active():
