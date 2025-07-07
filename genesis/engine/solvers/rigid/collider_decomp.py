@@ -153,6 +153,8 @@ class Collider:
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
 
+        # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
+        # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
             f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
@@ -777,7 +779,7 @@ class Collider:
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
-                                ti.static_print(self._warn_msg_max_collision_pairs)
+                                # print(self._warn_msg_max_collision_pairs)
                                 break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
@@ -887,22 +889,27 @@ class Collider:
                 i_ga = self.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
+                if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+                    i_ga, i_gb = i_gb, i_ga
+
                 if (
                     self._solver.geoms_info[i_ga].is_convex
                     and self._solver.geoms_info[i_gb].is_convex
                     and not self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
-                    and not (
-                        self._solver._enable_multi_contact
-                        and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    )
                     and not (
                         self._solver._box_box_detection
                         and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
                         and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                     )
                 ):
-                    self._func_convex_convex_contact(i_ga, i_gb, i_b)
+                    if ti.static(sys.platform == "darwin"):
+                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
+                    else:
+                        if not (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            self._func_convex_convex_contact(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_convex_specializations(self):
@@ -915,15 +922,11 @@ class Collider:
                 if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
                     i_ga, i_gb = i_gb, i_ga
 
-                if (
-                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                    and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                ):
-                    if ti.static(sys.platform == "darwin"):
-                        # FIXME: It seems redundant, why don't we just call _func_plane_box_contact directly?
-                        # Anyway in this function, we will call _func_plane_box_contact.
-                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
-                    else:
+                if ti.static(sys.platform != "darwin"):
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
                         self._func_plane_box_contact(i_ga, i_gb, i_b)
 
                 if ti.static(self._solver._box_box_detection):
@@ -1110,7 +1113,10 @@ class Collider:
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
-            ti.static_print(self._warn_msg_max_collision_pairs)
+            # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
+            # condition, while 'print' is slowing down the kernel even if every called in practice...
+            # print(self._warn_msg_max_collision_pairs)
+            pass
         else:
             ga_info = self._solver.geoms_info[i_ga]
             gb_info = self._solver.geoms_info[i_gb]
@@ -1194,9 +1200,6 @@ class Collider:
 
     @ti.func
     def _func_convex_convex_contact(self, i_ga, i_gb, i_b):
-        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
-            i_ga, i_gb = i_gb, i_ga
-
         if (
             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
             and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
