@@ -1006,7 +1006,7 @@ class RigidSolver(Solver):
         self.geoms_state = struct_geom_state.field(
             shape=self._batch_shape(self.n_geoms_), needs_grad=False, layout=ti.Layout.SOA
         )
-        self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), order="F", dtype=np.float32)
+        self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_geoms > 0:
             # Make sure that the constraints parameters are valid
@@ -1189,7 +1189,7 @@ class RigidSolver(Solver):
         self.vgeoms_state = struct_vgeom_state.field(
             shape=self._batch_shape(self.n_vgeoms_), needs_grad=False, layout=ti.Layout.SOA
         )
-        self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), order="F", dtype=np.float32)
+        self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_vgeoms > 0:
             vgeoms = self.vgeoms
