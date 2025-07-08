@@ -422,6 +422,7 @@ class RRT(PathPlanner):
         qpos_goal,
         qpos_start=None,
         resolution=0.05,
+        timeout=None,
         max_nodes=2000,
         smooth_path=True,
         num_waypoints=100,
@@ -474,6 +475,10 @@ class RRT(PathPlanner):
                 )
             else:
                 break
+            if timeout is not None:
+                if time.time() - start > timeout:
+                    gs.logger.warning(f"rrt connect planning timeout")
+                    break
 
         gs.logger.info(f"rrt planning time: {time.time() - start}")
 
@@ -756,6 +761,7 @@ class RRTConnect(PathPlanner):
         qpos_goal,
         qpos_start=None,
         resolution=0.05,
+        timeout=None,
         max_nodes=4000,
         smooth_path=True,
         num_waypoints=300,
@@ -813,6 +819,10 @@ class RRTConnect(PathPlanner):
                 forward_pass = not forward_pass
             else:
                 break
+            if timeout is not None:
+                if time.time() - start > timeout:
+                    gs.logger.warning(f"rrt connect planning timeout")
+                    break
 
         gs.logger.info(f"rrt connect planning time: {time.time() - start}")
         is_active = self._rrt_is_active.to_torch().bool()
@@ -921,7 +931,7 @@ class RRTConnect(PathPlanner):
 
 
 def align_weypoints_length(
-    path: torch.Tensor, mask: torch.Tensor, num_points: int  # [N, B, Dof]  # [N, B, ]
+    path: torch.Tensor, mask: torch.Tensor, num_points: int
 ) -> torch.Tensor:
     """
     Aligns each waypoints length to the given num_points.
@@ -931,7 +941,7 @@ def align_weypoints_length(
     path: torch.Tensor
         path tensor in [N, B, Dof]
     mask: torch.Tensor
-        the masking of path, indicating active waypoints
+        the masking of path, indicating active waypoints [N, B]
     num_points: int
         the number of the desired waypoints
 
@@ -939,15 +949,16 @@ def align_weypoints_length(
     -------
         A new 2D PyTorch tensor [num_points, B, Dof]
     """
-    res = torch.zeros(path.shape[1], num_points, path.shape[-1], device=gs.device)
-    for i_b in range(path.shape[1]):
+    t_path = path.permute(1, 2, 0) # [B, Dof, N]
+    res = torch.zeros(num_points, t_path.shape[0], t_path.shape[1], device=gs.device) # [num_points, B, Dof]
+    for i_b in range(t_path.shape[0]):
         if mask[:, i_b].sum() == 0:
             continue
         interpolated_path = torch.nn.functional.interpolate(
-            path[mask[:, i_b], i_b].T.unsqueeze(0), size=num_points, mode="linear", align_corners=True
-        )[0].T
-        res[i_b] = interpolated_path
-    return res.transpose(1, 0)
+            t_path[i_b:i_b+1, :, mask[:, i_b]], size=num_points, mode="linear", align_corners=True
+        ).squeeze(0) # [Dof, num_points]
+        res[:, i_b] = interpolated_path.T
+    return res
 
 
 def rrt_valid_mask(tensor: torch.Tensor) -> torch.Tensor:

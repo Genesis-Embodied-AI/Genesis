@@ -1553,6 +1553,7 @@ class RigidEntity(Entity):
         qpos_start=None,
         max_nodes=2000,
         resolution=0.05,
+        timeout=None,
         max_retry=1,
         smooth_path=True,
         num_waypoints=300,
@@ -1578,7 +1579,7 @@ class RigidEntity(Entity):
             Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
             for validity along a path segment. Default to 1%.
         timeout : float, optional
-            This option has been deprecated and is not longer doing anything.
+            The max time to spend for each planning in seconds. Note that the timeout is not exact. 
         max_retry : float, optional
             Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
@@ -1608,8 +1609,6 @@ class RigidEntity(Entity):
         is_valid: torch.Tensor
             A tensor of boolean mask indicating the batch indices with successful plan.
         """
-        if "timeout" in kwargs:
-            gs.logger.warning("`timeout` is deprecated")
         if "ignore_joint_limit" in kwargs:
             gs.logger.warning("`ignore_joint_limit` is deprecated")
 
@@ -1633,6 +1632,7 @@ class RigidEntity(Entity):
             qpos_goal,
             qpos_start=qpos_start,
             resolution=resolution,
+            timeout=timeout,
             max_nodes=max_nodes,
             smooth_path=smooth_path,
             num_waypoints=num_waypoints,
@@ -1649,6 +1649,7 @@ class RigidEntity(Entity):
                     qpos_goal,
                     qpos_start=qpos_start,
                     resolution=resolution,
+                    timeout=timeout,
                     max_nodes=max_nodes,
                     smooth_path=smooth_path,
                     num_waypoints=num_waypoints,
