@@ -444,7 +444,10 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array([self.sim.mpm_solver.boundary.lower, self.sim.mpm_solver.boundary.upper]),
+                            bounds=np.array(
+                                [self.sim.mpm_solver.boundary.lower, self.sim.mpm_solver.boundary.upper],
+                                dtype=np.float32,
+                            ),
                             wireframe=True,
                             color=(1.0, 1.0, 0.0, 1.0),
                         ),
@@ -505,7 +508,10 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array([self.sim.sph_solver.boundary.lower, self.sim.sph_solver.boundary.upper]),
+                            bounds=np.array(
+                                [self.sim.sph_solver.boundary.lower, self.sim.sph_solver.boundary.upper],
+                                dtype=np.float32,
+                            ),
                             wireframe=True,
                             color=(0.0, 1.0, 1.0, 1.0),
                         ),
@@ -578,7 +584,10 @@ class RasterizerContext:
                 self.add_node(
                     pyrender.Mesh.from_trimesh(
                         mu.create_box(
-                            bounds=np.array([self.sim.pbd_solver.boundary.lower, self.sim.pbd_solver.boundary.upper]),
+                            bounds=np.array(
+                                [self.sim.pbd_solver.boundary.lower, self.sim.pbd_solver.boundary.upper],
+                                dtype=np.float32,
+                            ),
                             wireframe=True,
                             color=(0.0, 1.0, 1.0, 1.0),
                         ),
@@ -690,14 +699,17 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_debug_arrow(self, pos, vec=(0, 0, 1), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
+    def draw_debug_arrow(self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         length = np.linalg.norm(vec)
         if length > 0:
             mesh = mu.create_arrow(length=length, radius=radius, body_color=color, head_color=color)
-            pose = np.eye(4)
-            pose[:3, 3] = tensor_to_array(pos)
-            pose[:3, :3] = gu.z_to_R(tensor_to_array(vec))
-            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose[None])
+
+            pose = np.zeros((1, 4, 4), dtype=np.float32)
+            pose[0, 3, 3] = 1.0
+            pose[0, :3, 3] = tensor_to_array(pos)
+            gu.z_up_to_R(tensor_to_array(vec), out=pose[0, :3, :3])
+
+            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose)
             if persistent:
                 self.add_external_node(node)
             else:
@@ -821,12 +833,12 @@ class RasterizerContext:
     def add_light(self, light):
         # light direction is light pose's -z frame
         if light["type"] == "directional":
-            z = -np.array(light["dir"])
+            z = -np.asarray(light["dir"], dtype=np.float32)
             R = gu.z_up_to_R(z)
             pose = gu.R_to_T(R)
             self.add_node(pyrender.DirectionalLight(color=light["color"], intensity=light["intensity"]), pose=pose)
         elif light["type"] == "point":
-            pose = gu.trans_to_T(np.array(light["pos"]))
+            pose = gu.trans_to_T(np.array(light["pos"], dtype=np.float32))
             self.add_node(pyrender.PointLight(color=light["color"], intensity=light["intensity"]), pose=pose)
         else:
             gs.raise_exception(f"Unsupported light type: {light['type']}")
@@ -879,7 +891,8 @@ class RasterizerContext:
                 (seg_idxc >> 16) & 0xFF,
                 (seg_idxc >> 8) & 0xFF,
                 seg_idxc & 0xFF,
-            ]
+            ],
+            dtype=np.int32,
         )
         return seg_idxc_rgb
 
