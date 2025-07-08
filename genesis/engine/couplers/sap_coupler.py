@@ -112,7 +112,7 @@ class SAPCoupler(RBC):
         self.init_pcg_fields()
         self.init_linesearch_fields()
 
-    def reset(self):
+    def reset(self, envs_idx=None):
         pass
 
     def init_hydroelastic_fem_fields_and_info(self):
