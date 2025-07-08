@@ -132,7 +132,7 @@ class HoverEnv:
         exec_actions = self.actions
 
         # 14468 is hover rpm
-        self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699)
+        self.drone.set_propellels_rpm((1 + exec_actions * 0.8) * 14468.429183500699 * 2 * math.pi / 60.0)
         # update target pos
         if self.target is not None:
             self.target.set_pos(self.commands, zero_velocity=True)
