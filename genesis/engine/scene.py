@@ -308,7 +308,9 @@ class Scene(RBC):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph}.")
 
         if surface.double_sided is None:
-            if isinstance(material, gs.materials.PBD.Cloth):
+            if hasattr(morph, "double_sided"):
+                surface.double_sided = morph.double_sided
+            elif isinstance(material, gs.materials.PBD.Cloth):
                 surface.double_sided = True
             else:
                 surface.double_sided = False

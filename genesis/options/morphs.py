@@ -331,10 +331,14 @@ class Plane(Primitive):
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+    one_sided : bool, optional
+        Whether the entity needs to be rendered as a one-sided or two-sided plane.
     """
 
     fixed: bool = True
     normal: tuple = (0, 0, 1)
+    one_sided: bool = False
+    double_sided: bool | None = None
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -347,6 +351,8 @@ class Plane(Primitive):
 
         if self.requires_jac_and_IK:
             gs.raise_exception("`requires_jac_and_IK` must be False for `Plane`.")
+
+        self.double_sided = not self.one_sided
 
         self.normal = tuple(np.array(self.normal) / np.linalg.norm(self.normal))
 
