@@ -335,6 +335,7 @@ class FEMSolver(Solver):
             entity.reset_grad()
 
     def build(self):
+        super().build()
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
         self.tet_wrong_order = ti.field(dtype=ti.u1, shape=(), needs_grad=False)
@@ -456,7 +457,7 @@ class FEMSolver(Solver):
             #       however, this inevitably damp the gravity.
             self.elements_v[f + 1, i_v, i_b].vel *= ti.exp(-dt * self.damping)
             # Add gravity (avoiding damping on gravity)
-            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[None]
+            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[i_b]
 
     @ti.kernel
     def compute_pos(self, f: ti.i32):
@@ -479,7 +480,7 @@ class FEMSolver(Solver):
         dt = self.substep_dt
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             self.elements_v_energy[i_b, i_v].inertia = (
-                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
+                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[i_b] * dt**2
             )
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
 
@@ -681,7 +682,7 @@ class FEMSolver(Solver):
                     )
 
             # diagonal 3-by-3 block of hessian
-            for k, i, j in ti.static(ti.ndrange(4, 3, 3)):
+            for k, i, j in ti.ndrange(4, 3, 3):
                 self.pcg_state_v[i_b, i_v[k]].diag3x3 += (
                     V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
                 )

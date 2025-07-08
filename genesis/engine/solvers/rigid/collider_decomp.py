@@ -22,9 +22,14 @@ if TYPE_CHECKING:
 
 
 class CCD_ALGORITHM_CODE(IntEnum):
+    # Our MPR (with SDF)
     MPR = 0
-    MPR_SDF = 1
+    # MuJoCo MPR
+    MJ_MPR = 1
+    # Our GJK
     GJK = 2
+    # MuJoCo GJK
+    MJ_GJK = 3
 
 
 @ti.func
@@ -54,15 +59,19 @@ class Collider:
 
         # Identify the convex collision detection (ccd) algorithm
         if self._solver._options.use_gjk_collision:
-            self.ccd_algorithm = CCD_ALGORITHM_CODE.GJK
-        elif self._solver._enable_mujoco_compatibility:
-            self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR
+            if self._solver._enable_mujoco_compatibility:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.MJ_GJK
+            else:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.GJK
         else:
-            self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR_SDF
+            if self._solver._enable_mujoco_compatibility:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.MJ_MPR
+            else:
+                self.ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
-        self._gjk = GJK(rigid_solver) if self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK else None
+        self._gjk = GJK(rigid_solver) if self._solver._options.use_gjk_collision else None
 
         # multi contact perturbation and tolerance
         if self._solver._enable_mujoco_compatibility:
@@ -152,6 +161,14 @@ class Collider:
         self._max_possible_pairs = n_possible_pairs
         self._max_collision_pairs = min(n_possible_pairs, self._solver._max_collision_pairs)
         self._max_contact_pairs = self._max_collision_pairs * self._n_contacts_per_pair
+
+        # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
+        # condition, while 'print' is slowing down the kernel even if every called in practice...
+        self._warn_msg_max_collision_pairs = (
+            f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
+            f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
+            f"'max_collision_pairs'.{formats.RESET}"
+        )
 
         ############## broad phase SAP ##############
         # This buffer stores the AABBs along the search axis of all geoms
@@ -299,23 +316,23 @@ class Collider:
                 self.n_contacts[i_b] = 0
 
     def detection(self) -> None:
-        from genesis.utils.tools import create_timer
+        # from genesis.utils.tools import create_timer
 
         self._contacts_info_cache = {}
-        timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
+        # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs()
-        timer.stamp("func_update_aabbs")
+        # timer.stamp("func_update_aabbs")
         self._func_broad_phase()
-        timer.stamp("func_broad_phase")
+        # timer.stamp("func_broad_phase")
         self._func_narrow_phase_convex_vs_convex()
         self._func_narrow_phase_convex_specializations()
-        timer.stamp("func_narrow_phase")
+        # timer.stamp("func_narrow_phase")
         if self._has_terrain:
             self._func_narrow_phase_any_vs_terrain()
-            timer.stamp("_func_narrow_phase_any_vs_terrain")
+            # timer.stamp("_func_narrow_phase_any_vs_terrain")
         if self._has_nonconvex_nonterrain:
             self._func_narrow_phase_nonconvex_vs_nonterrain()
-            timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
+            # timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
 
     @ti.func
     def _func_point_in_geom_aabb(self, point, i_g, i_b):
@@ -566,16 +583,14 @@ class Collider:
                 )
             )
 
-            for i in range(6):
-                i_axis = i % 3
-                i_m = i // 3
-
-                sign = gs.ti_float(1 - i_m * 2)
-                direction = ti.Vector([i_axis == 0, i_axis == 1, i_axis == 2], dt=gs.ti_float)
-                direction = direction * sign
-
+            for i_axis, i_m in ti.ndrange(3, 2):
+                direction = ti.Vector.zero(gs.ti_float, 3)
+                if i_m == 0:
+                    direction[i_axis] = 1.0
+                else:
+                    direction[i_axis] = -1.0
                 v1 = self._mpr.support_driver(direction, i_ga, i_b)
-                self.xyz_max_min[i, i_b] = v1[i_axis]
+                self.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
             for i in ti.static(range(3)):
                 self.prism[i, i_b][2] = self._solver.terrain_xyz_maxmin[5]
@@ -616,24 +631,27 @@ class Collider:
                                     or self.prism[4, i_b][2] >= self.xyz_max_min[5, i_b]
                                     or self.prism[5, i_b][2] >= self.xyz_max_min[5, i_b]
                                 ):
-                                    pos = ti.Vector.zero(gs.ti_float, 3)
+                                    center_a = gu.ti_transform_by_trans_quat(
+                                        self._solver.geoms_info[i_ga].center, ga_pos, ga_quat
+                                    )
+                                    center_b = ti.Vector.zero(gs.ti_float, 3)
                                     for i_p in ti.static(range(6)):
-                                        pos = pos + self.prism[i_p, i_b]
+                                        center_b = center_b + self.prism[i_p, i_b]
+                                    center_b = center_b / 6.0
 
-                                    self._solver.geoms_info[i_gb].center = pos / 6
                                     self._solver.geoms_state[i_gb, i_b].pos = ti.Vector.zero(gs.ti_float, 3)
                                     self._solver.geoms_state[i_gb, i_b].quat = gu.ti_identity_quat()
 
-                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact(
-                                        i_ga, i_gb, i_b, ti.Vector.zero(gs.ti_float, 3)
+                                    is_col, normal, penetration, contact_pos = self._mpr.func_mpr_contact_from_centers(
+                                        i_ga, i_gb, i_b, center_a, center_b
                                     )
                                     if is_col:
                                         normal = gu.ti_transform_by_quat(normal, gb_quat)
                                         contact_pos = gu.ti_transform_by_quat(contact_pos, gb_quat)
                                         contact_pos = contact_pos + gb_pos
 
-                                        i_col = self.n_contacts[i_b]
                                         valid = True
+                                        i_col = self.n_contacts[i_b]
                                         for j in range(cnt):
                                             if (
                                                 contact_pos - self.contact_data[i_col - j - 1, i_b].pos
@@ -770,11 +788,7 @@ class Collider:
                                 continue
 
                             if self.n_broad_pairs[i_b] == self._max_collision_pairs:
-                                # print(
-                                #     f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring collision pair to avoid "
-                                #     f"exceeding max ({self._max_collision_pairs}). Please increase the value of "
-                                #     f"RigidSolver's option 'max_collision_pairs'.{formats.RESET}"
-                                # )
+                                # print(self._warn_msg_max_collision_pairs)
                                 break
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][0] = i_ga
                             self.broad_collision_pairs[self.n_broad_pairs[i_b], i_b][1] = i_gb
@@ -884,22 +898,27 @@ class Collider:
                 i_ga = self.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = self.broad_collision_pairs[i_pair, i_b][1]
 
+                if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
+                    i_ga, i_gb = i_gb, i_ga
+
                 if (
                     self._solver.geoms_info[i_ga].is_convex
                     and self._solver.geoms_info[i_gb].is_convex
                     and not self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
-                    and not (
-                        self._solver._enable_multi_contact
-                        and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                    )
                     and not (
                         self._solver._box_box_detection
                         and self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
                         and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
                     )
                 ):
-                    self._func_convex_convex_contact(i_ga, i_gb, i_b)
+                    if ti.static(sys.platform == "darwin"):
+                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
+                    else:
+                        if not (
+                            self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                            and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        ):
+                            self._func_convex_convex_contact(i_ga, i_gb, i_b)
 
     @ti.kernel
     def _func_narrow_phase_convex_specializations(self):
@@ -912,15 +931,11 @@ class Collider:
                 if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
                     i_ga, i_gb = i_gb, i_ga
 
-                if (
-                    self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
-                    and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
-                ):
-                    if ti.static(sys.platform == "darwin"):
-                        # FIXME: It seems redundant, why don't we just call _func_plane_box_contact directly?
-                        # Anyway in this function, we will call _func_plane_box_contact.
-                        self._func_convex_convex_contact(i_ga, i_gb, i_b)
-                    else:
+                if ti.static(sys.platform != "darwin"):
+                    if (
+                        self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
+                        and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                    ):
                         self._func_plane_box_contact(i_ga, i_gb, i_b)
 
                 if ti.static(self._solver._box_box_detection):
@@ -1104,14 +1119,13 @@ class Collider:
 
     @ti.func
     def _func_add_contact(self, i_ga, i_gb, normal, contact_pos, penetration, i_b):
+        # print(f"Adding contact {i_ga} {i_gb}, normal:", normal, "contact_pos:", contact_pos, "penetration:", penetration)
         i_col = self.n_contacts[i_b]
 
         if i_col == self._max_contact_pairs:
-            # print(
-            #     f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            #     f"({self._max_contact_pairs}). Please increase the value of RigidSolver's option "
-            #     f"'max_collision_pairs'.{formats.RESET}"
-            # )
+            # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
+            # condition, while 'print' is slowing down the kernel even if every called in practice...
+            # print(self._warn_msg_max_collision_pairs)
             pass
         else:
             ga_info = self._solver.geoms_info[i_ga]
@@ -1196,9 +1210,6 @@ class Collider:
 
     @ti.func
     def _func_convex_convex_contact(self, i_ga, i_gb, i_b):
-        if self._solver.geoms_info[i_ga].type > self._solver.geoms_info[i_gb].type:
-            i_ga, i_gb = i_gb, i_ga
-
         if (
             self._solver.geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE
             and self._solver.geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
@@ -1264,8 +1275,8 @@ class Collider:
                         contact_pos = v1 - 0.5 * penetration * normal
                         is_col = penetration > 0
                     else:
-                        ### MPR, MPR + SDF
-                        if ti.static(self.ccd_algorithm != CCD_ALGORITHM_CODE.GJK):
+                        ### MPR, MJ_MPR
+                        if ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)):
                             # Try using MPR before anything else
                             is_mpr_updated = False
                             is_mpr_guess_direction_available = True
@@ -1299,10 +1310,10 @@ class Collider:
                                 # Because of this, it is necessary to run it twice and take the contact information
                                 # associated with the point of deepest penetration.
                                 try_sdf = True
-                        ### GJK
-                        elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
-                            # If it was not the first detection, only detect single contact point.
-                            self._gjk.func_gjk_contact(i_ga, i_gb, i_b, i_detection == 0)
+
+                        ### GJK, MJ_GJK
+                        elif ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)):
+                            self._gjk.func_gjk_contact(i_ga, i_gb, i_b)
 
                             is_col = self._gjk.is_col[i_b] == 1
                             penetration = self._gjk.penetration[i_b]
@@ -1313,19 +1324,18 @@ class Collider:
                                     # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
-                                        if i_c >= self._n_contacts_per_pair:
-                                            # Ignore contact points if the number of contacts exceeds the limit.
-                                            break
-                                        contact_pos = self._gjk.contact_pos[i_b, i_c]
-                                        normal = self._gjk.normal[i_b, i_c]
-                                        self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
+                                        # Ignore contact points if the number of contacts exceeds the limit.
+                                        if i_c < self._n_contacts_per_pair:
+                                            contact_pos = self._gjk.contact_pos[i_b, i_c]
+                                            normal = self._gjk.normal[i_b, i_c]
+                                            self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
 
                                     break
                                 else:
                                     contact_pos = self._gjk.contact_pos[i_b, 0]
                                     normal = self._gjk.normal[i_b, 0]
 
-                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR_SDF):
+                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         if try_sdf:
                             is_col_a = False
                             is_col_b = False
@@ -1391,7 +1401,7 @@ class Collider:
                             axis_0, axis_1 = self._func_contact_orthogonals(i_ga, i_gb, normal, i_b)
                             n_con = 1
 
-                        if ti.static(not self._solver._enable_mujoco_compatibility):
+                        if ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                             self.contact_cache[i_ga, i_gb, i_b].normal = normal
                     else:
                         # Clear collision normal cache if not in contact
@@ -1399,7 +1409,7 @@ class Collider:
                         self.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    if ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MPR_SDF):
+                    if ti.static(self.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                         # 1. Project the contact point on both geometries
                         # 2. Revert the effect of small rotation
                         # 3. Update contact point
@@ -1436,9 +1446,9 @@ class Collider:
                         # dynamics since zero-penetration contact points should not induce any force.
                         penetration = normal.dot(contact_point_b - contact_point_a)
 
-                    elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.GJK):
+                    elif ti.static(self.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         # Only change penetration to the initial one, because the normal vector could change abruptly
-                        # under GJK-EPA as the nearest simplex is determined by discrete logic, unlike MPR.
+                        # under MuJoCo's GJK-EPA.
                         penetration = penetration_0
 
                     # Discard contact point is repeated
@@ -1456,10 +1466,10 @@ class Collider:
                             self._func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b)
                             n_con = n_con + 1
 
-                    self._solver.geoms_state[i_ga, i_b].pos = ga_pos
-                    self._solver.geoms_state[i_ga, i_b].quat = ga_quat
-                    self._solver.geoms_state[i_gb, i_b].pos = gb_pos
-                    self._solver.geoms_state[i_gb, i_b].quat = gb_quat
+                self._solver.geoms_state[i_ga, i_b].pos = ga_pos
+                self._solver.geoms_state[i_ga, i_b].quat = ga_quat
+                self._solver.geoms_state[i_gb, i_b].pos = gb_pos
+                self._solver.geoms_state[i_gb, i_b].quat = gb_quat
 
     @ti.func
     def _func_rotate_frame(self, i_g, contact_pos, qrot, i_b):
@@ -2074,7 +2084,7 @@ class Collider:
         # Early return if already pre-computed
         contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
-            return contacts_info
+            return contacts_info.copy()
 
         # Find out how much dynamic memory must be allocated
         n_contacts = tuple(self.n_contacts.to_numpy())
@@ -2142,7 +2152,7 @@ class Collider:
         # Cache contact information before returning
         self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
 
-        return contacts_info
+        return contacts_info.copy()
 
     @ti.kernel
     def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):

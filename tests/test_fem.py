@@ -3,6 +3,8 @@ import pytest
 import igl
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
+
 from .utils import assert_allclose
 
 
@@ -243,7 +245,7 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = state.pos.detach().cpu().numpy()
+        pos = tensor_to_array(state.pos)
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
             min_pos_z, 0.0, atol=5e-2
@@ -281,7 +283,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = state.pos.detach().cpu().numpy()
+        pos = tensor_to_array(state.pos)
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
             min_pos_z, 0.0, atol=2e-3
@@ -326,7 +328,7 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = state.pos.detach().cpu().numpy().reshape(-1, 3)
+        pos = tensor_to_array(state.pos.reshape(-1, 3))
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
             min_pos_z, 0.0, atol=2e-3

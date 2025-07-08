@@ -164,8 +164,8 @@ class LBVH(RBC):
         # Nodes of the BVH, first n_aabbs - 1 are internal nodes, last n_aabbs are leaf nodes
         self.nodes = self.Node.field(shape=(self.n_batches, self.n_aabbs * 2 - 1))
         # Whether an internal node has been visited during traversal
-        self.internal_node_active = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
-        self.internal_node_ready = ti.field(ti.u8, shape=(self.n_batches, self.n_aabbs - 1))
+        self.internal_node_active = ti.field(ti.u1, shape=(self.n_batches, self.n_aabbs - 1))
+        self.internal_node_ready = ti.field(ti.u1, shape=(self.n_batches, self.n_aabbs - 1))
         self.updated = ti.field(ti.u1, shape=())
 
         # Query results, vec3 of batch id, self id, query id
@@ -256,7 +256,7 @@ class LBVH(RBC):
         for i_b in ti.ndrange(self.n_batches):
             scale = self.aabb_max[i_b] - self.aabb_min[i_b]
             for i in ti.static(range(3)):
-                self.scale[i_b][i] = ti.select(scale[i] > 1e-7, 1.0 / scale[i], 1)
+                self.scale[i_b][i] = ti.select(scale[i] > gs.EPS, 1.0 / scale[i], 1.0)
 
     @ti.kernel
     def compute_morton_codes(self):
@@ -453,10 +453,8 @@ class LBVH(RBC):
     @ti.kernel
     def _kernel_compute_bounds_init(self):
         self.updated[None] = True
-
-        for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            self.internal_node_active[i_b, i] = ti.u8(0)
-            self.internal_node_ready[i_b, i] = ti.u8(0)
+        self.internal_node_active.fill(False)
+        self.internal_node_ready.fill(False)
 
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs):
             idx = ti.i32(self.morton_codes[i_b, i])
@@ -464,13 +462,13 @@ class LBVH(RBC):
             self.nodes[i_b, i + self.n_aabbs - 1].bound.max = self.aabbs[i_b, idx].max
             parent_idx = self.nodes[i_b, i + self.n_aabbs - 1].parent
             if parent_idx != -1:
-                self.internal_node_active[i_b, parent_idx] = ti.u8(1)
+                self.internal_node_active[i_b, parent_idx] = True
 
     @ti.kernel
     def _kernel_compute_bounds_one_layer(self):
         self.updated[None] = False
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            if self.internal_node_active[i_b, i] == ti.uint8(0):
+            if not self.internal_node_active[i_b, i]:
                 continue
             left_bound = self.nodes[i_b, self.nodes[i_b, i].left].bound
             right_bound = self.nodes[i_b, self.nodes[i_b, i].right].bound
@@ -478,15 +476,15 @@ class LBVH(RBC):
             self.nodes[i_b, i].bound.max = ti.max(left_bound.max, right_bound.max)
             parent_idx = self.nodes[i_b, i].parent
             if parent_idx != -1:
-                self.internal_node_ready[i_b, parent_idx] = ti.u8(1)
-            self.internal_node_active[i_b, i] = ti.u8(0)
+                self.internal_node_ready[i_b, parent_idx] = True
+            self.internal_node_active[i_b, i] = False
             self.updated[None] = True
 
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            if self.internal_node_ready[i_b, i] == ti.uint8(0):
+            if not self.internal_node_ready[i_b, i]:
                 continue
-            self.internal_node_active[i_b, i] = ti.u8(1)
-            self.internal_node_ready[i_b, i] = ti.u8(0)
+            self.internal_node_active[i_b, i] = True
+            self.internal_node_ready[i_b, i] = False
 
     @ti.kernel
     def query(self, aabbs: ti.template()):
