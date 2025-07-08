@@ -930,9 +930,7 @@ class RRTConnect(PathPlanner):
 # ------------------------------------------------------------------------------------
 
 
-def align_weypoints_length(
-    path: torch.Tensor, mask: torch.Tensor, num_points: int
-) -> torch.Tensor:
+def align_weypoints_length(path: torch.Tensor, mask: torch.Tensor, num_points: int) -> torch.Tensor:
     """
     Aligns each waypoints length to the given num_points.
 
@@ -949,14 +947,16 @@ def align_weypoints_length(
     -------
         A new 2D PyTorch tensor [num_points, B, Dof]
     """
-    t_path = path.permute(1, 2, 0) # [B, Dof, N]
-    res = torch.zeros(num_points, t_path.shape[0], t_path.shape[1], device=gs.device) # [num_points, B, Dof]
+    t_path = path.permute(1, 2, 0)  # [B, Dof, N]
+    res = torch.zeros((num_points, t_path.shape[0], t_path.shape[1]), device=gs.device)  # [num_points, B, Dof]
     for i_b in range(t_path.shape[0]):
-        if mask[:, i_b].sum() == 0:
+        if not mask[:, i_b].any():
             continue
         interpolated_path = torch.nn.functional.interpolate(
-            t_path[i_b:i_b+1, :, mask[:, i_b]], size=num_points, mode="linear", align_corners=True
-        ).squeeze(0) # [Dof, num_points]
+            t_path[i_b : i_b + 1, :, mask[:, i_b]], size=num_points, mode="linear", align_corners=True
+        ).squeeze(
+            0
+        )  # [Dof, num_points]
         res[:, i_b] = interpolated_path.T
     return res
 

@@ -1579,7 +1579,7 @@ class RigidEntity(Entity):
             Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
             for validity along a path segment. Default to 1%.
         timeout : float, optional
-            The max time to spend for each planning in seconds. Note that the timeout is not exact. 
+            The max time to spend for each planning in seconds. Note that the timeout is not exact.
         max_retry : float, optional
             Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
