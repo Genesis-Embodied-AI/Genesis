@@ -2177,14 +2177,16 @@ def test_get_weld_constraints_basic(show_viewer, tol):
     scene.build(n_envs=1)
 
     rigid = scene.sim.rigid_solver
-    link1 = np.array([cube1.base_link.idx], dtype=gs.np_int)
-    link2 = np.array([cube2.base_link.idx], dtype=gs.np_int)
+    link_a = np.array([cube1.base_link.idx], dtype=gs.np_int)
+    link_b = np.array([cube2.base_link.idx], dtype=gs.np_int)
 
-    rigid.add_weld_constraint(link1, link2)
+    rigid.add_weld_constraint(link_a, link_b)
     scene.step()
 
     welds = rigid.get_weld_constraints()
-    assert_allclose(tuple(welds[0]), (0, link1[0], link2[0]), tol=tol)
+    row = np.array([welds["env"][0], welds["obj_a"][0], welds["obj_b"][0]], dtype=np.int32)
+    ref = np.array([0, link_a[0], link_b[0]], dtype=np.int32)
+    assert_allclose(row, ref, tol=tol)
 
 
 @pytest.mark.required

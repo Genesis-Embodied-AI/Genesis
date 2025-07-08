@@ -5005,19 +5005,37 @@ class RigidSolver(Solver):
     def get_weld_constraints(self, envs_idx=None):
         if envs_idx is None:
             envs_idx = np.arange(self.n_envs, dtype=np.int32)
+        envs_idx = np.atleast_1d(envs_idx)
 
-        rows = []
-        for env in np.atleast_1d(envs_idx):
+        env_col, obj_a_col, obj_b_col = [], [], []
+        WELD = gs.EQUALITY_TYPE.WELD
+
+        for env in envs_idx:
             n_eq = int(self.constraint_solver.ti_n_equalities[env])
             for i in range(n_eq):
                 rec = self.equalities_info[i, env]
-                if rec.eq_type == gs.EQUALITY_TYPE.WELD:
-                    rows.append((env, int(rec.eq_obj1id), int(rec.eq_obj2id)))
-        return np.asarray(rows, dtype=np.int32)
+                if rec.eq_type == WELD:
+                    env_col.append(env)
+                    obj_a_col.append(int(rec.eq_obj1id))
+                    obj_b_col.append(int(rec.eq_obj2id))
 
-    # ------------------------------------------------------------------------------------
-    # ----------------------------------- properties -------------------------------------
-    # ------------------------------------------------------------------------------------
+        obj_a = np.asarray(obj_a_col, dtype=np.int32)
+        obj_b = np.asarray(obj_b_col, dtype=np.int32)
+
+        if self.n_envs == 0:
+            return {"obj_a": obj_a, "obj_b": obj_b}
+
+        env_arr = np.asarray(env_col, dtype=np.int32)
+        valid_mask = np.zeros((self.n_envs, obj_a.shape[0]), dtype=bool)
+        for j, e in enumerate(env_arr):
+            valid_mask[e, j] = True
+
+        return {
+            "env": env_arr,
+            "obj_a": obj_a,
+            "obj_b": obj_b,
+            "valid_mask": valid_mask,
+        }
 
     @property
     def links(self):
