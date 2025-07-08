@@ -35,6 +35,13 @@ class ConstraintSolver:
         self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
         self.ti_n_equalities.from_numpy(np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int))
 
+        jac_shape = self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
+        if (jac_shape[0] * jac_shape[1] * jac_shape[2]) > np.iinfo(np.int32).max:
+            raise ValueError(
+                f"Jacobian shape {jac_shape} is too large for int32. "
+                "Consider reducing the number of constraints or the number of degrees of freedom."
+            )
+
         self.jac = ti.field(
             dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
         )
