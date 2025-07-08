@@ -3,11 +3,13 @@ from urllib import request
 import numpy as np
 import pygltflib
 import trimesh
-from scipy.spatial.transform import Rotation as R
 from PIL import Image
 
 import genesis as gs
+
 from . import mesh as mu
+from . import geom as gu
+
 
 ctype_to_numpy = {
     5120: np.int8,  # BYTE
@@ -266,7 +268,8 @@ def parse_glb_tree(glb, node_index):
             transform[:3, 3] = node.translation
             non_identity = True
         if node.rotation is not None:
-            transform[:3, :3] = R.from_quat(node.rotation).as_matrix()  # xyzw
+            quat = np.array(node.rotation, dtype=np.float32)[[3, 0, 1, 2]]
+            gu.quat_to_R(quat, out=transform[:3, :3])
             non_identity = True
         if node.scale is not None:
             transform[:3, :3] *= node.scale
