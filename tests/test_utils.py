@@ -1,17 +1,19 @@
+from unittest.mock import patch
+
 import pytest
 import torch
 import numpy as np
-from unittest.mock import patch
-import pytest
+from scipy.spatial.transform import Rotation
 
 import genesis as gs
 from genesis.utils.geom import *
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
-from scipy.spatial.transform import Rotation as R
+
 from .utils import (
     assert_allclose,
 )
+
 
 TOL = 1e-7
 
@@ -28,7 +30,7 @@ def clear_seen_fixture():
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
 def test_torch_round_trip(batch_size):
     print(f"Testing torch implementation with batch size {batch_size}...")
-    rot = R.random(batch_size)
+    rot = Rotation.random(batch_size)
     R_np = rot.as_matrix()
     if batch_size == 1:
         R_np = R_np[0]
@@ -43,7 +45,7 @@ def test_torch_round_trip(batch_size):
 @pytest.mark.parametrize("batch_size", [1, 10, 100])
 def test_numpy_round_trip(batch_size):
     print(f"Testing numpy implementation with batch size {batch_size}...")
-    rot = R.random(batch_size)
+    rot = Rotation.random(batch_size)
     R_np = rot.as_matrix()
     if batch_size == 1:
         R_np = R_np[0]
