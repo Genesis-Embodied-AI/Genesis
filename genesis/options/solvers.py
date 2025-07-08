@@ -115,16 +115,17 @@ class SAPCouplerOptions(CouplerOptions):
     n_pcg_iterations : int, optional
         Number of iterations for the Preconditioned Conjugate Gradient solver. Defaults to 100.
     n_linesearch_iterations : int, optional
-        Number of iterations for the line search solver. Defaults to 10.
+        Max number of iterations for the line search solver. Defaults to 10.
     sap_threshold : float, optional
         Threshold for the SAP solver. Defaults to 1e-6.
     pcg_threshold : float, optional
         Threshold for the Preconditioned Conjugate Gradient solver. Defaults to 1e-6.
     linesearch_c : float, optional
-        Line search sufficient decrease parameter. Defaults to 1e-4.
+        Line search sufficient decrease parameter for backtracking linesearch. Defaults to 1e-4.
     linesearch_tau : float, optional
-        Line search step size reduction factor. Defaults to 0.8.
-
+        Line search step size reduction factor for backtracking linesearch. Defaults to 0.8.
+    use_exact_linesearch : bool, optional
+        Whether to use exact linesearch. Defaults to True.
     Note
     ----
     Paper reference: https://arxiv.org/abs/2110.10107
@@ -138,6 +139,10 @@ class SAPCouplerOptions(CouplerOptions):
     pcg_threshold: float = 1e-6
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.8
+    use_exact_linesearch: bool = True
+    fem_floor_tet: bool = False  # Whether to use tetrahedral based contact against the floor
+    fem_floor_vert: bool = True  # Whether to use vertex based contact agianst the floor
+    fem_self_tet: bool = True  # Whether to use tetrahedral based self-contact
 
 
 ############################ Solvers inside simulator ############################

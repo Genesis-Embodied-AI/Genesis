@@ -186,12 +186,21 @@ class LBVH(RBC):
 
     def register_fem_tet_filter(self, fem_solver):
         """
-        Register a filter function for FEM tetrahedralized vertices.
+        Register a filter function for FEM tetrahedrals.
 
         This function is used to filter out AABBs that do not meet certain criteria during the query phase.
         """
         self.fem_solver = fem_solver
         self.filter = self.fem_tet_filter
+
+    def register_fem_surface_tet_filter(self, fem_solver):
+        """
+        Register a filter function for FEM surface tetrahedrals.
+
+        This function is used to filter out AABBs that do not meet certain criteria during the query phase.
+        """
+        self.fem_solver = fem_solver
+        self.filter = self.fem_surface_tet_filter
 
     @ti.func
     def dummy_filter(self, i_b, i_a, i_q):
@@ -211,6 +220,21 @@ class LBVH(RBC):
             result = True
         i_av = self.fem_solver.elements_i[i_a].el2v
         i_qv = self.fem_solver.elements_i[i_q].el2v
+        for i, j in ti.static(ti.ndrange(4, 4)):
+            if i_av[i] == i_qv[j]:
+                result = True
+        return result
+
+    @ti.func
+    def fem_surface_tet_filter(self, i_b, i_a, i_q):
+        """
+        Filter function for FEM tets. Filter out tet that share vertices
+        """
+        result = False
+        if i_a >= i_q:
+            result = True
+        i_av = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_a]].el2v
+        i_qv = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_q]].el2v
         for i, j in ti.static(ti.ndrange(4, 4)):
             if i_av[i] == i_qv[j]:
                 result = True

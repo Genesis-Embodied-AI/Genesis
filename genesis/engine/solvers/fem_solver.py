@@ -290,8 +290,11 @@ class FEMSolver(Solver):
         self.surface_elements.from_numpy(self.surface_elements_np)
 
         self.surface_triangles_np = self.surface.tri2v.to_numpy().reshape(-1, 3)
-        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :].reshape(-1, 3)
-        mass = igl.massmatrix(pos_np, self.surface_triangles_np)
+        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :].reshape(-1, 3)[self.surface_vertices_np]
+        surface_vertices_mapping = np.ones(self.n_vertices, dtype=np.int32) * -1
+        for i, v in enumerate(self.surface_vertices_np):
+            surface_vertices_mapping[v] = i
+        mass = igl.massmatrix(pos_np, surface_vertices_mapping[self.surface_triangles_np])
         self.surface_vert_mass_np = mass.diagonal()
         self.surface_vert_mass = ti.field(
             dtype=gs.ti_float,
