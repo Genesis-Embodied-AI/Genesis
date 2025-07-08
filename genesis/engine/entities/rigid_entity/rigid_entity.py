@@ -1,12 +1,11 @@
-import math
 from copy import copy
 from itertools import chain
 from typing import Literal
 
 import numpy as np
-import trimesh
 import taichi as ti
 import torch
+import trimesh
 
 import genesis as gs
 from genesis.engine.materials.base import Material
@@ -20,10 +19,11 @@ from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
 from genesis.utils.path_planing import RRT, RRTConnect
+
 from ..base_entity import Entity
+from .rigid_equality import RigidEquality
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
-from .rigid_equality import RigidEquality
 
 
 @ti.data_oriented
@@ -1574,10 +1574,11 @@ class RigidEntity(Entity):
         qpos_goal : array_like
             The goal state. [B, Nq] or [1, Nq]
         qpos_start : None | array_like, optional
-            The start state. If None, the current state of the rigid entity will be used. Defaults to None. [B, Nq] or [1, Nq]
+            The start state. If None, the current state of the rigid entity will be used. 
+            Defaults to None. [B, Nq] or [1, Nq]
         resolution : float, optiona
-            Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
-            for validity along a path segment. Default to 1%.
+            Joint-space resolution. It corresponds to the maximum distance between states to be checked
+            for validity along a path segment.
         timeout : float, optional
             The max time to spend for each planning in seconds. Note that the timeout is not exact.
         max_retry : float, optional
@@ -1585,13 +1586,15 @@ class RigidEntity(Entity):
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
         num_waypoints : int, optional
-            The number of waypoints to interpolate the path. If None, no interpolation will be performed. Defaults to 100.
+            The number of waypoints to interpolate the path. If None, no interpolation will be performed. 
+            Defaults to 100.
         ignore_collision : bool, optional
             Whether to ignore collision checking during motion planning. Defaults to False.
         ignore_joint_limit : bool, optional
             This option has been deprecated and is not longer doing anything.
         planner : str, optional
-            The name of the motion planning algorithm to use. Supported planners: 'RRT', 'RRTConnect'. Defaults to 'RRTConnect'.
+            The name of the motion planning algorithm to use.
+            Supported planners: 'RRT', 'RRTConnect'. Defaults to 'RRTConnect'.
         envs_idx : None | array_like, optional
             The indices of the environments to set. If None, all environments will be set. Defaults to None.
         return_valid_mask: bool
@@ -1622,13 +1625,13 @@ class RigidEntity(Entity):
 
         match planner:
             case "RRT":
-                p = RRT(self)
+                planner_obj = RRT(self)
             case "RRTConnect":
-                p = RRTConnect(self)
+                planner_obj = RRTConnect(self)
             case _:
                 gs.raise_exception(f"invalid planner {planner} specified.")
 
-        path, is_invalid = p.plan(
+        path, is_invalid = planner_obj.plan(
             qpos_goal,
             qpos_start=qpos_start,
             resolution=resolution,
@@ -1642,10 +1645,10 @@ class RigidEntity(Entity):
             obj_entity=with_entity,
         )
 
-        for i in range(max_retry):
+        for i in range(max_retry + 1):
             if is_invalid.any():
                 gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
-                retry_path, retry_is_invalid = p.plan(
+                retry_path, retry_is_invalid = planner_obj.plan(
                     qpos_goal,
                     qpos_start=qpos_start,
                     resolution=resolution,
@@ -1659,7 +1662,7 @@ class RigidEntity(Entity):
                     obj_entity=with_entity,
                 )
                 path[:, is_invalid] = retry_path[:, is_invalid]
-                is_invalid = torch.logical_and(is_invalid, retry_is_invalid)
+                is_invalid &= retry_is_invalid
 
         if self._solver.n_envs == 0:
             if return_valid_mask:

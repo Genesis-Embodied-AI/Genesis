@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
+import time
+
 import taichi as ti
 import torch
 import torch.nn.functional as F
-import time
+
 import genesis as gs
-import genesis.utils.geom as gg
+import genesis.utils.geom as gu
 
 
 class PathPlanner(ABC):
@@ -23,38 +25,43 @@ class PathPlanner(ABC):
         self,
         qpos_goal,
         qpos_start=None,
-    ): ...
+    ):
+        ...
 
     def get_link_transformation(self, robot_g_link_idx, obj_g_link_idx):
         """
-        get transformation from robot link to the object link
+        Get the relative pose of a given robot link wrt some object link as an homogeneous transformation matrix.
+
+        Parameters
+        ----------
         robot_g_link_idx: int
-            global link idx of the link of the robot
+            Global link idx of the link of the robot.
         obj_g_link_idx: int
-            global link idx of the base link of the object
+            Global link idx of the base link of the object.
         """
-        robot_T = gg.trans_quat_to_T(
+        robot_T = gu.trans_quat_to_T(
             self._solver.get_links_pos(links_idx=robot_g_link_idx),
             self._solver.get_links_quat(links_idx=robot_g_link_idx),
         )
-        obj_T = gg.trans_quat_to_T(
-            self._solver.get_links_pos(links_idx=obj_g_link_idx), self._solver.get_links_quat(links_idx=obj_g_link_idx)
+        obj_T = gu.trans_quat_to_T(
+            self._solver.get_links_pos(links_idx=obj_g_link_idx),
+            self._solver.get_links_quat(links_idx=obj_g_link_idx)
         )
         T_robot_object = torch.linalg.inv(robot_T) @ obj_T
         return T_robot_object
 
     def update_object(self, ee_link_idx, obj_link_idx, T_robot_object, envs_idx):
         if self._solver.n_envs > 0:
-            robot_T = gg.trans_quat_to_T(
+            robot_T = gu.trans_quat_to_T(
                 self._solver.get_links_pos(ee_link_idx, envs_idx=envs_idx),
                 self._solver.get_links_quat(ee_link_idx, envs_idx=envs_idx),
             )
         else:
-            robot_T = gg.trans_quat_to_T(
+            robot_T = gu.trans_quat_to_T(
                 self._solver.get_links_pos(ee_link_idx), self._solver.get_links_quat(ee_link_idx)
             )
         obj_T = robot_T @ T_robot_object
-        trans, quat = gg.T_to_trans_quat(obj_T)
+        trans, quat = gu.T_to_trans_quat(obj_T)
         if self._solver.n_envs > 0:
             self._solver.set_base_links_pos(trans, obj_link_idx, envs_idx=envs_idx)
             self._solver.set_base_links_quat(quat, obj_link_idx, envs_idx=envs_idx)
@@ -75,14 +82,19 @@ class PathPlanner(ABC):
                 qpos_start = qpos_start.unsqueeze(0)
             assert qpos_start.ndim == 2
             if qpos_start.shape[0] == 1:
-                qpos_start = qpos_start.repeat(len(envs_idx), 1)
+                qpos_start = qpos_start.expand(len(envs_idx), -1)
 
         if qpos_goal.ndim == 1:
             qpos_goal = qpos_goal.unsqueeze(0)
         assert qpos_goal.ndim == 2
         if qpos_goal.shape[0] == 1:
-            qpos_goal = qpos_goal.repeat(len(envs_idx), 1)
-        return qpos_cur, qpos_goal, qpos_start, envs_idx
+            qpos_goal = qpos_goal.expand(len(envs_idx), -1)
+        
+        assert qpos_goal.shape[0] == len(envs_idx)
+        assert qpos_start.shape[0] == len(envs_idx)
+        assert qpos_start.shape[-1] == qpos_goal.shape[-1]
+
+        return qpos_cur, qpos_goal.contiguous(), qpos_start.contiguous(), envs_idx
 
     def get_exclude_geom_pairs(self, qpos_goal, qpos_start, envs_idx):
         if self._solver.n_envs > 0:
@@ -126,10 +138,10 @@ class PathPlanner(ABC):
     @ti.kernel
     def interpolate_path(
         self,
-        tensor: ti.types.ndarray(),  # [N, B, Dof]
         path: ti.types.ndarray(),  # [N, B, Dof]
         sample_ind: ti.types.ndarray(),  # [B, 2]
         mask: ti.types.ndarray(),  # [B]
+        tensor: ti.types.ndarray(),  # [N, B, Dof]
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(path.shape[1]):
@@ -255,7 +267,7 @@ class PathPlanner(ABC):
             ind = torch.multinomial(path_mask.T, 2).sort()[0]  # B, 2
             ind_mask = (ind[:, 1] - ind[:, 0]) > 1
             result_path = path.clone()
-            self.interpolate_path(result_path.contiguous(), path.contiguous(), ind.contiguous(), ind_mask)
+            self.interpolate_path(path.contiguous(), ind, ind_mask, result_path)
             collision_mask = self.check_collision(
                 result_path,
                 ignore_geom_pairs,
@@ -451,7 +463,7 @@ class RRT(PathPlanner):
 
         self._init_rrt_fields(max_nodes=max_nodes, max_step_size=resolution)
         self._reset_rrt_fields()
-        self._kernel_rrt_init(qpos_start.contiguous(), qpos_goal.contiguous(), envs_idx)
+        self._kernel_rrt_init(qpos_start, qpos_goal, envs_idx)
 
         gs.logger.info("start rrt planning...")
         start = time.time()
@@ -790,7 +802,7 @@ class RRTConnect(PathPlanner):
 
         self._init_rrt_connect_fields(max_nodes=max_nodes, max_step_size=resolution)
         self._reset_rrt_connect_fields()
-        self._kernel_rrt_connect_init(qpos_start.contiguous(), qpos_goal.contiguous(), envs_idx)
+        self._kernel_rrt_connect_init(qpos_start, qpos_goal, envs_idx)
 
         gs.logger.info("start rrt connect planning...")
         start = time.time()
