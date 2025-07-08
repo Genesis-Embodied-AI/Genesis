@@ -339,3 +339,57 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         assert_allclose(y_scale, 0.2, atol=1e-3), f"Entity {entity.uid} Y scale {y_scale} is not close to 0.2."
         # The Z scale is expected to be more squashed due to gravity
         assert_allclose(z_scale, 0.2, atol=2e-3), f"Entity {entity.uid} Z scale {z_scale} is not close to 0.2."
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear_corotated_soft():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
+
+
+def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+    )
+
+    # Add first FEM entity
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.1),
+            radius=0.1,
+        ),
+        material=fem_material_linear_corotated_soft,
+    )
+
+    # Add second FEM entity
+    scale = 0.1
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/cube8.obj",
+            scale=scale,
+            pos=np.array([0.0, 0.0, scale * 4.0], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    # Build the scene
+    scene.build(n_envs=1)
+    # Run simulation
+    for _ in range(200):
+        scene.step()
+
+    for entity in scene.entities:
+        state = entity.get_state()
+        pos = state.pos.detach().cpu().numpy()
+        min_pos_z = np.min(pos[..., 2])
+        assert_allclose(
+            min_pos_z, 0.0, atol=2e-3
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."

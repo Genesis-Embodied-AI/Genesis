@@ -126,6 +126,12 @@ class SAPCouplerOptions(CouplerOptions):
         Line search step size reduction factor for backtracking linesearch. Defaults to 0.8.
     use_exact_linesearch : bool, optional
         Whether to use exact linesearch. Defaults to True.
+    fem_floor_tet : bool, optional
+        Whether to use tetrahedral based contact against the floor. Defaults to True.
+    fem_floor_vert : bool, optional
+        Whether to use vertex based contact against the floor. Defaults to False.
+    fem_self_tet : bool, optional
+        Whether to use tetrahedral based self-contact. Defaults to True.
     Note
     ----
     Paper reference: https://arxiv.org/abs/2110.10107
@@ -140,9 +146,9 @@ class SAPCouplerOptions(CouplerOptions):
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.8
     use_exact_linesearch: bool = True
-    fem_floor_tet: bool = False  # Whether to use tetrahedral based contact against the floor
-    fem_floor_vert: bool = True  # Whether to use vertex based contact agianst the floor
-    fem_self_tet: bool = True  # Whether to use tetrahedral based self-contact
+    fem_floor_tet: bool = True
+    fem_floor_vert: bool = False
+    fem_self_tet: bool = True
 
 
 ############################ Solvers inside simulator ############################
