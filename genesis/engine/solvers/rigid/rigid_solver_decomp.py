@@ -545,7 +545,7 @@ class RigidSolver(Solver):
             dofs_info[I].kp = dofs_kp[i]
             dofs_info[I].kv = dofs_kv[i]
 
-        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level) < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i, b in ti.ndrange(n_dofs, _B):
             dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
 
