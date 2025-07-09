@@ -35,6 +35,9 @@ class Vec3:
     def __rmul__(self, other: float) -> 'Vec3':
         return Vec3(self.v * np.float32(other))
 
+    def __neg__(self) -> 'Vec3':
+        return Vec3(-self.v)
+
     def dot(self, other: 'Vec3') -> float:
         return np.dot(self.v, other.v).item()
 
@@ -43,6 +46,9 @@ class Vec3:
 
     def normalized(self) -> 'Vec3':
         return Vec3(self.v / (np.linalg.norm(self.v) + 1e-24))
+
+    def magnitude(self) -> float:
+        return np.linalg.norm(self.v)
 
     def copy(self) -> 'Vec3':
         return Vec3(self.v.copy())

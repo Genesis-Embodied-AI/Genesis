@@ -3,6 +3,7 @@ from typing_extensions import override
 
 import numpy as np
 from numpy.typing import NDArray
+import torch
 
 import genesis as gs
 from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
@@ -10,7 +11,7 @@ from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 from .aabb import AABB
 from .ray import Plane, Ray, RayHit
 from .vec3 import Pose, Quat, Vec3, Color
-from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE
+from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
@@ -24,14 +25,6 @@ class ViewerInteraction(ViewerInteractionBase):
     - mouse dragging
     """
 
-    camera: 'Node'
-    scene: 'Scene'
-    viewport_size: tuple[int, int]
-    camera_yfov: float
-
-    tan_half_fov: float
-    prev_mouse_pos: tuple[int, int]
-
     def __init__(self, 
         camera: 'Node', 
         scene: 'Scene', 
@@ -41,13 +34,18 @@ class ViewerInteraction(ViewerInteractionBase):
         camera_fov: float = 60.0,
     ):
         super().__init__(log_events)
-        self.camera = camera
-        self.scene = scene
-        self.viewport_size = viewport_size
-        self.camera_yfov = camera_yfov
+        self.camera: 'Node' = camera
+        self.scene: 'Scene' = scene
+        self.viewport_size: tuple[int, int] = viewport_size
+        self.camera_yfov: float = camera_yfov
 
-        self.tan_half_fov = np.tan(0.5 * self.camera_yfov)
-        self.prev_mouse_pos = tuple(np.array(viewport_size) / 2)
+        self.tan_half_fov: float = np.tan(0.5 * self.camera_yfov)
+        self.prev_mouse_pos: tuple[int, int] = tuple(np.array(viewport_size) / 2)
+
+        self.picked_entity: RigidEntity | None = None
+        self.picked_point_in_local: Vec3 | None = None
+        self.mouse_drag_plane: Plane | None = None
+        self.prev_mouse_3d_pos: Vec3 | None = None
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -58,17 +56,55 @@ class ViewerInteraction(ViewerInteractionBase):
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_drag(x, y, dx, dy, buttons, modifiers)
         self.prev_mouse_pos = (x, y)
+        if self.picked_entity:
+            mouse_ray: Ray = self.screen_position_to_ray(x, y)
+            ray_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
+            assert ray_hit.is_hit
+            if ray_hit.is_hit:
+                new_mouse_3d_pos: Vec3 = ray_hit.position
+                delta_3d_pos: Vec3 = new_mouse_3d_pos - self.prev_mouse_3d_pos
+                self.prev_mouse_3d_pos = new_mouse_3d_pos
+
+                use_force: bool = False
+                if use_force:
+                    # apply force
+                    pass
+                else:
+                    #apply displacement
+                    pos = Vec3(self.picked_entity.get_pos().cpu().numpy())
+                    pos = pos + delta_3d_pos
+                    self.picked_entity.set_pos(torch.tensor(pos.v))
+
+            return EVENT_HANDLED
 
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_press(x, y, button, modifiers)
+        if button == 1: # left mouse button
+            (ray_hit, self.picked_entity) = self.raycast_against_entities(self.screen_position_to_ray(x, y))
+            if self.picked_entity and ray_hit:
+                temp_fwd = self.get_camera_forward()
+                temp_back = -temp_fwd
+
+                self.mouse_drag_plane = Plane(temp_back, ray_hit.position)
+                self.prev_mouse_3d_pos = ray_hit.position
+
+                pose: Pose = self.get_pose_of_first_geom(self.picked_entity)
+                self.picked_point_in_local = pose.inverse_transform_point(ray_hit.position)
+
+    @override
+    def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
+        super().on_mouse_release(x, y, button, modifiers)
+        if button == 1: # left mouse button
+            self.picked_entity = None
+            self.picked_point_in_local = None
 
     @override
     def on_draw(self) -> None:
         super().on_draw()
         if self.scene._visualizer is not None and self.scene._visualizer.viewer_lock is not None:
             self.scene.clear_debug_objects()
-            mouse_ray = self.screen_position_to_ray(*self.prev_mouse_pos)
+            mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
             closest_hit = None
             hit_entity: RigidEntity | None = None
 
@@ -88,6 +124,20 @@ class ViewerInteraction(ViewerInteractionBase):
                 self._draw_arrow(closest_hit.position, 0.25 * closest_hit.normal, (0, 1, 0, 1))
             if hit_entity:
                 self._draw_entity_unrotated_oobb(hit_entity)
+
+            if self.picked_entity:
+                assert self.mouse_drag_plane is not None
+                assert self.picked_point_in_local is not None
+
+                # draw held point
+                pose: Pose = self.get_pose_of_first_geom(self.picked_entity)
+                held_point: Vec3 = pose.transform_point(self.picked_point_in_local)
+                self.scene.draw_debug_sphere(held_point.v, 0.02, Color.red().tuple())
+
+                plane_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
+                if plane_hit.is_hit:
+                    self.scene.draw_debug_sphere(plane_hit.position.v, 0.02, Color.red().tuple())
+                    self.scene.draw_debug_line(held_point.v, plane_hit.position.v, color=Color.red().tuple())
 
     def screen_position_to_ray(self, x: float, y: float) -> Ray:
         # convert screen position to ray
@@ -115,6 +165,10 @@ class ViewerInteraction(ViewerInteractionBase):
         direction = forward + right * x + up * y
         return Ray(position, direction)
 
+    def get_camera_forward(self) -> Vec3:
+        mtx = self.camera.matrix
+        return Vec3.from_float64(-mtx[:3, 2])
+
     def get_camera_ray(self) -> Ray:
         mtx = self.camera.matrix
         position = Vec3.from_float64(mtx[:3, 3])
@@ -135,6 +189,16 @@ class ViewerInteraction(ViewerInteractionBase):
             return ray_hit
         else:
             return RayHit.no_hit()
+
+    def raycast_against_entities(self, ray: Ray) -> tuple[RayHit | None, RigidEntity | None]:
+        closest_hit = None
+        hit_entity: RigidEntity | None = None
+        for entity in self.get_entities():
+            ray_hit = self.raycast_against_entity_oobb(entity, ray)
+            if ray_hit.is_hit and (closest_hit is None or ray_hit.distance < closest_hit.distance):
+                closest_hit = ray_hit
+                hit_entity = entity
+        return (closest_hit, hit_entity)
 
     def get_entities(self) -> list[RigidEntity]:
         return self.scene.sim.rigid_solver.entities
