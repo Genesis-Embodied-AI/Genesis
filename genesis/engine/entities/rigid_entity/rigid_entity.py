@@ -1574,7 +1574,7 @@ class RigidEntity(Entity):
         qpos_goal : array_like
             The goal state. [B, Nq] or [1, Nq]
         qpos_start : None | array_like, optional
-            The start state. If None, the current state of the rigid entity will be used. 
+            The start state. If None, the current state of the rigid entity will be used.
             Defaults to None. [B, Nq] or [1, Nq]
         resolution : float, optiona
             Joint-space resolution. It corresponds to the maximum distance between states to be checked
@@ -1586,7 +1586,7 @@ class RigidEntity(Entity):
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
         num_waypoints : int, optional
-            The number of waypoints to interpolate the path. If None, no interpolation will be performed. 
+            The number of waypoints to interpolate the path. If None, no interpolation will be performed.
             Defaults to 100.
         ignore_collision : bool, optional
             Whether to ignore collision checking during motion planning. Defaults to False.
@@ -1609,9 +1609,14 @@ class RigidEntity(Entity):
         path : torch.Tensor
             A tensor of waypoints representing the planned path.
             Each waypoint is an array storing the entity's qpos of a single time step.
-        is_valid: torch.Tensor
-            A tensor of boolean mask indicating the batch indices with successful plan.
+        is_invalid: torch.Tensor
+            A tensor of boolean mask indicating the batch indices with failed plan.
         """
+        if self._solver.n_envs > 0:
+            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+        else:
+            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+
         if "ignore_joint_limit" in kwargs:
             gs.logger.warning("`ignore_joint_limit` is deprecated")
 
@@ -1631,23 +1636,12 @@ class RigidEntity(Entity):
             case _:
                 gs.raise_exception(f"invalid planner {planner} specified.")
 
-        path, is_invalid = planner_obj.plan(
-            qpos_goal,
-            qpos_start=qpos_start,
-            resolution=resolution,
-            timeout=timeout,
-            max_nodes=max_nodes,
-            smooth_path=smooth_path,
-            num_waypoints=num_waypoints,
-            ignore_collision=ignore_collision,
-            envs_idx=envs_idx,
-            ee_link_idx=ee_link_idx,
-            obj_entity=with_entity,
-        )
-
-        for i in range(max_retry + 1):
+        path = torch.empty((num_waypoints, len(envs_idx), self.n_qs), dtype=gs.tc_float, device=gs.device)
+        is_invalid = torch.ones((len(envs_idx)), dtype=bool)
+        for i in range(1 + max_retry):
             if is_invalid.any():
-                gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
+                if i > 0:
+                    gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
                 retry_path, retry_is_invalid = planner_obj.plan(
                     qpos_goal,
                     qpos_start=qpos_start,

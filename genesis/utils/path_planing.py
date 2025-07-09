@@ -25,8 +25,7 @@ class PathPlanner(ABC):
         self,
         qpos_goal,
         qpos_start=None,
-    ):
-        ...
+    ): ...
 
     def get_link_pose(self, robot_g_link_idx, obj_g_link_idx, envs_idx):
         """
@@ -41,27 +40,27 @@ class PathPlanner(ABC):
         """
         if self._solver.n_envs > 0:
             robot_trans = self._solver.get_links_pos(links_idx=robot_g_link_idx, envs_idx=envs_idx)
-            robot_quat  = self._solver.get_links_quat(links_idx=robot_g_link_idx, envs_idx=envs_idx)
+            robot_quat = self._solver.get_links_quat(links_idx=robot_g_link_idx, envs_idx=envs_idx)
             obj_trans = self._solver.get_links_pos(links_idx=obj_g_link_idx, envs_idx=envs_idx)
-            obj_quat  = self._solver.get_links_quat(links_idx=obj_g_link_idx, envs_idx=envs_idx)
+            obj_quat = self._solver.get_links_quat(links_idx=obj_g_link_idx, envs_idx=envs_idx)
         else:
             robot_trans = self._solver.get_links_pos(links_idx=robot_g_link_idx)
-            robot_quat  = self._solver.get_links_quat(links_idx=robot_g_link_idx)
+            robot_quat = self._solver.get_links_quat(links_idx=robot_g_link_idx)
             obj_trans = self._solver.get_links_pos(links_idx=obj_g_link_idx)
-            obj_quat  = self._solver.get_links_quat(links_idx=obj_g_link_idx)
+            obj_quat = self._solver.get_links_quat(links_idx=obj_g_link_idx)
 
         trans = gu.inv_transform_by_trans_quat(obj_trans, robot_trans, robot_quat)
         quat = gu.transform_quat_by_quat(obj_quat, gu.inv_quat(robot_quat))
-        
+
         return trans, quat
 
     def update_object(self, ee_link_idx, obj_link_idx, _pos, _quat, envs_idx):
         if self._solver.n_envs > 0:
             robot_trans = self._solver.get_links_pos(ee_link_idx, envs_idx=envs_idx)
-            robot_quat  = self._solver.get_links_quat(ee_link_idx, envs_idx=envs_idx)
+            robot_quat = self._solver.get_links_quat(ee_link_idx, envs_idx=envs_idx)
         else:
             robot_trans = self._solver.get_links_pos(ee_link_idx)
-            robot_quat  = self._solver.get_links_quat(ee_link_idx)
+            robot_quat = self._solver.get_links_quat(ee_link_idx)
 
         trans, quat = gu.transform_pos_quat_by_trans_quat(_pos, _quat, robot_trans, robot_quat)
 
@@ -92,7 +91,7 @@ class PathPlanner(ABC):
         assert qpos_goal.ndim == 2
         if qpos_goal.shape[0] == 1:
             qpos_goal = qpos_goal.expand(len(envs_idx), -1)
-        
+
         assert qpos_goal.shape[0] == len(envs_idx)
         assert qpos_start.shape[0] == len(envs_idx)
         assert qpos_start.shape[-1] == qpos_goal.shape[-1]
@@ -170,7 +169,7 @@ class PathPlanner(ABC):
         ee_link_idx=0,
         obj_link_idx=0,
         _pos=None,
-        _quat=None
+        _quat=None,
     ):
         res = torch.zeros(path.shape[1], dtype=bool, device=gs.device)
         for qpos in path:
@@ -257,7 +256,8 @@ class PathPlanner(ABC):
         obj_geom_end=-1,
         ee_link_idx=0,
         obj_link_idx=0,
-        _pos=None, _quat=None
+        _pos=None,
+        _quat=None,
     ):
         """
         path_mask: torch.Tensor
@@ -281,7 +281,8 @@ class PathPlanner(ABC):
                 obj_geom_end=obj_geom_end,
                 ee_link_idx=ee_link_idx,
                 obj_link_idx=obj_link_idx,
-                _pos=_pos, _quat=_quat,
+                _pos=_pos,
+                _quat=_quat,
             )  # B
             path[:, ~collision_mask] = result_path[:, ~collision_mask]
         return path
