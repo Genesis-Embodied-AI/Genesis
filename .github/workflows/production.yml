@@ -1,4 +1,4 @@
-name: Linux x86 - Nvidia GPU
+name: Production
 
 on:
   # Trigger the workflow on push on the master branch, or for any pull request
@@ -100,6 +100,12 @@ jobs:
           if [ -n "${SLURM_JOB_NAME}" ] ; then
             scancel --user=${USER} --name="${SLURM_JOB_NAME}"
           fi
+
+      # - name: Run examples
+      #   run: |
+      #     for name in "cloth_on_rigid.py" "cut_dragon.py" "flush_cubes.py" "grasp_soft_cube.py" "sand_wheel.py" "sph_mpm.py" "sph_rigid.py" "water_wheel.py"; do
+      #       python ./examples/coupling/$name
+      #     done
 
       - name: Display benchmark stats
         run: |
