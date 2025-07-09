@@ -4,8 +4,6 @@ from typing_extensions import override
 import numpy as np
 from numpy.typing import NDArray
 
-from pyglet.event import EVENT_HANDLE_STATE
-
 import genesis as gs
 from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 
