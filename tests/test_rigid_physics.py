@@ -2180,15 +2180,23 @@ def test_get_weld_constraints_basic(show_viewer, tol):
     scene.build(n_envs=1)
 
     rigid = scene.sim.rigid_solver
-    link_a = np.array([cube1.base_link.idx], dtype=gs.np_int)
-    link_b = np.array([cube2.base_link.idx], dtype=gs.np_int)
+
+    link_a = torch.tensor([cube1.base_link.idx], dtype=gs.tc_int, device=gs.device)
+    link_b = torch.tensor([cube2.base_link.idx], dtype=gs.tc_int, device=gs.device)
 
     rigid.add_weld_constraint(link_a, link_b)
     scene.step()
 
-    welds = rigid.get_weld_constraints()
-    row = np.array([welds["env"][0], welds["obj_a"][0], welds["obj_b"][0]], dtype=np.int32)
-    ref = np.array([0, link_a[0], link_b[0]], dtype=np.int32)
+    welds = rigid.get_weld_constraints(as_tensor=True, to_torch=False)
+
+    env_id = 0 if "env" not in welds else int(welds["env"][0])
+
+    row = np.array(
+        [env_id, int(welds["obj_a"][0]), int(welds["obj_b"][0])],
+        dtype=np.int32,
+    )
+    ref = np.array([0, link_a.item(), link_b.item()], dtype=np.int32)
+
     assert_allclose(row, ref, tol=tol)
 
 
