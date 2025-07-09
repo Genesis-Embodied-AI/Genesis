@@ -27,7 +27,7 @@ class ConstraintSolver:
 
         # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 3 constraints per equality
         self.len_constraints = (
-            5 * self._collider._max_contact_pairs
+            5 * rigid_solver.collider.global_info._max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
             + self._solver.n_equalities_candidate * 6
         )

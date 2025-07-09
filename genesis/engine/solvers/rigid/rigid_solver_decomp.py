@@ -72,6 +72,10 @@ class RigidSolver(Solver):
         # store static arguments here
         para_level: int = 0
         use_hibernation: bool = False
+        batch_links_info: bool = False
+        enable_mujoco_compatibility: bool = False
+        enable_self_collision: bool = True
+        enable_adjacent_collision: bool = False
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -223,6 +227,10 @@ class RigidSolver(Solver):
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
             use_hibernation=getattr(self, "_use_hibernation", False),
+            batch_links_info=getattr(self._options, "batch_links_info", False),
+            enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
+            enable_self_collision=getattr(self, "_enable_self_collision", True),
+            enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
         )
         # when the migration is finished, we will remove the about two lines
         # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
