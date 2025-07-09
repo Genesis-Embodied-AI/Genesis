@@ -826,10 +826,9 @@ class RigidEntity(Entity):
         if local_point is None:
             self._kernel_get_jacobian_zero(link.idx)
         else:
-            p_local = torch.as_tensor(local_point, device=gs.device, dtype=gs.tc_float)
-            if p_local.numel() != 3:
-                gs.raise_exception("`local_point` must have exactly 3 elements.")
-            p_local = ti.Vector([float(p_local[0]), float(p_local[1]), float(p_local[2])])
+            p_local = torch.as_tensor(local_point, dtype=torch.float64, device="cpu").numpy()
+            if p_local.shape != (3,):
+                gs.raise_exception("Must be a vector of length 3")
             self._kernel_get_jacobian(link.idx, p_local)
 
         jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
@@ -839,24 +838,25 @@ class RigidEntity(Entity):
         return jacobian
 
     @ti.func
-    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_local):
+    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_vec: ti.types.vector(3, ti.f64)):
         self._func_get_jacobian(
             tgt_link_idx,
             i_b,
-            p_local,
+            p_vec,
             ti.Vector.one(gs.ti_int, 3),
             ti.Vector.one(gs.ti_int, 3),
         )
 
     @ti.kernel
-    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.template()):
+    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
+        p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=ti.f64)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, p_local)
+            self._impl_get_jacobian(tgt_link_idx, i_b, p_vec)
 
     @ti.kernel
     def _kernel_get_jacobian_zero(self, tgt_link_idx: ti.i32):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(ti.f32, 3))
+            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(ti.f64, 3))
 
     @ti.func
     def _func_get_jacobian(self, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
