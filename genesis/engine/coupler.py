@@ -346,7 +346,7 @@ class Coupler(RBC):
                             self.mpm_rigid_normal[i_p, i_g, i_b] = sdf_normal
 
     def fem_rigid_link_constraints(self):
-        if self.fem_solver._constraints_initialized:
+        if self.fem_solver._constraints_initialized and self.rigid_solver.is_active():
             links_pos = self.rigid_solver.links_state.pos
             links_quat = self.rigid_solver.links_state.quat
             self.fem_solver._kernel_update_linked_vertex_constraints(links_pos, links_quat)
