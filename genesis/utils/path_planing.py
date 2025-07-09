@@ -28,9 +28,9 @@ class PathPlanner(ABC):
     ):
         ...
 
-    def get_link_transformation(self, robot_g_link_idx, obj_g_link_idx):
+    def get_link_pose(self, robot_g_link_idx, obj_g_link_idx, envs_idx):
         """
-        Get the relative pose of a given robot link wrt some object link as an homogeneous transformation matrix.
+        Get the relative pose of a given robot link wrt some object link.
 
         Parameters
         ----------
@@ -39,29 +39,32 @@ class PathPlanner(ABC):
         obj_g_link_idx: int
             Global link idx of the base link of the object.
         """
-        robot_T = gu.trans_quat_to_T(
-            self._solver.get_links_pos(links_idx=robot_g_link_idx),
-            self._solver.get_links_quat(links_idx=robot_g_link_idx),
-        )
-        obj_T = gu.trans_quat_to_T(
-            self._solver.get_links_pos(links_idx=obj_g_link_idx),
-            self._solver.get_links_quat(links_idx=obj_g_link_idx)
-        )
-        T_robot_object = torch.linalg.inv(robot_T) @ obj_T
-        return T_robot_object
-
-    def update_object(self, ee_link_idx, obj_link_idx, T_robot_object, envs_idx):
         if self._solver.n_envs > 0:
-            robot_T = gu.trans_quat_to_T(
-                self._solver.get_links_pos(ee_link_idx, envs_idx=envs_idx),
-                self._solver.get_links_quat(ee_link_idx, envs_idx=envs_idx),
-            )
+            robot_trans = self._solver.get_links_pos(links_idx=robot_g_link_idx, envs_idx=envs_idx)
+            robot_quat  = self._solver.get_links_quat(links_idx=robot_g_link_idx, envs_idx=envs_idx)
+            obj_trans = self._solver.get_links_pos(links_idx=obj_g_link_idx, envs_idx=envs_idx)
+            obj_quat  = self._solver.get_links_quat(links_idx=obj_g_link_idx, envs_idx=envs_idx)
         else:
-            robot_T = gu.trans_quat_to_T(
-                self._solver.get_links_pos(ee_link_idx), self._solver.get_links_quat(ee_link_idx)
-            )
-        obj_T = robot_T @ T_robot_object
-        trans, quat = gu.T_to_trans_quat(obj_T)
+            robot_trans = self._solver.get_links_pos(links_idx=robot_g_link_idx)
+            robot_quat  = self._solver.get_links_quat(links_idx=robot_g_link_idx)
+            obj_trans = self._solver.get_links_pos(links_idx=obj_g_link_idx)
+            obj_quat  = self._solver.get_links_quat(links_idx=obj_g_link_idx)
+
+        trans = gu.inv_transform_by_trans_quat(obj_trans, robot_trans, robot_quat)
+        quat = gu.transform_quat_by_quat(obj_quat, gu.inv_quat(robot_quat))
+        
+        return trans, quat
+
+    def update_object(self, ee_link_idx, obj_link_idx, _pos, _quat, envs_idx):
+        if self._solver.n_envs > 0:
+            robot_trans = self._solver.get_links_pos(ee_link_idx, envs_idx=envs_idx)
+            robot_quat  = self._solver.get_links_quat(ee_link_idx, envs_idx=envs_idx)
+        else:
+            robot_trans = self._solver.get_links_pos(ee_link_idx)
+            robot_quat  = self._solver.get_links_quat(ee_link_idx)
+
+        trans, quat = gu.transform_pos_quat_by_trans_quat(_pos, _quat, robot_trans, robot_quat)
+
         if self._solver.n_envs > 0:
             self._solver.set_base_links_pos(trans, obj_link_idx, envs_idx=envs_idx)
             self._solver.set_base_links_quat(quat, obj_link_idx, envs_idx=envs_idx)
@@ -128,7 +131,7 @@ class PathPlanner(ABC):
             torch.cat(
                 [
                     torch.stack((geom_a_start, geom_b_start), dim=1),
-                    torch.stack((geom_a_start, geom_b_start), dim=1),
+                    torch.stack((geom_a_goal, geom_b_goal), dim=1),
                 ]
             ),
             dim=0,
@@ -166,7 +169,8 @@ class PathPlanner(ABC):
         obj_geom_end=-1,
         ee_link_idx=0,
         obj_link_idx=0,
-        T_robot_object=None,
+        _pos=None,
+        _quat=None
     ):
         res = torch.zeros(path.shape[1], dtype=bool, device=gs.device)
         for qpos in path:
@@ -176,7 +180,7 @@ class PathPlanner(ABC):
                 self._entity.set_qpos(qpos[0])
 
             if is_plan_with_obj:
-                self.update_object(ee_link_idx, obj_link_idx, T_robot_object, envs_idx)
+                self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
             self._solver._kernel_detect_collision()
             self._kernel_check_collision(
                 res,
@@ -253,7 +257,7 @@ class PathPlanner(ABC):
         obj_geom_end=-1,
         ee_link_idx=0,
         obj_link_idx=0,
-        T_robot_object=None,
+        _pos=None, _quat=None
     ):
         """
         path_mask: torch.Tensor
@@ -277,7 +281,7 @@ class PathPlanner(ABC):
                 obj_geom_end=obj_geom_end,
                 ee_link_idx=ee_link_idx,
                 obj_link_idx=obj_link_idx,
-                T_robot_object=T_robot_object,
+                _pos=_pos, _quat=_quat,
             )  # B
             path[:, ~collision_mask] = result_path[:, ~collision_mask]
         return path
@@ -453,13 +457,14 @@ class RRT(PathPlanner):
         unique_pairs = self.get_exclude_geom_pairs(qpos_goal, qpos_start, envs_idx)
 
         is_plan_with_obj = False
+        _pos, _quat = None, None
         obj_geom_start, obj_geom_end = -1, -1
         if ee_link_idx is not None and obj_entity is not None:
             is_plan_with_obj = True
             obj_geom_start = obj_entity.geom_start
             obj_geom_end = obj_entity.geom_end
             obj_link_idx = obj_entity._links[0].idx
-            T_robot_obj = self.get_link_transformation(ee_link_idx, obj_link_idx)[envs_idx]
+            _pos, _quat = self.get_link_pose(ee_link_idx, obj_link_idx, envs_idx)
 
         self._init_rrt_fields(max_nodes=max_nodes, max_step_size=resolution)
         self._reset_rrt_fields()
@@ -475,7 +480,7 @@ class RRT(PathPlanner):
                     envs_idx=envs_idx,
                 )
                 if is_plan_with_obj:
-                    self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
+                    self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_step2(
                     ignore_geom_pairs=unique_pairs,
@@ -533,7 +538,8 @@ class RRT(PathPlanner):
                     obj_geom_end=obj_geom_end,
                     ee_link_idx=ee_link_idx,
                     obj_link_idx=obj_link_idx,
-                    T_robot_object=T_robot_obj,
+                    _pos=_pos,
+                    _quat=_quat,
                 )
             else:
                 sol = self.shortcut_path(
@@ -556,7 +562,8 @@ class RRT(PathPlanner):
                         obj_geom_end=obj_geom_end,
                         ee_link_idx=ee_link_idx,
                         obj_link_idx=obj_link_idx,
-                        T_robot_object=T_robot_obj,
+                        _pos=_pos,
+                        _quat=_quat,
                     ),
                 )
             else:
@@ -575,7 +582,7 @@ class RRT(PathPlanner):
             self._entity.set_qpos(qpos_cur)
 
         if is_plan_with_obj:
-            self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
+            self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
 
         if is_invalid.any():
             num_failure = int(is_invalid.sum().cpu())
@@ -792,13 +799,14 @@ class RRTConnect(PathPlanner):
         unique_pairs = self.get_exclude_geom_pairs(qpos_goal, qpos_start, envs_idx)
 
         is_plan_with_obj = False
+        _pos, _quat = None, None
         obj_geom_start, obj_geom_end = -1, -1
         if ee_link_idx is not None and obj_entity is not None:
             is_plan_with_obj = True
             obj_geom_start = obj_entity.geom_start
             obj_geom_end = obj_entity.geom_end
             obj_link_idx = obj_entity._links[0].idx
-            T_robot_obj = self.get_link_transformation(ee_link_idx, obj_link_idx)[envs_idx]
+            _pos, _quat = self.get_link_pose(ee_link_idx, obj_link_idx, envs_idx)
 
         self._init_rrt_connect_fields(max_nodes=max_nodes, max_step_size=resolution)
         self._reset_rrt_connect_fields()
@@ -816,7 +824,7 @@ class RRTConnect(PathPlanner):
                     envs_idx=envs_idx,
                 )
                 if is_plan_with_obj:
-                    self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
+                    self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
                 # self._solver._scene.visualizer.update()
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_connect_step2(
@@ -886,7 +894,8 @@ class RRTConnect(PathPlanner):
                     obj_geom_end=obj_geom_end,
                     ee_link_idx=ee_link_idx,
                     obj_link_idx=obj_link_idx,
-                    T_robot_object=T_robot_obj,
+                    _pos=_pos,
+                    _quat=_quat,
                 )
             else:
                 sol = self.shortcut_path(
@@ -910,7 +919,8 @@ class RRTConnect(PathPlanner):
                         obj_geom_end=obj_geom_end,
                         ee_link_idx=ee_link_idx,
                         obj_link_idx=obj_link_idx,
-                        T_robot_object=T_robot_obj,
+                        _pos=_pos,
+                        _quat=_quat,
                     ),
                 )
             else:
@@ -929,7 +939,7 @@ class RRTConnect(PathPlanner):
             self._entity.set_qpos(qpos_cur)
 
         if is_plan_with_obj:
-            self.update_object(ee_link_idx, obj_link_idx, T_robot_obj, envs_idx)
+            self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
 
         if is_invalid.any():
             num_failure = int(is_invalid.sum().cpu())

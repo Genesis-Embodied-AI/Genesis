@@ -1661,6 +1661,7 @@ class RigidEntity(Entity):
                     ee_link_idx=ee_link_idx,
                     obj_entity=with_entity,
                 )
+                # NOTE: update the previously failed path with the new results
                 path[:, is_invalid] = retry_path[:, is_invalid]
                 is_invalid &= retry_is_invalid
 
