@@ -346,14 +346,11 @@ class Coupler(RBC):
                             self.mpm_rigid_normal[i_p, i_g, i_b] = sdf_normal
 
     def fem_rigid_link_constraints(self):
-        links = self.fem_solver._constraint_links
-        if len(links) > 0:
-            poss = gs.zeros((len(links), 3), dtype=float)
-            quats = gs.zeros((len(links), 4), dtype=float)
-            for i, link_idx in enumerate(links):
-                poss[i] = self.rigid_solver.get_links_pos([link_idx], 0).squeeze(-2)
-                quats[i] = self.rigid_solver.get_links_quat([link_idx], 0).squeeze(-2)
-            self.fem_solver._kernel_update_linked_vertex_constraints(poss, quats)
+        if self.fem_solver._constraints_initialized:
+            links_pos = self.rigid_solver.links_state.pos
+            links_quat = self.rigid_solver.links_state.quat
+            self.fem_solver._kernel_update_linked_vertex_constraints(links_pos, links_quat)
+
 
     @ti.kernel
     def fem_surface_force(self, f: ti.i32):

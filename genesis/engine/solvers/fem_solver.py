@@ -51,9 +51,6 @@ class FEMSolver(Solver):
 
         # lazy initialization
         self._constraints_initialized = False
-        self._constraint_links = []
-        self._constraint_link_poss = []
-        self._constraint_link_quats = []
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
@@ -286,7 +283,7 @@ class FEMSolver(Solver):
             stiffness=gs.ti_float,  # spring stiffness (for soft constraints)
             damping=gs.ti_float,    # spring damping   (for soft constraints)
             constraint_type=ti.u1,  # 0: hard constraint, 1: soft constraint
-            link_idx=gs.ti_int,     # local index of the rigid link (-1 if not linked)
+            link_idx=gs.ti_int,     # index of the rigid link (-1 if not linked)
             link_offset_pos=gs.ti_vec3,  # offset position of link
             link_init_quat=gs.ti_vec4,   # offset rotation of link
         )
@@ -1377,29 +1374,21 @@ class FEMSolver(Solver):
         """Remove all vertex constraints."""
         self.vertex_constraints.is_constrained.fill(0)
 
-    def _add_constraint_link(self, link):
-        """Returns the local index of the added constraint link."""
-        if link._idx in self._constraint_links:
-            return self._constraint_links.index(link._idx)
-        else:
-            self._constraint_links.append(link._idx)
-            return len(self._constraint_links) - 1
-
     @ti.kernel
     def _kernel_update_linked_vertex_constraints(
         self,
-        poss: ti.types.ndarray(),
-        quats: ti.types.ndarray(),
+        links_pos: ti.template(),  # matrix field
+        links_quat: ti.template(), # matrix field
     ):
         for i_v in range(self.n_vertices):
             if self.vertex_constraints[i_v].is_constrained and self.vertex_constraints[i_v].link_idx >= 0:
                 i_l = self.vertex_constraints[i_v].link_idx
-                pos = gs.ti_vec3([poss[i_l, 0], poss[i_l, 1], poss[i_l, 2]])
-                quat = gs.ti_vec4([quats[i_l, 0], quats[i_l, 1], quats[i_l, 2], quats[i_l, 3]])
+                pos = links_pos[0, i_l]
+                quat = links_quat[0, i_l]
+
                 offset_pos = self.vertex_constraints[i_v].link_offset_pos
                 offset_quat = ti_transform_quat_by_quat(self.vertex_constraints[i_v].link_init_quat, quat)
                 self.vertex_constraints[i_v].target_pos = pos + ti_transform_by_quat(offset_pos, offset_quat)
-
 
     @ti.kernel
     def apply_hard_constraints(self, f: ti.i32):
