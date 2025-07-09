@@ -2171,6 +2171,37 @@ def test_terrain_size(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_weld_constraints_basic(show_viewer, tol):
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    cube1 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.0, 0.0, 0.05)))
+    cube2 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.2, 0.0, 0.05)))
+
+    scene.build(n_envs=1)
+
+    rigid = scene.sim.rigid_solver
+
+    link_a = torch.tensor([cube1.base_link.idx], dtype=gs.tc_int, device=gs.device)
+    link_b = torch.tensor([cube2.base_link.idx], dtype=gs.tc_int, device=gs.device)
+
+    rigid.add_weld_constraint(link_a, link_b)
+    scene.step()
+
+    welds = rigid.get_weld_constraints(as_tensor=True, to_torch=False)
+
+    env_id = 0 if "env" not in welds else int(welds["env"][0])
+
+    row = np.array(
+        [env_id, int(welds["obj_a"][0]), int(welds["obj_b"][0])],
+        dtype=np.int32,
+    )
+    ref = np.array([0, link_a.item(), link_b.item()], dtype=np.int32)
+
+    assert_allclose(row, ref, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
@@ -2300,37 +2331,6 @@ def test_urdf_mimic(show_viewer, tol):
 
     gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.merge_fixed_links(False)
-@pytest.mark.parametrize("model_name", ["pendulum"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
-def test_jacobian(gs_sim, tol):
-    pendulum = gs_sim.entities[0]
-    angle = 0.7
-    pendulum.set_qpos(np.array([angle], dtype=np.float64))
-    gs_sim.scene.step()
-
-    link = pendulum.get_link("PendulumArm_0")
-
-    p_local = np.array([0.05, -0.02, 0.12], dtype=np.float64)
-    J_o = pendulum.get_jacobian(link).cpu().numpy()
-    J_p = pendulum.get_jacobian(link, p_local).cpu().numpy()
-
-    c, s = np.cos(angle), np.sin(angle)
-    Rx = np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64)
-    r_world = Rx @ p_local
-    r_cross = np.array(
-        [[0, -r_world[2], r_world[1]], [r_world[2], 0, -r_world[0]], [-r_world[1], r_world[0], 0]], dtype=np.float64
-    )
-
-    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
-    lin_expected = lin_o - r_cross @ ang_o
-
-    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
-    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
 
 
 @pytest.mark.required

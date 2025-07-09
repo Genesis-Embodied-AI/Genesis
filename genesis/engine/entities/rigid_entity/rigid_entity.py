@@ -838,7 +838,7 @@ class RigidEntity(Entity):
         return jacobian
 
     @ti.func
-    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_vec: ti.types.vector(3, ti.f64)):
+    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_vec):
         self._func_get_jacobian(
             tgt_link_idx,
             i_b,
@@ -849,14 +849,14 @@ class RigidEntity(Entity):
 
     @ti.kernel
     def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
-        p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=ti.f64)
+        p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
         for i_b in range(self._solver._B):
             self._impl_get_jacobian(tgt_link_idx, i_b, p_vec)
 
     @ti.kernel
     def _kernel_get_jacobian_zero(self, tgt_link_idx: ti.i32):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(ti.f64, 3))
+            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
 
     @ti.func
     def _func_get_jacobian(self, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
