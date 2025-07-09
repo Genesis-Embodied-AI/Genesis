@@ -33,6 +33,7 @@ from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
+from genesis.engine.sensors import Sensor
 from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
@@ -435,6 +436,28 @@ class Scene(RBC):
             )
         child_link._parent_idx = parent_link.idx
         parent_link._child_idxs.append(child_link.idx)
+    
+    @gs.assert_unbuilt
+    def add_sensor(
+        self,
+        sensor_type: Sensor,
+        morph: Morph,
+        material: Material | None = None,
+        surface: Surface | None = None,
+        visualize_contact: bool = False,
+        vis_mode: str | None = None,
+        **sensor_kwargs
+    ):
+        """Add a sensor to the scene."""
+        
+        entity = self.add_entity(
+            morph=morph,
+            material=material,
+            surface=surface,
+            visualize_contact=visualize_contact,
+            vis_mode=vis_mode,
+        )
+        return entity.add_sensor(sensor_type, **sensor_kwargs)
 
     @gs.assert_unbuilt
     def add_light(

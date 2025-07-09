@@ -26,11 +26,27 @@ class Entity(RBC):
         self._material = material
         self._morph = morph
         self._surface = surface
+        self._sensors = []
         self._sim = scene.sim
 
         gs.logger.info(
             f"Adding ~<{self._repr_type()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
         )
+    
+    def add_sensor(self, sensor_type, **sensor_kwargs):
+        """
+        Add a sensor to the entity.
+
+        Args:
+            sensor_type: The type of the sensor to add.
+            **sensor_kwargs: Additional keyword arguments for the sensor.
+
+        Returns:
+            The created sensor instance.
+        """
+        sensor = sensor_type(self, **sensor_kwargs)
+        self._sensors.append(sensor)
+        return sensor
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -67,6 +83,10 @@ class Entity(RBC):
     @property
     def material(self):
         return self._material
+    
+    @property
+    def sensors(self):
+        return self._sensors
 
     @property
     def is_built(self):
