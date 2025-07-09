@@ -75,28 +75,18 @@ class PathPlanner(ABC):
     # ------------------------------ util funcs ------------------------------------------
     # ------------------------------------------------------------------------------------
     def format_input(self, qpos_cur, qpos_goal, qpos_start, envs_idx):
+        qpos_goal, _, _ = self._solver._sanitize_1D_io_variables(
+            qpos_goal, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True
+        )
         if qpos_start is None:
             qpos_start = qpos_cur.clone()
-            if self._solver.n_envs == 0:
-                qpos_start = qpos_start.unsqueeze(0)
-        else:
-            if qpos_start.ndim == 1:
-                qpos_start = qpos_start.unsqueeze(0)
-            assert qpos_start.ndim == 2
-            if qpos_start.shape[0] == 1:
-                qpos_start = qpos_start.expand(len(envs_idx), -1)
-
-        if qpos_goal.ndim == 1:
+        qpos_start, _, envs_idx = self._solver._sanitize_1D_io_variables(
+            qpos_start, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True
+        )
+        if self._solver.n_envs == 0:
             qpos_goal = qpos_goal.unsqueeze(0)
-        assert qpos_goal.ndim == 2
-        if qpos_goal.shape[0] == 1:
-            qpos_goal = qpos_goal.expand(len(envs_idx), -1)
-
-        assert qpos_goal.shape[0] == len(envs_idx)
-        assert qpos_start.shape[0] == len(envs_idx)
-        assert qpos_start.shape[-1] == qpos_goal.shape[-1]
-
-        return qpos_cur, qpos_goal.contiguous(), qpos_start.contiguous(), envs_idx
+            qpos_start = qpos_start.unsqueeze(0)
+        return qpos_cur, qpos_goal, qpos_start, envs_idx
 
     def get_exclude_geom_pairs(self, qpos_goal, qpos_start, envs_idx):
         if self._solver.n_envs > 0:
@@ -364,7 +354,7 @@ class RRT(PathPlanner):
                 nearest_neighbor_dist = gs.ti_float(1e30)
                 ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
                 for i_n in range(self._rrt_tree_size[i_b]):
-                    dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
+                    dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm_sqr()
                     if dist < nearest_neighbor_dist:
                         nearest_neighbor_dist = dist
                         nearest_neighbor_idx = i_n
@@ -448,11 +438,6 @@ class RRT(PathPlanner):
         obj_entity=None,
         envs_idx=None,
     ):
-        if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
-        else:
-            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
-
         qpos_cur = self._entity.get_qpos(envs_idx=envs_idx)
         qpos_cur, qpos_goal, qpos_start, envs_idx = self.format_input(qpos_cur, qpos_goal, qpos_start, envs_idx)
         unique_pairs = self.get_exclude_geom_pairs(qpos_goal, qpos_start, envs_idx)
@@ -686,7 +671,7 @@ class RRTConnect(PathPlanner):
                         # NOTE: in backward pass, we only consider the previous backward pass nodes (which has child_idx != -1)
                         if self._rrt_node_info[i_n, i_b].child_idx == -1:
                             continue
-                    dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm()
+                    dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm_sqr()
                     if dist < nearest_neighbor_dist:
                         nearest_neighbor_dist = dist
                         nearest_neighbor_idx = i_n
@@ -790,11 +775,6 @@ class RRTConnect(PathPlanner):
         obj_entity=None,
         envs_idx=None,
     ):
-        if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
-        else:
-            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
-
         qpos_cur = self._entity.get_qpos(envs_idx=envs_idx)
         qpos_cur, qpos_goal, qpos_start, envs_idx = self.format_input(qpos_cur, qpos_goal, qpos_start, envs_idx)
         unique_pairs = self.get_exclude_geom_pairs(qpos_goal, qpos_start, envs_idx)
@@ -826,7 +806,6 @@ class RRTConnect(PathPlanner):
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
-                # self._solver._scene.visualizer.update()
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_connect_step2(
                     forward_pass=forward_pass,

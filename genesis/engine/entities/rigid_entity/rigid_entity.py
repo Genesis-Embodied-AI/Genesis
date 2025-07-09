@@ -1613,9 +1613,9 @@ class RigidEntity(Entity):
             A tensor of boolean mask indicating the batch indices with failed plan.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            n_envs = len(self._solver._sanitize_envs_idx(envs_idx))
         else:
-            envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+            n_envs = 1
 
         if "ignore_joint_limit" in kwargs:
             gs.logger.warning("`ignore_joint_limit` is deprecated")
@@ -1636,8 +1636,8 @@ class RigidEntity(Entity):
             case _:
                 gs.raise_exception(f"invalid planner {planner} specified.")
 
-        path = torch.empty((num_waypoints, len(envs_idx), self.n_qs), dtype=gs.tc_float, device=gs.device)
-        is_invalid = torch.ones((len(envs_idx)), dtype=bool)
+        path = torch.empty((num_waypoints, n_envs, self.n_qs), dtype=gs.tc_float, device=gs.device)
+        is_invalid = torch.ones((n_envs), dtype=bool)
         for i in range(1 + max_retry):
             if is_invalid.any():
                 if i > 0:
