@@ -149,6 +149,7 @@ class SAPCouplerOptions(CouplerOptions):
     fem_floor_tet: bool = True
     fem_floor_vert: bool = False
     fem_self_tet: bool = True
+    rigid_floor_vert: bool = True
 
 
 ############################ Solvers inside simulator ############################

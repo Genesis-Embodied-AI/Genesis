@@ -357,7 +357,8 @@ class FEMSolver(Solver):
         for mat in self._mats:
             mat.build(self)
 
-        self.compute_surface_info()
+        if self.n_elements_max > 0:
+            self.compute_surface_info()
         if self.tet_wrong_order[None] == 1:
             raise RuntimeError(
                 "The order of vertices in the tetrahedral elements is not correct. "
