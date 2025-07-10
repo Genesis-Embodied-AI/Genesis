@@ -837,15 +837,15 @@ def create_plane(size=1e3, color=None, normal=(0, 0, 1), one_sided: bool = False
         )
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_to_R(normal))
-    if color is None:
+    if color is None:  # use checkerboard texture
         mesh.visual = trimesh.visual.TextureVisuals(
             uv=uv,
             material=trimesh.visual.material.SimpleMaterial(
-                image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png"))
+                image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png")),
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, (len(mesh.vertices), 1)).astype(float))
+        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
     return mesh
 
 
