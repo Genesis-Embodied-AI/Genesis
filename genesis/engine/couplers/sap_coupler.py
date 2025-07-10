@@ -119,7 +119,7 @@ class SAPCoupler(RBC):
                 self.rigid_floor_vert_contact = RigidFloorVertContact(self.sim)
                 self.contacts.append(self.rigid_floor_vert_contact)
 
-            self.init_rigid_fields()
+            self._init_rigid_fields()
 
         self._init_sap_fields()
         self._init_pcg_fields()
@@ -230,7 +230,7 @@ class SAPCoupler(RBC):
             layout=ti.Layout.SOA,
         )
 
-    def init_rigid_fields(self):
+    def _init_rigid_fields(self):
         rigid_state_dof = ti.types.struct(
             v=gs.ti_float,  # vertex velocity
             v_diff=gs.ti_float,  # difference between current and previous velocity
@@ -444,12 +444,12 @@ class SAPCoupler(RBC):
 
     @ti.kernel
     def update_batch_active(self):
-        a_tol = 1e-6
-        r_tol = 1e-5
         for i_b in range(self._B):
             if not self.batch_active[i_b]:
                 continue
-            self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= a_tol + r_tol * ti.max(
+            self.batch_active[i_b] = self.sap_state[
+                i_b
+            ].gradient_norm >= self._sap_convergence_atol + self._sap_convergence_rtol * ti.max(
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
 
@@ -519,63 +519,19 @@ class SAPCoupler(RBC):
 
     @ti.kernel
     def compute_fem_non_contact_gradient(self):
-        fem_solver = self.fem_solver
-        dt2 = fem_solver._substep_dt**2
-        damping_alpha_dt = fem_solver._damping_alpha * fem_solver._substep_dt
-        damping_alpha_factor = damping_alpha_dt + 1.0
-        damping_beta_over_dt = fem_solver._damping_beta / fem_solver._substep_dt
-        damping_beta_factor = damping_beta_over_dt + 1.0
-
-        for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
-            self.fem_state_v.gradient[i_b, i_v] = (
-                fem_solver.elements_v_info[i_v].mass_over_dt2
-                * self.fem_state_v.v_diff[i_b, i_v]
-                * dt2
-                * damping_alpha_factor
-            )
-
-        for i_b, i_e in ti.ndrange(fem_solver._B, fem_solver.n_elements):
-            V_dt2 = fem_solver.elements_i[i_e].V * dt2
-            B = fem_solver.elements_i[i_e].B
-            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
-            p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
-            i_v0, i_v1, i_v2, i_v3 = fem_solver.elements_i[i_e].el2v
-
-            for i in ti.static(range(3)):
-                p9[i * 3 : i * 3 + 3] = (
-                    B[0, i] * self.fem_state_v.v_diff[i_b, i_v0]
-                    + B[1, i] * self.fem_state_v.v_diff[i_b, i_v1]
-                    + B[2, i] * self.fem_state_v.v_diff[i_b, i_v2]
-                    + s[i] * self.fem_state_v.v_diff[i_b, i_v3]
-                )
-
-            new_p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
-
-            for i in ti.static(range(3)):
-                new_p9[i * 3 : i * 3 + 3] = (
-                    fem_solver.elements_el_hessian[i_b, i, 0, i_e] @ p9[0:3]
-                    + fem_solver.elements_el_hessian[i_b, i, 1, i_e] @ p9[3:6]
-                    + fem_solver.elements_el_hessian[i_b, i, 2, i_e] @ p9[6:9]
-                )
-
-            # atomic
-            self.fem_state_v.gradient[i_b, i_v0] += (
-                (B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
-            )
-            self.fem_state_v.gradient[i_b, i_v1] += (
-                (B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
-            )
-            self.fem_state_v.gradient[i_b, i_v2] += (
-                (B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
-            )
-            self.fem_state_v.gradient[i_b, i_v3] += (
-                (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * V_dt2 * damping_beta_factor
-            )
+        self._func_compute_fem_Ap(
+            self.fem_state_v.v_diff,
+            self.fem_state_v.gradient,
+            self.batch_active,
+        )
 
     @ti.kernel
     def compute_rigid_non_contact_gradient(self):
         rigid_solver = self.rigid_solver
+        self.pcg_rigid_state_dof.Ap.fill(0.0)
         for i_b, i_d0, i_d1 in ti.ndrange(rigid_solver._B, rigid_solver.n_dofs, rigid_solver.n_dofs):
+            if not self.batch_active[i_b]:
+                continue
             self.rigid_state_dof.gradient[i_b, i_d1] += (
                 rigid_solver.mass_mat[i_d1, i_d0, i_b] * self.rigid_state_dof.v_diff[i_b, i_d0]
             )
@@ -620,19 +576,33 @@ class SAPCoupler(RBC):
             self.pcg_fem_state_v[i_b, i_v].prec = self.pcg_fem_state_v[i_b, i_v].diag3x3.inverse()
 
     def compute_Ap(self):
-        self.compute_inertia_elastic_Ap()
+        if self.fem_solver.is_active():
+            self.compute_fem_Ap()
+        if self.rigid_solver.is_active():
+            self.compute_rigid_Ap()
         # Contact
         for contact in self.contacts:
             if contact.has_contact:
                 contact.compute_Ap()
 
     @ti.kernel
-    def compute_inertia_elastic_Ap(self):
-        self._func_compute_inertia_elastic_Ap(
+    def compute_fem_Ap(self):
+        self._func_compute_fem_Ap(
             self.pcg_fem_state_v.p,
             self.pcg_fem_state_v.Ap,
             self.batch_pcg_active,
         )
+
+    @ti.kernel
+    def compute_rigid_Ap(self):
+        rigid_solver = self.rigid_solver
+        self.pcg_rigid_state_dof.Ap.fill(0.0)
+        for i_b, i_d0, i_d1 in ti.ndrange(rigid_solver._B, rigid_solver.n_dofs, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_rigid_state_dof.Ap[i_b, i_d1] += (
+                rigid_solver.mass_mat[i_d1, i_d0, i_b] * self.pcg_rigid_state_dof.p[i_b, i_d0]
+            )
 
     @ti.func
     def compute_elastic_products(self, i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, src):
@@ -652,7 +622,7 @@ class SAPCoupler(RBC):
         return p9, H9_p9
 
     @ti.func
-    def _func_compute_inertia_elastic_Ap(self, src, dst, active):
+    def _func_compute_fem_Ap(self, src, dst, active):
         fem_solver = self.fem_solver
         dt2 = fem_solver._substep_dt**2
         damping_alpha_factor = fem_solver._damping_alpha * fem_solver._substep_dt + 1.0
@@ -711,6 +681,39 @@ class SAPCoupler(RBC):
             self.pcg_state[i_b].rTr += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
             self.pcg_state[i_b].rTz += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
 
+    @ti.func
+    def rigid_solve(self, vec, out):
+        rigid_solver = self.rigid_solver
+        # Step 1: Solve w st. L^T @ w = y
+        for i_b, i_e in ti.ndrange(self._B, rigid_solver.n_entities):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            entity_dof_start = rigid_solver.entities_info[i_e].dof_start
+            entity_dof_end = rigid_solver.entities_info[i_e].dof_end
+            n_dofs = rigid_solver.entities_info[i_e].n_dofs
+            for i_d_ in range(n_dofs):
+                i_d = entity_dof_end - i_d_ - 1
+                out[i_b, i_d] = vec[i_b, i_d]
+                for j_d in range(i_d + 1, entity_dof_end):
+                    out[i_b, i_d] -= rigid_solver.mass_mat_L[j_d, i_d, i_b] * out[i_b, j_d]
+
+        # Step 2: z = D^{-1} w
+        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            out[i_b, i_d] *= rigid_solver.mass_mat_D_inv[i_b, i_d]
+
+        # Step 3: Solve x st. L @ x = z
+        for i_b, i_e in ti.ndrange(self._B, rigid_solver.n_entities):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            entity_dof_start = rigid_solver.entities_info[i_e].dof_start
+            entity_dof_end = rigid_solver.entities_info[i_e].dof_end
+            n_dofs = rigid_solver.entities_info[i_e].n_dofs
+            for i_d in range(entity_dof_start, entity_dof_end):
+                for j_d in range(entity_dof_start, i_d):
+                    out[i_b, i_d] -= rigid_solver.mass_mat_L[i_d, j_d, i_b] * out[i_b, j_d]
+
     @ti.kernel
     def init_rigid_pcg_solve(self):
         rigid_solver = self.rigid_solver
@@ -719,9 +722,14 @@ class SAPCoupler(RBC):
                 continue
             self.pcg_rigid_state_dof[i_b, i_d].x = 0.0
             self.pcg_rigid_state_dof[i_b, i_d].r = -self.rigid_state_dof.gradient[i_b, i_d]
-            self.pcg_rigid_state_dof[i_b, i_d].z = self.pcg_rigid_state_dof[i_b, i_d].r
-            self.pcg_rigid_state_dof[i_b, i_d].p = self.pcg_rigid_state_dof[i_b, i_d].z
             self.pcg_state[i_b].rTr += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].r
+
+        self.rigid_solve(self.pcg_rigid_state_dof.r, self.pcg_rigid_state_dof.z)
+
+        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_rigid_state_dof[i_b, i_d].p = self.pcg_rigid_state_dof[i_b, i_d].z
             self.pcg_state[i_b].rTz += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
 
     @ti.kernel
@@ -732,11 +740,77 @@ class SAPCoupler(RBC):
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
 
     def one_pcg_iter(self):
+        self.clear_pcg_state()
         self.compute_Ap()
-        self._kernel_one_pcg_iter()
+        self.compute_pTAp()
+        self.compute_alpha()
+        self.compute_pcg_state()
+        self.check_pcg_convergence()
+        self.compute_p()
+
+    # def one_pcg_iter(self):
+    #     self.compute_Ap()
+    #     self._kernel_one_pcg_iter2()
 
     @ti.kernel
-    def _kernel_one_pcg_iter(self):
+    def _kernel_one_pcg_iter1(self):
+        fem_solver = self.fem_solver
+        # compute pTAp
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].pTAp = 0.0
+        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            ti.atomic_add(
+                self.pcg_state[i_b].pTAp, self.pcg_fem_state_v[i_b, i_v].p.dot(self.pcg_fem_state_v[i_b, i_v].Ap)
+            )
+
+        # compute alpha and update x, r, z, rTr, rTz
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
+            self.pcg_state[i_b].rTr_new = 0.0
+            self.pcg_state[i_b].rTz_new = 0.0
+        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_fem_state_v[i_b, i_v].x = (
+                self.pcg_fem_state_v[i_b, i_v].x + self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].p
+            )
+            self.pcg_fem_state_v[i_b, i_v].r = (
+                self.pcg_fem_state_v[i_b, i_v].r - self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].Ap
+            )
+            self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].prec @ self.pcg_fem_state_v[i_b, i_v].r
+            self.pcg_state[i_b].rTr_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
+            self.pcg_state[i_b].rTz_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
+
+        # check convergence
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
+            print("pcg_rTr", self.pcg_state[i_b].rTr_new)
+        # update beta, rTr, rTz
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
+            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
+            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
+
+        # update p
+        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_fem_state_v[i_b, i_v].p = (
+                self.pcg_fem_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_fem_state_v[i_b, i_v].p
+            )
+
+    @ti.kernel
+    def _kernel_one_pcg_iter2(self):
         fem_solver = self.fem_solver
         # compute pTAp
         for i_b in ti.ndrange(self._B):
@@ -767,14 +841,19 @@ class SAPCoupler(RBC):
                 self.pcg_fem_state_v[i_b, i_v].r - self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].Ap
             )
             self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].r
-            self.pcg_state[i_b].rTr_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
-            self.pcg_state[i_b].rTz_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
+            ti.atomic_add(
+                self.pcg_state[i_b].rTr_new, self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
+            )
+            ti.atomic_add(
+                self.pcg_state[i_b].rTz_new, self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
+            )
 
         # check convergence
         for i_b in ti.ndrange(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
+            print("pcg_rTr", self.pcg_state[i_b].rTr_new)
         # update beta, rTr, rTz
         for i_b in ti.ndrange(self._B):
             if not self.batch_pcg_active[i_b]:
@@ -791,20 +870,149 @@ class SAPCoupler(RBC):
                 self.pcg_fem_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_fem_state_v[i_b, i_v].p
             )
 
+    @ti.kernel
+    def clear_pcg_state(self):
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].pTAp = 0.0
+            self.pcg_state[i_b].rTr_new = 0.0
+            self.pcg_state[i_b].rTz_new = 0.0
+
+    def compute_pTAp(self):
+        if self.fem_solver.is_active():
+            self.compute_fem_pTAp()
+        if self.rigid_solver.is_active():
+            self.compute_rigid_pTAp()
+
+    @ti.kernel
+    def compute_fem_pTAp(self):
+        fem_solver = self.fem_solver
+        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            ti.atomic_add(
+                self.pcg_state[i_b].pTAp, self.pcg_fem_state_v[i_b, i_v].p.dot(self.pcg_fem_state_v[i_b, i_v].Ap)
+            )
+
+    @ti.kernel
+    def compute_rigid_pTAp(self):
+        rigid_solver = self.rigid_solver
+        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            ti.atomic_add(
+                self.pcg_state[i_b].pTAp,
+                self.pcg_rigid_state_dof[i_b, i_d].p.dot(self.pcg_rigid_state_dof[i_b, i_d].Ap),
+            )
+
+    @ti.kernel
+    def compute_alpha(self):
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
+
+    def compute_pcg_state(self):
+        if self.fem_solver.is_active():
+            self.compute_fem_pcg_state()
+        if self.rigid_solver.is_active():
+            self.compute_rigid_pcg_state()
+
+    @ti.kernel
+    def compute_fem_pcg_state(self):
+        fem_solver = self.fem_solver
+        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_fem_state_v[i_b, i_v].x = (
+                self.pcg_fem_state_v[i_b, i_v].x + self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].p
+            )
+            self.pcg_fem_state_v[i_b, i_v].r = (
+                self.pcg_fem_state_v[i_b, i_v].r - self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].Ap
+            )
+            self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].prec @ self.pcg_fem_state_v[i_b, i_v].r
+            self.pcg_state[i_b].rTr_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
+            self.pcg_state[i_b].rTz_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
+
+    @ti.kernel
+    def compute_rigid_pcg_state(self):
+        rigid_solver = self.rigid_solver
+        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_rigid_state_dof[i_b, i_d].x = (
+                self.pcg_rigid_state_dof[i_b, i_d].x + self.pcg_state[i_b].alpha * self.pcg_rigid_state_dof[i_b, i_d].p
+            )
+            self.pcg_rigid_state_dof[i_b, i_d].r = (
+                self.pcg_rigid_state_dof[i_b, i_d].r - self.pcg_state[i_b].alpha * self.pcg_rigid_state_dof[i_b, i_d].Ap
+            )
+            self.pcg_state[i_b].rTr_new += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].r
+
+        self.rigid_solve(self.pcg_rigid_state_dof.r, self.pcg_rigid_state_dof.z)
+
+        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].rTz_new += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
+
+    @ti.kernel
+    def check_pcg_convergence(self):
+        # check convergence
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
+            print("pcg_rTr", self.pcg_state[i_b].rTr_new)
+        # update beta, rTr, rTz
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
+            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
+            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
+
+    def compute_p(self):
+        if self.fem_solver.is_active():
+            self.compute_fem_p()
+        if self.rigid_solver.is_active():
+            self.compute_rigid_p()
+
+    @ti.kernel
+    def compute_fem_p(self):
+        fem_solver = self.fem_solver
+        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_fem_state_v[i_b, i_v].p = (
+                self.pcg_fem_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_fem_state_v[i_b, i_v].p
+            )
+
+    @ti.kernel
+    def compute_rigid_p(self):
+        rigid_solver = self.rigid_solver
+        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+            if not self.batch_pcg_active[i_b]:
+                continue
+            self.pcg_rigid_state_dof[i_b, i_d].p = (
+                self.pcg_rigid_state_dof[i_b, i_d].z + self.pcg_state[i_b].beta * self.pcg_rigid_state_dof[i_b, i_d].p
+            )
+
     def pcg_solve(self):
+        print("pcg solve")
         self.init_pcg_solve()
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
 
     def compute_total_energy(self, f: ti.i32, energy):
-        self.compute_inertia_elastic_energy(f, energy)
+        self.compute_fem_energy(f, energy)
         # Contact
         for contact in self.contacts:
             if contact.has_contact:
                 contact.compute_energy(energy)
 
     @ti.kernel
-    def compute_inertia_elastic_energy(self, f: ti.i32, energy: ti.template()):
+    def compute_fem_energy(self, f: ti.i32, energy: ti.template()):
         fem_solver = self.fem_solver
         dt2 = fem_solver._substep_dt**2
         damping_alpha_factor = fem_solver._damping_alpha * fem_solver._substep_dt + 1.0
@@ -850,7 +1058,7 @@ class SAPCoupler(RBC):
     def init_exact_linesearch(self, f: ti.i32):
         self._kernel_init_exact_linesearch()
         self.prepare_search_direction_data()
-        self.compute_inertia_elastic_energy(f, self.linesearch_state.prev_energy)
+        self.compute_fem_energy(f, self.linesearch_state.prev_energy)
         self.update_velocity_linesearch()
         self.compute_line_energy_gradient_hessian(f)
         self.check_initial_exact_linesearch_convergence()
@@ -950,9 +1158,7 @@ class SAPCoupler(RBC):
 
     @ti.kernel
     def prepare_inertia_elastic_search_direction_data(self):
-        self._func_compute_inertia_elastic_Ap(
-            self.pcg_fem_state_v.x, self.linesearch_fem_state_v.dp, self.batch_linesearch_active
-        )
+        self._func_compute_fem_Ap(self.pcg_fem_state_v.x, self.linesearch_fem_state_v.dp, self.batch_linesearch_active)
 
     @ti.kernel
     def _kernel_init_linesearch(self):
