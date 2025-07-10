@@ -2723,6 +2723,8 @@ class RigidSolver(Solver):
         torque, links_idx, envs_idx = self._sanitize_2D_io_variables(
             torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
+        if self.n_envs == 0:
+            torque = torque.unsqueeze(0)
 
         if ref == "root_com":
             if local:
