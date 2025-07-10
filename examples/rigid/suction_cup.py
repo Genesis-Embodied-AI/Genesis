@@ -96,8 +96,8 @@ def main():
 
     # add suction / weld constraint
     rigid = scene.sim.rigid_solver
-    link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
-    link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
+    link_cube = cube.get_link("box_baselink").idx
+    link_franka = franka.get_link("hand").idx
     rigid.add_weld_constraint(link_cube, link_franka)
 
     # lift
