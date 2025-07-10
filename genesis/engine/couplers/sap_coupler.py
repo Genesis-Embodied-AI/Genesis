@@ -927,39 +927,6 @@ class SAPCoupler(RBC):
                 self.batch_linesearch_active[i_b] = False
 
     # ------------------------------------------------------------------------------------
-    # ----------------------------------- For Debug  -------------------------------------
-    # ------------------------------------------------------------------------------------
-    def save_contact_file(self, f):
-        """
-        Save the contact pairs for debugging purposes.
-
-        This function is not used in the simulation but can be used for debugging.
-        """
-        for contact in self.contacts:
-            if contact.has_contact:
-                contact.save_contact_file(f)
-
-    def save_pos_file(self, f):
-        """
-        Save the position for debugging purposes.
-
-        This function is not used in the simulation but can be used for debugging.
-        """
-        if self.fem_solver.is_active():
-            pos_np = self.fem_solver.elements_v.pos.to_numpy()[f, ...].reshape(-1, 3)
-            np.save(f"contact_debug/V_{self.sim.cur_step_global}.npy", pos_np)
-
-    def save_elements_file(self):
-        """
-        Save the elements for debugging purposes.
-
-        This function is not used in the simulation but can be used for debugging.
-        """
-        if self.fem_solver.is_active():
-            ele_np = self.fem_solver.elements_i.el2v.to_numpy().reshape(-1, 4)
-            np.save(f"contact_debug/T.npy", ele_np)
-
-    # ------------------------------------------------------------------------------------
     # ----------------------------------- Properties -------------------------------------
     # ------------------------------------------------------------------------------------
     @property
@@ -1203,29 +1170,6 @@ class BaseContact(RBC):
         sap_info[i_p].vn_hat = vn_hat
         sap_info[i_p].mu_hat = sap_info[i_p].mu * Rt * sap_info[i_p].Rn_inv
         sap_info[i_p].mu_factor = 1.0 / (1.0 + sap_info[i_p].mu * sap_info[i_p].mu_hat)
-
-    def save_contact_file(self, f):
-        self.compute_contact_pos(f)
-        n_contact_pairs = int(self.n_contact_pairs[None])
-        gamma_np = self.contact_pairs.sap_info.gamma.to_numpy()
-        batch_idx_np = self.contact_pairs.batch_idx.to_numpy()
-        contact_pos_np = self.contact_pairs.contact_pos.to_numpy()
-        contact_pos = []
-        contact_vec = []
-        for i in range(n_contact_pairs):
-            if batch_idx_np[i] != 0 or np.linalg.norm(gamma_np[i]) < gs.EPS:
-                continue
-            contact_vec.append(gamma_np[i])
-            contact_pos.append(contact_pos_np[i])
-        if len(contact_pos) == 0:
-            return
-        contact_pos = np.array(contact_pos)
-        contact_vec = np.array(contact_vec)
-        np.savez(
-            f"contact_debug/{self.name}_{self.sim.cur_step_global}.npz",
-            contact_pos=contact_pos,
-            contact_vec=contact_vec,
-        )
 
 
 @ti.data_oriented
