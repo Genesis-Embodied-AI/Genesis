@@ -320,16 +320,8 @@ class Camera(RBC):
             - `(entity_id, link_id)`
             - `(entity_id, link_id, geom_id)`
           depending on the material type and the configured segmentation level.
-
-        Raises
-        ------
-        Exception
-            If the rasterizer has not been created.
         """
-        if self._rasterizer is not None:
-            return self._rasterizer._context.seg_idxc_map
-        else:
-            gs.raise_exception("No renderer was found.")
+        return self._rasterizer._context.seg_idxc_map
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):

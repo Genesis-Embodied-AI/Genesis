@@ -666,7 +666,7 @@ class RasterizerContext:
                 elif pbd_entity.surface.vis_mode == "visual":
                     vverts = vverts_all[pbd_entity.vvert_start : pbd_entity.vvert_end]
                     node = self.static_nodes[pbd_entity.uid]
-                    update_data = self._scene.reorder_vertices(node, vverts)
+                    update_data = self._scene.reorder_vertices(node, vverts.astype(np.float32))
                     buffer_updates[self._scene.get_buffer_id(node, "pos")] = update_data
                     normal_data = self.jit.update_normal(node, update_data)
                     if normal_data is not None:

@@ -5,12 +5,10 @@ import genesis as gs
 
 
 @pytest.mark.required
-# @pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("segmentation_level", ["entity", "link"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
 def test_segmentation(segmentation_level, particle_mode):
     """Test segmentation rendering."""
-    np.random.seed(0)
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=0.01),
         fem_options=gs.options.FEMOptions(use_implicit_solver=True),
