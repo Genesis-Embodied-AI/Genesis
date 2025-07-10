@@ -707,7 +707,7 @@ class RasterizerContext:
             pose = np.zeros((1, 4, 4), dtype=np.float32)
             pose[0, 3, 3] = 1.0
             pose[0, :3, 3] = tensor_to_array(pos)
-            gu.z_up_to_R(tensor_to_array(vec), out=pose[0, :3, :3])
+            gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=pose[0, :3, :3])
 
             node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose)
             if persistent:
@@ -833,12 +833,11 @@ class RasterizerContext:
     def add_light(self, light):
         # light direction is light pose's -z frame
         if light["type"] == "directional":
-            z = -np.asarray(light["dir"], dtype=np.float32)
-            R = gu.z_up_to_R(z)
-            pose = gu.R_to_T(R)
+            pose = np.eye(4, dtype=np.float32)
+            gu.z_up_to_R(-np.asarray(light["dir"], dtype=np.float32), out=pose[:3, :3])
             self.add_node(pyrender.DirectionalLight(color=light["color"], intensity=light["intensity"]), pose=pose)
         elif light["type"] == "point":
-            pose = gu.trans_to_T(np.array(light["pos"], dtype=np.float32))
+            pose = gu.trans_to_T(np.asarray(light["pos"], dtype=np.float32))
             self.add_node(pyrender.PointLight(color=light["color"], intensity=light["intensity"]), pose=pose)
         else:
             gs.raise_exception(f"Unsupported light type: {light['type']}")

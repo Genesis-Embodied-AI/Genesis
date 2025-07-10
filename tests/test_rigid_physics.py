@@ -1438,8 +1438,8 @@ def move_cube(use_suction, mode, show_viewer):
 
     # grasp
     if use_suction:
-        link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
-        link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
+        link_cube = cube.get_link("box_baselink").idx
+        link_franka = franka.get_link("hand").idx
         scene.sim.rigid_solver.add_weld_constraint(link_cube, link_franka)
     else:
         franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -2290,7 +2290,7 @@ def test_urdf_parsing(show_viewer, tol):
     entities[(True, True)].set_dofs_velocity(door_vel)
     link_1 = np.array([entities[(True, True)].link_start], dtype=gs.np_int)
     for key in ((False, False), (False, True)):
-        link_2 = np.array([entities[key].link_start], dtype=gs.np_int)
+        link_2 = entities[key].link_start
         scene.rigid_solver.add_weld_constraint(link_1, link_2)
 
     for i in range(2000):
