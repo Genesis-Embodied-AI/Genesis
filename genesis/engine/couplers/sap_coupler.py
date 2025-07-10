@@ -738,6 +738,7 @@ class SAPCoupler(RBC):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
+            print("pcg init rTr", self.pcg_state[i_b].rTr)
 
     def one_pcg_iter(self):
         self.clear_pcg_state()
@@ -747,128 +748,6 @@ class SAPCoupler(RBC):
         self.compute_pcg_state()
         self.check_pcg_convergence()
         self.compute_p()
-
-    # def one_pcg_iter(self):
-    #     self.compute_Ap()
-    #     self._kernel_one_pcg_iter2()
-
-    @ti.kernel
-    def _kernel_one_pcg_iter1(self):
-        fem_solver = self.fem_solver
-        # compute pTAp
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].pTAp = 0.0
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            ti.atomic_add(
-                self.pcg_state[i_b].pTAp, self.pcg_fem_state_v[i_b, i_v].p.dot(self.pcg_fem_state_v[i_b, i_v].Ap)
-            )
-
-        # compute alpha and update x, r, z, rTr, rTz
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
-            self.pcg_state[i_b].rTr_new = 0.0
-            self.pcg_state[i_b].rTz_new = 0.0
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].x = (
-                self.pcg_fem_state_v[i_b, i_v].x + self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].p
-            )
-            self.pcg_fem_state_v[i_b, i_v].r = (
-                self.pcg_fem_state_v[i_b, i_v].r - self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].Ap
-            )
-            self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].prec @ self.pcg_fem_state_v[i_b, i_v].r
-            self.pcg_state[i_b].rTr_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
-            self.pcg_state[i_b].rTz_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
-
-        # check convergence
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
-            print("pcg_rTr", self.pcg_state[i_b].rTr_new)
-        # update beta, rTr, rTz
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
-            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
-            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
-
-        # update p
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].p = (
-                self.pcg_fem_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_fem_state_v[i_b, i_v].p
-            )
-
-    @ti.kernel
-    def _kernel_one_pcg_iter2(self):
-        fem_solver = self.fem_solver
-        # compute pTAp
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].pTAp = 0.0
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            ti.atomic_add(
-                self.pcg_state[i_b].pTAp, self.pcg_fem_state_v[i_b, i_v].p.dot(self.pcg_fem_state_v[i_b, i_v].Ap)
-            )
-
-        # compute alpha and update x, r, z, rTr, rTz
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
-            self.pcg_state[i_b].rTr_new = 0.0
-            self.pcg_state[i_b].rTz_new = 0.0
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].x = (
-                self.pcg_fem_state_v[i_b, i_v].x + self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].p
-            )
-            self.pcg_fem_state_v[i_b, i_v].r = (
-                self.pcg_fem_state_v[i_b, i_v].r - self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].Ap
-            )
-            self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].r
-            ti.atomic_add(
-                self.pcg_state[i_b].rTr_new, self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
-            )
-            ti.atomic_add(
-                self.pcg_state[i_b].rTz_new, self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
-            )
-
-        # check convergence
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
-            print("pcg_rTr", self.pcg_state[i_b].rTr_new)
-        # update beta, rTr, rTz
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
-            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
-            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
-
-        # update p
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].p = (
-                self.pcg_fem_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_fem_state_v[i_b, i_v].p
-            )
 
     @ti.kernel
     def clear_pcg_state(self):
@@ -912,6 +791,7 @@ class SAPCoupler(RBC):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
+            print("pcg alpha", self.pcg_state[i_b].alpha, self.pcg_state[i_b].rTz, self.pcg_state[i_b].pTAp)
 
     def compute_pcg_state(self):
         if self.fem_solver.is_active():
@@ -963,7 +843,6 @@ class SAPCoupler(RBC):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
-            print("pcg_rTr", self.pcg_state[i_b].rTr_new)
         # update beta, rTr, rTz
         for i_b in ti.ndrange(self._B):
             if not self.batch_pcg_active[i_b]:
