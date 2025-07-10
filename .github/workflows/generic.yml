@@ -10,13 +10,25 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  generic-cpu:
+  generic:
+    name: >-
+      Generic (${{ matrix.OS }}) (${{ matrix.PYTEST_FLAGS == '-m required' && 'CPU' || 'GPU' }})
+      (${{ matrix.PYTHON_VERSION }})
+
     strategy:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: ['ubuntu-22.04', 'ubuntu-24.04', 'macos-15', 'windows-2025']
+        OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15", "windows-2025"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12"]
+        PYTEST_FLAGS: ["-m required"]
+        include:
+          - OS: "macos-15-xlarge"     # (MacOS Arm - Apple M1) 6CPU+8GPU, 14GB RAM, 14GB SSD
+            PYTHON_VERSION: "3.12"
+          - OS: "gpu-t4-4-core"       # (Linux x86) 4CPU, NVIDIA Tesla T4 16 GB VRAM, 28 GB RAM, 176 GB SSD
+            PYTHON_VERSION: "3.12"
+          - OS: "win-gpu-t4-4-core"   # (Windows x86) 4CPU, NVIDIA Tesla T4 16 GB VRAM, 28 GB RAM, 176 GB SSD
+            PYTHON_VERSION: "3.12"
 
     env:
       HF_HUB_DOWNLOAD_TIMEOUT: 60
@@ -24,10 +36,10 @@ jobs:
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
       TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
-      TI_ENABLE_CUDA: "0"
-      TI_ENABLE_METAL: "0"
-      TI_ENABLE_OPENGL: "0"
-      TI_ENABLE_VULKAN: "0"
+      TI_ENABLE_CUDA: ${{ matrix.PYTEST_FLAGS == '-m required' && '0' || '1' }}
+      TI_ENABLE_METAL: ${{ matrix.PYTEST_FLAGS == '-m required' && '0' || '1' }}
+      TI_ENABLE_OPENGL: ${{ matrix.PYTEST_FLAGS == '-m required' && '0' || '1' }}
+      TI_ENABLE_VULKAN: ${{ matrix.PYTEST_FLAGS == '-m required' && '0' || '1' }}
 
     runs-on: ${{ matrix.OS }}
 
@@ -63,28 +75,40 @@ jobs:
 
           echo "PYOPENGL_PLATFORM=osmesa" >> $GITHUB_ENV
 
-      - name: Install system dependencies (Linux)
-        if: startsWith(matrix.OS, 'ubuntu-')
+      - name: Install system dependencies (Linux CPU+GPU)
+        if: startsWith(matrix.OS, 'ubuntu-') || matrix.OS == 'gpu-t4-4-core'
         run: |
           sudo apt-get update
           sudo apt install -y \
               libgl1 \
               libegl1 \
-              libglvnd-dev \
-              libglew-dev \
+              libgles2 \
               libegl-dev \
-              libx11-6  \
-              libxrender1 \
               libglib2.0-0 \
               libosmesa6-dev \
-              libglx-mesa0 \
               libglu1-mesa \
+              libglx-mesa0 \
               libegl1-mesa-dev \
               libgles2-mesa-dev
-      - name: Install python dependencies
+      - name: Install system dependencies (Linux CPU only)
+        if: startsWith(matrix.OS, 'ubuntu-')
+        run: |
+          sudo apt install -y \
+              libglew-dev \
+              libglvnd-dev \
+              libxrender1 \
+              libx11-6
+      - name: Install python dependencies (Generic CPU+GPU)
         run: |
           pip install --upgrade pip setuptools pkg-info wheel
+      - name: Install python dependencies (MacOS)
+        if: startsWith(matrix.OS, 'macos-')
+        run: |
           pip install torch
+      - name: Install python dependencies (Not MacOS)
+        if: ${{ !startsWith(matrix.OS, 'macos-') }}
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cu118
 
       - name: Black Format Check
         if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
@@ -98,7 +122,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --forked -m required ./tests
+          pytest -v --forked ${{ matrix.PYTEST_FLAGS }} ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: always()
