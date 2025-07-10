@@ -71,7 +71,7 @@ class ViewerInteraction(ViewerInteractionBase):
                     #apply displacement
                     pos = Vec3.from_tensor(self.picked_entity.get_pos())
                     pos = pos + delta_3d_pos
-                    self.picked_entity.set_pos(pos.as_tensor)
+                    self.picked_entity.set_pos(pos.as_tensor())
 
             return EVENT_HANDLED
 

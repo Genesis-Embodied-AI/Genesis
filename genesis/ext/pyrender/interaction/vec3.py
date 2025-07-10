@@ -10,16 +10,12 @@ from genesis.utils.misc import tensor_to_array
 # Vec3 = Annotated[npt.NDArray[np.float32], (3,)]
 # Aabb = Annotated[npt.NDArray[np.float32], (2, 3)]
 
-_is_torch_imported: bool = False
 
 def _ensure_torch_imported() -> None:
-    global _is_torch_imported
-    if not _is_torch_imported:
-        _is_torch_imported = True
-        global gs
-        import genesis as gs
-        global torch
-        import torch
+    global gs
+    import genesis as gs
+    global torch
+    import torch
 
 
 class Vec3:
@@ -69,6 +65,10 @@ class Vec3:
     def __repr__(self) -> str:
         return f"Vec3({self.v[0]}, {self.v[1]}, {self.v[2]})"
 
+    def as_tensor(self) -> 'torch.Tensor':
+        _ensure_torch_imported()
+        return torch.tensor(self.v, dtype=gs.tc_float) 
+
     @property
     def x(self) -> float:
         return self.v[0]
@@ -80,11 +80,6 @@ class Vec3:
     @property
     def z(self) -> float:
         return self.v[2]
-
-    @property
-    def as_tensor(self) -> 'torch.Tensor':
-        _ensure_torch_imported()
-        return torch.tensor(self.v, dtype=gs.tc_float) 
 
     @classmethod
     def from_xyz(cls, x: float, y: float, z: float) -> 'Vec3':
@@ -150,6 +145,10 @@ class Quat:
     def __repr__(self) -> str:
         return f"Quat({self.v[0]}, {self.v[1]}, {self.v[2]}, {self.v[3]})"
 
+    def as_tensor(self) -> 'torch.Tensor':
+        _ensure_torch_imported()
+        return torch.tensor(self.v, dtype=gs.tc_float) 
+
     @property
     def w(self) -> float:
         return self.v[0]
@@ -166,11 +165,6 @@ class Quat:
     def z(self) -> float:
         return self.v[3]
 
-    @property
-    def as_tensor(self) -> 'torch.Tensor':
-        _ensure_torch_imported()
-        return torch.tensor(self.v, dtype=gs.tc_float) 
-
     @classmethod
     def from_wxyz(cls, w: float, x: float, y: float, z: float) -> 'Quat':
         return cls(np.array([w, x, y, z], dtype=np.float32))
@@ -185,7 +179,6 @@ class Quat:
         _ensure_torch_imported()
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
-
 
 
 @dataclass
