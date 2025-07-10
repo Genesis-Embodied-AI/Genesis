@@ -4920,6 +4920,19 @@ class RigidSolver(Solver):
         _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
             None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
+
+        if torch.is_tensor(link1_idx):
+            link1_idx = link1_idx.cpu().numpy()
+        if torch.is_tensor(link2_idx):
+            link2_idx = link2_idx.cpu().numpy()
+        if envs_idx is not None and torch.is_tensor(envs_idx):
+            envs_idx = envs_idx.cpu().numpy()
+
+        if envs_idx is not None and envs_idx.shape[0] > 1:
+            if link1_idx.shape[0] == 1:
+                link1_idx = np.repeat(link1_idx, envs_idx.shape[0])
+            if link2_idx.shape[0] == 1:
+                link2_idx = np.repeat(link2_idx, envs_idx.shape[0])
         self._kernel_add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     @ti.kernel
