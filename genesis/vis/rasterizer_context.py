@@ -291,7 +291,7 @@ class RasterizerContext:
                     else:
                         mesh = geom.get_trimesh()
                     if isinstance(rigid_entity.morph, gs.morphs.Plane) and not rigid_entity.morph.double_sided:
-                        mesh = mu.create_plane(render_as_one_sided=not rigid_entity.morph.double_sided)
+                        mesh = mu.create_plane(render_as_one_sided = not rigid_entity.morph.double_sided)
                     else:
                         mesh = geom.get_trimesh()
 
