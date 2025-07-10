@@ -60,8 +60,7 @@ class SAPCoupler(RBC):
         self.sim = simulator
         self.options = options
         self.rigid_solver = self.sim.rigid_solver
-        self.fem_solver = self.sim.fem_solvers
-        self._B = self.sim._B
+        self.fem_solver = self.sim.fem_solver
         self._n_sap_iterations = options.n_sap_iterations
         self._n_pcg_iterations = options.n_pcg_iterations
         self._n_linesearch_iterations = options.n_linesearch_iterations
@@ -87,6 +86,7 @@ class SAPCoupler(RBC):
     # ------------------------------------------------------------------------------------
 
     def build(self) -> None:
+        self._B = self.sim._B
         self.contacts = []
         self._init_bvh()
 
@@ -112,7 +112,7 @@ class SAPCoupler(RBC):
                 self.fem_self_tet_contact = FEMSelfTetContact(self.sim)
                 self.contacts.append(self.fem_self_tet_contact)
 
-            self.init_fem_fields()
+            self._init_fem_fields()
 
         if self.rigid_solver.is_active():
             if self._rigid_floor_vert:
@@ -121,9 +121,9 @@ class SAPCoupler(RBC):
 
             self.init_rigid_fields()
 
-        self.init_sap_fields()
-        self.init_pcg_fields()
-        self.init_linesearch_fields()
+        self._init_sap_fields()
+        self._init_pcg_fields()
+        self._init_linesearch_fields()
 
     def reset(self, envs_idx=None):
         pass
@@ -189,7 +189,7 @@ class SAPCoupler(RBC):
             layout=ti.Layout.SOA,
         )
 
-    def init_fem_fields(self):
+    def _init_fem_fields(self):
         fem_state_v = ti.types.struct(
             v=gs.ti_vec3,  # vertex velocity
             v_diff=gs.ti_vec3,  # difference between current and previous velocity
@@ -258,7 +258,7 @@ class SAPCoupler(RBC):
             layout=ti.Layout.SOA,
         )
 
-    def init_pcg_fields(self):
+    def _init_pcg_fields(self):
         self.batch_pcg_active = ti.field(
             dtype=ti.u1,
             shape=self.sim._B,
@@ -281,7 +281,7 @@ class SAPCoupler(RBC):
             layout=ti.Layout.SOA,
         )
 
-    def init_linesearch_fields(self):
+    def _init_linesearch_fields(self):
         self.batch_linesearch_active = ti.field(
             dtype=ti.u1,
             shape=self.sim._B,
@@ -460,20 +460,20 @@ class SAPCoupler(RBC):
             if contact.has_contact:
                 contact.compute_regularization()
 
-    def init_v(self, f: ti.i32):
+    def _init_v(self, f: ti.i32):
         if self.fem_solver.is_active():
-            self.init_v_fem(f)
+            self._init_v_fem(f)
         if self.rigid_solver.is_active():
-            self.init_v_rigid(f)
+            self._init_v_rigid(f)
 
     @ti.kernel
-    def init_v_fem(self, f: ti.i32):
+    def _init_v_fem(self, f: ti.i32):
         fem_solver = self.fem_solver
         for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
             self.fem_state_v.v[i_b, i_v] = fem_solver.elements_v[f + 1, i_v, i_b].vel
 
     @ti.kernel
-    def init_v_rigid(self, f: ti.i32):
+    def _init_v_rigid(self, f: ti.i32):
         rigid_solver = self.rigid_solver
         for i_b, i_d in ti.ndrange(rigid_solver._B, rigid_solver.n_dofs):
             self.rigid_state_dof.v[i_b, i_d] = rigid_solver.dofs_state[i_d, i_b].vel
@@ -681,7 +681,6 @@ class SAPCoupler(RBC):
             dst[i_b, i_v2] += (B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]) * scale
             dst[i_b, i_v3] += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * scale
 
-    @ti.kernel
     def init_pcg_solve(self):
         self.init_pcg_state()
         if self.fem_solver.is_active():
@@ -1690,11 +1689,11 @@ class FEMFloorTetContact(FEMContact):
 
 
 @ti.data_oriented
-class FEMSelfTetContact(BaseContact):
+class FEMSelfTetContact(FEMContact):
     """
     Class for handling self-contact between tetrahedral elements in a simulation using hydroelastic model.
 
-    This class extends the BaseContact class and provides methods for detecting self-contact
+    This class extends the FEMContact class and provides methods for detecting self-contact
     between tetrahedral elements, computing contact pairs, and managing contact-related computations.
     """
 
@@ -2068,11 +2067,11 @@ class FEMSelfTetContact(BaseContact):
 
 
 @ti.data_oriented
-class FEMFloorVertContact(BaseContact):
+class FEMFloorVertContact(FEMContact):
     """
     Class for handling contact between tetrahedral elements and a floor in a simulation using point contact model.
 
-    This class extends the BaseContact class and provides methods for detecting contact
+    This class extends the FEMContact class and provides methods for detecting contact
     between the tetrahedral elements and the floor, computing contact pairs, and managing
     contact-related computations.
     """
