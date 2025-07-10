@@ -2170,6 +2170,49 @@ def test_terrain_size(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.merge_fixed_links(False)
+@pytest.mark.parametrize("model_name", ["pendulum"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_jacobian(gs_sim, tol):
+    pendulum = gs_sim.entities[0]
+    angle = 0.7
+    pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
+    gs_sim.scene.step()
+
+    link = pendulum.get_link("PendulumArm_0")
+
+    p_local = np.array([0.05, -0.02, 0.12], dtype=gs.np_float)
+    J_o = tensor_to_array(pendulum.get_jacobian(link))
+    J_p = tensor_to_array(pendulum.get_jacobian(link, p_local))
+
+    c, s = np.cos(angle), np.sin(angle)
+    Rx = np.array(
+        [
+            [1, 0, 0],
+            [0, c, -s],
+            [0, s, c],
+        ],
+        dtype=gs.np_float,
+    )
+    r_world = Rx @ p_local
+    r_cross = np.array(
+        [
+            [0, -r_world[2], r_world[1]],
+            [r_world[2], 0, -r_world[0]],
+            [-r_world[1], r_world[0], 0],
+        ],
+        dtype=gs.np_float,
+    )
+
+    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
+    lin_expected = lin_o - r_cross @ ang_o
+
+    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
+    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
