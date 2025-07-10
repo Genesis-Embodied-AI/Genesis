@@ -3486,7 +3486,7 @@ class RigidSolver(Solver):
 
     def set_state(self, f, state, envs_idx=None):
         if self.is_active():
-            envs_idx = self._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             self._kernel_set_state(
                 state.qpos,
                 state.dofs_vel,
@@ -3557,35 +3557,6 @@ class RigidSolver(Solver):
     # ------------------------------------ control ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_envs_idx(self, envs_idx, *, unsafe=False):
-        # Handling default argument and special cases
-        if envs_idx is None:
-            return self._scene._envs_idx
-
-        if self.n_envs == 0:
-            gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
-
-        if isinstance(envs_idx, slice):
-            return self._scene._envs_idx[envs_idx]
-        if isinstance(envs_idx, int):
-            return self._scene._envs_idx[[envs_idx]]
-
-        # Early return if unsafe
-        if unsafe:
-            return envs_idx
-
-        # Perform a bunch of sanity checks
-        _envs_idx = torch.atleast_1d(torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
-        if _envs_idx is not envs_idx:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-
-        if _envs_idx.ndim != 1:
-            gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")
-
-        if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
-            gs.raise_exception("`envs_idx` exceeds valid range.")
-
-        return _envs_idx
 
     def _sanitize_1D_io_variables(
         self,
@@ -3601,7 +3572,7 @@ class RigidSolver(Solver):
     ):
         # Handling default arguments
         if batched:
-            envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
             envs_idx = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
 
@@ -3686,7 +3657,7 @@ class RigidSolver(Solver):
     ):
         # Handling default arguments
         if batched:
-            envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
             envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
 

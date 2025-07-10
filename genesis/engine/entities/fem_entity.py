@@ -752,16 +752,16 @@ class FEMEntity(Entity):
         )
 
     def set_vertex_constraints(
-        self, vertex_indices, target_positions=None, link=None, is_soft_constraint=False, stiffness=0.0
+        self, verts_idx, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
     ):
         """
         Set vertex constraints for specified vertices.
 
         Parameters
         ----------
-            vertex_indices : array_like
+            verts_idx : array_like
                 List of vertex indices to constrain.
-            target_positions : array_like, shape (len(vertex_indices), 3), optional
+            target_poss : array_like, shape (len(verts_idx), 3), optional
                 List of target positions [x, y, z] for each vertex. If not provided, the initial positions are used.
             link : RigidLink
                 Optional rigid link for the vertices to follow, maintaining relative position.
@@ -770,6 +770,8 @@ class FEMEntity(Entity):
                 A soft constraint uses a spring force to pull the vertex towards the target position.
             stiffness : float
                 Specify a spring stiffness for a soft constraint. Critical damping is applied.
+            envs_idx : array_like, optional
+                List of environment indices to apply the constraints to. If None, applies to all environments.
         """
         if self._solver._use_implicit_solver:
             gs.logger.warning("Ignoring vertex constraint; unsupported with FEM implicit solver.")
@@ -778,71 +780,97 @@ class FEMEntity(Entity):
         if not self._solver._constraints_initialized:
             self._solver.init_constraints()
 
-        vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device) + self._v_start
-        self._assert_vertex_idx_in_bounds(vertex_indices)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        verts_idx = self._sanitize_input_to_batch_tensor(verts_idx, dtype=gs.tc_int) + self._v_start
+        self._assert_verts_idx_in_bounds(verts_idx)
 
-        if target_positions is None:
-            target_positions = self.init_positions[vertex_indices]
-        target_positions = torch.as_tensor(target_positions, dtype=gs.tc_float, device=gs.device)
+        if target_poss is None:
+            target_poss = gs.zeros((verts_idx.shape[0], verts_idx.shape[1], 3), dtype=float, requires_grad=False)
+            self._kernel_get_verts_pos(self._sim.cur_substep_local, target_poss, verts_idx)
+        target_poss = self._sanitize_input_to_batch_tensor(target_poss, gs.tc_float, dims=2)
+
+        assert len(envs_idx) == target_poss.shape[0] == verts_idx.shape[0], \
+            "First dimension should match number of environments."
+        assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
 
         if link is None:
-            link_init_pos = np.zeros((3,))
-            link_init_quat = np.zeros((4,))
+            B = self._sim._B
+            link_init_pos = gs.zeros((B, 3))
+            link_init_quat = gs.zeros((B, 4))
             link_idx = -1
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
-            link_init_pos = tensor_to_array(link.get_pos())
-            link_init_quat = tensor_to_array(link.get_quat())
+            link_init_pos = self._sanitize_input_to_batch_tensor(link.get_pos(), dtype=gs.tc_float)
+            link_init_quat = self._sanitize_input_to_batch_tensor(link.get_quat(), dtype=gs.tc_float)
             link_idx = link._idx
 
         self._solver._kernel_set_vertex_constraints(
-            vertex_indices,
-            target_positions,
+            self._sim.cur_substep_local,
+            verts_idx,
+            target_poss,
             1 if is_soft_constraint else 0,
             stiffness,
             link_idx,
             link_init_pos,
             link_init_quat,
+            envs_idx
         )
 
-    def _sanitize_input_to_tensor(self, arr, dtype):
-        if not isinstance(arr, torch.Tensor):
-            arr = torch.as_tensor(arr, dtype=dtype, device=gs.device)
-        return torch.atleast_1d(arr)
-
-    def update_constraint_targets(self, vertex_indices, target_positions):
+    def update_constraint_targets(self, verts_idx, target_poss, envs_idx=None):
         """Update target positions for existing constraints."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
             return
 
-        vertex_indices = self._sanitize_input_to_tensor(vertex_indices, dtype=gs.tc_int) + self._v_start
-        target_positions = self._sanitize_input_to_tensor(target_positions, gs.tc_float)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        verts_idx = self._sanitize_input_to_batch_tensor(verts_idx, dtype=gs.tc_int) + self._v_start
+        target_poss = self._sanitize_input_to_batch_tensor(target_poss, gs.tc_float, dims=2)
 
-        assert target_positions.shape[0] == vertex_indices.shape[0]
-        self._assert_vertex_idx_in_bounds(vertex_indices)
+        assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
+        self._assert_verts_idx_in_bounds(verts_idx)
 
-        self._solver._kernel_update_constraint_targets(vertex_indices, target_positions)
+        self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
 
-    def remove_vertex_constraints(self, vertex_indices=None):
+    def remove_vertex_constraints(self, verts_idx=None, envs_idx=None):
         """Remove constraints from specified vertices, or all if None."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
             return
 
-        if vertex_indices is None:
-            vertex_indices = self._v_start + torch.arange(self.n_vertices, dtype=gs.np_int, device=gs.device)
+        if verts_idx is None:
+            self._solver.vertex_constraints.is_constrained.fill(0)
         else:
-            vertex_indices = torch.as_tensor(vertex_indices, dtype=gs.tc_int, device=gs.device) + self._v_start
+            verts_idx = self._sanitize_input_to_batch_tensor(verts_idx, dtype=gs.tc_int) + self._v_start
+            self._assert_verts_idx_in_bounds(verts_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
-        self._assert_vertex_idx_in_bounds(vertex_indices)
-        self._solver._kernel_remove_specific_constraints(vertex_indices)
+    @ti.kernel
+    def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
+        # get current position of vertices
+        n = verts_idx.shape[0]
+        B = verts_idx.shape[1]
+        for i_v, i_b in ti.ndrange(n, B):
+            i_global = verts_idx[i_v, i_b] + self.v_start
+            for j in ti.static(range(3)):
+                pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
 
-    def _assert_vertex_idx_in_bounds(self, vertex_indices):
+    def _sanitize_input_to_batch_tensor(self, arr, dtype, dims=1):
+        if not isinstance(arr, torch.Tensor):
+            arr = torch.as_tensor(arr, dtype=dtype, device=gs.device)
+        tensor = torch.atleast_1d(arr)
+        if tensor.ndim < dims+1:
+            # add batch dimension if missing
+            tensor = tensor.unsqueeze(0).repeat((self._sim._B, *([1] * dims)))
+            # tensor = tensor.unsqueeze(0).repeat(self._sim._B, 1)
+        assert tensor.shape[0] == self._sim._B, "Input tensor batch size must match the number of environments."
+        return tensor
+
+    def _assert_verts_idx_in_bounds(self, verts_idx):
         """
         Assert that all vertex indices are within the valid range.
         """
-        out_of_bounds = torch.any(torch.logical_or(vertex_indices >= self._solver.n_vertices, vertex_indices < 0))
+        out_of_bounds = torch.any(torch.logical_or(verts_idx >= self._solver.n_vertices, verts_idx < 0))
         assert not out_of_bounds, "Vertex indices out of bounds in set_vertex_constraints."
 
     def get_el2v(self):

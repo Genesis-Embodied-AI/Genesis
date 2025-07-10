@@ -351,7 +351,6 @@ class Coupler(RBC):
             links_quat = self.rigid_solver.links_state.quat
             self.fem_solver._kernel_update_linked_vertex_constraints(links_pos, links_quat)
 
-
     @ti.kernel
     def fem_surface_force(self, f: ti.i32):
         # TODO: all collisions are on vertices instead of surface and edge

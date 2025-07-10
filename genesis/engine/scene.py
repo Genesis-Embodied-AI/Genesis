@@ -8,6 +8,7 @@ import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
@@ -1127,6 +1128,41 @@ class Scene(RBC):
             solver.load_ckpt_from_numpy(arrays)
 
         self._t = state.get("step_index", self._t)
+
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- utilities --------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _sanitize_envs_idx(self, envs_idx, *, unsafe=False):
+        # Handling default argument and special cases
+        if envs_idx is None:
+            return self._envs_idx
+
+        if self.n_envs == 0:
+            gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
+
+        if isinstance(envs_idx, slice):
+            return self._envs_idx[envs_idx]
+        if isinstance(envs_idx, int):
+            return self._envs_idx[[envs_idx]]
+
+        # Early return if unsafe
+        if unsafe:
+            return envs_idx
+
+        # Perform a bunch of sanity checks
+        _envs_idx = torch.atleast_1d(torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
+        if _envs_idx is not envs_idx:
+            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+
+        if _envs_idx.ndim != 1:
+            gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")
+
+        if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
+            gs.raise_exception("`envs_idx` exceeds valid range.")
+
+        return _envs_idx
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
