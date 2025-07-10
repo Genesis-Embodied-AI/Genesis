@@ -2526,7 +2526,14 @@ class Collider:
 
         # Copy contact data
         if n_contacts_max > 0:
-            self._kernel_get_contacts(as_tensor, iout, fout)
+            self._kernel_get_contacts(
+                self._solver.static_rigid_sim_config,
+                self.collider_state,
+                self.collider_info,
+                as_tensor, 
+                iout, 
+                fout
+            )
 
         # Build structured view (no copy)
         if as_tensor:
@@ -2576,31 +2583,39 @@ class Collider:
         return contacts_info.copy()
 
     @ti.kernel
-    def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):
+    def _kernel_get_contacts(
+        self_unused,
+        static_rigid_sim_config: ti.template(),
+        collider_state: ti.template(),
+        collider_info: ti.template(), 
+        is_padded: ti.template(), 
+        iout: ti.types.ndarray(), 
+        fout: ti.types.ndarray()
+    ):
         n_contacts_max = gs.ti_int(0)
-        for i_b in range(self._solver._B):
-            n_contacts = self.collider_state.n_contacts[i_b]
+        for i_b in range(collider_state._B[None]):
+            n_contacts = collider_state.n_contacts[i_b]
             if n_contacts > n_contacts_max:
                 n_contacts_max = n_contacts
 
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._solver._B):
+        ti.loop_config(serialize=static_rigid_sim_config._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(collider_state._B):
             i_c_start = gs.ti_int(0)
             if ti.static(is_padded):
                 i_c_start = i_b * n_contacts_max
             else:
                 for j_b in range(i_b):
-                    i_c_start = i_c_start + self.collider_state.n_contacts[j_b]
+                    i_c_start = i_c_start + collider_state.n_contacts[j_b]
 
-            for i_c_ in range(self.collider_state.n_contacts[i_b]):
+            for i_c_ in range(collider_state.n_contacts[i_b]):
                 i_c = i_c_start + i_c_
 
-                iout[i_c, 0] = self.collider_state.contact_data[i_c_, i_b].link_a
-                iout[i_c, 1] = self.collider_state.contact_data[i_c_, i_b].link_b
-                iout[i_c, 2] = self.collider_state.contact_data[i_c_, i_b].geom_a
-                iout[i_c, 3] = self.collider_state.contact_data[i_c_, i_b].geom_b
-                fout[i_c, 0] = self.collider_state.contact_data[i_c_, i_b].penetration
+                iout[i_c, 0] = collider_state.contact_data[i_c_, i_b].link_a
+                iout[i_c, 1] = collider_state.contact_data[i_c_, i_b].link_b
+                iout[i_c, 2] = collider_state.contact_data[i_c_, i_b].geom_a
+                iout[i_c, 3] = collider_state.contact_data[i_c_, i_b].geom_b
+                fout[i_c, 0] = collider_state.contact_data[i_c_, i_b].penetration
                 for j in ti.static(range(3)):
-                    fout[i_c, 1 + j] = self.collider_state.contact_data[i_c_, i_b].pos[j]
-                    fout[i_c, 4 + j] = self.collider_state.contact_data[i_c_, i_b].normal[j]
-                    fout[i_c, 7 + j] = self.collider_state.contact_data[i_c_, i_b].force[j]
+                    fout[i_c, 1 + j] = collider_state.contact_data[i_c_, i_b].pos[j]
+                    fout[i_c, 4 + j] = collider_state.contact_data[i_c_, i_b].normal[j]
+                    fout[i_c, 7 + j] = collider_state.contact_data[i_c_, i_b].force[j]
