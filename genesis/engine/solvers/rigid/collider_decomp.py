@@ -90,7 +90,7 @@ class Collider:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
         # Initialize the static info
-        self.collider_info = Collider.ColliderInfo(
+        self._collider_info = Collider.ColliderInfo(
             has_nonconvex_nonterrain=np.logical_and(
                 self._solver.geoms_info.is_convex.to_numpy() == 0,
                 self._solver.geoms_info.type.to_numpy() != gs.GEOM_TYPE.TERRAIN,
@@ -104,13 +104,13 @@ class Collider:
 
     def _init_collision_fields(self) -> None:
         # Every information about collision is stored in this [global_info].
-        self.collider_state = array_class.ColliderState(self._solver, self.collider_info)
+        self._collider_state = array_class.ColliderState(self._solver, self._collider_info)
 
         # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            f"({self.collider_state._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
+            f"({self._collider_state._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
             f"'max_collision_pairs'.{formats.RESET}"
         )
 
@@ -120,9 +120,9 @@ class Collider:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(
-            self._solver._rigid_global_info, self._solver._static_rigid_sim_config, self.collider_state, envs_idx
+            self._solver._rigid_global_info, self._solver._static_rigid_sim_config, self._collider_state, envs_idx
         )
-        self.collider_state._contacts_info_cache = {}
+        self._collider_state._contacts_info_cache = {}
 
     @ti.kernel
     def _kernel_reset(
@@ -149,7 +149,7 @@ class Collider:
             self._solver.links_state,
             self._solver.links_info,
             self._solver._static_rigid_sim_config,
-            self.collider_state,
+            self._collider_state,
             envs_idx,
         )
 
@@ -195,7 +195,7 @@ class Collider:
     def detection(self) -> None:
         # from genesis.utils.tools import create_timer
 
-        self.collider_state._contacts_info_cache = {}
+        self._collider_state._contacts_info_cache = {}
         # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs()
         # timer.stamp("func_update_aabbs")
@@ -206,7 +206,7 @@ class Collider:
             self._solver.geoms_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self.collider_state,
+            self._collider_state,
         )
         # timer.stamp("func_broad_phase")
         self._func_narrow_phase_convex_vs_convex(
@@ -218,8 +218,8 @@ class Collider:
             self._solver.verts_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self.collider_state,
-            self.collider_info,
+            self._collider_state,
+            self._collider_info,
             self._mpr,
             self._gjk,
             self._solver.sdf,
@@ -231,12 +231,12 @@ class Collider:
             self._solver.verts_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self.collider_state,
-            self.collider_info,
+            self._collider_state,
+            self._collider_info,
             self._mpr,
         )
         # timer.stamp("func_narrow_phase")
-        if self.collider_info.has_terrain:
+        if self._collider_info.has_terrain:
             self._func_narrow_phase_any_vs_terrain(
                 self._solver,
                 self._solver.geoms_state,
@@ -244,12 +244,12 @@ class Collider:
                 self._solver.geoms_init_AABB,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
-                self.collider_state,
-                self.collider_info,
+                self._collider_state,
+                self._collider_info,
                 self._mpr,
             )
             # timer.stamp("_func_narrow_phase_any_vs_terrain")
-        if self.collider_info.has_nonconvex_nonterrain:
+        if self._collider_info.has_nonconvex_nonterrain:
             self._func_narrow_phase_nonconvex_vs_nonterrain(
                 self._solver.links_state,
                 self._solver.links_info,
@@ -260,8 +260,8 @@ class Collider:
                 self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
-                self.collider_state,
-                self.collider_info,
+                self._collider_state,
+                self._collider_info,
                 self._solver.sdf,
             )
             # timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
@@ -2538,12 +2538,12 @@ class Collider:
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
-        contacts_info = self.collider_state._contacts_info_cache.get((as_tensor, to_torch))
+        contacts_info = self._collider_state._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
             return contacts_info.copy()
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = tuple(self.collider_state.n_contacts.to_numpy())
+        n_contacts = tuple(self._collider_state.n_contacts.to_numpy())
         n_envs = len(n_contacts)
         n_contacts_max = max(n_contacts)
         if as_tensor:
@@ -2562,7 +2562,7 @@ class Collider:
         # Copy contact data
         if n_contacts_max > 0:
             self._kernel_get_contacts(
-                self._solver._static_rigid_sim_config, self.collider_state, self.collider_info, as_tensor, iout, fout
+                self._solver._static_rigid_sim_config, self._collider_state, self._collider_info, as_tensor, iout, fout
             )
 
         # Build structured view (no copy)
@@ -2608,7 +2608,7 @@ class Collider:
         )
 
         # Cache contact information before returning
-        self.collider_state._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
+        self._collider_state._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
 
         return contacts_info.copy()
 
