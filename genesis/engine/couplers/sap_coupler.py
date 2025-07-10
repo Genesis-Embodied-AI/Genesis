@@ -791,7 +791,6 @@ class SAPCoupler(RBC):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
-            print("pcg alpha", self.pcg_state[i_b].alpha, self.pcg_state[i_b].rTz, self.pcg_state[i_b].pTAp)
 
     def compute_pcg_state(self):
         if self.fem_solver.is_active():
