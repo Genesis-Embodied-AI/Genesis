@@ -2,8 +2,6 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 import numpy as np
-from numpy.typing import NDArray
-import torch
 
 import genesis as gs
 from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
@@ -40,7 +38,7 @@ class ViewerInteraction(ViewerInteractionBase):
         self.camera_yfov: float = camera_yfov
 
         self.tan_half_fov: float = np.tan(0.5 * self.camera_yfov)
-        self.prev_mouse_pos: tuple[int, int] = tuple(np.array(viewport_size) / 2)
+        self.prev_mouse_pos: tuple[int, int] = (0.5 * viewport_size[0], 0.5 * viewport_size[1])
 
         self.picked_entity: RigidEntity | None = None
         self.picked_point_in_local: Vec3 | None = None
@@ -71,9 +69,9 @@ class ViewerInteraction(ViewerInteractionBase):
                     pass
                 else:
                     #apply displacement
-                    pos = Vec3(self.picked_entity.get_pos().cpu().numpy())
+                    pos = Vec3.from_tensor(self.picked_entity.get_pos())
                     pos = pos + delta_3d_pos
-                    self.picked_entity.set_pos(torch.tensor(pos.v))
+                    self.picked_entity.set_pos(pos.as_tensor)
 
             return EVENT_HANDLED
 
@@ -113,7 +111,7 @@ class ViewerInteraction(ViewerInteractionBase):
                 closest_hit = ray_hit
 
             for entity in self.get_entities():
-                ray_hit = self.raycast_against_entity_oobb(entity, mouse_ray)
+                ray_hit = self.raycast_against_entity_obb(entity, mouse_ray)
                 if ray_hit.is_hit:
                     if closest_hit is None or ray_hit.distance < closest_hit.distance:
                         closest_hit = ray_hit
@@ -123,7 +121,7 @@ class ViewerInteraction(ViewerInteractionBase):
                 self.scene.draw_debug_sphere(closest_hit.position.v, 0.01, (0, 1, 0, 1))
                 self._draw_arrow(closest_hit.position, 0.25 * closest_hit.normal, (0, 1, 0, 1))
             if hit_entity:
-                self._draw_entity_unrotated_oobb(hit_entity)
+                self._draw_entity_unrotated_obb(hit_entity)
 
             if self.picked_entity:
                 assert self.mouse_drag_plane is not None
@@ -157,35 +155,35 @@ class ViewerInteraction(ViewerInteractionBase):
         # Note: ignoring pixel aspect ratio
 
         mtx = self.camera.matrix
-        position = Vec3.from_float64(mtx[:3, 3])
-        forward = Vec3.from_float64(-mtx[:3, 2])
-        right = Vec3.from_float64(mtx[:3, 0])
-        up = Vec3.from_float64(mtx[:3, 1])
+        position = Vec3.from_array(mtx[:3, 3])
+        forward = Vec3.from_array(-mtx[:3, 2])
+        right = Vec3.from_array(mtx[:3, 0])
+        up = Vec3.from_array(mtx[:3, 1])
 
         direction = forward + right * x + up * y
         return Ray(position, direction)
 
     def get_camera_forward(self) -> Vec3:
         mtx = self.camera.matrix
-        return Vec3.from_float64(-mtx[:3, 2])
+        return Vec3.from_array(-mtx[:3, 2])
 
     def get_camera_ray(self) -> Ray:
         mtx = self.camera.matrix
-        position = Vec3.from_float64(mtx[:3, 3])
-        forward = Vec3.from_float64(-mtx[:3, 2])
+        position = Vec3.from_array(mtx[:3, 3])
+        forward = Vec3.from_array(-mtx[:3, 2])
         return Ray(position, forward)
 
     def _raycast_against_ground_plane(self, ray: Ray) -> RayHit:
         ground_plane = Plane(Vec3.from_xyz(0, 0, 1), Vec3.zero())
         return ground_plane.raycast(ray)
 
-    def raycast_against_entity_oobb(self, entity: RigidEntity, ray: Ray) -> RayHit:
+    def raycast_against_entity_obb(self, entity: RigidEntity, ray: Ray) -> RayHit:
         if isinstance(entity.morph, gs.morphs.Box):
             box: gs.morphs.Box = entity.morph
             size = Vec3.from_xyz(*box.size)
             pose = self.get_pose_of_first_geom(entity)
             aabb = AABB.from_center_and_size(Vec3.zero(), size)
-            ray_hit = aabb.raycast_oobb(pose, ray)
+            ray_hit = aabb.raycast_obb(pose, ray)
             return ray_hit
         else:
             return RayHit.no_hit()
@@ -194,7 +192,7 @@ class ViewerInteraction(ViewerInteractionBase):
         closest_hit = None
         hit_entity: RigidEntity | None = None
         for entity in self.get_entities():
-            ray_hit = self.raycast_against_entity_oobb(entity, ray)
+            ray_hit = self.raycast_against_entity_obb(entity, ray)
             if ray_hit.is_hit and (closest_hit is None or ray_hit.distance < closest_hit.distance):
                 closest_hit = ray_hit
                 hit_entity = entity
@@ -216,7 +214,7 @@ class ViewerInteraction(ViewerInteractionBase):
         self.scene.draw_debug_arrow(pos.v, dir.v, color=color)  # Only draws arrowhead -- bug?
         self.scene.draw_debug_line(pos.v, pos.v + dir.v, color=color)
 
-    def _draw_entity_unrotated_oobb(self, entity: RigidEntity) -> None:
+    def _draw_entity_unrotated_obb(self, entity: RigidEntity) -> None:
         if isinstance(entity.morph, gs.morphs.Plane):
             plane: gs.morphs.Plane = entity.morph
             pass
@@ -225,10 +223,9 @@ class ViewerInteraction(ViewerInteractionBase):
             size = Vec3.from_xyz(*box.size)
             geom: RigidGeom = entity.geoms[0]
             assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
-            gpos = geom.get_pos()  # squeezed if n_envs == 0
-            gquat = geom.get_quat()  # squeezed if n_envs == 0
-            pos = Vec3.from_any_array(gpos.cpu().numpy())
-            quat = Quat.from_any_array(gquat.cpu().numpy())
+            # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
+            pos = Vec3.from_tensor(geom.get_pos())
+            quat = Quat.from_tensor(geom.get_quat())
             aabb = AABB.from_center_and_size(pos, size)
             aabb.expand(0.01)
             self.scene.draw_debug_box(aabb.v, color=Color.red().with_alpha(0.5).tuple(), wireframe=False)

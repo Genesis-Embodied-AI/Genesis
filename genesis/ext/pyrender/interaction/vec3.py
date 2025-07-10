@@ -4,9 +4,22 @@ from typing import Union
 import numpy as np
 from numpy.typing import NDArray
 
+from genesis.utils.misc import tensor_to_array
+
 # If not needing runtime checks, we can just use annotated types:
 # Vec3 = Annotated[npt.NDArray[np.float32], (3,)]
 # Aabb = Annotated[npt.NDArray[np.float32], (2, 3)]
+
+_is_torch_imported: bool = False
+
+def _ensure_torch_imported() -> None:
+    global _is_torch_imported
+    if not _is_torch_imported:
+        _is_torch_imported = True
+        global gs
+        import genesis as gs
+        global torch
+        import torch
 
 
 class Vec3:
@@ -68,32 +81,27 @@ class Vec3:
     def z(self) -> float:
         return self.v[2]
 
+    @property
+    def as_tensor(self) -> 'torch.Tensor':
+        _ensure_torch_imported()
+        return torch.tensor(self.v, dtype=gs.tc_float) 
+
     @classmethod
     def from_xyz(cls, x: float, y: float, z: float) -> 'Vec3':
         return cls(np.array([x, y, z], dtype=np.float32))
 
     @classmethod
-    def from_int32(cls, v: NDArray[np.int32]) -> 'Vec3':
+    def from_array(cls, v: np.ndarray) -> 'Vec3':
         assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.int32, f"from_int32 must be initialized with a int32 array, got {v.dtype}"
+        assert v.dtype == np.int32 or v.dtype == np.int64 or v.dtype == np.float32 or v.dtype == np.float64, \
+            f"from_array must be initialized with a array of ints/floats 32/64-bit, got {v.dtype}"
         return cls.from_xyz(*v)
 
     @classmethod
-    def from_int64(cls, v: NDArray[np.int64]) -> 'Vec3':
-        assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.int64, f"from_int64 must be initialized with a int64 array, got {v.dtype}"
-        return cls.from_xyz(*v)
-
-    @classmethod
-    def from_float64(cls, v: NDArray[np.float64]) -> 'Vec3':
-        assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.float64, f"from_float64 must be initialized with a float64 array, got {v.dtype}"
-        return cls.from_xyz(*v)
-
-    @classmethod
-    def from_any_array(cls, v: np.ndarray) -> 'Vec3':
-        assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        return cls.from_xyz(*v)
+    def from_tensor(cls, v: 'torch.Tensor') -> 'Vec3':
+        _ensure_torch_imported()
+        array: np.ndarray = tensor_to_array(v)
+        return cls.from_array(array)
 
 
     @classmethod
@@ -158,15 +166,26 @@ class Quat:
     def z(self) -> float:
         return self.v[3]
 
+    @property
+    def as_tensor(self) -> 'torch.Tensor':
+        _ensure_torch_imported()
+        return torch.tensor(self.v, dtype=gs.tc_float) 
 
     @classmethod
     def from_wxyz(cls, w: float, x: float, y: float, z: float) -> 'Quat':
         return cls(np.array([w, x, y, z], dtype=np.float32))
 
     @classmethod
-    def from_any_array(cls, v: np.ndarray) -> 'Quat':
+    def from_array(cls, v: np.ndarray) -> 'Quat':
         assert v.shape == (4,), f"Quat must be initialized with a 4-element array, got {v.shape}"
         return cls.from_wxyz(*v)
+
+    @classmethod
+    def from_tensor(cls, v: 'torch.Tensor') -> 'Quat':
+        _ensure_torch_imported()
+        array: np.ndarray = tensor_to_array(v)
+        return cls.from_array(array)
+
 
 
 @dataclass
