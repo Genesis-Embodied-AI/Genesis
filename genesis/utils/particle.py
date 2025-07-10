@@ -8,8 +8,6 @@ import tempfile
 import igl
 import numpy as np
 import trimesh
-import vtk
-from vtk.util.numpy_support import vtk_to_numpy
 
 import genesis as gs
 
@@ -117,6 +115,10 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
             mesh.export(mesh_path)
 
             try:
+                # Try importing VTK. It would fail on Linux if not graphic server is running.
+                import vtk
+                from vtk.util.numpy_support import vtk_to_numpy
+
                 # Sample particles
                 command = (
                     os.path.join(miu.get_src_dir(), "ext/VolumeSampling"),
@@ -147,7 +149,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
                 reader.SetFileName(vtk_path)
                 reader.Update()
                 positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
-            except OSError as e:
+            except (OSError, ImportError) as e:
                 gs.raise_exception_from("`pbs` sampler failed.", e)
             finally:
                 os.remove(mesh_path)
