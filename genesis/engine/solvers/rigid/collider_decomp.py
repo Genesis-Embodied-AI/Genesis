@@ -241,6 +241,7 @@ class Collider:
                 self._solver,
                 self._solver.geoms_state,
                 self._solver.geoms_info,
+                self._solver.geoms_init_AABB,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self.collider_state,
@@ -1093,6 +1094,7 @@ class Collider:
         solver: ti.template(),
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
+        geoms_init_AABB: array_class.GeomsInitAABB,
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
@@ -1118,7 +1120,16 @@ class Collider:
 
                     if geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN:
                         self_unused._func_contact_mpr_terrain(
-                            solver, geoms_state, geoms_info, collider_state, collider_info, mpr, i_ga, i_gb, i_b
+                            solver,
+                            geoms_state,
+                            geoms_info,
+                            geoms_init_AABB,
+                            collider_state,
+                            collider_info,
+                            mpr,
+                            i_ga,
+                            i_gb,
+                            i_b,
                         )
 
     @ti.kernel
@@ -2551,7 +2562,7 @@ class Collider:
         # Copy contact data
         if n_contacts_max > 0:
             self._kernel_get_contacts(
-                self._solver.static_rigid_sim_config, self.collider_state, self.collider_info, as_tensor, iout, fout
+                self._solver._static_rigid_sim_config, self.collider_state, self.collider_info, as_tensor, iout, fout
             )
 
         # Build structured view (no copy)
@@ -2612,12 +2623,12 @@ class Collider:
         fout: ti.types.ndarray(),
     ):
         n_contacts_max = gs.ti_int(0)
-        for i_b in range(collider_state._B[None]):
+        for i_b in range(collider_state._B):
             n_contacts = collider_state.n_contacts[i_b]
             if n_contacts > n_contacts_max:
                 n_contacts_max = n_contacts
 
-        ti.loop_config(serialize=static_rigid_sim_config._para_level < gs.PARA_LEVEL.ALL)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(collider_state._B):
             i_c_start = gs.ti_int(0)
             if ti.static(is_padded):
