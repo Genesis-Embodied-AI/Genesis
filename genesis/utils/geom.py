@@ -400,6 +400,22 @@ def inv_quat(quat):
     return _quat
 
 
+def inv_T(T):
+    if isinstance(T, torch.Tensor):
+        T_inv = torch.zeros(T)
+    elif isinstance(T, np.ndarray):
+        T_inv = np.zeros(T)
+    else:
+        gs.raise_exception(f"the input must be torch.Tensor or np.ndarray. got: {type(T)=}")
+
+    trans, R = T[..., :3, 3], T[..., :3, :3]
+    T_inv[..., 3, 3] = 1.0
+    T_inv[..., :3, 3] = -R.T @ trans
+    T_inv[..., :3, :3] = R.T
+
+    return T_inv
+
+
 def normalize(x, eps: float = 1e-12):
     if isinstance(x, torch.Tensor):
         return x / x.norm(p=2, dim=-1).clamp(min=eps, max=None).unsqueeze(-1)
