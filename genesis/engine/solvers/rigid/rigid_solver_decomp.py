@@ -74,8 +74,10 @@ class RigidSolver(Solver):
         use_hibernation: bool = False
         batch_links_info: bool = False
         enable_mujoco_compatibility: bool = False
+        enable_multi_contact: bool = True
         enable_self_collision: bool = True
         enable_adjacent_collision: bool = False
+        box_box_detection: bool = False
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -229,8 +231,10 @@ class RigidSolver(Solver):
             use_hibernation=getattr(self, "_use_hibernation", False),
             batch_links_info=getattr(self._options, "batch_links_info", False),
             enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
+            enable_multi_contact=getattr(self, "_enable_multi_contact", True),
             enable_self_collision=getattr(self, "_enable_self_collision", True),
             enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
+            box_box_detection=getattr(self, "_box_box_detection", False),
         )
         # when the migration is finished, we will remove the about two lines
         # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
@@ -1386,7 +1390,7 @@ class RigidSolver(Solver):
     def _init_collider(self):
         self.collider = Collider(self)
 
-        if self.collider._has_terrain:
+        if self.collider.static_collider_info.has_terrain:
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
 
@@ -1891,7 +1895,7 @@ class RigidSolver(Solver):
 
                     self.n_contacts[i_b] = self.n_contacts_hibernated[i_b]
             else:
-                self.collider.n_contacts.fill(0)
+                self.collider.collider_global_info.n_contacts.fill(0)
 
     def _batch_array(self, arr, first_dim=False):
         if first_dim:

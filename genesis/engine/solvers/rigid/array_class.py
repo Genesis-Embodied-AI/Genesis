@@ -4,6 +4,7 @@ from typing import Callable
 import taichi as ti
 
 import genesis as gs
+import numpy as np
 
 # we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
 DofsState = ti.template()
@@ -19,6 +20,9 @@ class RigidGlobalInfo:
     def __init__(self, n_dofs: int, n_entities: int, n_geoms: int, f_batch: Callable):
         self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
         self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
+        
+        self.n_geoms = ti.field(dtype=gs.ti_int, shape=())
+        self.n_geoms[None] = n_geoms
 
 
 # =========================================== Collider ===========================================
@@ -26,7 +30,7 @@ class RigidGlobalInfo:
 
 @ti.data_oriented
 class ColliderGlobalInfo:
-    def __init__(self, solver):
+    def __init__(self, solver, collider_static_info):
         _B = solver._B
         f_batch = solver._batch_shape
         n_geoms = solver.n_geoms_
@@ -70,6 +74,45 @@ class ColliderGlobalInfo:
         self.broad_collision_pairs = ti.Vector.field(
             2, dtype=gs.ti_int, shape=f_batch(max(1, self._max_collision_pairs[None]))
         )
+
+        ############## narrow phase ##############
+        struct_contact_data = ti.types.struct(
+            geom_a=gs.ti_int,
+            geom_b=gs.ti_int,
+            penetration=gs.ti_float,
+            normal=gs.ti_vec3,
+            pos=gs.ti_vec3,
+            friction=gs.ti_float,
+            sol_params=gs.ti_vec7,
+            force=gs.ti_vec3,
+            link_a=gs.ti_int,
+            link_b=gs.ti_int,
+        )
+        self.contact_data = struct_contact_data.field(
+            shape=f_batch(max(1, self._max_contact_pairs[None])),
+            layout=ti.Layout.SOA,
+        )
+        # total number of contacts, including hibernated contacts
+        self.n_contacts = ti.field(gs.ti_int, shape=_B)  
+        self.n_contacts_hibernated = ti.field(gs.ti_int, shape=_B)
+        self._contacts_info_cache = {}
+
+        # contact caching for warmstart collision detection
+        struct_contact_cache = ti.types.struct(
+            # i_va_ws=gs.ti_int,
+            # penetration=gs.ti_float,
+            normal=gs.ti_vec3,
+        )
+        self.contact_cache = struct_contact_cache.field(
+            shape=f_batch((n_geoms, n_geoms)),
+            layout=ti.Layout.SOA,
+        )
+
+        # for faster compilation
+        if collider_static_info.has_terrain:
+            self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
+            self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
+
 
 
     def init_collision_pair_validity(self, solver):
