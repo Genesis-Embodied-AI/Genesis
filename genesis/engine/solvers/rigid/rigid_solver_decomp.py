@@ -1,4 +1,5 @@
 from typing import Literal, TYPE_CHECKING
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -13,6 +14,7 @@ from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TEN
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.styles import colors, formats
+import genesis.engine.solvers.rigid.array_class as array_class
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
@@ -65,6 +67,11 @@ class RigidSolver(Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
+    @dataclass(frozen=True)
+    class StaticRigidSimConfig:
+        # store static arguments here
+        para_level: int = 0
+        use_hibernation: bool = False
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -212,6 +219,19 @@ class RigidSolver(Solver):
         self.n_entities_ = max(1, self.n_entities)
 
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
+
+        self._static_rigid_sim_config = self.StaticRigidSimConfig(
+            para_level=self.sim._para_level,
+            use_hibernation=getattr(self, "_use_hibernation", False),
+        )
+        # when the migration is finished, we will remove the about two lines
+        # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
+        self._rigid_global_info = array_class.RigidGlobalInfo(
+            n_dofs=self.n_dofs_,
+            n_entities=self.n_entities_,
+            n_geoms=self.n_geoms_,
+            f_batch=self._batch_shape,
+        )
 
         if self.is_active():
             self._init_mass_mat()
@@ -408,8 +428,11 @@ class RigidSolver(Solver):
 
     def _init_dof_fields(self):
         if self._use_hibernation:
-            self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=self._B)
-            self.awake_dofs = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_dofs_))
+            # we are going to move n_awake_dofs and awake_dofs to _rigid_global_info completely after migration.
+            # But right now, other kernels are still using self.n_awake_dofs and self.awake_dofs
+            # so we need to keep them in self for now.
+            self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
+            self.awake_dofs = self._rigid_global_info.awake_dofs
 
         struct_dof_info = ti.types.struct(
             stiffness=gs.ti_float,
@@ -472,6 +495,10 @@ class RigidSolver(Solver):
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
                 dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
                 dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
+                dofs_info=self.dofs_info,
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
         # just in case
@@ -479,7 +506,8 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_init_dof_fields(
-        self,
+        self_unused,
+        # input np array
         dofs_motion_ang: ti.types.ndarray(),
         dofs_motion_vel: ti.types.ndarray(),
         dofs_limit: ti.types.ndarray(),
@@ -490,38 +518,46 @@ class RigidSolver(Solver):
         dofs_kp: ti.types.ndarray(),
         dofs_kv: ti.types.ndarray(),
         dofs_force_range: ti.types.ndarray(),
+        # taichi variables
+        dofs_info: array_class.DofsInfo,
+        dofs_state: array_class.DofsState,
+        # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
+        rigid_global_info: ti.template(),
+        static_rigid_sim_config: ti.template(),
     ):
-        for I in ti.grouped(self.dofs_info):
+        n_dofs = dofs_state.shape[0]
+        _B = dofs_state.shape[1]
+        for I in ti.grouped(dofs_info):
             i = I[0]  # batching (if any) will be the second dim
 
             for j in ti.static(range(3)):
-                self.dofs_info[I].motion_ang[j] = dofs_motion_ang[i, j]
-                self.dofs_info[I].motion_vel[j] = dofs_motion_vel[i, j]
+                dofs_info[I].motion_ang[j] = dofs_motion_ang[i, j]
+                dofs_info[I].motion_vel[j] = dofs_motion_vel[i, j]
 
             for j in ti.static(range(2)):
-                self.dofs_info[I].limit[j] = dofs_limit[i, j]
-                self.dofs_info[I].force_range[j] = dofs_force_range[i, j]
+                dofs_info[I].limit[j] = dofs_limit[i, j]
+                dofs_info[I].force_range[j] = dofs_force_range[i, j]
 
-            self.dofs_info[I].armature = dofs_armature[i]
-            self.dofs_info[I].invweight = dofs_invweight[i]
-            self.dofs_info[I].stiffness = dofs_stiffness[i]
-            self.dofs_info[I].damping = dofs_damping[i]
-            self.dofs_info[I].kp = dofs_kp[i]
-            self.dofs_info[I].kv = dofs_kv[i]
+            dofs_info[I].armature = dofs_armature[i]
+            dofs_info[I].invweight = dofs_invweight[i]
+            dofs_info[I].stiffness = dofs_stiffness[i]
+            dofs_info[I].damping = dofs_damping[i]
+            dofs_info[I].kp = dofs_kp[i]
+            dofs_info[I].kv = dofs_kv[i]
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i, b in ti.ndrange(self.n_dofs, self._B):
-            self.dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i, b in ti.ndrange(n_dofs, _B):
+            dofs_state[i, b].ctrl_mode = gs.CTRL_MODE.FORCE
 
-        if ti.static(self._use_hibernation):
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i, b in ti.ndrange(self.n_dofs, self._B):
-                self.dofs_state[i, b].hibernated = False
-                self.awake_dofs[i, b] = i
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i, b in ti.ndrange(n_dofs, _B):
+                dofs_state[i, b].hibernated = False
+                rigid_global_info.awake_dofs[i, b] = i
 
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for b in range(self._B):
-                self.n_awake_dofs[b] = self.n_dofs
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for b in range(_B):
+                rigid_global_info.n_awake_dofs[b] = n_dofs
 
     def _init_link_fields(self):
         if self._use_hibernation:
@@ -970,7 +1006,7 @@ class RigidSolver(Solver):
         self.geoms_state = struct_geom_state.field(
             shape=self._batch_shape(self.n_geoms_), needs_grad=False, layout=ti.Layout.SOA
         )
-        self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), order="F", dtype=np.float32)
+        self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_geoms > 0:
             # Make sure that the constraints parameters are valid
@@ -1153,7 +1189,7 @@ class RigidSolver(Solver):
         self.vgeoms_state = struct_vgeom_state.field(
             shape=self._batch_shape(self.n_vgeoms_), needs_grad=False, layout=ti.Layout.SOA
         )
-        self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), order="F", dtype=np.float32)
+        self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_vgeoms > 0:
             vgeoms = self.vgeoms
@@ -2687,6 +2723,8 @@ class RigidSolver(Solver):
         torque, links_idx, envs_idx = self._sanitize_2D_io_variables(
             torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
+        if self.n_envs == 0:
+            torque = torque.unsqueeze(0)
 
         if ref == "root_com":
             if local:
