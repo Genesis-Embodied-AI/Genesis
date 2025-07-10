@@ -792,9 +792,9 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     return mesh
 
 
-def create_plane(size=1e3, color=None, normal=(0, 0, 1), one_sided: bool = False):
+def create_plane(size=1e3, color=None, normal=(0, 0, 1), render_as_one_sided: bool = True):
     thickness = 1e-2  # for safety
-    if one_sided:
+    if render_as_one_sided:
         half = size * 0.5
         verts = np.array(
             [
