@@ -104,7 +104,7 @@ class SDF:
         """
         sdf_grad_sdf = ti.Vector.zero(gs.ti_float, 3)
         if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.TERRAIN:  # Terrain uses finite difference
-            if ti.static(self.solver.collider.static_collider_info.has_terrain):  # for speed up compilation
+            if ti.static(self.solver.collider.collider_info.has_terrain):  # for speed up compilation
                 # since we are in sdf frame, delta can be a relatively big value
                 delta = gs.ti_float(1e-2)
 

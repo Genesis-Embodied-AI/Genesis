@@ -202,14 +202,14 @@ class SupportField:
             istart = 0
 
         ibest = istart
-        best = self.solver.collider.collider_global_info.prism[istart, i_b].dot(d)
+        best = self.solver.collider.collider_state.prism[istart, i_b].dot(d)
         for i in range(istart + 1, istart + 3):
-            dot = self.solver.collider.collider_global_info.prism[i, i_b].dot(d)
+            dot = self.solver.collider.collider_state.prism[i, i_b].dot(d)
             if dot > best:
                 ibest = i
                 best = dot
 
-        return self.solver.collider.collider_global_info.prism[ibest, i_b], ibest
+        return self.solver.collider.collider_state.prism[ibest, i_b], ibest
 
     @ti.func
     def _func_support_box(self, d, i_g, i_b):

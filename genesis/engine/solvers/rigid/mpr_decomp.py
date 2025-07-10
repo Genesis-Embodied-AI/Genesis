@@ -179,7 +179,7 @@ class MPR:
         elif geom_type == gs.GEOM_TYPE.BOX:
             v, _ = self.support_field._func_support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
-            if ti.static(self._solver.collider.static_collider_info.has_terrain):
+            if ti.static(self._solver.collider.collider_info.has_terrain):
                 v, _ = self.support_field._func_support_prism(direction, i_g, i_b)
         else:
             v, _ = self.support_field._func_support_world(direction, i_g, i_b)

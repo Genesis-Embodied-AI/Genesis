@@ -11,8 +11,11 @@ DofsState = ti.template()
 DofsInfo = ti.template()
 GeomsState = ti.template()
 GeomsInfo = ti.template()
+GeomsInitAABB = ti.template()
 LinksState = ti.template()
 LinksInfo = ti.template()
+VertsInfo = ti.template()
+EdgesInfo = ti.template()
 
 
 @ti.data_oriented
@@ -29,13 +32,17 @@ class RigidGlobalInfo:
 
 
 @ti.data_oriented
-class ColliderGlobalInfo:
+class ColliderState:
     def __init__(self, solver, collider_static_info):
-        _B = solver._B
         f_batch = solver._batch_shape
         n_geoms = solver.n_geoms_
         max_collision_pairs = solver._max_collision_pairs
         use_hibernation = solver._static_rigid_sim_config.use_hibernation
+
+        self._B = solver._B
+
+        ############## vertex connectivity ##############
+        self._init_verts_connectivity(solver)
 
         ############## broad phase SAP ##############
         # This buffer stores the AABBs along the search axis of all geoms
@@ -53,10 +60,10 @@ class ColliderGlobalInfo:
 
         # Stores the validity of the collision pairs
         self.collision_pair_validity = ti.field(dtype=gs.ti_int, shape=(n_geoms, n_geoms))
-        n_possible_pairs = self.init_collision_pair_validity(solver)
+        n_possible_pairs = self._init_collision_pair_validity(solver)
 
         # Whether or not this is the first time to run the broad phase for each batch
-        self.first_time = ti.field(gs.ti_int, shape=_B)
+        self.first_time = ti.field(gs.ti_int, shape=self._B)
 
         # Number of possible pairs of collision, store them in a field to avoid recompilation
         self._n_contacts_per_pair = ti.field(dtype=gs.ti_int, shape=())
@@ -70,7 +77,7 @@ class ColliderGlobalInfo:
         self._max_contact_pairs[None] = self._max_collision_pairs[None] * self._n_contacts_per_pair[None]
 
         # Final results of the broad phase
-        self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=_B)
+        self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=self._B)
         self.broad_collision_pairs = ti.Vector.field(
             2, dtype=gs.ti_int, shape=f_batch(max(1, self._max_collision_pairs[None]))
         )
@@ -93,8 +100,8 @@ class ColliderGlobalInfo:
             layout=ti.Layout.SOA,
         )
         # total number of contacts, including hibernated contacts
-        self.n_contacts = ti.field(gs.ti_int, shape=_B)  
-        self.n_contacts_hibernated = ti.field(gs.ti_int, shape=_B)
+        self.n_contacts = ti.field(gs.ti_int, shape=self._B)  
+        self.n_contacts_hibernated = ti.field(gs.ti_int, shape=self._B)
         self._contacts_info_cache = {}
 
         # contact caching for warmstart collision detection
@@ -113,9 +120,33 @@ class ColliderGlobalInfo:
             self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
             self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
 
+    def _init_verts_connectivity(self, solver) -> None:
+        vert_neighbors = []
+        vert_neighbor_start = []
+        vert_n_neighbors = []
+        offset = 0
+        for geom in solver.geoms:
+            vert_neighbors.append(geom.vert_neighbors + geom.vert_start)
+            vert_neighbor_start.append(geom.vert_neighbor_start + offset)
+            vert_n_neighbors.append(geom.vert_n_neighbors)
+            offset += len(geom.vert_neighbors)
+
+        if solver.n_verts > 0:
+            vert_neighbors = np.concatenate(vert_neighbors, dtype=gs.np_int)
+            vert_neighbor_start = np.concatenate(vert_neighbor_start, dtype=gs.np_int)
+            vert_n_neighbors = np.concatenate(vert_n_neighbors, dtype=gs.np_int)
+
+        self.vert_neighbors = ti.field(dtype=gs.ti_int, shape=max(1, len(vert_neighbors)))
+        self.vert_neighbor_start = ti.field(dtype=gs.ti_int, shape=solver.n_verts_)
+        self.vert_n_neighbors = ti.field(dtype=gs.ti_int, shape=solver.n_verts_)
+
+        if solver.n_verts > 0:
+            self.vert_neighbors.from_numpy(vert_neighbors)
+            self.vert_neighbor_start.from_numpy(vert_neighbor_start)
+            self.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
 
-    def init_collision_pair_validity(self, solver):
+    def _init_collision_pair_validity(self, solver):
         """
         Initialize the collision pair validity matrix.
 
