@@ -504,7 +504,8 @@ class RigidEntity(Entity):
                         j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
 
             # Exclude joints with 0 dofs to align with Mujoco
-            link_j_infos = [j_info for j_info in link_j_infos if j_info["n_dofs"] > 0]
+            if not morph.keep_fixed_joints:
+                link_j_infos = [j_info for j_info in link_j_infos if j_info["n_dofs"] > 0]
 
             self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
 

@@ -618,6 +618,8 @@ class MJCF(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    keep_fixed_joints : bool, optional
+        Whether to remove joints with 0 dofs to align with Mujoco. Defaults to False.
     """
 
     pos: Optional[tuple] = None
@@ -625,6 +627,7 @@ class MJCF(FileMorph):
     quat: Optional[tuple] = None
     requires_jac_and_IK: bool = True
     default_armature: Optional[float] = 0.1
+    keep_fixed_joints: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -716,12 +719,15 @@ class URDF(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    keep_fixed_joints : bool, optional
+        Whether to remove joints with 0 dofs to align with Mujoco. Defaults to False.
     """
 
     fixed: bool = False
     prioritize_urdf_material: bool = False
     requires_jac_and_IK: bool = True
     merge_fixed_links: bool = True
+    keep_fixed_joints: bool = False
     links_to_keep: List[str] = []
     default_armature: Optional[float] = 0.1
 
@@ -814,6 +820,8 @@ class Drone(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    keep_fixed_joints : bool, optional
+        Whether to remove joints with 0 dofs to align with Mujoco. Defaults to False.
     """
 
     model: str = "CF2X"
@@ -825,6 +833,7 @@ class Drone(FileMorph):
     merge_fixed_links: bool = True
     links_to_keep: Sequence[str] = ()
     default_armature: Optional[float] = 0.1
+    keep_fixed_joints: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
