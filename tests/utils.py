@@ -182,10 +182,7 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
             # Make sure that download was successful
             has_files = False
             for path in Path(asset_path).rglob(pattern):
-                cache_path = os.path.join(asset_path, ".cache")
                 if not path.is_file():
-                    continue
-                if str(path).startswith(cache_path):
                     continue
                 has_files = True
 
@@ -199,11 +196,11 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
                         raise HTTPError(f"Impossible to parse XML file.") from e
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except HTTPError as e:
+        except HTTPError:
             num_trials += 1
             if num_trials == num_retry:
                 raise
-            print(f"Failed to download assets from HuggingFace dataset: {e}. Trying again in {retry_delay}s...")
+            print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
             time.sleep(retry_delay)
         else:
             break
