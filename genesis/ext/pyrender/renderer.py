@@ -688,17 +688,11 @@ class Renderer(object):
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
             # Set culling mode
-            if primitive.is_floor and not primitive.double_sided:
-                glEnable(GL_CULL_FACE)
-                glCullFace(GL_BACK)
-            if not primitive.double_sided:
-                glEnable(GL_CULL_FACE)
-                glCullFace(GL_BACK)
-            elif material.doubleSided or flags & RenderFlags.SKIP_CULL_FACES:
-                 glDisable(GL_CULL_FACE)
+            if material.doubleSided or flags & RenderFlags.SKIP_CULL_FACES:
+                glDisable(GL_CULL_FACE)
             else:
-                 glEnable(GL_CULL_FACE)
-                 glCullFace(GL_BACK)
+                glEnable(GL_CULL_FACE)
+                glCullFace(GL_BACK)
         else:
             glEnable(GL_CULL_FACE)
             glCullFace(GL_BACK)
