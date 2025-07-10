@@ -707,7 +707,7 @@ class RasterizerContext:
             pose = np.zeros((1, 4, 4), dtype=np.float32)
             pose[0, 3, 3] = 1.0
             pose[0, :3, 3] = tensor_to_array(pos)
-            gu.z_up_to_R(tensor_to_array(vec), out=pose[0, :3, :3])
+            gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=pose[0, :3, :3])
 
             node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose)
             if persistent:
