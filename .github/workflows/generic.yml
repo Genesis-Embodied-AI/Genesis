@@ -1,4 +1,4 @@
-name: Generic - CPU only
+name: Generic
 
 on:
   pull_request:
