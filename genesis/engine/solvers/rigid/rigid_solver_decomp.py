@@ -1831,10 +1831,10 @@ class RigidSolver(Solver):
     def detect_collision(self, env_idx=0):
         # TODO: support batching
         self._kernel_detect_collision()
-        n_collision = self.collider.n_contacts.to_numpy()[env_idx]
+        n_collision = self.collider.collider_global_info.n_contacts.to_numpy()[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = self.collider.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
-        collision_pairs[:, 1] = self.collider.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
+        collision_pairs[:, 0] = self.collider.collider_global_info.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
+        collision_pairs[:, 1] = self.collider.collider_global_info.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
         return collision_pairs
 
     @ti.kernel
