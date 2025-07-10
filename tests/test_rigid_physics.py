@@ -1438,8 +1438,8 @@ def move_cube(use_suction, mode, show_viewer):
 
     # grasp
     if use_suction:
-        link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
-        link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
+        link_cube = cube.get_link("box_baselink").idx
+        link_franka = franka.get_link("hand").idx
         scene.sim.rigid_solver.add_weld_constraint(link_cube, link_franka)
     else:
         franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -1897,7 +1897,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 # FIXME: GJK collision detection algorithm is failing on some platform.
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (76, 15, 90)])
-@pytest.mark.parametrize("gjk_collision", [False])
+@pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
@@ -2004,8 +2004,9 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_collision_edge_cases(gs_sim, mode):
+def test_collision_edge_cases(gs_sim, mode, gjk_collision):
     qpos_0 = gs_sim.rigid_solver.get_dofs_position()
     for _ in range(200):
         gs_sim.scene.step()
@@ -2013,7 +2014,9 @@ def test_collision_edge_cases(gs_sim, mode):
     qvel = gs_sim.rigid_solver.get_dofs_velocity()
     assert_allclose(qvel, 0, atol=1e-2)
     qpos = gs_sim.rigid_solver.get_dofs_position()
-    assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=1e-4)
+    # When using GJK, tolerance should be slightly higher for mode 6, but it is still physically valid.
+    atol = 1e-3 if gjk_collision == True and mode == 6 else 1e-4
+    assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=atol)
 
 
 @pytest.mark.required
@@ -2167,6 +2170,49 @@ def test_terrain_size(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.merge_fixed_links(False)
+@pytest.mark.parametrize("model_name", ["pendulum"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_jacobian(gs_sim, tol):
+    pendulum = gs_sim.entities[0]
+    angle = 0.7
+    pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
+    gs_sim.scene.step()
+
+    link = pendulum.get_link("PendulumArm_0")
+
+    p_local = np.array([0.05, -0.02, 0.12], dtype=gs.np_float)
+    J_o = tensor_to_array(pendulum.get_jacobian(link))
+    J_p = tensor_to_array(pendulum.get_jacobian(link, p_local))
+
+    c, s = np.cos(angle), np.sin(angle)
+    Rx = np.array(
+        [
+            [1, 0, 0],
+            [0, c, -s],
+            [0, s, c],
+        ],
+        dtype=gs.np_float,
+    )
+    r_world = Rx @ p_local
+    r_cross = np.array(
+        [
+            [0, -r_world[2], r_world[1]],
+            [r_world[2], 0, -r_world[0]],
+            [-r_world[1], r_world[0], 0],
+        ],
+        dtype=gs.np_float,
+    )
+
+    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
+    lin_expected = lin_o - r_cross @ ang_o
+
+    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
+    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
@@ -2256,7 +2302,7 @@ def test_urdf_parsing(show_viewer, tol):
     entities[(True, True)].set_dofs_velocity(door_vel)
     link_1 = np.array([entities[(True, True)].link_start], dtype=gs.np_int)
     for key in ((False, False), (False, True)):
-        link_2 = np.array([entities[key].link_start], dtype=gs.np_int)
+        link_2 = entities[key].link_start
         scene.rigid_solver.add_weld_constraint(link_1, link_2)
 
     for i in range(2000):

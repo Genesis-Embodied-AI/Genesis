@@ -55,24 +55,24 @@ class RigidLink(RBC):
         self._entity_idx_in_solver = entity.idx
 
         self._uid = gs.UID()
-        self._idx = idx
-        self._parent_idx = parent_idx
-        self._root_idx = root_idx
-        self._child_idxs = list()
-        self._invweight = invweight
+        self._idx: int = idx
+        self._parent_idx: int = parent_idx  # -1 if no parent
+        self._root_idx: int | None = root_idx  # None if no root
+        self._child_idxs: list[int] = list()
+        self._invweight: float | None = invweight
 
-        self._joint_start = joint_start
-        self._n_joints = n_joints
+        self._joint_start: int = joint_start
+        self._n_joints: int = n_joints
 
-        self._geom_start = geom_start
-        self._cell_start = cell_start
-        self._vert_start = vert_start
-        self._face_start = face_start
-        self._edge_start = edge_start
-        self._verts_state_start = verts_state_start
-        self._vgeom_start = vgeom_start
-        self._vvert_start = vvert_start
-        self._vface_start = vface_start
+        self._geom_start: int = geom_start
+        self._cell_start: int = cell_start
+        self._vert_start: int = vert_start
+        self._face_start: int = face_start
+        self._edge_start: int = edge_start
+        self._verts_state_start: int = verts_state_start
+        self._vgeom_start: int = vgeom_start
+        self._vvert_start: int = vvert_start
+        self._vface_start: int = vface_start
 
         # Link position & rotation at creation time:
         self._pos: ArrayLike = pos
@@ -144,7 +144,8 @@ class RigidLink(RBC):
 
                 if inertia_mesh.is_watertight and self._init_mesh.mass > 0:
                     # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
-                    T_inertia = gu.trans_quat_to_T(self._inertial_pos, self._inertial_quat)
+                    dtype = np.result_type(self._inertial_pos, self._inertial_quat)
+                    T_inertia = gu.trans_quat_to_T(self._inertial_pos.astype(dtype), self._inertial_quat.astype(dtype))
                     self._inertial_i = (
                         self._init_mesh.moment_inertia_frame(T_inertia) / self._init_mesh.mass * self._inertial_mass
                     )
