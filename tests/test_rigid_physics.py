@@ -2483,37 +2483,6 @@ def test_drone_advanced(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_get_weld_constraints_basic(show_viewer, tol):
-    scene = gs.Scene(show_viewer=show_viewer)
-
-    cube1 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.0, 0.0, 0.05)))
-    cube2 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.2, 0.0, 0.05)))
-
-    scene.build(n_envs=1)
-
-    rigid = scene.sim.rigid_solver
-
-    link_a = torch.tensor([cube1.base_link.idx], dtype=gs.tc_int, device=gs.device)
-    link_b = torch.tensor([cube2.base_link.idx], dtype=gs.tc_int, device=gs.device)
-
-    rigid.add_weld_constraint(link_a, link_b)
-    scene.step()
-
-    welds = rigid.get_weld_constraints(as_tensor=True, to_torch=False)
-
-    env_id = 0 if "env" not in welds else int(welds["env"][0])
-
-    row = np.array(
-        [env_id, int(welds["obj_a"][0]), int(welds["obj_b"][0])],
-        dtype=np.int32,
-    )
-    ref = np.array([0, link_a.item(), link_b.item()], dtype=np.int32)
-
-    assert_allclose(row, ref, tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_get_weld_constraints_basic(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
         show_viewer=show_viewer,
