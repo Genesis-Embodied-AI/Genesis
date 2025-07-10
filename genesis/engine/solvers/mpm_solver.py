@@ -720,9 +720,9 @@ class MPMSolver(Solver):
                 self.particles[f, i_global, i_b].pos[k] = pos[i_b, i_p, k]
 
             # we restore these whenever directly setting positions
-            self.particles[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+            self.particles[f, i_global, i_b].vel.fill(0.0)
             self.particles[f, i_global, i_b].F = ti.Matrix.identity(gs.ti_float, 3)
-            self.particles[f, i_global, i_b].C = ti.Matrix.zero(gs.ti_float, 3, 3)
+            self.particles[f, i_global, i_b].C.fill(0.0)
             self.particles[f, i_global, i_b].Jp = self.particles_info[i_global].default_Jp
 
     @ti.kernel
