@@ -826,7 +826,7 @@ class RigidEntity(Entity):
         if local_point is None:
             self._kernel_get_jacobian_zero(link.idx)
         else:
-            p_local = torch.as_tensor(local_point, dtype=torch.float64, device="cpu").numpy()
+            p_local = torch.as_tensor(local_point, dtype=gs.tc_float, device=gs.device)
             if p_local.shape != (3,):
                 gs.raise_exception("Must be a vector of length 3")
             self._kernel_get_jacobian(link.idx, p_local)
