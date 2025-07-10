@@ -73,15 +73,13 @@ class ColliderState:
         self.first_time = ti.field(gs.ti_int, shape=_B)
 
         # Number of possible pairs of collision, store them in a field to avoid recompilation
-        self._n_contacts_per_pair = ti.field(dtype=gs.ti_int, shape=())
         self._max_possible_pairs = ti.field(dtype=gs.ti_int, shape=())
         self._max_collision_pairs = ti.field(dtype=gs.ti_int, shape=())
         self._max_contact_pairs = ti.field(dtype=gs.ti_int, shape=())
 
-        self._n_contacts_per_pair[None] = 5  # CONSTANT. CANNOT NOT BE CHANGED.
         self._max_possible_pairs[None] = n_possible_pairs
         self._max_collision_pairs[None] = min(n_possible_pairs, max_collision_pairs)
-        self._max_contact_pairs[None] = self._max_collision_pairs[None] * self._n_contacts_per_pair[None]
+        self._max_contact_pairs[None] = self._max_collision_pairs[None] * collider_info.n_contacts_per_pair[None]
 
         # Final results of the broad phase
         self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=_B)

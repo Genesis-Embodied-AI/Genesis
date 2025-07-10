@@ -67,6 +67,8 @@ class Collider:
         mc_perturbation: float = 0.0
         mc_tolerance: float = 0.0
         mpr_to_sdf_overlap_ratio: float = 0.0
+        # maximum number of contact pairs per collision pair
+        n_contacts_per_pair: int = 5
         # maximum number of contact points for box-box collision detection
         box_MAXCONPAIR: int = 16
         # ccd algorithm
@@ -105,6 +107,7 @@ class Collider:
             mc_perturbation=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mc_tolerance=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mpr_to_sdf_overlap_ratio=0.4,
+            n_contacts_per_pair=5,
             box_MAXCONPAIR=16,
             ccd_algorithm=ccd_algorithm,
         )
@@ -616,12 +619,12 @@ class Collider:
                 r_max = ti.min(solver.terrain_rc[0] - 1, r_max)
                 c_max = ti.min(solver.terrain_rc[1] - 1, c_max)
 
-                cnt = 0
+                n_con = 0
                 for r in range(r_min, r_max):
                     nvert = 0
                     for c in range(c_min, c_max + 1):
                         for i in range(2):
-                            if cnt < collider_state._n_contacts_per_pair[None]:
+                            if n_con < ti.static(collider_info.n_contacts_per_pair):
                                 nvert = nvert + 1
                                 self_unused.add_prism_vert(
                                     collider_state,
@@ -653,10 +656,10 @@ class Collider:
                                         contact_pos = contact_pos + gb_pos
 
                                         valid = True
-                                        i_col = collider_state.n_contacts[i_b]
-                                        for j in range(cnt):
+                                        i_c = collider_state.n_contacts[i_b]
+                                        for j in range(n_con):
                                             if (
-                                                contact_pos - collider_state.contact_data[i_col - j - 1, i_b].pos
+                                                contact_pos - collider_state.contact_data[i_c - j - 1, i_b].pos
                                             ).norm() < tolerance:
                                                 valid = False
                                                 break
@@ -674,7 +677,7 @@ class Collider:
                                                 penetration,
                                                 i_b,
                                             )
-                                            cnt = cnt + 1
+                                            n_con = n_con + 1
 
         geoms_state[i_ga, i_b].pos, geoms_state[i_ga, i_b].quat = ga_pos, ga_quat
         geoms_state[i_gb, i_b].pos, geoms_state[i_gb, i_b].quat = gb_pos, gb_quat
@@ -833,12 +836,13 @@ class Collider:
                                     collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
                                 continue
 
-                            if collider_state.n_broad_pairs[i_b] == collider_state._max_collision_pairs[None]:
+                            i_p = collider_state.n_broad_pairs[i_b]
+                            if i_p == collider_state._max_collision_pairs[None]:
                                 # print(self._warn_msg_max_collision_pairs)
                                 break
-                            collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][0] = i_ga
-                            collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][1] = i_gb
-                            collider_state.n_broad_pairs[i_b] = collider_state.n_broad_pairs[i_b] + 1
+                            collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
+                            collider_state.broad_collision_pairs[i_p, i_b][1] = i_gb
+                            collider_state.n_broad_pairs[i_b] += 1
 
                         collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer[i, i_b].i_g
                         n_active = n_active + 1
@@ -1274,9 +1278,9 @@ class Collider:
 
                                             # Discard contact point is repeated
                                             repeated = False
-                                            for i_con in range(n_con):
+                                            for i_c in range(n_con):
                                                 if not repeated:
-                                                    idx_prev = collider_state.n_contacts[i_b] - 1 - i_con
+                                                    idx_prev = collider_state.n_contacts[i_b] - 1 - i_c
                                                     prev_contact = collider_state.contact_data[idx_prev, i_b].pos
                                                     if (contact_pos - prev_contact).norm() < tolerance:
                                                         repeated = True
@@ -1370,7 +1374,7 @@ class Collider:
                     geoms_info, geoms_init_AABB, collider_info, i_ga, i_gb, i_b
                 )
                 for i_v in range(gb_info.vert_start, gb_info.vert_end):
-                    if n_con < collider_state._n_contacts_per_pair[None]:
+                    if n_con < ti.static(collider_info.n_contacts_per_pair):
                         pos_corner = gu.ti_transform_by_trans_quat(
                             verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
                         )
@@ -1406,10 +1410,8 @@ class Collider:
         penetration: ti.f32,
         i_b: ti.i32,
     ):
-        # print(f"Adding contact {i_ga} {i_gb}, normal:", normal, "contact_pos:", contact_pos, "penetration:", penetration)
-        i_col = collider_state.n_contacts[i_b]
-
-        if i_col == collider_state._max_contact_pairs[None]:
+        i_c = collider_state.n_contacts[i_b]
+        if i_c == collider_state._max_contact_pairs[None]:
             # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
             # condition, while 'print' is slowing down the kernel even if every called in practice...
             # print(self._warn_msg_max_collision_pairs)
@@ -1422,17 +1424,17 @@ class Collider:
             friction_b = gb_info.friction * geoms_state[i_gb, i_b].friction_ratio
 
             # b to a
-            collider_state.contact_data[i_col, i_b].geom_a = i_ga
-            collider_state.contact_data[i_col, i_b].geom_b = i_gb
-            collider_state.contact_data[i_col, i_b].normal = normal
-            collider_state.contact_data[i_col, i_b].pos = contact_pos
-            collider_state.contact_data[i_col, i_b].penetration = penetration
-            collider_state.contact_data[i_col, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
-            collider_state.contact_data[i_col, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
-            collider_state.contact_data[i_col, i_b].link_a = ga_info.link_idx
-            collider_state.contact_data[i_col, i_b].link_b = gb_info.link_idx
+            collider_state.contact_data[i_c, i_b].geom_a = i_ga
+            collider_state.contact_data[i_c, i_b].geom_b = i_gb
+            collider_state.contact_data[i_c, i_b].normal = normal
+            collider_state.contact_data[i_c, i_b].pos = contact_pos
+            collider_state.contact_data[i_c, i_b].penetration = penetration
+            collider_state.contact_data[i_c, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
+            collider_state.contact_data[i_c, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
+            collider_state.contact_data[i_c, i_b].link_a = ga_info.link_idx
+            collider_state.contact_data[i_c, i_b].link_b = gb_info.link_idx
 
-            collider_state.n_contacts[i_b] = i_col + 1
+            collider_state.n_contacts[i_b] = i_c + 1
 
     @ti.func
     def _func_compute_tolerance(
@@ -1664,7 +1666,7 @@ class Collider:
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
                                         # Ignore contact points if the number of contacts exceeds the limit.
-                                        if i_c < collider_state._n_contacts_per_pair[None]:
+                                        if i_c < ti.static(collider_info.n_contacts_per_pair):
                                             contact_pos = gjk.contact_pos[i_b, i_c]
                                             normal = gjk.normal[i_b, i_c]
                                             self_unused._func_add_contact(
@@ -1834,9 +1836,9 @@ class Collider:
 
                     # Discard contact point is repeated
                     repeated = False
-                    for i_con in range(n_con):
+                    for i_c in range(n_con):
                         if not repeated:
-                            idx_prev = collider_state.n_contacts[i_b] - 1 - i_con
+                            idx_prev = collider_state.n_contacts[i_b] - 1 - i_c
                             prev_contact = collider_state.contact_data[idx_prev, i_b].pos
                             if (contact_pos - prev_contact).norm() < tolerance:
                                 repeated = True
