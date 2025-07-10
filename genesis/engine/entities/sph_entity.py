@@ -92,12 +92,7 @@ class SPHEntity(ParticleEntity):
         pos : ndarray
             Array of particle positions of shape (n_envs, n_particles, 3).
         """
-        self.solver._kernel_set_particles_pos(
-            f,
-            self._particle_start,
-            self._n_particles,
-            pos,
-        )
+        self.solver._kernel_set_particles_pos(f, self._particle_start, self._n_particles, pos)
 
     def set_pos_grad(self, f: ti.i32, pos_grad: ti.types.ndarray()):
         """

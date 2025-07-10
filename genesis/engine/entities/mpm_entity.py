@@ -89,14 +89,9 @@ class MPMEntity(ParticleEntity):
         f : int
             The current substep index.
         pos : gs.Tensor
-            A tensor of shape (n_particles, 3) representing particle positions.
+            A tensor of shape (n_envs, n_particles, 3) representing particle positions.
         """
-        self.solver._kernel_set_particles_pos(
-            f,
-            self._particle_start,
-            self._n_particles,
-            pos,
-        )
+        self.solver._kernel_set_particles_pos(f, self._particle_start, self._n_particles, pos)
 
     def set_pos_grad(self, f, pos_grad):
         """

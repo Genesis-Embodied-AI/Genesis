@@ -840,8 +840,8 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].pos[k] = pos[i_p, k]
-            self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+                self.particles[i_global, i_b].pos[k] = pos[i_b, i_p, k]
+            self.particles[i_global, i_b].vel.fill(0.0)
 
     @ti.kernel
     def _kernel_set_particles_vel(
