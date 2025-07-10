@@ -33,13 +33,20 @@ class RigidGlobalInfo:
 
 @ti.data_oriented
 class ColliderState:
-    def __init__(self, solver, collider_static_info):
+    """
+    Class to store the mutable collider data, all of which type is [ti.fields].
+    """
+
+    def __init__(self, solver, collider_info):
+        _B = solver._B
         f_batch = solver._batch_shape
         n_geoms = solver.n_geoms_
         max_collision_pairs = solver._max_collision_pairs
         use_hibernation = solver._static_rigid_sim_config.use_hibernation
 
-        self._B = solver._B
+        # Data size, put it here to avoid recompilation when it changes, even though it is immutable
+        self._B = ti.field(dtype=gs.ti_int, shape=())
+        self._B[None] = _B
 
         ############## vertex connectivity ##############
         self._init_verts_connectivity(solver)
@@ -63,7 +70,7 @@ class ColliderState:
         n_possible_pairs = self._init_collision_pair_validity(solver)
 
         # Whether or not this is the first time to run the broad phase for each batch
-        self.first_time = ti.field(gs.ti_int, shape=self._B)
+        self.first_time = ti.field(gs.ti_int, shape=_B)
 
         # Number of possible pairs of collision, store them in a field to avoid recompilation
         self._n_contacts_per_pair = ti.field(dtype=gs.ti_int, shape=())
@@ -77,7 +84,7 @@ class ColliderState:
         self._max_contact_pairs[None] = self._max_collision_pairs[None] * self._n_contacts_per_pair[None]
 
         # Final results of the broad phase
-        self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=self._B)
+        self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=_B)
         self.broad_collision_pairs = ti.Vector.field(
             2, dtype=gs.ti_int, shape=f_batch(max(1, self._max_collision_pairs[None]))
         )
@@ -100,8 +107,8 @@ class ColliderState:
             layout=ti.Layout.SOA,
         )
         # total number of contacts, including hibernated contacts
-        self.n_contacts = ti.field(gs.ti_int, shape=self._B)
-        self.n_contacts_hibernated = ti.field(gs.ti_int, shape=self._B)
+        self.n_contacts = ti.field(gs.ti_int, shape=_B)
+        self.n_contacts_hibernated = ti.field(gs.ti_int, shape=_B)
         self._contacts_info_cache = {}
 
         # contact caching for warmstart collision detection
@@ -116,7 +123,7 @@ class ColliderState:
         )
 
         # for faster compilation
-        if collider_static_info.has_terrain:
+        if collider_info.has_terrain:
             self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
             self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
 
@@ -126,9 +133,8 @@ class ColliderState:
             # located depending of the pose and size of each box. In practice, up to 11 contact points have been
             # observed. The theoretical worst case scenario would be 2 cubes roughly the same size and same center,
             # with transform RPY = (45, 45, 45), resulting in 3 contact points per faces for a total of 16 points.
-            self.box_MAXCONPAIR = 16
-            self.box_depth = ti.field(dtype=gs.ti_float, shape=f_batch(self.box_MAXCONPAIR))
-            self.box_points = ti.field(gs.ti_vec3, shape=f_batch(self.box_MAXCONPAIR))
+            self.box_depth = ti.field(dtype=gs.ti_float, shape=f_batch(collider_info.box_MAXCONPAIR))
+            self.box_points = ti.field(gs.ti_vec3, shape=f_batch(collider_info.box_MAXCONPAIR))
             self.box_pts = ti.field(gs.ti_vec3, shape=f_batch(6))
             self.box_lines = ti.field(gs.ti_vec6, shape=f_batch(4))
             self.box_linesu = ti.field(gs.ti_vec6, shape=f_batch(4))
@@ -138,6 +144,9 @@ class ColliderState:
         ##---------------- box box
 
     def _init_verts_connectivity(self, solver) -> None:
+        """
+        Initialize the vertex connectivity fields.
+        """
         vert_neighbors = []
         vert_neighbor_start = []
         vert_n_neighbors = []

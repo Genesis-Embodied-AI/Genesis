@@ -56,6 +56,10 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
 class Collider:
     @dataclass(frozen=True)
     class ColliderInfo:
+        """
+        Class to store the immutable collider data.
+        """
+
         # store static information here
         has_nonconvex_nonterrain: bool = False
         has_terrain: bool = False
@@ -63,6 +67,8 @@ class Collider:
         mc_perturbation: float = 0.0
         mc_tolerance: float = 0.0
         mpr_to_sdf_overlap_ratio: float = 0.0
+        # maximum number of contact points for box-box collision detection
+        box_MAXCONPAIR: int = 16
         # ccd algorithm
         ccd_algorithm: CCD_ALGORITHM_CODE = CCD_ALGORITHM_CODE.MPR
 
@@ -99,6 +105,7 @@ class Collider:
             mc_perturbation=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mc_tolerance=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mpr_to_sdf_overlap_ratio=0.4,
+            box_MAXCONPAIR=16,
             ccd_algorithm=ccd_algorithm,
         )
 
@@ -272,8 +279,8 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         point: ti.types.vector(3),
-        i_g: int,
-        i_b: int,
+        i_g: ti.i32,
+        i_b: ti.i32,
     ):
         return (point < geoms_state[i_g, i_b].aabb_max).all() and (point > geoms_state[i_g, i_b].aabb_min).all()
 
@@ -282,9 +289,9 @@ class Collider:
         self_unused,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         return not (
             (geoms_state[i_ga, i_b].aabb_max <= geoms_state[i_gb, i_b].aabb_min).any()
@@ -293,7 +300,7 @@ class Collider:
 
     @ti.func
     def _func_find_intersect_midpoint(
-        self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, i_ga: int, i_gb: int
+        self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, i_ga: ti.i32, i_gb: ti.i32
     ):
         # return the center of the intersecting AABB of AABBs of two geoms
         intersect_lower = ti.max(geoms_state[i_ga].aabb_min, geoms_state[i_gb].aabb_min)
@@ -306,9 +313,9 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         sdf: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         ga_info = geoms_info[i_ga]
         is_col = False
@@ -335,9 +342,9 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         verts_info: array_class.VertsInfo,
         sdf: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         ga_info = geoms_info[i_ga]
         ga_pos = geoms_state[i_ga, i_b].pos
@@ -374,9 +381,9 @@ class Collider:
         verts_info: array_class.VertsInfo,
         edges_info: array_class.EdgesInfo,
         sdf: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         ga_info = geoms_info[i_ga]
         ga_state = geoms_state[i_ga, i_b]
@@ -443,10 +450,10 @@ class Collider:
         verts_info: array_class.VertsInfo,
         collider_state: ti.template(),
         sdf: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
-        i_va_ws: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
+        i_va_ws: ti.i32,
     ):
         gb_vert_start = geoms_info[i_gb].vert_start
         ga_pos = geoms_state[i_ga, i_b].pos
@@ -553,9 +560,9 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         mpr: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         # FIXME: Here we need some data from [solver], but it seems that we can store it in [collider_state] instead,
         # and remove the reference to [solver] in this function.
@@ -698,9 +705,9 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         is_valid = collider_state.collision_pair_validity[i_ga, i_gb]
 
@@ -736,8 +743,8 @@ class Collider:
         This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for
         potential collision pairs based on the AABB overlap.
         """
-        _B = collider_state.active_buffer.shape[1]
-        n_geoms = collider_state.active_buffer.shape[0]
+        _B = collider_state._B[None]
+        n_geoms = rigid_global_info.n_geoms[None]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -980,7 +987,7 @@ class Collider:
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
-        _B = collider_state.active_buffer.shape[1]
+        _B = collider_state._B[None]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -1056,7 +1063,7 @@ class Collider:
         collider_info: ti.template(),
         mpr: ti.template(),
     ):
-        _B = collider_state.active_buffer.shape[1]
+        _B = collider_state._B[None]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_pair in range(collider_state.n_broad_pairs[i_b]):
@@ -1107,7 +1114,7 @@ class Collider:
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
-        _B = collider_state.active_buffer.shape[1]
+        _B = collider_state._B[None]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_pair in range(collider_state.n_broad_pairs[i_b]):
@@ -1154,7 +1161,7 @@ class Collider:
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
-        _B = collider_state.active_buffer.shape[1]
+        _B = collider_state._B[None]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_pair in range(collider_state.n_broad_pairs[i_b]):
@@ -1325,9 +1332,9 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         mpr: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         ga_info = geoms_info[i_ga]
         gb_info = geoms_info[i_gb]
@@ -1392,12 +1399,12 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         collider_state: ti.template(),
         collider_info: ti.template(),
-        i_ga: int,
-        i_gb: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
         normal: ti.types.vector(3),
         contact_pos: ti.types.vector(3),
-        penetration: float,
-        i_b: int,
+        penetration: ti.f32,
+        i_b: ti.i32,
     ):
         # print(f"Adding contact {i_ga} {i_gb}, normal:", normal, "contact_pos:", contact_pos, "penetration:", penetration)
         i_col = collider_state.n_contacts[i_b]
@@ -1433,9 +1440,9 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         collider_info: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         # Note that the original world-aligned bounding box is used to computed the absolute tolerance from the
         # relative one. This way, it is a constant that does not depends on the orientation of the geometry, which
@@ -1458,10 +1465,10 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         static_rigid_sim_config: ti.template(),
-        i_ga: int,
-        i_gb: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
         normal: ti.types.vector(3),
-        i_b: int,
+        i_b: ti.i32,
     ):
         axis_0 = ti.Vector.zero(gs.ti_float, 3)
         axis_1 = ti.Vector.zero(gs.ti_float, 3)
@@ -1524,9 +1531,9 @@ class Collider:
         mpr: ti.template(),
         gjk: ti.template(),
         sdf: ti.template(),
-        i_ga: int,
-        i_gb: int,
-        i_b: int,
+        i_ga: ti.i32,
+        i_gb: ti.i32,
+        i_b: ti.i32,
     ):
         if geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX:
             if ti.static(sys.platform == "darwin"):
@@ -1861,10 +1868,10 @@ class Collider:
         self_unused,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
-        i_g: int,
+        i_g: ti.i32,
         contact_pos: ti.types.vector(3),
         qrot: ti.types.vector(4),
-        i_b: int,
+        i_b: ti.i32,
     ):
         geoms_state[i_g, i_b].quat = gu.ti_transform_quat_by_quat(geoms_state[i_g, i_b].quat, qrot)
 
@@ -2622,14 +2629,15 @@ class Collider:
         iout: ti.types.ndarray(),
         fout: ti.types.ndarray(),
     ):
+        _B = collider_state._B[None]
         n_contacts_max = gs.ti_int(0)
-        for i_b in range(collider_state._B):
+        for i_b in range(_B):
             n_contacts = collider_state.n_contacts[i_b]
             if n_contacts > n_contacts_max:
                 n_contacts_max = n_contacts
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(collider_state._B):
+        for i_b in range(_B):
             i_c_start = gs.ti_int(0)
             if ti.static(is_padded):
                 i_c_start = i_b * n_contacts_max
