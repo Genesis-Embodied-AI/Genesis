@@ -5,17 +5,17 @@ import genesis as gs
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.gpu])
+# @pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("segmentation_level", ["entity", "link"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
 def test_segmentation(segmentation_level, particle_mode):
     """Test segmentation rendering."""
     np.random.seed(0)
     scene = gs.Scene(
-        show_viewer=False,
-        vis_options=gs.options.VisOptions(segmentation_level=segmentation_level),
         sim_options=gs.options.SimOptions(dt=0.01),
         fem_options=gs.options.FEMOptions(use_implicit_solver=True),
+        vis_options=gs.options.VisOptions(segmentation_level=segmentation_level),
+        show_viewer=False,
     )
 
     robot = scene.add_entity(
@@ -77,7 +77,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
     for i in range(2):
         scene.step()
-        _, _, seg, _ = camera.render(rgb=True, segmentation=True, colorize_seg=False)
+        _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
         uni_count = len(np.unique(seg))
         assert seg.min() == 0
         assert seg.max() == uni_count - 1 == seg_num - 1

@@ -53,7 +53,7 @@ class redirect_libc_stderr:
     """
 
     def __init__(self, fd):
-        self.fd = fd  # Target destination
+        self.fd = fd
         self.stderr_fileno = None  # Usually 2
         self.original_stderr_fileno = None
 
