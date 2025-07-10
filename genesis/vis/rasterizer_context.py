@@ -290,6 +290,11 @@ class RasterizerContext:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
+                    if isinstance(rigid_entity.morph, gs.morphs.Plane) and not rigid_entity.morph.double_sided:
+                        mesh = mu.create_plane(one_sided=not rigid_entity.morph.double_sided)
+                    else:
+                        mesh = geom.get_trimesh()
+
                     geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     self.rigid_nodes[geom.uid] = self.add_node(
                         pyrender.Mesh.from_trimesh(

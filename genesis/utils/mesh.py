@@ -792,32 +792,60 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     return mesh
 
 
-def create_plane(size=1e3, color=None, normal=(0, 0, 1)):
+def create_plane(size=1e3, color=None, normal=(0, 0, 1), one_sided: bool = False):
     thickness = 1e-2  # for safety
-    mesh = trimesh.creation.box(extents=[size, size, thickness])
+    if one_sided:
+        half = size * 0.5
+        verts = np.array(
+            [
+                [-half, -half, 0.0],
+                [half, -half, 0.0],
+                [half, half, 0.0],
+                [-half, -half, 0.0],
+                [half, half, 0.0],
+                [-half, half, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+        uv = np.array(
+            [
+                [0, 0],
+                [size, 0],
+                [size, size],
+                [0, 0],
+                [size, size],
+                [0, size],
+            ],
+            dtype=np.float32,
+        )
+        mesh = trimesh.Trimesh(verts, faces, process=False)
+    else:
+        mesh = trimesh.creation.box(extents=[size, size, thickness])
+        uv = np.array(
+            [
+                [0, 0],
+                [0, 0],
+                [0, size],
+                [0, size],
+                [size, 0],
+                [size, 0],
+                [size, size],
+                [size, size],
+            ],
+            dtype=np.float32,
+        )
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_to_R(normal))
-    if color is None:  # use checkerboard texture
+    if color is None:
         mesh.visual = trimesh.visual.TextureVisuals(
-            uv=np.array(
-                [
-                    [0, 0],
-                    [0, 0],
-                    [0, size],
-                    [0, size],
-                    [size, 0],
-                    [size, 0],
-                    [size, size],
-                    [size, size],
-                ],
-                dtype=np.float32,
-            ),
+            uv=uv,
             material=trimesh.visual.material.SimpleMaterial(
-                image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png")),
+                image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png"))
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
+        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, (len(mesh.vertices), 1)).astype(float))
     return mesh
 
 
