@@ -41,7 +41,6 @@ except:
 import pyglet
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from pyglet import clock
-from pyglet.event import EVENT_HANDLE_STATE
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
 from .constants import (
@@ -57,7 +56,7 @@ from .constants import (
     TextAlign,
 )
 from .interaction.viewer_interaction import ViewerInteraction
-from .interaction.viewer_interaction_base import ViewerInteractionBase
+from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer

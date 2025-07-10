@@ -7,6 +7,12 @@ on:
       - main
   pull_request:
 
+concurrency:
+  # Cancel all workflows that are stil running if any when updating branches associated with PRs,
+  # BUT don't do anything for workflows that are not triggered by PRs.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   linux-gpu:
     runs-on: [self-hosted, coreweave]

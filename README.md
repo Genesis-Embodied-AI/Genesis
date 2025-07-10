@@ -18,6 +18,7 @@
 # Genesis
 
 ## 🔥 News
+- [2025-07-02] The development of Genesis is now officially supported by [Genesis AI](https://genesis-ai.company/).
 - [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
 - [2025-01-08] Released v0.2.1 🎊 🎉
 - [2025-01-08] Created [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group.

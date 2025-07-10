@@ -131,14 +131,8 @@ class Viewer(RBC):
         return self._pyrender_viewer is not None and self._pyrender_viewer.is_active
 
     def setup_camera(self):
-        pos = np.array(self._camera_init_pos)
-        up = np.array(self._camera_up)
-        lookat = np.array(self._camera_init_lookat)
-
         yfov = self._camera_fov / 180.0 * np.pi
-        z = pos - lookat
-        R = gu.z_up_to_R(z, up=up)
-        pose = gu.trans_R_to_T(pos, R)
+        pose = gu.pos_lookat_up_to_T(self._camera_init_pos, self._camera_init_lookat, self._camera_up)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
     def update(self, auto_refresh=None):
@@ -175,20 +169,12 @@ class Viewer(RBC):
         """
         if pose is None:
             if pos is None:
-                pos = np.array(self._camera_init_pos)
-            else:
-                pos = np.array(pos)
-
+                pos = self._camera_init_pos
             if lookat is None:
-                lookat = np.array(self._camera_init_lookat)
-            else:
-                lookat = np.array(lookat)
+                lookat = self._camera_init_lookat
+            up = self._camera_up
 
-            up = np.array(self._camera_up)
-
-            z = pos - lookat
-            R = gu.z_up_to_R(z, up=up)
-            pose = gu.trans_R_to_T(pos, R)
+            pose = gu.pos_lookat_up_to_T(pos, lookat, up)
         else:
             if np.array(pose).shape != (4, 4):
                 gs.raise_exception("pose should be a 4x4 matrix.")

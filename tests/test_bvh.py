@@ -1,11 +1,10 @@
-import taichi as ti
 import torch
 import numpy as np
-import genesis as gs
+import pytest
 
+import genesis as gs
 from genesis.engine.bvh import LBVH, AABB
 
-import pytest
 from .utils import assert_allclose
 
 
@@ -37,18 +36,19 @@ def test_morton_code(lbvh):
             ), f"Morton codes are not sorted: {morton_codes[i_b, i]} < {morton_codes[i_b, i - 1]}"
 
 
-@ti.kernel
-def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()):
-    n_x = x.shape[0]
-    for i in range(n_x):
-        expanded_x[i] = lbvh.expand_bits(x[i])
-
-
 def test_expand_bits():
     """
     Test the expand_bits function for LBVH.
     A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
     """
+    import taichi as ti
+
+    @ti.kernel
+    def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()):
+        n_x = x.shape[0]
+        for i in range(n_x):
+            expanded_x[i] = lbvh.expand_bits(x[i])
+
     # random integer
     x_np = np.random.randint(0, 1024, (10,), dtype=np.uint32)
     x_ti = ti.field(ti.uint32, shape=x_np.shape)

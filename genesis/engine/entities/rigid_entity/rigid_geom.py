@@ -1,5 +1,6 @@
 import os
 import pickle as pkl
+from typing import TYPE_CHECKING
 
 import igl
 import numpy as np
@@ -13,6 +14,12 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
+
+if TYPE_CHECKING:
+    from genesis.engine.materials.rigid import Rigid as RigidMaterial
+
+    from .rigid_entity import RigidEntity
+    from .rigid_link import RigidLink
 
 
 @ti.data_oriented
@@ -42,9 +49,9 @@ class RigidGeom(RBC):
         center_init=None,
         data=None,
     ):
-        self._link = link
-        self._entity = link.entity
-        self._material = link.entity.material
+        self._link: "RigidLink" = link
+        self._entity: "RigidEntity" = link.entity
+        self._material: "RigidMaterial" = link.entity.material
         self._solver = link.entity.solver
         self._mesh = mesh
 

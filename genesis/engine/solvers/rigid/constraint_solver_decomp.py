@@ -35,6 +35,13 @@ class ConstraintSolver:
         self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
         self.ti_n_equalities.from_numpy(np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int))
 
+        jac_shape = self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
+        if (jac_shape[0] * jac_shape[1] * jac_shape[2]) > np.iinfo(np.int32).max:
+            raise ValueError(
+                f"Jacobian shape {jac_shape} is too large for int32. "
+                "Consider reducing the number of constraints or the number of degrees of freedom."
+            )
+
         self.jac = ti.field(
             dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
         )
@@ -122,7 +129,7 @@ class ConstraintSolver:
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
                 link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
 
-                d1, d2 = gu.orthogonals(contact_data.normal)
+                d1, d2 = gu.ti_orthogonals(contact_data.normal)
 
                 invweight = self._solver.links_info[link_a_maybe_batch].invweight[0]
                 if link_b > -1:
@@ -775,7 +782,7 @@ class ConstraintSolver:
                 contact_data = self._collider.contact_data[i_c, i_b]
 
                 force = ti.Vector.zero(gs.ti_float, 3)
-                d1, d2 = gu.orthogonals(contact_data.normal)
+                d1, d2 = gu.ti_orthogonals(contact_data.normal)
                 for i_dir in range(4):
                     d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
                     n = d * contact_data.friction - contact_data.normal

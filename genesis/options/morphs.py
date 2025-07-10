@@ -48,11 +48,11 @@ class Morph(Options):
     Parameters
     ----------
     pos : tuple, shape (3,), optional
-        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+        The initial position of the entity in meters at creation time. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The initial euler angle of the entity in degrees at creation time. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+        The initial quaternion (w-x-y-z convention) of the entity at creation time. If specified, `euler` will be ignored. Defaults to None.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     collision : bool, optional
@@ -63,6 +63,7 @@ class Morph(Options):
         Whether the entity is free to move. Defaults to True. **This is only used for RigidEntity.**
     """
 
+    # Note: pos, euler, quat store only initial varlues at creation time, and are unaffected by sim
     pos: tuple = (0.0, 0.0, 0.0)
     euler: Optional[tuple] = None
     quat: Optional[tuple] = None
