@@ -2100,35 +2100,6 @@ class RigidEntity(Entity):
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
-        solver = self.scene.sim.rigid_solver
-        welds = solver.get_weld_constraints(as_tensor=as_tensor, to_torch=to_torch)
-        obj_a = welds["obj_a"]
-        obj_b = welds["obj_b"]
-
-        if as_tensor:
-            mask = (obj_a == self.idx) | (obj_b == self.idx)
-            for k in ("obj_a", "obj_b"):
-                welds[k] = welds[k][mask]
-            if "env" in welds:
-                welds["env"] = welds["env"][mask]
-            if "valid_mask" in welds:
-                welds["valid_mask"] = welds["valid_mask"][:, mask]
-        else:
-            obj_a_new, obj_b_new, env_new = [], [], []
-            for ea, eb, env in zip(obj_a, obj_b, welds.get("env", [0] * len(obj_a))):
-                keep = (ea == self.idx) | (eb == self.idx)
-                obj_a_new.append(ea[keep])
-                obj_b_new.append(eb[keep])
-                if "env" in welds:
-                    env_new.append(env[keep])
-            welds["obj_a"], welds["obj_b"] = obj_a_new, obj_b_new
-            if "env" in welds:
-                welds["env"] = env_new
-
-        return welds
-
-    @gs.assert_built
     def set_quat(self, quat, envs_idx=None, *, relative=False, zero_velocity=True, unsafe=False):
         """
         Set quaternion of the entity's base link.
