@@ -4708,6 +4708,14 @@ class RigidSolver(Solver):
         tensor = ti_field_to_torch(self.qpos, envs_idx, qs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
+    def get_joints_anchor_pos(self, joints_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_field_to_torch(self.joints_state.xanchor, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+
+    def get_joints_anchor_axis(self, joints_idx=None, envs_idx=None, *, unsafe=False):
+        tensor = ti_field_to_torch(self.joints_state.xaxis, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         _tensor, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             None, dofs_idx, self.n_dofs, envs_idx, unsafe=unsafe

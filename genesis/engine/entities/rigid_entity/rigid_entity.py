@@ -2444,6 +2444,46 @@ class RigidEntity(Entity):
         return self._solver.get_qpos(qs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
+    def get_joints_anchor_pos(self, joints_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns anchor position of the entity's joints. This is the position of the joint in the world frame.
+
+        Parameters
+        ----------
+        joints_idx_local : None | array_like, optional
+            The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        anchor_pos : torch.Tensor, shape (n_joints, 3) or (n_envs, n_joints, 3)
+            The anchor position of the entity's joints.
+        """
+        joints_idx = self._get_idx(joints_idx_local, self.n_joints, self._joint_start, unsafe=True)
+        return self._solver.get_joints_anchor_pos(joints_idx, envs_idx, unsafe=unsafe).squeeze(-2)
+
+    @gs.assert_built
+    def get_joints_anchor_axis(self, joints_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Returns anchor axis of the entity's joints represented as a unit vector.
+
+        Parameters
+        ----------
+        joints_idx_local : None | array_like, optional
+            The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        anchor_axis : torch.Tensor, shape (n_joints, 3) or (n_envs, n_joints, 3)
+            The anchor axis of the entity's joints.
+        """
+        joints_idx = self._get_idx(joints_idx_local, self.n_joints, self._joint_start, unsafe=True)
+        return self._solver.get_joints_anchor_axis(joints_idx, envs_idx, unsafe=unsafe).squeeze(-2)
+
+    @gs.assert_built
     def get_dofs_control_force(self, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Get the entity's dofs' internal control force, computed based on the position/velocity control command.
