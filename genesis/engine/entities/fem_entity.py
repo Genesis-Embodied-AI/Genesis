@@ -8,12 +8,12 @@ import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
+from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor
 
 from .base_entity import Entity
-from genesis.engine.couplers import SAPCoupler
 
 
 @ti.data_oriented
@@ -358,8 +358,7 @@ class FEMEntity(Entity):
         else:
             gs.raise_exception(f"Unsupported morph: {self.morph}.")
 
-        verts, elems = eu.split_all_surface_tets(verts, elems)
-        self.instantiate(verts, elems)
+        self.instantiate(*eu.split_all_surface_tets(verts, elems))
 
     def _add_to_solver(self, in_backward=False):
         if not in_backward:

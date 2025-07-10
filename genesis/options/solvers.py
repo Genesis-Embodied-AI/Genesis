@@ -116,20 +116,34 @@ class SAPCouplerOptions(CouplerOptions):
         Number of iterations for the Preconditioned Conjugate Gradient solver. Defaults to 100.
     n_linesearch_iterations : int, optional
         Max number of iterations for the line search solver. Defaults to 10.
-    sap_threshold : float, optional
-        Threshold for the SAP solver. Defaults to 1e-6.
+    sap_convergence_atol : float, optional
+        Absolute tolerance for SAP convergence. Defaults to 1e-6.
+    sap_convergence_rtol : float, optional
+        Relative tolerance for SAP convergence. Defaults to 1e-5.
+    sap_taud : float, optional
+        Dissipation time scale for SAP. Defaults to 0.1.
+    sap_beta : float, optional
+        Normal regularization parameter for SAP. Defaults to 1.0.
+    sap_sigma : float, optional
+        Friction regularization parameter for SAP. Defaults to 1e-3.
     pcg_threshold : float, optional
         Threshold for the Preconditioned Conjugate Gradient solver. Defaults to 1e-6.
+    use_exact_linesearch : bool, optional
+        Whether to use exact linesearch. Defaults to True.
     linesearch_c : float, optional
         Line search sufficient decrease parameter for backtracking linesearch. Defaults to 1e-4.
     linesearch_tau : float, optional
         Line search step size reduction factor for backtracking linesearch. Defaults to 0.8.
-    use_exact_linesearch : bool, optional
-        Whether to use exact linesearch. Defaults to True.
-    fem_floor_tet : bool, optional
-        Whether to use tetrahedral based contact against the floor. Defaults to True.
-    fem_floor_vert : bool, optional
-        Whether to use vertex based contact against the floor. Defaults to False.
+    linesearch_ftol : float, optional
+        Line search sufficient value close to zero for exact linesearch. Defaults to 1e-6.
+    linesearch_max_step_size : float, optional
+        Maximum step size for exact linesearch. Defaults to 1.5.
+    hydroelastic_stiffness : float, optional
+        Stiffness for hydroelastic contact. Defaults to 1e8.
+    point_contact_stiffness : float, optional
+        Stiffness for point contact. Defaults to 1e8.
+    fem_floor_type : str, optional
+        Type of contact against the floor. Defaults to "tet". Can be "tet", "vert", or "none".
     fem_self_tet : bool, optional
         Whether to use tetrahedral based self-contact. Defaults to True.
     Note
@@ -141,13 +155,20 @@ class SAPCouplerOptions(CouplerOptions):
     n_sap_iterations: int = 5
     n_pcg_iterations: int = 100
     n_linesearch_iterations: int = 10
-    sap_threshold: float = 1e-6
+    sap_convergence_atol: float = 1e-6
+    sap_convergence_rtol: float = 1e-5
+    sap_taud: float = 0.1
+    sap_beta: float = 1.0
+    sap_sigma: float = 1e-3
     pcg_threshold: float = 1e-6
+    use_exact_linesearch: bool = True
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.8
-    use_exact_linesearch: bool = True
-    fem_floor_tet: bool = True
-    fem_floor_vert: bool = False
+    linesearch_ftol: float = 1e-6
+    linesearch_max_step_size: float = 1.5
+    hydroelastic_stiffness: float = 1e8
+    point_contact_stiffness: float = 1e8
+    fem_floor_type: str = "tet"
     fem_self_tet: bool = True
     rigid_floor_vert: bool = True
 

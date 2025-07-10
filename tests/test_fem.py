@@ -5,7 +5,7 @@ import igl
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from .utils import assert_allclose
+from .utils import assert_allclose, get_hf_assets
 
 
 @pytest.fixture(scope="session")
@@ -245,8 +245,7 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = tensor_to_array(state.pos)
-        min_pos_z = np.min(pos[..., 2])
+        min_pos_z = state.pos[..., 2].min()
         assert_allclose(
             min_pos_z, 0.0, atol=5e-2
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
@@ -283,8 +282,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = tensor_to_array(state.pos)
-        min_pos_z = np.min(pos[..., 2])
+        min_pos_z = state.pos[..., 2].min()
         assert_allclose(
             min_pos_z, 0.0, atol=2e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
@@ -331,7 +329,7 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         pos = tensor_to_array(state.pos.reshape(-1, 3))
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
-            min_pos_z, 0.0, atol=2e-3
+            min_pos_z, 0.0, atol=1.1e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
         BV, BF = igl.bounding_box(pos)
         x_scale = BV[0, 0] - BV[-1, 0]
@@ -373,25 +371,25 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
 
     # Add second FEM entity
     scale = 0.1
+    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
     scene.add_entity(
         morph=gs.morphs.Mesh(
-            file="meshes/cube8.obj",
+            file=f"{asset_path}/meshes/cube8.obj",
             scale=scale,
-            pos=np.array([0.0, 0.0, scale * 4.0], dtype=np.float32),
+            pos=(0.0, 0.0, scale * 4.0),
         ),
         material=fem_material_linear_corotated,
     )
 
     # Build the scene
-    scene.build(n_envs=1)
+    scene.build()
     # Run simulation
     for _ in range(200):
         scene.step()
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = state.pos.detach().cpu().numpy()
-        min_pos_z = np.min(pos[..., 2])
+        min_pos_z = state.pos[..., 2].min()
         assert_allclose(
-            min_pos_z, 0.0, atol=2e-3
+            min_pos_z, 0.0, atol=5e-4
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
