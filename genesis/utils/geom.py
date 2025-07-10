@@ -607,7 +607,7 @@ def quat_to_R(quat, *, out=None):
     if all(isinstance(e, torch.Tensor) for e in (quat, out) if e is not None):
         return _tc_quat_to_R(quat, out=out)
     elif all(isinstance(e, np.ndarray) for e in (quat, out) if e is not None):
-        return _np_quat_to_R(quat, out=out)
+        return _np_quat_to_R(quat.astype(out.dtype) if out is not None else quat, out=out)
     else:
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(quat)=}")
 
