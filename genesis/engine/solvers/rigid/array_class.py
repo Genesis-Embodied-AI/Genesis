@@ -23,7 +23,7 @@ class RigidGlobalInfo:
     def __init__(self, n_dofs: int, n_entities: int, n_geoms: int, f_batch: Callable):
         self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
         self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
-        
+
         self.n_geoms = ti.field(dtype=gs.ti_int, shape=())
         self.n_geoms[None] = n_geoms
 
@@ -51,7 +51,7 @@ class ColliderState:
             shape=f_batch(2 * n_geoms),
             layout=ti.Layout.SOA,
         )
-        
+
         # This buffer stores indexes of active geoms during SAP search
         if use_hibernation:
             self.active_buffer_awake = ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms))
@@ -71,7 +71,7 @@ class ColliderState:
         self._max_collision_pairs = ti.field(dtype=gs.ti_int, shape=())
         self._max_contact_pairs = ti.field(dtype=gs.ti_int, shape=())
 
-        self._n_contacts_per_pair[None] = 5     # CONSTANT. CANNOT NOT BE CHANGED.
+        self._n_contacts_per_pair[None] = 5  # CONSTANT. CANNOT NOT BE CHANGED.
         self._max_possible_pairs[None] = n_possible_pairs
         self._max_collision_pairs[None] = min(n_possible_pairs, max_collision_pairs)
         self._max_contact_pairs[None] = self._max_collision_pairs[None] * self._n_contacts_per_pair[None]
@@ -100,7 +100,7 @@ class ColliderState:
             layout=ti.Layout.SOA,
         )
         # total number of contacts, including hibernated contacts
-        self.n_contacts = ti.field(gs.ti_int, shape=self._B)  
+        self.n_contacts = ti.field(gs.ti_int, shape=self._B)
         self.n_contacts_hibernated = ti.field(gs.ti_int, shape=self._B)
         self._contacts_info_cache = {}
 
@@ -162,7 +162,6 @@ class ColliderState:
             self.vert_neighbor_start.from_numpy(vert_neighbor_start)
             self.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
-
     def _init_collision_pair_validity(self, solver):
         """
         Initialize the collision pair validity matrix.
@@ -173,7 +172,7 @@ class ColliderState:
         enable_self_collision = solver._static_rigid_sim_config.enable_self_collision
         enable_adjacent_collision = solver._static_rigid_sim_config.enable_adjacent_collision
         batch_links_info = solver._static_rigid_sim_config.batch_links_info
-        
+
         geoms_link_idx = solver.geoms_info.link_idx.to_numpy()
         geoms_contype = solver.geoms_info.contype.to_numpy()
         geoms_conaffinity = solver.geoms_info.conaffinity.to_numpy()
