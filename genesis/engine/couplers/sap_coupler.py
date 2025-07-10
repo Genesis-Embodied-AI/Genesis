@@ -738,7 +738,6 @@ class SAPCoupler(RBC):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
-            print("pcg init rTr", self.pcg_state[i_b].rTr)
 
     def one_pcg_iter(self):
         self.clear_pcg_state()
@@ -877,7 +876,6 @@ class SAPCoupler(RBC):
             )
 
     def pcg_solve(self):
-        print("pcg solve")
         self.init_pcg_solve()
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
@@ -1542,6 +1540,7 @@ class FEMContact(BaseContact):
             self.compute_contact_gamma_G(sap_info, i_p, vc)
             self.add_Jt_x(coupler.fem_state_v.gradient, i_p, -sap_info[i_p].gamma)
             self.add_Jt_x(coupler.fem_state_v.impulse, i_p, sap_info[i_p].gamma)
+            self.add_Jt_A_J_diag3x3(coupler.pcg_fem_state_v.diag3x3, i_p, sap_info[i_p].G)
 
     @ti.kernel
     def prepare_search_direction_data(self):
