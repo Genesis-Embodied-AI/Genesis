@@ -240,7 +240,7 @@ class Collider:
     def detection(self) -> None:
         # from genesis.utils.tools import create_timer
 
-        self._contacts_info_cache = {}
+        self.collider_global_info._contacts_info_cache = {}
         # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs()
         # timer.stamp("func_update_aabbs")
@@ -1047,7 +1047,7 @@ class Collider:
                                     for i_rot in range(1, 5):
                                         axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
-                                        qrot = gu.ti_rotvec_to_quat(self._mc_perturbation * axis)
+                                        qrot = gu.ti_rotvec_to_quat(self.static_collider_info.mc_perturbation * axis)
                                         self._func_rotate_frame(i_ga, contact_pos_i, qrot, i_b)
                                         self._func_rotate_frame(i_gb, contact_pos_i, gu.ti_inv_quat(qrot), i_b)
 
@@ -1079,8 +1079,8 @@ class Collider:
                                                 # First-order correction of the normal direction
                                                 twist_rotvec = ti.math.clamp(
                                                     normal.cross(normal_i),
-                                                    -self._mc_perturbation,
-                                                    self._mc_perturbation,
+                                                    -self.static_collider_info.mc_perturbation,
+                                                    self.static_collider_info.mc_perturbation,
                                                 )
                                                 normal += twist_rotvec.cross(normal)
 
@@ -2126,12 +2126,12 @@ class Collider:
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
-        contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
+        contacts_info = self.collider_global_info._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
             return contacts_info.copy()
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = tuple(self.n_contacts.to_numpy())
+        n_contacts = tuple(self.collider_global_info.n_contacts.to_numpy())
         n_envs = len(n_contacts)
         n_contacts_max = max(n_contacts)
         if as_tensor:
@@ -2194,7 +2194,7 @@ class Collider:
         )
 
         # Cache contact information before returning
-        self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
+        self.collider_global_info._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
 
         return contacts_info.copy()
 
@@ -2202,7 +2202,7 @@ class Collider:
     def _kernel_get_contacts(self, is_padded: ti.template(), iout: ti.types.ndarray(), fout: ti.types.ndarray()):
         n_contacts_max = gs.ti_int(0)
         for i_b in range(self._solver._B):
-            n_contacts = self.n_contacts[i_b]
+            n_contacts = self.collider_global_info.n_contacts[i_b]
             if n_contacts > n_contacts_max:
                 n_contacts_max = n_contacts
 
@@ -2213,17 +2213,17 @@ class Collider:
                 i_c_start = i_b * n_contacts_max
             else:
                 for j_b in range(i_b):
-                    i_c_start = i_c_start + self.n_contacts[j_b]
+                    i_c_start = i_c_start + self.collider_global_info.n_contacts[j_b]
 
-            for i_c_ in range(self.n_contacts[i_b]):
+            for i_c_ in range(self.collider_global_info.n_contacts[i_b]):
                 i_c = i_c_start + i_c_
 
-                iout[i_c, 0] = self.contact_data[i_c_, i_b].link_a
-                iout[i_c, 1] = self.contact_data[i_c_, i_b].link_b
-                iout[i_c, 2] = self.contact_data[i_c_, i_b].geom_a
-                iout[i_c, 3] = self.contact_data[i_c_, i_b].geom_b
-                fout[i_c, 0] = self.contact_data[i_c_, i_b].penetration
+                iout[i_c, 0] = self.collider_global_info.contact_data[i_c_, i_b].link_a
+                iout[i_c, 1] = self.collider_global_info.contact_data[i_c_, i_b].link_b
+                iout[i_c, 2] = self.collider_global_info.contact_data[i_c_, i_b].geom_a
+                iout[i_c, 3] = self.collider_global_info.contact_data[i_c_, i_b].geom_b
+                fout[i_c, 0] = self.collider_global_info.contact_data[i_c_, i_b].penetration
                 for j in ti.static(range(3)):
-                    fout[i_c, 1 + j] = self.contact_data[i_c_, i_b].pos[j]
-                    fout[i_c, 4 + j] = self.contact_data[i_c_, i_b].normal[j]
-                    fout[i_c, 7 + j] = self.contact_data[i_c_, i_b].force[j]
+                    fout[i_c, 1 + j] = self.collider_global_info.contact_data[i_c_, i_b].pos[j]
+                    fout[i_c, 4 + j] = self.collider_global_info.contact_data[i_c_, i_b].normal[j]
+                    fout[i_c, 7 + j] = self.collider_global_info.contact_data[i_c_, i_b].force[j]
