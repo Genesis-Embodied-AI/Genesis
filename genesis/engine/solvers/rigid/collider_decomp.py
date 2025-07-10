@@ -529,23 +529,23 @@ class Collider:
                 else:
                     direction[i_axis] = -1.0
                 v1 = self._mpr.support_driver(direction, i_ga, i_b)
-                self.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
+                self.collider_global_info.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
             for i in ti.static(range(3)):
-                self.prism[i, i_b][2] = self._solver.terrain_xyz_maxmin[5]
+                self.collider_global_info.prism[i, i_b][2] = self._solver.terrain_xyz_maxmin[5]
 
                 if (
-                    self._solver.terrain_xyz_maxmin[i] < self.xyz_max_min[i + 3, i_b] - margin
-                    or self._solver.terrain_xyz_maxmin[i + 3] > self.xyz_max_min[i, i_b] + margin
+                    self._solver.terrain_xyz_maxmin[i] < self.collider_global_info.xyz_max_min[i + 3, i_b] - margin
+                    or self._solver.terrain_xyz_maxmin[i + 3] > self.collider_global_info.xyz_max_min[i, i_b] + margin
                 ):
                     is_return = True
 
             if not is_return:
                 sh = self._solver.terrain_scale[0]
-                r_min = gs.ti_int(ti.floor((self.xyz_max_min[3, i_b] - self._solver.terrain_xyz_maxmin[3]) / sh))
-                r_max = gs.ti_int(ti.ceil((self.xyz_max_min[0, i_b] - self._solver.terrain_xyz_maxmin[3]) / sh))
-                c_min = gs.ti_int(ti.floor((self.xyz_max_min[4, i_b] - self._solver.terrain_xyz_maxmin[4]) / sh))
-                c_max = gs.ti_int(ti.ceil((self.xyz_max_min[1, i_b] - self._solver.terrain_xyz_maxmin[4]) / sh))
+                r_min = gs.ti_int(ti.floor((self.collider_global_info.xyz_max_min[3, i_b] - self._solver.terrain_xyz_maxmin[3]) / sh))
+                r_max = gs.ti_int(ti.ceil((self.collider_global_info.xyz_max_min[0, i_b] - self._solver.terrain_xyz_maxmin[3]) / sh))
+                c_min = gs.ti_int(ti.floor((self.collider_global_info.xyz_max_min[4, i_b] - self._solver.terrain_xyz_maxmin[4]) / sh))
+                c_max = gs.ti_int(ti.ceil((self.collider_global_info.xyz_max_min[1, i_b] - self._solver.terrain_xyz_maxmin[4]) / sh))
 
                 r_min = ti.max(0, r_min)
                 c_min = ti.max(0, c_min)
@@ -557,7 +557,7 @@ class Collider:
                     nvert = 0
                     for c in range(c_min, c_max + 1):
                         for i in range(2):
-                            if cnt < self._n_contacts_per_pair:
+                            if cnt < self.collider_global_info._n_contacts_per_pair[None]:
                                 nvert = nvert + 1
                                 self.add_prism_vert(
                                     sh * (r + i) + self._solver.terrain_xyz_maxmin[3],
@@ -566,16 +566,16 @@ class Collider:
                                     i_b,
                                 )
                                 if nvert > 2 and (
-                                    self.prism[3, i_b][2] >= self.xyz_max_min[5, i_b]
-                                    or self.prism[4, i_b][2] >= self.xyz_max_min[5, i_b]
-                                    or self.prism[5, i_b][2] >= self.xyz_max_min[5, i_b]
+                                    self.collider_global_info.prism[3, i_b][2] >= self.collider_global_info.xyz_max_min[5, i_b]
+                                    or self.collider_global_info.prism[4, i_b][2] >= self.collider_global_info.xyz_max_min[5, i_b]
+                                    or self.collider_global_info.prism[5, i_b][2] >= self.collider_global_info.xyz_max_min[5, i_b]
                                 ):
                                     center_a = gu.ti_transform_by_trans_quat(
                                         self._solver.geoms_info[i_ga].center, ga_pos, ga_quat
                                     )
                                     center_b = ti.Vector.zero(gs.ti_float, 3)
                                     for i_p in ti.static(range(6)):
-                                        center_b = center_b + self.prism[i_p, i_b]
+                                        center_b = center_b + self.collider_global_info.prism[i_p, i_b]
                                     center_b = center_b / 6.0
 
                                     self._solver.geoms_state[i_gb, i_b].pos = ti.Vector.zero(gs.ti_float, 3)
@@ -590,10 +590,10 @@ class Collider:
                                         contact_pos = contact_pos + gb_pos
 
                                         valid = True
-                                        i_col = self.n_contacts[i_b]
+                                        i_col = self.collider_global_info.n_contacts[i_b]
                                         for j in range(cnt):
                                             if (
-                                                contact_pos - self.contact_data[i_col - j - 1, i_b].pos
+                                                contact_pos - self.collider_global_info.contact_data[i_col - j - 1, i_b].pos
                                             ).norm() < tolerance:
                                                 valid = False
                                                 break
@@ -607,16 +607,16 @@ class Collider:
 
     @ti.func
     def add_prism_vert(self, x, y, z, i_b):
-        self.prism[0, i_b] = self.prism[1, i_b]
-        self.prism[1, i_b] = self.prism[2, i_b]
-        self.prism[3, i_b] = self.prism[4, i_b]
-        self.prism[4, i_b] = self.prism[5, i_b]
+        self.collider_global_info.prism[0, i_b] = self.collider_global_info.prism[1, i_b]
+        self.collider_global_info.prism[1, i_b] = self.collider_global_info.prism[2, i_b]
+        self.collider_global_info.prism[3, i_b] = self.collider_global_info.prism[4, i_b]
+        self.collider_global_info.prism[4, i_b] = self.collider_global_info.prism[5, i_b]
 
-        self.prism[2, i_b][0] = x
-        self.prism[5, i_b][0] = x
-        self.prism[2, i_b][1] = y
-        self.prism[5, i_b][1] = y
-        self.prism[5, i_b][2] = z
+        self.collider_global_info.prism[2, i_b][0] = x
+        self.collider_global_info.prism[5, i_b][0] = x
+        self.collider_global_info.prism[2, i_b][1] = y
+        self.collider_global_info.prism[5, i_b][1] = y
+        self.collider_global_info.prism[5, i_b][2] = z
 
     @ti.kernel
     def _func_update_aabbs(self):
