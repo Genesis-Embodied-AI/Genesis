@@ -155,6 +155,7 @@ class FEMSolver(Solver):
 
         element_v_info = ti.types.struct(
             mass=gs.ti_float,  # mass of the vertex
+            mass_inv=gs.ti_float,  # inverse mass of the vertex
             mass_over_dt2=gs.ti_float,  # scaled mass of the vertex over dt^2
             friction_mu=gs.ti_float,  # friction coefficient for contact
         )
@@ -267,41 +268,40 @@ class FEMSolver(Solver):
             layout=ti.Layout.SOA,
         )
 
-    def compute_surface_info(self):
+    def _init_surface_info(self):
         self.vertices_on_surface = ti.field(dtype=ti.u1, shape=(self.n_vertices))
         self.elements_on_surface = ti.field(dtype=ti.u1, shape=(self.n_elements))
         self.compute_surface_vertices()
         self.compute_surface_elements()
-        self.vertices_on_surface_np = self.vertices_on_surface.to_numpy()
-        self.elements_on_surface_np = self.elements_on_surface.to_numpy()
-        self.surface_vertices_np = np.where(self.vertices_on_surface_np)[0].flatten()
+        vertices_on_surface_np = self.vertices_on_surface.to_numpy()
+        elements_on_surface_np = self.elements_on_surface.to_numpy()
+        surface_vertices_np = np.where(vertices_on_surface_np)[0].flatten()
         self.surface_vertices = ti.field(
             dtype=ti.i32,
-            shape=(self.surface_vertices_np.shape[0]),
+            shape=(len(surface_vertices_np),),
             needs_grad=False,
         )
-        self.surface_vertices.from_numpy(self.surface_vertices_np)
-        self.surface_elements_np = np.where(self.elements_on_surface_np)[0].flatten()
+        self.surface_vertices.from_numpy(surface_vertices_np)
+        surface_elements_np = elements_on_surface_np.nonzero()[0].reshape((-1,))
         self.surface_elements = ti.field(
             dtype=ti.i32,
-            shape=(self.surface_elements_np.shape[0]),
+            shape=(len(surface_elements_np),),
             needs_grad=False,
         )
-        self.surface_elements.from_numpy(self.surface_elements_np)
+        self.surface_elements.from_numpy(surface_elements_np)
 
-        self.surface_triangles_np = self.surface.tri2v.to_numpy().reshape(-1, 3)
-        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :].reshape(-1, 3)[self.surface_vertices_np]
-        surface_vertices_mapping = np.ones(self.n_vertices, dtype=np.int32) * -1
-        for i, v in enumerate(self.surface_vertices_np):
-            surface_vertices_mapping[v] = i
-        mass = igl.massmatrix(pos_np, surface_vertices_mapping[self.surface_triangles_np])
-        self.surface_vert_mass_np = mass.diagonal()
+        surface_triangles_np = self.surface.tri2v.to_numpy().reshape(-1, 3)
+        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :].reshape(-1, 3)[surface_vertices_np]
+        surface_vertices_mapping = np.full(self.n_vertices, -1, dtype=np.int32)
+        surface_vertices_mapping[surface_vertices_np] = np.arange(len(surface_vertices_np))
+        mass = igl.massmatrix(pos_np, surface_vertices_mapping[surface_triangles_np])
+        surface_vert_mass_np = mass.diagonal()
         self.surface_vert_mass = ti.field(
             dtype=gs.ti_float,
-            shape=(self.surface_vertices_np.shape[0]),
+            shape=(len(surface_vertices_np),),
             needs_grad=False,
         )
-        self.surface_vert_mass.from_numpy(self.surface_vert_mass_np)
+        self.surface_vert_mass.from_numpy(surface_vert_mass_np)
 
     @ti.kernel
     def compute_surface_vertices(self):
@@ -357,7 +357,7 @@ class FEMSolver(Solver):
         for mat in self._mats:
             mat.build(self)
 
-        self.compute_surface_info()
+        self._init_surface_info()
         if self.tet_wrong_order[None] == 1:
             raise RuntimeError(
                 "The order of vertices in the tetrahedral elements is not correct. "
@@ -832,7 +832,6 @@ class FEMSolver(Solver):
             )
 
     def pcg_solve(self):
-        # print("PCG solve started")
         self.init_pcg_solve()
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
@@ -1134,6 +1133,9 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        for i_v in range(n_verts_local):
+            i_global = i_v + v_start
             self.elements_v_info[i_global].mass = 0.0
             self.elements_v_info[i_global].mass_over_dt2 = 0.0
             self.elements_v_info[i_global].friction_mu = mat_friction_mu
@@ -1151,9 +1153,9 @@ class FEMSolver(Solver):
             self.elements_i[i_global].B = B_inv.inverse()
             det = B_inv.determinant()
             # Determinant should be consistently smaller than 0
-            if det >= 0:
+            if det >= 0.0:
                 self.tet_wrong_order[None] = True
-            V = ti.abs(det) / 6
+            V = ti.abs(det) / 6.0
             self.elements_i[i_global].V = V
             V_scaled = V * self._vol_scale
             self.elements_i[i_global].V_scaled = V_scaled
@@ -1171,6 +1173,10 @@ class FEMSolver(Solver):
                 self.elements_v_info[self.elements_i[i_global].el2v[j]].mass_over_dt2 += mass * one_over_dt2
             self.elements_i[i_global].muscle_group = 0
             self.elements_i[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+
+        for i_v in range(n_verts_local):
+            i_global = i_v + v_start
+            self.elements_v_info[i_global].mass_inv = 1.0 / self.elements_v_info[i_global].mass
 
         for i_e, i_b in ti.ndrange(n_elems_local, self._B):
             i_global = i_e + el_start
@@ -1401,8 +1407,8 @@ class FEMSolver(Solver):
 
     @property
     def n_surface_vertices(self):
-        return self.surface_vertices_np.shape[0]
+        return self.surface_vertices.shape[0]
 
     @property
     def n_surface_elements(self):
-        return self.surface_elements_np.shape[0]
+        return self.surface_elements.shape[0]

@@ -4,12 +4,12 @@ import pickle as pkl
 import numpy as np
 import trimesh
 
+import igl
+
 import genesis as gs
 
 from . import geom as gu
 from . import mesh as mu
-
-import igl
 
 
 def box_to_elements(pos=(0, 0, 0), size=(1, 1, 1), tet_cfg=dict()):
@@ -67,15 +67,20 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
 def split_all_surface_tets(verts, elems):
     """
     Splits tetrahedras that have 4 vertices on the surface into 4 smaller tetrahedras.
+
     This is useful for the hydroelastic contact model.
     """
     F, *_ = igl.boundary_facets(elems)
     on_surface = np.zeros(verts.shape[0], dtype=bool)
-    on_surface[F.flatten()] = True
+    on_surface[
+        F.reshape(
+            -1,
+        )
+    ] = True
     all_on_surface = np.all(on_surface[elems], axis=1)
-    bad_elems = elems[all_on_surface]
-    if len(bad_elems) == 0:
+    if not all_on_surface.any():
         return verts, elems
+    bad_elems = elems[all_on_surface]
     new_elems = []
     new_verts = []
     for elem in bad_elems:
@@ -90,6 +95,5 @@ def split_all_surface_tets(verts, elems):
     new_verts = np.array(new_verts, dtype=np.float32)
     verts = np.concatenate([verts, new_verts], axis=0)
     # remove the bad elements from the original elements
-    elems = elems[~all_on_surface]
-    elems = np.concatenate([elems, new_elems], axis=0)
+    elems = np.concatenate([elems[~all_on_surface], new_elems], axis=0)
     return verts, elems
