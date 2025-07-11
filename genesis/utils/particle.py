@@ -8,8 +8,6 @@ import tempfile
 import igl
 import numpy as np
 import trimesh
-import vtk
-from vtk.util.numpy_support import vtk_to_numpy
 
 import genesis as gs
 
@@ -36,8 +34,7 @@ def n_particles_1D(p_size=0.01, length=1.0):
 
 
 def nowhere_particles(n):
-    positions = np.tile(gu.nowhere(), [n, 1])
-    return positions
+    return np.tile(gu.nowhere(), (n, 1))
 
 
 def trimesh_to_particles_simple(mesh, p_size, sampler):
@@ -68,7 +65,7 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
             positions = _box_to_particles(p_size=p_size, pos=box_center, size=box_size, sampler=sampler)
             # reject out-of-boundary particles
             sd, *_ = igl.signed_distance(positions, mesh.vertices, mesh.faces)
-            positions = positions[sd < 0]
+            positions = positions[sd < 0.0]
 
             os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)
             with open(ptc_file_path, "wb") as file:
@@ -117,6 +114,10 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
             mesh.export(mesh_path)
 
             try:
+                # Try importing VTK. It would fail on Linux if not graphic server is running.
+                import vtk
+                from vtk.util.numpy_support import vtk_to_numpy
+
                 # Sample particles
                 command = (
                     os.path.join(miu.get_src_dir(), "ext/VolumeSampling"),
@@ -147,7 +148,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
                 reader.SetFileName(vtk_path)
                 reader.Update()
                 positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
-            except OSError as e:
+            except (OSError, ImportError) as e:
                 gs.raise_exception_from("`pbs` sampler failed.", e)
             finally:
                 os.remove(mesh_path)
@@ -353,7 +354,7 @@ def particles_to_mesh(positions, radius, backend):
         os.close(fd)
         fd, obj_path = tempfile.mkstemp(suffix=".obj")
         os.close(fd)
-        positions.astype(np.float32).tofile(xyz_path)
+        positions.astype(np.float32, copy=False).tofile(xyz_path)
 
         # Suggested value is 1.4-1.6, but 1.0 seems more detailed
         radius_scale = args_dict.get("rscale", 1.0)

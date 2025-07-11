@@ -160,7 +160,6 @@ class LBVH(RBC):
         # Whether an internal node has been visited during traversal
         self.internal_node_active = ti.field(ti.u1, shape=(self.n_batches, self.n_aabbs - 1))
         self.internal_node_ready = ti.field(ti.u1, shape=(self.n_batches, self.n_aabbs - 1))
-        self.updated = ti.field(ti.u1, shape=())
 
         # Query results, vec3 of batch id, self id, query id
         self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
@@ -281,11 +280,7 @@ class LBVH(RBC):
 
         # Parallel build for every internal node
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            d = ti.select(
-                self.delta(i, i + 1, i_b) > self.delta(i, i - 1, i_b),
-                1,
-                -1,
-            )
+            d = ti.select(self.delta(i, i + 1, i_b) > self.delta(i, i - 1, i_b), 1, -1)
 
             delta_min = self.delta(i, i - d, i_b)
             l_max = ti.u32(2)
@@ -337,12 +332,12 @@ class LBVH(RBC):
         Starts from the leaf nodes and works upwards layer by layer.
         """
         self._kernel_compute_bounds_init()
-        while self.updated[None]:
-            self._kernel_compute_bounds_one_layer()
+        is_done = False
+        while not is_done:
+            is_done = self._kernel_compute_bounds_one_layer()
 
     @ti.kernel
     def _kernel_compute_bounds_init(self):
-        self.updated[None] = True
         self.internal_node_active.fill(False)
         self.internal_node_ready.fill(False)
 
@@ -355,26 +350,26 @@ class LBVH(RBC):
                 self.internal_node_active[i_b, parent_idx] = True
 
     @ti.kernel
-    def _kernel_compute_bounds_one_layer(self):
-        self.updated[None] = False
+    def _kernel_compute_bounds_one_layer(self) -> ti.u1:
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            if not self.internal_node_active[i_b, i]:
-                continue
-            left_bound = self.nodes[i_b, self.nodes[i_b, i].left].bound
-            right_bound = self.nodes[i_b, self.nodes[i_b, i].right].bound
-            self.nodes[i_b, i].bound.min = ti.min(left_bound.min, right_bound.min)
-            self.nodes[i_b, i].bound.max = ti.max(left_bound.max, right_bound.max)
-            parent_idx = self.nodes[i_b, i].parent
-            if parent_idx != -1:
-                self.internal_node_ready[i_b, parent_idx] = True
-            self.internal_node_active[i_b, i] = False
-            self.updated[None] = True
+            if self.internal_node_active[i_b, i]:
+                left_bound = self.nodes[i_b, self.nodes[i_b, i].left].bound
+                right_bound = self.nodes[i_b, self.nodes[i_b, i].right].bound
+                self.nodes[i_b, i].bound.min = ti.min(left_bound.min, right_bound.min)
+                self.nodes[i_b, i].bound.max = ti.max(left_bound.max, right_bound.max)
+                parent_idx = self.nodes[i_b, i].parent
+                if parent_idx != -1:
+                    self.internal_node_ready[i_b, parent_idx] = True
+                self.internal_node_active[i_b, i] = False
 
+        is_done = True
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
-            if not self.internal_node_ready[i_b, i]:
-                continue
-            self.internal_node_active[i_b, i] = True
-            self.internal_node_ready[i_b, i] = False
+            if self.internal_node_ready[i_b, i]:
+                self.internal_node_active[i_b, i] = True
+                is_done = False
+        self.internal_node_ready.fill(False)
+
+        return is_done
 
     @ti.kernel
     def query(self, aabbs: ti.template()):

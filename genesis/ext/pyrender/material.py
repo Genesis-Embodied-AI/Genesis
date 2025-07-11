@@ -98,7 +98,7 @@ class Material(metaclass=ABCMeta):
             alphaCutoff = 0.5
 
         if emissiveFactor is None:
-            emissiveFactor = np.zeros(3).astype(np.float32)
+            emissiveFactor = np.zeros((3,), dtype=np.float32)
 
         self.name = name
         self.normalTexture = normalTexture
@@ -392,7 +392,7 @@ class MetallicRoughnessMaterial(Material):
 
         # Set defaults
         if baseColorFactor is None:
-            baseColorFactor = np.ones(4).astype(np.float32)
+            baseColorFactor = np.ones((4,), dtype=np.float32)
 
         self.baseColorFactor = baseColorFactor
         self.baseColorTexture = baseColorTexture
@@ -601,9 +601,9 @@ class SpecularGlossinessMaterial(Material):
 
         # Set defaults
         if diffuseFactor is None:
-            diffuseFactor = np.ones(4).astype(np.float32)
+            diffuseFactor = np.ones((4,), dtype=np.float32)
         if specularFactor is None:
-            specularFactor = np.ones(3).astype(np.float32)
+            specularFactor = np.ones((3,), dtype=np.float32)
 
         self.diffuseFactor = diffuseFactor
         self.diffuseTexture = diffuseTexture

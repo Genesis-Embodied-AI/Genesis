@@ -78,8 +78,12 @@ class RigidLink(RBC):
         self._pos: ArrayLike = pos
         self._quat: ArrayLike = quat
         # Link's center-of-mass position & principal axes frame rotation at creation time:
-        self._inertial_pos: ArrayLike = inertial_pos
-        self._inertial_quat: ArrayLike = inertial_quat
+        if inertial_pos is not None:
+            inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
+        self._inertial_pos: ArrayLike | None = inertial_pos
+        if inertial_quat is not None:
+            inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
+        self._inertial_quat: ArrayLike | None = inertial_quat
         self._inertial_mass = inertial_mass
         self._inertial_i = inertial_i
 
@@ -144,8 +148,7 @@ class RigidLink(RBC):
 
                 if inertia_mesh.is_watertight and self._init_mesh.mass > 0:
                     # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
-                    dtype = np.result_type(self._inertial_pos, self._inertial_quat)
-                    T_inertia = gu.trans_quat_to_T(self._inertial_pos.astype(dtype), self._inertial_quat.astype(dtype))
+                    T_inertia = gu.trans_quat_to_T(self._inertial_pos, self._inertial_quat)
                     self._inertial_i = (
                         self._init_mesh.moment_inertia_frame(T_inertia) / self._init_mesh.mass * self._inertial_mass
                     )

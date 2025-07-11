@@ -146,7 +146,7 @@ class MPMSolverState(RBC):
         self._C = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), **args)
         self._F = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), **args)
         self._Jp = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **args)
-        args["dtype"] = int
+        args["dtype"] = bool
         args["requires_grad"] = False
         self._active = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), **args)
 
@@ -203,7 +203,7 @@ class SPHSolverState:
         }
         self._pos = gs.zeros((scene.sim._B, scene.sim.sph_solver.n_particles, 3), **args)
         self._vel = gs.zeros((self._scene.sim._B, scene.sim.sph_solver.n_particles, 3), **args)
-        args["dtype"] = int
+        args["dtype"] = bool
         args["requires_grad"] = False
         self._active = gs.zeros((self._scene.sim._B, scene.sim.sph_solver.n_particles), **args)
 
@@ -238,7 +238,7 @@ class PBDSolverState:
         }
         self._pos = gs.zeros((scene.sim._B, scene.sim.pbd_solver.n_particles, 3), **args)
         self._vel = gs.zeros((self._scene.sim._B, scene.sim.pbd_solver.n_particles, 3), **args)
-        args["dtype"] = int
+        args["dtype"] = bool
         args["requires_grad"] = False
         self._free = gs.zeros((self._scene.sim._B, scene.sim.pbd_solver.n_particles), **args)
 
@@ -258,24 +258,18 @@ class PBDSolverState:
     def free(self):
         return self._free
 
-    # def __repr__(self):
-    #     return f'{_repr(self)}\n' \
-    #            f'scene : {_repr(self.scene)}\n' \
-    #            f'pos   : {_repr(self.pos)}\n' \
-    #            f'vel   : {_repr(self.vel)}\n'
-
 
 class FEMSolverState:
     def __init__(self, scene):
         self._scene = scene
         args = {
-            "dtype": float,
+            "dtype": gs.tc_float,
             "requires_grad": scene.requires_grad,
             "scene": self._scene,
         }
         self._pos = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), **args)
         self._vel = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), **args)
-        args["dtype"] = int
+        args["dtype"] = bool
         args["requires_grad"] = False
         self._active = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_elements), **args)
 

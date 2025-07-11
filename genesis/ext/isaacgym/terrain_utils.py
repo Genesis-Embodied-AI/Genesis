@@ -35,7 +35,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(gs.np_float)
+    terrain.height_field_raw = height
     return terrain
 
 
@@ -83,7 +83,7 @@ def random_uniform_terrain(
     y_upsampled = np.linspace(0, terrain.length * terrain.horizontal_scale, terrain.length)
     z_upsampled = np.rint(f((y_upsampled, x_upsampled)))
 
-    terrain.height_field_raw += z_upsampled.astype(gs.np_float)
+    terrain.height_field_raw += z_upsampled
     return terrain
 
 
@@ -103,9 +103,7 @@ def sloped_terrain(terrain, slope=1):
     xx, yy = np.meshgrid(x, y, sparse=True)
     xx = xx.reshape(terrain.width, 1)
     max_height = int(slope * (terrain.horizontal_scale / terrain.vertical_scale) * terrain.width)
-    terrain.height_field_raw[:, np.arange(terrain.length)] += (max_height * xx / terrain.width).astype(
-        terrain.height_field_raw.dtype
-    )
+    terrain.height_field_raw[:, np.arange(terrain.length)] += max_height * xx / terrain.width
     return terrain
 
 
@@ -130,7 +128,7 @@ def pyramid_sloped_terrain(terrain, slope=1, platform_size=1.0):
     xx = xx.reshape(terrain.width, 1)
     yy = yy.reshape(1, terrain.length)
     max_height = int(slope * (terrain.horizontal_scale / terrain.vertical_scale) * (terrain.width / 2))
-    terrain.height_field_raw += (max_height * xx * yy).astype(terrain.height_field_raw.dtype)
+    terrain.height_field_raw += max_height * xx * yy
 
     platform_size = int(platform_size / terrain.horizontal_scale / 2)
     x1 = terrain.width // 2 - platform_size
@@ -203,9 +201,7 @@ def wave_terrain(terrain, num_waves=1, amplitude=1.0):
         xx, yy = np.meshgrid(x, y, sparse=True)
         xx = xx.reshape(terrain.width, 1)
         yy = yy.reshape(1, terrain.length)
-        terrain.height_field_raw += (amplitude * np.cos(yy / div) + amplitude * np.sin(xx / div)).astype(
-            terrain.height_field_raw.dtype
-        )
+        terrain.height_field_raw += amplitude * np.cos(yy / div) + amplitude * np.sin(xx / div)
     return terrain
 
 
@@ -373,9 +369,9 @@ def convert_heightfield_to_trimesh(height_field_raw, horizontal_scale, vertical_
 
     # create triangle mesh vertices and triangles from the heightfield grid
     vertices = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
-    vertices[:, 0] = xx.flatten()
-    vertices[:, 1] = yy.flatten()
-    vertices[:, 2] = hf.flatten() * vertical_scale
+    vertices[:, 0] = xx.flat
+    vertices[:, 1] = yy.flat
+    vertices[:, 2] = (hf * vertical_scale).flat
     triangles = -np.ones((2 * (num_rows - 1) * (num_cols - 1), 3), dtype=np.uint32)
     for i in range(num_rows - 1):
         ind0 = np.arange(0, num_cols - 1) + i * num_cols

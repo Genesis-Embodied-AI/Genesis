@@ -368,7 +368,7 @@ class MPMEntity(ParticleEntity):
         """
         self._assert_active()
 
-        free = gs.zeros((self._n_particles,), dtype=int, requires_grad=False, scene=self._scene)
+        free = gs.zeros((self._n_particles,), dtype=torch.bool, requires_grad=False, scene=self._scene)
         self.solver._kernel_get_free(
             self._particle_start,
             self._n_particles,
