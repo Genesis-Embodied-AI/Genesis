@@ -54,21 +54,19 @@ class Mesh:
 
         # apply initial transforms (scale then quat then pos)
         T_init = gu.scale_to_T(scale)
-        self.init_vertices_np = gu.transform_by_T(self.raw_vertices, T_init).astype(np.float32, order="C", copy=False)
-
-        self.init_vertex_normals_np = self.raw_vertex_normals_np.astype(np.float32, order="C", copy=False)
+        init_vertices_np = gu.transform_by_T(self.raw_vertices, T_init)
 
         # init ti fields
         self.init_vertices = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
         self.init_vertex_normals = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
         self.faces = ti.field(dtype=gs.ti_int, shape=(self.n_faces))
 
-        self.init_vertices.from_numpy(self.init_vertices_np)
-        self.init_vertex_normals.from_numpy(self.init_vertex_normals_np)
+        self.init_vertices.from_numpy(init_vertices_np)
+        self.init_vertex_normals.from_numpy(self.raw_vertex_normals_np)
         self.faces.from_numpy(self.faces_np)
 
         if self.collision:
-            self.T_mesh_to_sdf_np = self.T_mesh_to_sdf_np @ np.linalg.inv(T_init)
+            self.T_mesh_to_sdf_np = self.T_mesh_to_sdf_np @ gu.inv_T(T_init)
             self.sdf_voxels = ti.field(dtype=gs.ti_float, shape=self.sdf_voxels_np.shape)
             self.T_mesh_to_sdf = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=())
 

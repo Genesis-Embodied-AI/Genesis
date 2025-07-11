@@ -478,11 +478,11 @@ class SPHOptions(Options):
         if self.hash_grid_res is None:
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
-            ).astype(int)
-            default_hash_grid_res = np.array([150, 150, 150])
+            ).astype(gs.np_int)
+            default_hash_grid_res = np.array([150, 150, 150], dtype=gs.np_int)
             self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
         else:
-            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(int)
+            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
         # check pressure solver
         pressure_solver_available = ["WCSPH", "DFSPH"]
@@ -567,11 +567,11 @@ class PBDOptions(Options):
             # Otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
-            ).astype(int)
-            default_hash_grid_res = np.array([150, 150, 150])
+            ).astype(gs.np_int)
+            default_hash_grid_res = np.array([150, 150, 150], dtype=gs.np_int)
             self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
         else:
-            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(int)
+            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
 
 class FEMOptions(Options):
