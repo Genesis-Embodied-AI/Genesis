@@ -72,6 +72,12 @@ class RigidSolver(Solver):
         # store static arguments here
         para_level: int = 0
         use_hibernation: bool = False
+        batch_links_info: bool = False
+        enable_mujoco_compatibility: bool = False
+        enable_multi_contact: bool = True
+        enable_self_collision: bool = True
+        enable_adjacent_collision: bool = False
+        box_box_detection: bool = False
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -223,6 +229,12 @@ class RigidSolver(Solver):
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
             use_hibernation=getattr(self, "_use_hibernation", False),
+            batch_links_info=getattr(self._options, "batch_links_info", False),
+            enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
+            enable_multi_contact=getattr(self, "_enable_multi_contact", True),
+            enable_self_collision=getattr(self, "_enable_self_collision", True),
+            enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
+            box_box_detection=getattr(self, "_box_box_detection", False),
         )
         # when the migration is finished, we will remove the about two lines
         # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
@@ -230,6 +242,7 @@ class RigidSolver(Solver):
             n_dofs=self.n_dofs_,
             n_entities=self.n_entities_,
             n_geoms=self.n_geoms_,
+            _B=self._B,
             f_batch=self._batch_shape,
         )
 
@@ -1378,7 +1391,7 @@ class RigidSolver(Solver):
     def _init_collider(self):
         self.collider = Collider(self)
 
-        if self.collider._has_terrain:
+        if self.collider._collider_info.has_terrain:
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
 
@@ -1819,10 +1832,10 @@ class RigidSolver(Solver):
     def detect_collision(self, env_idx=0):
         # TODO: support batching
         self._kernel_detect_collision()
-        n_collision = self.collider.n_contacts.to_numpy()[env_idx]
+        n_collision = self.collider._collider_state.n_contacts.to_numpy()[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = self.collider.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
-        collision_pairs[:, 1] = self.collider.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
+        collision_pairs[:, 0] = self.collider._collider_state.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
+        collision_pairs[:, 1] = self.collider._collider_state.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
         return collision_pairs
 
     @ti.kernel
@@ -1883,7 +1896,7 @@ class RigidSolver(Solver):
 
                     self.n_contacts[i_b] = self.n_contacts_hibernated[i_b]
             else:
-                self.collider.n_contacts.fill(0)
+                self.collider._collider_state.n_contacts.fill(0)
 
     def _batch_array(self, arr, first_dim=False):
         if first_dim:
@@ -2565,12 +2578,12 @@ class RigidSolver(Solver):
                 else:
                     # update collider sort_buffer
                     for i_g in range(self.entities_info[i_e].geom_start, self.entities_info[i_e].geom_end):
-                        self.collider.sort_buffer[self.geoms_state[i_g, i_b].min_buffer_idx, i_b].value = (
-                            self.geoms_state[i_g, i_b].aabb_min[0]
-                        )
-                        self.collider.sort_buffer[self.geoms_state[i_g, i_b].max_buffer_idx, i_b].value = (
-                            self.geoms_state[i_g, i_b].aabb_max[0]
-                        )
+                        self.collider._collider_state.sort_buffer[
+                            self.geoms_state[i_g, i_b].min_buffer_idx, i_b
+                        ].value = self.geoms_state[i_g, i_b].aabb_min[0]
+                        self.collider._collider_state.sort_buffer[
+                            self.geoms_state[i_g, i_b].max_buffer_idx, i_b
+                        ].value = self.geoms_state[i_g, i_b].aabb_max[0]
 
     @ti.func
     def _func_aggregate_awake_entities(self):

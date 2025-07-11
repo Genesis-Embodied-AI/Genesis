@@ -76,10 +76,10 @@ class AvatarSolver(RigidSolver):
 
     def print_contact_data(self):
         batch_idx = 0
-        n_contacts = self.collider.n_contacts[batch_idx]
+        n_contacts = self.collider._collider_state.n_contacts[batch_idx]
         print("collision_pairs:")
         if n_contacts > 0:
-            contact_data = self.collider.contact_data.to_numpy()
+            contact_data = self.collider._collider_state.contact_data.to_numpy()
             links_a = contact_data["link_a"][:n_contacts, batch_idx]
             links_b = contact_data["link_b"][:n_contacts, batch_idx]
             link_pairs = np.vstack([links_a, links_b]).T
