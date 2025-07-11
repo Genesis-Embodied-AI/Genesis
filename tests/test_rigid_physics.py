@@ -1668,8 +1668,8 @@ def test_path_planning_avoidance(show_viewer):
             # Check if the cube is colliding with the robot
             scene.rigid_solver._kernel_forward_dynamics()
             scene.rigid_solver._func_constraint_force()
-            for i in range(scene.rigid_solver.collider.n_contacts.to_numpy()[0]):
-                contact_data = scene.rigid_solver.collider.contact_data[i, 0]
+            for i in range(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]):
+                contact_data = scene.rigid_solver.collider._collider_state.contact_data[i, 0]
                 if any(i_g in tuple(range(len(cubes))) for i_g in (contact_data.link_a, contact_data.link_b)):
                     max_penetration = max(max_penetration, contact_data.penetration)
 
@@ -2028,7 +2028,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
 
     # Make sure that all the geometries in the scene are convex
     assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
-    assert not gs_sim.rigid_solver.collider._has_nonconvex_nonterrain
+    assert not gs_sim.rigid_solver.collider._collider_info.has_nonconvex_nonterrain
 
     # There should be only one geometry for the apple as it can be convexify without decomposition,
     # but for the others it is hard to tell... Let's use some reasonable guess.
@@ -2563,7 +2563,7 @@ def test_drone_advanced(show_viewer):
             drone.set_propellels_rpm(torch.full((4,), 50000.0))
         scene.step()
         if i > 350:
-            assert scene.rigid_solver.collider.n_contacts.to_numpy()[0] == 2
+            assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] == 2
             assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=2e-3)
 
     # Push the drones symmetrically and wait for them to collide
@@ -2573,7 +2573,7 @@ def test_drone_advanced(show_viewer):
         for drone in drones:
             drone.set_propellels_rpm(torch.full((4,), 50000.0))
         scene.step()
-        if scene.rigid_solver.collider.n_contacts.to_numpy()[0] > 2:
+        if scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] > 2:
             break
     else:
         raise AssertionError
@@ -2634,7 +2634,7 @@ def test_data_accessor(n_envs, batched, tol):
     for _ in range(400):
         gs_sim.step()
 
-        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()
         assert len(gs_n_contacts) == max(n_envs, 1)
         for as_tensor in (False, True):
             for to_torch in (False, True):
