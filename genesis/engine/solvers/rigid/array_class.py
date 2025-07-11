@@ -141,3 +141,25 @@ class ColliderState:
             # for faster compilation
             self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
             self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
+
+
+# =========================================== MPR ===========================================
+@ti.data_oriented
+class MPRInfo:
+
+    pass
+
+
+@ti.data_oriented
+class MPRState:
+    def __init__(self, f_batch):
+        struct_support = ti.types.struct(
+            v1=gs.ti_vec3,
+            v2=gs.ti_vec3,
+            v=gs.ti_vec3,
+        )
+        self.simplex_support = struct_support.field(
+            shape=f_batch(4),
+            layout=ti.Layout.SOA,
+        )
+        self.simplex_size = ti.field(gs.ti_int, shape=f_batch())

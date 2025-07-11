@@ -1,50 +1,50 @@
 import numpy as np
 import taichi as ti
 import torch
+from dataclasses import dataclass
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.engine.solvers.rigid.array_class as array_class
 
 from .support_field_decomp import SupportField
 
 
 @ti.data_oriented
 class MPR:
+    @dataclass(frozen=True)
+    class MPRStaticConfig:
+        # store static arguments here
+        B: int = 0
+        para_level: int = 0
+        CCD_EPS: float = 1e-9
+        CCD_TOLERANCE: float = 1e-6
+        CCD_ITERATIONS: int = 50
+
     def __init__(self, rigid_solver):
         self._solver = rigid_solver
-        self._B = rigid_solver._B
-        self._para_level = rigid_solver._para_level
-
-        if gs.ti_float == ti.f32:
+        self._mpr_static_config = MPR.MPRStaticConfig(
+            B=rigid_solver._B,
+            para_level=rigid_solver._para_level,
             # It has been observed in practice that increasing this threshold makes collision detection instable,
             # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
-            self.CCD_EPS = 1e-9
-        else:
-            self.CCD_EPS = 1e-10
-        self.CCD_TOLERANCE = 1e-6
-        self.CCD_ITERATIONS = 50
+            CCD_EPS=1e-9 if gs.ti_float == ti.f32 else 1e-10,
+            CCD_TOLERANCE=1e-6,
+            CCD_ITERATIONS=50,
+        )
 
         self.support_field = SupportField(rigid_solver)
-        self.init_support()
+        self.init_state()
 
-    def init_support(self):
-        struct_support = ti.types.struct(
-            v1=gs.ti_vec3,
-            v2=gs.ti_vec3,
-            v=gs.ti_vec3,
-        )
-        self.simplex_support = struct_support.field(
-            shape=self._solver._batch_shape(4),
-            layout=ti.Layout.SOA,
-        )
-        self.simplex_size = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+    def init_state(self):
+        self._mpr_state = array_class.MPRState(self._solver._batch_shape)
 
     def reset(self):
         pass
 
     @ti.kernel
-    def clear(self):
-        self.simplex_size.fill(0)
+    def clear(self_unused, mpr_state: ti.template()):
+        mpr_state.simplex_size.fill(0)
 
     @ti.func
     def func_point_in_geom_aabb(self, point, i_g, i_b):
@@ -550,6 +550,6 @@ class MPR:
         return is_col, normal, penetration, pos
 
     @ti.func
-    def func_mpr_contact(self, i_ga, i_gb, i_b, normal_ws):
+    def func_mpr_contact(self_unused, i_ga, i_gb, i_b, normal_ws):
         center_a, center_b = self.guess_geoms_center(i_ga, i_gb, i_b, normal_ws)
         return self.func_mpr_contact_from_centers(i_ga, i_gb, i_b, center_a, center_b)
