@@ -138,7 +138,29 @@ class ColliderState:
             self.box_axi = ti.field(gs.ti_vec3, shape=f_batch(3))
             self.box_ppts2 = ti.field(dtype=gs.ti_float, shape=f_batch((4, 2)))
             self.box_pu = ti.field(gs.ti_vec3, shape=f_batch(4))
-        ##---------------- box box
+
+        ########## Terrain contact detection ##########
+        if collider_info.has_terrain:
+            links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
+            entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
+
+            scale = entity.terrain_scale.astype(gs.np_float)
+            rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
+            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
+            xyz_maxmin = np.array(
+                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0],
+                dtype=gs.np_float,
+            )
+
+            self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
+            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
+            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
+            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
+
+            self.terrain_hf.from_numpy(hf)
+            self.terrain_rc.from_numpy(rc)
+            self.terrain_scale.from_numpy(scale)
+            self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def _init_verts_connectivity(self, solver) -> None:
         """

@@ -207,7 +207,7 @@ class Collider:
 
         self._collider_state._contacts_info_cache = {}
         # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
-        self._func_update_aabbs()
+        self._func_update_aabbs(self._solver)
         # timer.stamp("func_update_aabbs")
         self._func_broad_phase(
             self._solver.links_state,
@@ -248,7 +248,6 @@ class Collider:
         # timer.stamp("func_narrow_phase")
         if self._collider_info.has_terrain:
             self._func_narrow_phase_any_vs_terrain(
-                self._solver,
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
@@ -556,7 +555,6 @@ class Collider:
     @ti.func
     def _func_contact_mpr_terrain(
         self_unused,
-        solver: ti.template(),
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
@@ -567,8 +565,6 @@ class Collider:
         i_gb,
         i_b,
     ):
-        # FIXME: Here we need some data from [solver], but it seems that we can store it in [collider_state] instead,
-        # and remove the reference to [solver] in this function.
         ga_pos, ga_quat = geoms_state[i_ga, i_b].pos, geoms_state[i_ga, i_b].quat
         gb_pos, gb_quat = geoms_state[i_gb, i_b].pos, geoms_state[i_gb, i_b].quat
         margin = gs.ti_float(0.0)
@@ -599,25 +595,33 @@ class Collider:
                 collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
             for i in ti.static(range(3)):
-                collider_state.prism[i, i_b][2] = solver.terrain_xyz_maxmin[5]
+                collider_state.prism[i, i_b][2] = collider_state.terrain_xyz_maxmin[5]
 
                 if (
-                    solver.terrain_xyz_maxmin[i] < collider_state.xyz_max_min[i + 3, i_b] - margin
-                    or solver.terrain_xyz_maxmin[i + 3] > collider_state.xyz_max_min[i, i_b] + margin
+                    collider_state.terrain_xyz_maxmin[i] < collider_state.xyz_max_min[i + 3, i_b] - margin
+                    or collider_state.terrain_xyz_maxmin[i + 3] > collider_state.xyz_max_min[i, i_b] + margin
                 ):
                     is_return = True
 
             if not is_return:
-                sh = solver.terrain_scale[0]
-                r_min = gs.ti_int(ti.floor((collider_state.xyz_max_min[3, i_b] - solver.terrain_xyz_maxmin[3]) / sh))
-                r_max = gs.ti_int(ti.ceil((collider_state.xyz_max_min[0, i_b] - solver.terrain_xyz_maxmin[3]) / sh))
-                c_min = gs.ti_int(ti.floor((collider_state.xyz_max_min[4, i_b] - solver.terrain_xyz_maxmin[4]) / sh))
-                c_max = gs.ti_int(ti.ceil((collider_state.xyz_max_min[1, i_b] - solver.terrain_xyz_maxmin[4]) / sh))
+                sh = collider_state.terrain_scale[0]
+                r_min = gs.ti_int(
+                    ti.floor((collider_state.xyz_max_min[3, i_b] - collider_state.terrain_xyz_maxmin[3]) / sh)
+                )
+                r_max = gs.ti_int(
+                    ti.ceil((collider_state.xyz_max_min[0, i_b] - collider_state.terrain_xyz_maxmin[3]) / sh)
+                )
+                c_min = gs.ti_int(
+                    ti.floor((collider_state.xyz_max_min[4, i_b] - collider_state.terrain_xyz_maxmin[4]) / sh)
+                )
+                c_max = gs.ti_int(
+                    ti.ceil((collider_state.xyz_max_min[1, i_b] - collider_state.terrain_xyz_maxmin[4]) / sh)
+                )
 
                 r_min = ti.max(0, r_min)
                 c_min = ti.max(0, c_min)
-                r_max = ti.min(solver.terrain_rc[0] - 1, r_max)
-                c_max = ti.min(solver.terrain_rc[1] - 1, c_max)
+                r_max = ti.min(collider_state.terrain_rc[0] - 1, r_max)
+                c_max = ti.min(collider_state.terrain_rc[1] - 1, c_max)
 
                 n_con = 0
                 for r in range(r_min, r_max):
@@ -628,9 +632,9 @@ class Collider:
                                 nvert = nvert + 1
                                 self_unused.add_prism_vert(
                                     collider_state,
-                                    sh * (r + i) + solver.terrain_xyz_maxmin[3],
-                                    sh * c + solver.terrain_xyz_maxmin[4],
-                                    solver.terrain_hf[r + i, c] + margin,
+                                    sh * (r + i) + collider_state.terrain_xyz_maxmin[3],
+                                    sh * c + collider_state.terrain_xyz_maxmin[4],
+                                    collider_state.terrain_hf[r + i, c] + margin,
                                     i_b,
                                 )
                                 if nvert > 2 and (
@@ -696,9 +700,9 @@ class Collider:
         collider_state.prism[5, i_b][2] = z
 
     @ti.kernel
-    def _func_update_aabbs(self):
-        # FIXME: Migration will be done once [func_update_geom_aabbs] is migrated first
-        self._solver._func_update_geom_aabbs()
+    def _func_update_aabbs(self_unused, solver: ti.template()):
+        # FIXME: Remove [solver] when Rigid solver migration is done.
+        solver._func_update_geom_aabbs()
 
     @ti.func
     def _func_check_collision_valid(
@@ -1102,7 +1106,6 @@ class Collider:
     @ti.kernel
     def _func_narrow_phase_any_vs_terrain(
         self_unused,
-        solver: ti.template(),
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
@@ -1131,7 +1134,6 @@ class Collider:
 
                     if geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN:
                         self_unused._func_contact_mpr_terrain(
-                            solver,
                             geoms_state,
                             geoms_info,
                             geoms_init_AABB,
@@ -2571,7 +2573,13 @@ class Collider:
         # Copy contact data
         if n_contacts_max > 0:
             self._kernel_get_contacts(
-                self._solver._static_rigid_sim_config, self._collider_state, self._collider_info, as_tensor, iout, fout
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_state,
+                self._collider_info,
+                as_tensor,
+                iout,
+                fout,
             )
 
         # Build structured view (no copy)
