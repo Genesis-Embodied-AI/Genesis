@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+import time
 
 import numpy as np
 import taichi as ti
@@ -575,17 +576,13 @@ class SAPCoupler(RBC):
                 continue
             self.pcg_fem_state_v[i_b, i_v].prec = self.pcg_fem_state_v[i_b, i_v].diag3x3.inverse()
 
-    def compute_Ap(self):
-        if self.fem_solver.is_active():
-            self.compute_fem_Ap()
-        if self.rigid_solver.is_active():
-            self.compute_rigid_Ap()
-        # Contact
-        for contact in self.contacts:
-            if contact.has_contact:
-                contact.compute_Ap()
-
     @ti.kernel
+    def _kernel_compute_Ap(self):
+        # Contact
+        for contact in ti.static(self.contacts):
+            contact.compute_Ap()
+
+    @ti.func
     def compute_fem_Ap(self):
         self._func_compute_fem_Ap(
             self.pcg_fem_state_v.p,
@@ -593,7 +590,7 @@ class SAPCoupler(RBC):
             self.batch_pcg_active,
         )
 
-    @ti.kernel
+    @ti.func
     def compute_rigid_Ap(self):
         rigid_solver = self.rigid_solver
         self.pcg_rigid_state_dof.Ap.fill(0.0)
@@ -740,15 +737,29 @@ class SAPCoupler(RBC):
             self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
 
     def one_pcg_iter(self):
-        self.clear_pcg_state()
+        self._kernel_one_pcg_iter()
+
+    @ti.kernel
+    def _kernel_one_pcg_iter(self):
         self.compute_Ap()
+        self.clear_pcg_state()
         self.compute_pTAp()
         self.compute_alpha()
         self.compute_pcg_state()
         self.check_pcg_convergence()
         self.compute_p()
 
-    @ti.kernel
+    @ti.func
+    def compute_Ap(self):
+        if ti.static(self.fem_solver.is_active()):
+            self.compute_fem_Ap()
+        if ti.static(self.rigid_solver.is_active()):
+            self.compute_rigid_Ap()
+        # Contact
+        for contact in ti.static(self.contacts):
+            contact.compute_Ap()
+
+    @ti.func
     def clear_pcg_state(self):
         for i_b in ti.ndrange(self._B):
             if not self.batch_pcg_active[i_b]:
@@ -757,13 +768,14 @@ class SAPCoupler(RBC):
             self.pcg_state[i_b].rTr_new = 0.0
             self.pcg_state[i_b].rTz_new = 0.0
 
+    @ti.func
     def compute_pTAp(self):
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self.compute_fem_pTAp()
-        if self.rigid_solver.is_active():
+        if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_pTAp()
 
-    @ti.kernel
+    @ti.func
     def compute_fem_pTAp(self):
         fem_solver = self.fem_solver
         for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
@@ -773,7 +785,7 @@ class SAPCoupler(RBC):
                 self.pcg_state[i_b].pTAp, self.pcg_fem_state_v[i_b, i_v].p.dot(self.pcg_fem_state_v[i_b, i_v].Ap)
             )
 
-    @ti.kernel
+    @ti.func
     def compute_rigid_pTAp(self):
         rigid_solver = self.rigid_solver
         for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
@@ -784,20 +796,21 @@ class SAPCoupler(RBC):
                 self.pcg_rigid_state_dof[i_b, i_d].p.dot(self.pcg_rigid_state_dof[i_b, i_d].Ap),
             )
 
-    @ti.kernel
+    @ti.func
     def compute_alpha(self):
         for i_b in ti.ndrange(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
             self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
 
+    @ti.func
     def compute_pcg_state(self):
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self.compute_fem_pcg_state()
-        if self.rigid_solver.is_active():
+        if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_pcg_state()
 
-    @ti.kernel
+    @ti.func
     def compute_fem_pcg_state(self):
         fem_solver = self.fem_solver
         for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
@@ -813,7 +826,7 @@ class SAPCoupler(RBC):
             self.pcg_state[i_b].rTr_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
             self.pcg_state[i_b].rTz_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
 
-    @ti.kernel
+    @ti.func
     def compute_rigid_pcg_state(self):
         rigid_solver = self.rigid_solver
         for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
@@ -834,7 +847,7 @@ class SAPCoupler(RBC):
                 continue
             self.pcg_state[i_b].rTz_new += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
 
-    @ti.kernel
+    @ti.func
     def check_pcg_convergence(self):
         # check convergence
         for i_b in ti.ndrange(self._B):
@@ -849,13 +862,14 @@ class SAPCoupler(RBC):
             self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
             self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
 
+    @ti.func
     def compute_p(self):
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self.compute_fem_p()
-        if self.rigid_solver.is_active():
+        if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_p()
 
-    @ti.kernel
+    @ti.func
     def compute_fem_p(self):
         fem_solver = self.fem_solver
         for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
@@ -865,7 +879,7 @@ class SAPCoupler(RBC):
                 self.pcg_fem_state_v[i_b, i_v].z + self.pcg_state[i_b].beta * self.pcg_fem_state_v[i_b, i_v].p
             )
 
-    @ti.kernel
+    @ti.func
     def compute_rigid_p(self):
         rigid_solver = self.rigid_solver
         for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
@@ -1494,7 +1508,7 @@ class RigidContact(BaseContact):
             self.add_Jt_x(coupler.rigid_state_dof.gradient, i_p, -sap_info[i_p].gamma)
             self.add_Jt_x(coupler.rigid_state_dof.impulse, i_p, sap_info[i_p].gamma)
 
-    @ti.kernel
+    @ti.func
     def compute_Ap(self):
         pairs = ti.static(self.contact_pairs)
         sap_info = ti.static(pairs.sap_info)
@@ -1553,7 +1567,7 @@ class FEMContact(BaseContact):
                 continue
             sap_info[i_p].dvc = self.compute_Jx(i_p, coupler.pcg_fem_state_v.x)
 
-    @ti.kernel
+    @ti.func
     def compute_Ap(self):
         pairs = ti.static(self.contact_pairs)
         sap_info = ti.static(pairs.sap_info)
