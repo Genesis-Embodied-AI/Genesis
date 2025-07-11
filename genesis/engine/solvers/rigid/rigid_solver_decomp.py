@@ -5046,8 +5046,8 @@ class RigidSolver(Solver):
     @ti.kernel
     def _kernel_collect_welds(self, buf: ti.types.ndarray()):
         WELD = gs.EQUALITY_TYPE.WELD
-        n_envs = ti.static(max(1, self.n_envs))
-        stride = buf.shape[0] // n_envs
+        n_envs = self.n_envs
+        stride = self.n_equalities_candidate
 
         for env in range(n_envs):
             out = 0
