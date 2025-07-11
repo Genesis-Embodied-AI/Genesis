@@ -302,7 +302,7 @@ def to_gs_tensor(x):
 
 def tensor_to_cpu(x):
     if isinstance(x, torch.Tensor):
-        x = x.cpu()
+        x = x.detach().cpu()
     return x
 
 
