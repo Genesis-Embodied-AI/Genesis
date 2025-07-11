@@ -95,7 +95,7 @@ class PBDTetEntity(ParticleEntity):
         edges: ti.types.ndarray(),
         edges_len_rest: ti.types.ndarray(),
         mat_type: ti.i32,
-        active: ti.i32,
+        active: ti.u1,
     ):
         for i_p_ in range(self.n_particles):
             i_p = i_p_ + self._particle_start
@@ -588,7 +588,7 @@ class PBDParticleEntity(ParticleEntity):
         particles: ti.types.ndarray(),
         rho: ti.float32,
         mat_type: ti.i32,
-        active: ti.i32,
+        active: ti.u1,
     ):
         for i_p_ in range(self._n_particles):
             i_p = i_p_ + self._particle_start
