@@ -10,7 +10,7 @@ import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 from genesis.engine.entities import StaticEntity
 from .base_sensor import Sensor
-from .data_collector import DataCollector, OutputMode
+from .data_collector import DataCollector, DataStreamConfig, DataOutType
 
 
 class Camera(Sensor):
@@ -561,7 +561,7 @@ class Camera(Sensor):
         return rgb_arr
 
     @gs.assert_built
-    def start_recording(self, auto_render=False, filename=None, fps=None, hz=None, mode=OutputMode.VIDEO):
+    def start_recording(self, auto_render=False, filename=None, fps=None, hz=None, out_type=DataOutType.VIDEO):
         """
         Start recording on the camera.
 
@@ -578,9 +578,9 @@ class Camera(Sensor):
         hz : int, optional
             Used only when `auto_render` is True.
             The frequency at which images are rendered and stored.  If None, it will be set to the simulation's dt.
-        mode : OutputMode, optional
+        out_type: DataOutType, optional
             Used only when `auto_render` is True.
-            The output mode for the video recording. Options are `OutputMode.VIDEO` or `OutputMode.VIDEO_STREAM`.
+            The output type for video recording. Options are `DataOutType.VIDEO` or `DataOutType.VIDEO_STREAM`.
         """
         self._in_recording = True
         self._auto_render = auto_render
@@ -588,16 +588,19 @@ class Camera(Sensor):
 
         if auto_render:
             if self._data_collector is None:
-                assert mode in [OutputMode.VIDEO, OutputMode.VIDEO_STREAM], "Invalid output mode for video recording."
-                sim = self._visualizer._scene._sim
+                assert out_type in [DataOutType.VIDEO, DataOutType.VIDEO_STREAM], "DataOutType should be video."
 
-                kwargs = dict(mode=mode, filename=self.filename, fps=fps, sim_dt=sim._dt)
-                if mode == OutputMode.VIDEO_STREAM:
+                kwargs = dict(filename=self.filename, fps=fps)
+                if out_type == DataOutType.VIDEO_STREAM:
                     kwargs["shape"] = self._res
                 if self._rgb_stacked:
                     kwargs["frames_idx"] = self._visualizer._context.rendered_envs_idx
 
-                self._data_collector = DataCollector(self, **kwargs)
+                config = DataStreamConfig(
+                    out_type=out_type,
+                    handler_kwargs=kwargs
+                )
+                self._data_collector = DataCollector(self, config)
 
             self._data_collector.start_recording()
 
