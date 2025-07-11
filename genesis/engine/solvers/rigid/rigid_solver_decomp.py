@@ -242,6 +242,7 @@ class RigidSolver(Solver):
             n_dofs=self.n_dofs_,
             n_entities=self.n_entities_,
             n_geoms=self.n_geoms_,
+            _B=self._B,
             f_batch=self._batch_shape,
         )
 

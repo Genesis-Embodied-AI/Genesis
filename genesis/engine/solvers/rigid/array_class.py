@@ -20,12 +20,15 @@ EdgesInfo = ti.template()
 
 @ti.data_oriented
 class RigidGlobalInfo:
-    def __init__(self, n_dofs: int, n_entities: int, n_geoms: int, f_batch: Callable):
+    def __init__(self, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
         self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
         self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
 
         self.n_geoms = ti.field(dtype=gs.ti_int, shape=())
         self.n_geoms[None] = n_geoms
+
+        self._B = ti.field(dtype=gs.ti_int, shape=())
+        self._B[None] = _B
 
 
 # =========================================== Collider ===========================================
@@ -43,10 +46,6 @@ class ColliderState:
         n_geoms = solver.n_geoms_
         max_collision_pairs = solver._max_collision_pairs
         use_hibernation = solver._static_rigid_sim_config.use_hibernation
-
-        # Data size, put it here to avoid recompilation when it changes, even though it is immutable
-        self._B = ti.field(dtype=gs.ti_int, shape=())
-        self._B[None] = _B
 
         ############## vertex connectivity ##############
         self._init_verts_connectivity(solver)
