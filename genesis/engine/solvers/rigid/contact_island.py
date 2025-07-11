@@ -17,16 +17,22 @@ class ContactIsland:
             start=gs.ti_int,
         )
 
-        self.ci_edges = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs, 2)))
+        self.ci_edges = ti.field(
+            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._collider_state._max_contact_pairs[None], 2))
+        )
 
-        self.edge_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs * 2)))
+        self.edge_id = ti.field(
+            dtype=gs.ti_int,
+            shape=self.solver._batch_shape((self.collider._collider_state._max_contact_pairs[None] * 2)),
+        )
 
         self.constraint_list = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs))
+            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._collider_state._max_contact_pairs[None]))
         )
 
         self.constraint_id = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs * 2))
+            dtype=gs.ti_int,
+            shape=self.solver._batch_shape((self.collider._collider_state._max_contact_pairs[None] * 2)),
         )
 
         self.entity_edge = struct_agg_list.field(

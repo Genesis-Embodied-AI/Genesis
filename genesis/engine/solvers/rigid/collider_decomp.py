@@ -1544,6 +1544,7 @@ class Collider:
                 self_unused._func_plane_box_contact(
                     geoms_state,
                     geoms_info,
+                    geoms_init_AABB,
                     verts_info,
                     static_rigid_sim_config,
                     collider_state,
