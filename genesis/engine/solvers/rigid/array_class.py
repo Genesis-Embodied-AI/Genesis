@@ -79,7 +79,7 @@ class ColliderState:
 
         self._max_possible_pairs[None] = n_possible_pairs
         self._max_collision_pairs[None] = min(n_possible_pairs, max_collision_pairs)
-        self._max_contact_pairs[None] = self._max_collision_pairs[None] * collider_info.n_contacts_per_pair[None]
+        self._max_contact_pairs[None] = self._max_collision_pairs[None] * collider_info.n_contacts_per_pair
 
         # Final results of the broad phase
         self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=_B)
