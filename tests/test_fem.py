@@ -246,6 +246,7 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     for entity in scene.entities:
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
             min_pos_z, 0.0, atol=5e-2
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
@@ -283,6 +284,7 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
     for entity in scene.entities:
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
             min_pos_z, 0.0, atol=2e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
@@ -328,6 +330,7 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         state = entity.get_state()
         pos = tensor_to_array(state.pos.reshape(-1, 3))
         min_pos_z = np.min(pos[..., 2])
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
             min_pos_z, 0.0, atol=1.1e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
@@ -390,6 +393,7 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
     for entity in scene.entities:
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
             min_pos_z, 0.0, atol=5e-4
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."

@@ -11,6 +11,25 @@ from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
 
+MARCHING_TETS_EDGE_TABLE = (
+    (-1, -1, -1, -1),
+    (0, 3, 2, -1),
+    (0, 1, 4, -1),
+    (4, 3, 2, 1),
+    (1, 2, 5, -1),
+    (0, 3, 5, 1),
+    (0, 2, 5, 4),
+    (3, 5, 4, -1),
+    (3, 4, 5, -1),
+    (4, 5, 2, 0),
+    (1, 5, 3, 0),
+    (1, 5, 2, -1),
+    (1, 2, 3, 4),
+    (0, 4, 1, -1),
+    (0, 2, 3, -1),
+    (-1, -1, -1, -1),
+)
+
 
 @ti.func
 def tet_barycentric(p, tet_vertices):
@@ -127,28 +146,8 @@ class SAPCoupler(RBC):
         self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(fem_solver._B, fem_solver.n_elements))
 
         # Lookup table for marching tetrahedra edges
-        kMarchingTetsEdgeTable_np = np.array(
-            [
-                [-1, -1, -1, -1],
-                [0, 3, 2, -1],
-                [0, 1, 4, -1],
-                [4, 3, 2, 1],
-                [1, 2, 5, -1],
-                [0, 3, 5, 1],
-                [0, 2, 5, 4],
-                [3, 5, 4, -1],
-                [3, 4, 5, -1],
-                [4, 5, 2, 0],
-                [1, 5, 3, 0],
-                [1, 5, 2, -1],
-                [1, 2, 3, 4],
-                [0, 4, 1, -1],
-                [0, 2, 3, -1],
-                [-1, -1, -1, -1],
-            ]
-        )
-        self.kMarchingTetsEdgeTable = ti.field(gs.ti_ivec4, shape=kMarchingTetsEdgeTable_np.shape[0])
-        self.kMarchingTetsEdgeTable.from_numpy(kMarchingTetsEdgeTable_np)
+        self.kMarchingTetsEdgeTable = ti.field(gs.ti_ivec4, shape=len(MARCHING_TETS_EDGE_TABLE))
+        self.kMarchingTetsEdgeTable.from_numpy(np.array(MARCHING_TETS_EDGE_TABLE, dtype=np.int32))
 
         kTetEdges_np = np.array([[0, 1], [1, 2], [2, 0], [0, 3], [1, 3], [2, 3]])
         self.kTetEdges = ti.field(gs.ti_ivec2, shape=kTetEdges_np.shape[0])

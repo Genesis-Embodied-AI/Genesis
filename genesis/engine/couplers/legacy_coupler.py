@@ -4,7 +4,7 @@ import numpy as np
 import taichi as ti
 
 import genesis as gs
-from genesis.options.solvers import CouplerOptions
+from genesis.options.solvers import LegacyCouplerOptions
 from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
@@ -12,9 +12,9 @@ if TYPE_CHECKING:
 
 
 @ti.data_oriented
-class Coupler(RBC):
+class LegacyCoupler(RBC):
     """
-    This class handles all the coupling between different solvers.
+    This class handles all the coupling between different solvers. LegacyCoupler will be deprecated in the future.
     """
 
     # ------------------------------------------------------------------------------------
@@ -24,7 +24,7 @@ class Coupler(RBC):
     def __init__(
         self,
         simulator: "Simulator",
-        options: "CouplerOptions",
+        options: "LegacyCouplerOptions",
     ) -> None:
         self.sim = simulator
         self.options = options

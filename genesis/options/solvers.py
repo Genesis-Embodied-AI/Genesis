@@ -68,7 +68,7 @@ class SimOptions(Options):
             self._steps_local = None
 
 
-class CouplerOptions(Options):
+class LegacyCouplerOptions(Options):
     """
     Options configuring the inter-solver coupling.
 
@@ -104,7 +104,7 @@ class CouplerOptions(Options):
     fem_sph: bool = True
 
 
-class SAPCouplerOptions(CouplerOptions):
+class SAPCouplerOptions(LegacyCouplerOptions):
     """
     Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
 

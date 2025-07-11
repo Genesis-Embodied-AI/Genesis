@@ -186,8 +186,11 @@ class LBVH(RBC):
     @ti.func
     def filter(self, i_a, i_q):
         """
-        Default filter function that always returns False.
-        This function can be overridden by registering a custom filter.
+        Filter function that always returns False.
+
+        This function does not filter out any AABB by default.
+        It can be overridden in subclasses to implement custom filtering logic.
+
         i_a: index of the found AABB
         i_q: index of the query AABB
         """
