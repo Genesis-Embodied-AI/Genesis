@@ -4968,19 +4968,14 @@ class RigidSolver(Solver):
                 self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        _, link1_idx, _ = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
-        )
-        _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
-        )
-        self._kernel_delete_weld_constraint(link1_idx, link2_idx, envs_idx)
+        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        self._kernel_delete_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel
     def _kernel_delete_weld_constraint(
         self,
-        link1_idx: ti.types.ndarray(),
-        link2_idx: ti.types.ndarray(),
+        link1_idx: ti.i32,
+        link2_idx: ti.i32,
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
@@ -4989,8 +4984,8 @@ class RigidSolver(Solver):
             for i_e in range(self.n_equalities, self.constraint_solver.ti_n_equalities[i_b]):
                 if (
                     self.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD
-                    and self.equalities_info[i_e, i_b].eq_obj1id == link1_idx[i_b]
-                    and self.equalities_info[i_e, i_b].eq_obj2id == link2_idx[i_b]
+                    and self.equalities_info[i_e, i_b].eq_obj1id == link1_idx
+                    and self.equalities_info[i_e, i_b].eq_obj2id == link2_idx
                 ):
                     if i_e < self.constraint_solver.ti_n_equalities[i_b] - 1:
                         self.equalities_info[i_e, i_b] = self.equalities_info[
