@@ -77,7 +77,7 @@ def get_glb_data_from_accessor(glb, accessor_index):
             data_slice = buffer_data[start:end]
             array[i] = np.frombuffer(data_slice, dtype=dtype, count=num_components)
 
-    return array.reshape([count, *type_to_count[data_type][1]])
+    return array.reshape((count, *type_to_count[data_type][1]))
 
 
 def get_glb_image(glb, image_index, image_type=None):

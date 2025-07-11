@@ -11,7 +11,7 @@ import sys
 import os
 from dataclasses import dataclass
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Type
 
 import numpy as np
 import cpuinfo
@@ -305,12 +305,12 @@ def to_gs_tensor(x):
 
 def tensor_to_cpu(x):
     if isinstance(x, torch.Tensor):
-        x = x.cpu()
+        x = x.detach().cpu()
     return x
 
 
-def tensor_to_array(x):
-    return np.asarray(tensor_to_cpu(x))
+def tensor_to_array(x: torch.Tensor, dtype: Type[np.generic] | None = None) -> np.ndarray:
+    return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 
 def is_approx_multiple(a, b, tol=1e-7):
