@@ -683,7 +683,7 @@ class Collider:
         geoms_state[i_gb, i_b].pos, geoms_state[i_gb, i_b].quat = gb_pos, gb_quat
 
     @ti.func
-    def add_prism_vert(self_unused, collider_state: ti.template(), x: float, y: float, z: float, i_b: int):
+    def add_prism_vert(self_unused, collider_state: ti.template(), x, y, z, i_b):
         collider_state.prism[0, i_b] = collider_state.prism[1, i_b]
         collider_state.prism[1, i_b] = collider_state.prism[2, i_b]
         collider_state.prism[3, i_b] = collider_state.prism[4, i_b]
