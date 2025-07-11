@@ -92,7 +92,7 @@ class ContactIsland:
     def add_island(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
-            for i_col in range(self.collider.n_contacts[i_b]):
+            for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 impact = self.collider.contact_data[i_col, i_b]
                 self.add_edge(impact.link_a, impact.link_b, i_b)
 
@@ -107,7 +107,7 @@ class ContactIsland:
     def postprocess_island(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
-            for i_col in range(self.collider.n_contacts[i_b]):
+            for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 impact = self.collider.contact_data[i_col, i_b]
                 link_a = impact.link_a
                 link_b = impact.link_b
@@ -135,7 +135,7 @@ class ContactIsland:
 
                 self.island_hibernated[i, i_b] = 1
 
-            for i_col in range(self.collider.n_contacts[i_b]):
+            for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 island = self.constraint_list[i_col, i_b]
                 self.constraint_id[self.island_col[island, i_b].curr, i_b] = i_col
                 self.island_col[island, i_b].curr = self.island_col[island, i_b].curr + 1

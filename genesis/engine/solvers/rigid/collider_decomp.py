@@ -146,8 +146,9 @@ class Collider:
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             collider_state.first_time[i_b] = 1
-            for i_ga in range(rigid_global_info.n_geoms[None]):
-                for i_gb in range(rigid_global_info.n_geoms[None]):
+            n_geoms = collider_state.active_buffer.shape[0]
+            for i_ga in range(n_geoms):
+                for i_gb in range(n_geoms):
                     # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
                     # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
                     collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
@@ -750,8 +751,8 @@ class Collider:
         This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for
         potential collision pairs based on the AABB overlap.
         """
-        _B = rigid_global_info._B[None]
-        n_geoms = rigid_global_info.n_geoms[None]
+        _B = collider_state.active_buffer.shape[1]
+        n_geoms = collider_state.active_buffer.shape[0]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -995,7 +996,7 @@ class Collider:
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
-        _B = rigid_global_info._B[None]
+        _B = collider_state.active_buffer.shape[1]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -1071,7 +1072,7 @@ class Collider:
         collider_info: ti.template(),
         mpr: ti.template(),
     ):
-        _B = rigid_global_info._B[None]
+        _B = collider_state.active_buffer.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_pair in range(collider_state.n_broad_pairs[i_b]):
@@ -1121,7 +1122,7 @@ class Collider:
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
-        _B = rigid_global_info._B[None]
+        _B = collider_state.active_buffer.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_pair in range(collider_state.n_broad_pairs[i_b]):
@@ -1167,7 +1168,7 @@ class Collider:
         Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
         Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
         """
-        _B = rigid_global_info._B[None]
+        _B = collider_state.active_buffer.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_pair in range(collider_state.n_broad_pairs[i_b]):
@@ -2641,7 +2642,7 @@ class Collider:
         iout: ti.types.ndarray(),
         fout: ti.types.ndarray(),
     ):
-        _B = rigid_global_info._B[None]
+        _B = collider_state.active_buffer.shape[1]
         n_contacts_max = gs.ti_int(0)
         for i_b in range(_B):
             n_contacts = collider_state.n_contacts[i_b]

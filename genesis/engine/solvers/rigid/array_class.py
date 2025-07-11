@@ -24,12 +24,6 @@ class RigidGlobalInfo:
         self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
         self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
 
-        self.n_geoms = ti.field(dtype=gs.ti_int, shape=())
-        self.n_geoms[None] = n_geoms
-
-        self._B = ti.field(dtype=gs.ti_int, shape=())
-        self._B[None] = _B
-
 
 # =========================================== Collider ===========================================
 
