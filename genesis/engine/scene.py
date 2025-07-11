@@ -33,7 +33,7 @@ from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
-from genesis.engine.sensors import Sensor
+from genesis.sensors import Sensor, Camera
 from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
@@ -260,7 +260,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_entity(
         self,
-        morph: Morph,
+        morph: Morph | None = None,
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -271,8 +271,8 @@ class Scene(RBC):
 
         Parameters
         ----------
-        morph : gs.morphs.Morph
-            The morph of the entity.
+        morph : gs.morphs.Morph | None, optional
+            The morph of the entity. Required for all entity types except `StaticEntity`.
         material : gs.materials.Material | None, optional
             The material of the entity. If None, use ``gs.materials.Rigid()``.
         surface : gs.surfaces.Surface | None, optional
@@ -317,7 +317,7 @@ class Scene(RBC):
         if vis_mode is not None:
             surface.vis_mode = vis_mode
         # validate and populate default surface.vis_mode considering morph type
-        if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Tool)):
+        if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Tool, gs.materials.Static)):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
@@ -441,7 +441,7 @@ class Scene(RBC):
     def add_sensor(
         self,
         sensor_type: Sensor,
-        morph: Morph,
+        morph: Morph | None = None,
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -449,6 +449,8 @@ class Scene(RBC):
         **sensor_kwargs
     ):
         """Add a sensor to the scene."""
+        if material is None:
+            material = gs.materials.Static()
         
         entity = self.add_entity(
             morph=morph,
@@ -547,8 +549,20 @@ class Scene(RBC):
         camera : genesis.Camera
             The created camera object.
         """
-
-        return self._visualizer.add_camera(res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise)
+        return self.add_sensor(Camera,
+            visualizer=self._visualizer,
+            model=model,
+            res=res,
+            pos=pos,
+            lookat=lookat,
+            up=up,
+            fov=fov,
+            aperture=aperture,
+            focus_dist=focus_dist,
+            GUI=GUI,
+            spp=spp,
+            denoise=denoise,
+        )
 
     @gs.assert_unbuilt
     def add_emitter(

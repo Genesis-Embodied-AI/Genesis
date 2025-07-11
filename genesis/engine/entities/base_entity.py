@@ -90,4 +90,4 @@ class Entity(RBC):
 
     @property
     def is_built(self):
-        return self._solver._scene._is_built
+        return self._scene._is_built

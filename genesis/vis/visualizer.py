@@ -3,7 +3,6 @@ import pyglet
 import genesis as gs
 from genesis.repr_base import RBC
 
-from .camera import Camera
 from .rasterizer import Rasterizer
 
 
@@ -112,13 +111,6 @@ class Visualizer(RBC):
             self._context = None
         self._renderer = None
 
-    def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise):
-        camera = Camera(
-            self, len(self._cameras), model, res, pos, lookat, up, fov, aperture, focus_dist, GUI, spp, denoise
-        )
-        self._cameras.append(camera)
-        return camera
-
     def reset(self):
         self._t = -1
 
@@ -146,10 +138,14 @@ class Visualizer(RBC):
         if self._raytracer is not None:
             self._raytracer.build(self._scene)
 
-        for camera in self._cameras:
-            camera._build()
-
         if self._cameras:
+            for camera in self._cameras:
+                if self._rasterizer is not None:
+                    self._rasterizer.add_camera(camera)
+                if self._raytracer is not None:
+                    self._raytracer.add_camera(camera)
+                    camera._rgb_stacked = False # TODO: Raytracer currently does not support batch rendering
+
             # need to update viewer once here, because otherwise camera will update scene if render is called right
             # after build, which will lead to segfault.
             if self._viewer is not None:

@@ -7,17 +7,21 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
+from genesis.engine.entities import StaticEntity
+from .base_sensor import Sensor
+from .data_collector import DataCollector, OutputMode
 
 
-class Camera(RBC):
+class Camera(Sensor):
     """
     Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
     The camera also comes with handy tools such as video recording.
 
     Parameters
     ----------
+    entity: genesis.StaticEntity
+        The entity object that the camera is attached to.
     visualizer : genesis.Visualizer
         The visualizer object that the camera is associated with.
     idx : int
@@ -51,9 +55,13 @@ class Camera(RBC):
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
     """
+    @staticmethod
+    def get_valid_entity_types():
+        return (StaticEntity)
 
     def __init__(
         self,
+        entity,
         visualizer,
         idx=0,
         model="pinhole",  # pinhole or thinlens
@@ -71,7 +79,10 @@ class Camera(RBC):
         far=100.0,
         transform=None,
     ):
-        self._idx = idx
+        super().__init__(entity)
+        self._idx = len(visualizer._cameras)
+        visualizer._cameras.append(self)
+
         self._uid = gs.UID()
         self._model = model
         self._res = res
@@ -95,7 +106,9 @@ class Camera(RBC):
         self._attached_env_idx = None
 
         self._in_recording = False
+        self._manual_render = False
         self._recorded_imgs = []
+        self._data_collector = None
 
         self._init_pos = np.array(pos)
 
@@ -110,21 +123,16 @@ class Camera(RBC):
         if self._focus_dist is None:
             self._focus_dist = np.linalg.norm(np.array(lookat) - np.array(pos))
 
-    def _build(self):
+    @gs.assert_unbuilt
+    def build(self):
         self._rasterizer = self._visualizer.rasterizer
         self._raytracer = self._visualizer.raytracer
 
         self._rgb_stacked = self._visualizer._context.env_separate_rigid
         self._other_stacked = self._visualizer._context.env_separate_rigid
 
-        if self._rasterizer is not None:
-            self._rasterizer.add_camera(self)
-        if self._raytracer is not None:
-            self._raytracer.add_camera(self)
-            self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
-
-        self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
+        self._is_built = True
 
     def attach(self, rigid_link, offset_T, env_idx: int | None = None):
         """
@@ -407,7 +415,6 @@ class Camera(RBC):
         else:
             gs.raise_exception("We need a rasterizer to render depth and then convert it to pount cloud.")
 
-    @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None):
         """
         Set the pose of the camera.
@@ -442,10 +449,14 @@ class Camera(RBC):
 
             self._transform = gu.pos_lookat_up_to_T(self._pos, self._lookat, self._up)
 
-        if self._rasterizer is not None:
-            self._rasterizer.update_camera(self)
-        if self._raytracer is not None:
-            self._raytracer.update_camera(self)
+        self._update_rasterizer_and_raytracer()
+   
+    def _update_rasterizer_and_raytracer(self):
+        if self._is_built:
+            if self._rasterizer is not None:
+                self._rasterizer.update_camera(self)
+            if self._raytracer is not None:
+                self._raytracer.update_camera(self)
 
     def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
         """
@@ -542,60 +553,110 @@ class Camera(RBC):
             else:
                 self._fov = intrinsics_fov
 
-        if self._rasterizer is not None:
-            self._rasterizer.update_camera(self)
-        if self._raytracer is not None:
-            self._raytracer.update_camera(self)
+        self._update_rasterizer_and_raytracer()
+    
+    def read(self):
+        """Render and returns the RGB frame of the camera as a numpy array."""
+        rgb_arr, _, _, _ = self.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+        return rgb_arr
 
     @gs.assert_built
-    def start_recording(self):
+    def start_recording(self, auto_render=False, filename=None, fps=None, hz=None, mode=OutputMode.VIDEO):
         """
-        Start recording on the camera. After recording is started, all the rgb images rendered by `camera.render()` will be stored, and saved to a video file when `camera.stop_recording()` is called.
+        Start recording on the camera.
+
+        Parameters
+        ----------
+        auto_render : bool, optional
+            When `auto_render` is True, images will automatically be rendered at the specified `hz` based on sim dt.
+            If `auto_render` is False, images are stored when rendered by `camera.render()`
+        filename : str, optional
+            Name of the output video file. If None, the default is `{caller_file_name}_cam_{cam.idx}.mp4`.
+        fps : int, optional
+            Used only when `auto_render` is True.
+            The frames per second of the output video file. If None, real-time fps will be used based on hz.
+        hz : int, optional
+            Used only when `auto_render` is True.
+            The frequency at which images are rendered and stored.  If None, it will be set to the simulation's dt.
+        mode : OutputMode, optional
+            Used only when `auto_render` is True.
+            The output mode for the video recording. Options are `OutputMode.VIDEO` or `OutputMode.VIDEO_STREAM`.
         """
         self._in_recording = True
+        self._auto_render = auto_render
+        self.filename = filename or self._get_default_video_filename()
+
+        if auto_render:
+            if self._data_collector is None:
+                assert mode in [OutputMode.VIDEO, OutputMode.VIDEO_STREAM], "Invalid output mode for video recording."
+                sim = self._visualizer._scene._sim
+
+                kwargs = dict(mode=mode, filename=self.filename, fps=fps, sim_dt=sim._dt)
+                if mode == OutputMode.VIDEO_STREAM:
+                    kwargs["shape"] = self._res
+                if self._rgb_stacked:
+                    kwargs["frames_idx"] = self._visualizer._context.rendered_envs_idx
+
+                self._data_collector = DataCollector(self, **kwargs)
+
+            self._data_collector.start_recording()
 
     @gs.assert_built
     def pause_recording(self):
         """
-        Pause recording on the camera. After recording is paused, the rgb images rendered by `camera.render()` will not be stored. Recording can be resumed by calling `camera.start_recording()` again.
+        Pause recording on the camera. After recording is paused, the rgb images rendered by `camera.render()`
+        will not be stored. Recording can be resumed by calling `camera.start_recording()` again.
         """
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
         self._in_recording = False
 
+        if self._auto_render:
+            self._data_collector.pause_recording()
+    
+    def _get_default_video_filename(self):
+        caller_file = inspect.stack()[-1].filename
+        return (
+            os.path.splitext(os.path.basename(caller_file))[0]
+            + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+        )
+
     @gs.assert_built
     def stop_recording(self, save_to_filename=None, fps=60):
         """
-        Stop recording on the camera. Once this is called, all the rgb images stored so far will be saved to a video file. If `save_to_filename` is None, the video file will be saved with the name '{caller_file_name}_cam_{camera.idx}.mp4'.
-        If `env_separate_rigid` in `VisOptions` is set to True, each environment will record and save a video separately. The filenames will be identified by the indices of the environments.
+        Stop recording on the camera.
+        Once this is called, all the rgb images stored so far will be saved to a video file.
+        If `env_separate_rigid` in `VisOptions` is set to True, a video will be saved for each environment.
 
         Parameters
         ----------
         save_to_filename : str, optional
-            Name of the output video file. If not provided, the name will be default to the name of the caller file, with camera idx, a timestamp and '.mp4' extension.
+            Used only when `auto_render` is False.
+            Name of the output video file. If None, the default is `{caller_file_name}_cam_{cam.idx}.mp4`.
         fps : int, optional
+            Used only when `auto_render` is False.
             The frames per second of the video file.
         """
 
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
+        
+        if self._auto_render:
+            self._data_collector.stop_recording()
 
-        if save_to_filename is None:
-            caller_file = inspect.stack()[-1].filename
-            save_to_filename = (
-                os.path.splitext(os.path.basename(caller_file))[0]
-                + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
-            )
-
-        if self._rgb_stacked:
-            for env_idx in self._visualizer._context.rendered_envs_idx:
-                env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
-                env_name, env_ext = os.path.splitext(save_to_filename)
-                gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
         else:
-            gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
+            filename = save_to_filename or self.filename
 
-        self._recorded_imgs.clear()
+            if self._rgb_stacked:
+                for env_idx in self._visualizer._context.rendered_envs_idx:
+                    env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
+                    env_name, env_ext = os.path.splitext(filename)
+                    gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
+            else:
+                gs.tools.animate(self._recorded_imgs, filename, fps)
+
+            self._recorded_imgs.clear()
+        
         self._in_recording = False
 
     def _repr_brief(self):
