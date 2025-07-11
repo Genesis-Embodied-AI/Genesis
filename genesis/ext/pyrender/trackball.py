@@ -37,11 +37,11 @@ class Trackball(object):
             The center of the scene in world coordinates.
             The trackball will revolve around this point.
         """
-        self._size = np.array(size)
+        self._size = np.asarray(size, dtype=np.float32)
         self._scale = float(scale)
 
-        self._pose = pose
-        self._n_pose = pose
+        self._pose = pose.copy()
+        self._n_pose = pose.copy()
 
         self._target = target
         self._n_target = target

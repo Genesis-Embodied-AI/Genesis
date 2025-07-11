@@ -34,8 +34,7 @@ def n_particles_1D(p_size=0.01, length=1.0):
 
 
 def nowhere_particles(n):
-    positions = np.tile(gu.nowhere(), [n, 1])
-    return positions
+    return np.tile(gu.nowhere(), (n, 1))
 
 
 def trimesh_to_particles_simple(mesh, p_size, sampler):
@@ -66,7 +65,7 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
             positions = _box_to_particles(p_size=p_size, pos=box_center, size=box_size, sampler=sampler)
             # reject out-of-boundary particles
             sd, *_ = igl.signed_distance(positions, mesh.vertices, mesh.faces)
-            positions = positions[sd < 0]
+            positions = positions[sd < 0.0]
 
             os.makedirs(os.path.dirname(ptc_file_path), exist_ok=True)
             with open(ptc_file_path, "wb") as file:
@@ -355,7 +354,7 @@ def particles_to_mesh(positions, radius, backend):
         os.close(fd)
         fd, obj_path = tempfile.mkstemp(suffix=".obj")
         os.close(fd)
-        positions.astype(np.float32).tofile(xyz_path)
+        positions.astype(np.float32, copy=False).tofile(xyz_path)
 
         # Suggested value is 1.4-1.6, but 1.0 seems more detailed
         radius_scale = args_dict.get("rscale", 1.0)

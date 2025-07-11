@@ -23,7 +23,7 @@ def format_color_vector(value, length):
     else:
         raise ValueError("Invalid vector data type")
 
-    return value.squeeze().astype(np.float32)
+    return value.squeeze().astype(np.float32, order="C", copy=False)
 
 
 def format_color_array(value, shape):

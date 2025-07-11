@@ -209,7 +209,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(gs.np_float)
+    terrain.height_field_raw = height
     return terrain
 
 

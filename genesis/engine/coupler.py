@@ -1451,8 +1451,6 @@ class SAPCoupler(RBC):
     @ti.kernel
     def init_linesearch(self, f: ti.i32):
         fem_solver = self.fem_solver
-        dt = self.sim._substep_dt
-        dt2 = dt**2
         for i_b in ti.ndrange(self._B):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
             if not self.batch_linesearch_active[i_b]:

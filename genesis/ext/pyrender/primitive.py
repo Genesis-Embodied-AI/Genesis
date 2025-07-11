@@ -426,7 +426,7 @@ class Primitive(object):
         #######################################################################
 
         if self.poses is not None:
-            pose_data = np.transpose(self.poses, [0, 2, 1]).astype(np.float32, order="C", copy=False).reshape((-1,))
+            pose_data = np.transpose(self.poses, (0, 2, 1)).astype(np.float32, order="C", copy=False).reshape((-1,))
         else:
             pose_data = np.eye(4, dtype=np.float32).reshape((-1,))
 

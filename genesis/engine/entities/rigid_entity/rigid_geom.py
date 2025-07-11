@@ -154,7 +154,7 @@ class RigidGeom(RBC):
                     grid_size.max() / (self._material.sdf_max_res - 1),
                     grid_size.min() / max(self._material.sdf_min_res - 1, 2),
                 )
-                sdf_res = np.ceil(grid_size / sdf_cell_size).astype(int) + 1
+                sdf_res = np.ceil(grid_size / sdf_cell_size).astype(gs.np_int) + 1
 
                 # round up to multiple of sdf_cell_size
                 grid_size = (sdf_res - 1) * sdf_cell_size
@@ -242,14 +242,14 @@ class RigidGeom(RBC):
         self.vert_neighbor_start = gsd_dict["vert_neighbor_start"]
 
     def _compute_sd(self, query_points):
-        sd, *_ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
-        return sd
+        signed_distance, *_ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
+        return signed_distance.astype(gs.np_float, copy=False)
 
     def _compute_closest_verts(self, query_points):
         _, closest_faces, *_ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
         verts_ids = self._init_faces[closest_faces]
         verts_ids = verts_ids[
-            np.arange(len(query_points)).astype(int),
+            np.arange(len(query_points), dtype=gs.np_int),
             np.argmin(np.linalg.norm(self._init_verts[verts_ids] - query_points[:, None, :], axis=-1), axis=-1),
         ]
         return verts_ids
@@ -363,22 +363,21 @@ class RigidGeom(RBC):
         """
         sdf grad wrt sdf frame coordinate.
         """
-        base = np.floor(pos_sdf)
+        base = np.floor(pos_sdf).astype(gs.np_int)
         res = self.sdf_res
 
         if (base >= res - 1).any() or (base < 0).any():
-            grad_sdf = np.array([np.nan, np.nan, np.nan])
+            grad_sdf = np.full((3,), fill_value=float("nan"), dtype=gs.np_float)
 
         else:
-            grad_sdf = np.zeros(3)
+            grad_sdf = np.zeros(3, dtype=gs.np_float)
             for i in range(2):
                 for j in range(2):
                     for k in range(2):
-                        offset = np.array([i, j, k])
-                        voxel_pos = (base + offset).astype(int)
+                        offset = np.array([i, j, k], dtype=gs.np_int)
+                        voxel_pos = base + offset
                         w_xyz = 1 - np.abs(pos_sdf - voxel_pos)
-                        w = w_xyz[0] * w_xyz[1] * w_xyz[2]
-                        grad_sdf += w * self.sdf_grad[voxel_pos[0], voxel_pos[1], voxel_pos[2]]
+                        grad_sdf += np.prod(w_xyz) * self.sdf_grad[*voxel_pos]
 
         return grad_sdf
 
@@ -404,7 +403,7 @@ class RigidGeom(RBC):
         sdf value wrt sdf frame coordinate.
         Note that the stored sdf magnitude is already w.r.t world frame.
         """
-        base = np.floor(pos_sdf)
+        base = np.floor(pos_sdf).astype(gs.np_int)
         res = self.sdf_res
 
         if (base >= res - 1).any() or (base < 0).any():
@@ -415,11 +414,10 @@ class RigidGeom(RBC):
             for i in range(2):
                 for j in range(2):
                     for k in range(2):
-                        offset = np.array([i, j, k])
-                        voxel_pos = (base + offset).astype(int)
+                        offset = np.array([i, j, k], dtype=gs.np_int)
+                        voxel_pos = base + offset
                         w_xyz = 1 - np.abs(pos_sdf - voxel_pos)
-                        w = w_xyz[0] * w_xyz[1] * w_xyz[2]
-                        signed_dist += w * self.sdf_val[voxel_pos[0], voxel_pos[1], voxel_pos[2]]
+                        signed_dist += np.prod(w_xyz) * self.sdf_val[*voxel_pos]
 
         return signed_dist
 

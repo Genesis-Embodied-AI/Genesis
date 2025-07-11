@@ -364,29 +364,30 @@ class Camera(RBC):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
+                y, x = np.meshgrid(
+                    np.arange(height, dtype=np.float32), np.arange(width, dtype=np.float32), indexing="ij"
+                )
                 x = x.flatten()
                 y = y.flatten()
 
                 # Normalize pixel coordinates
-                normalized_x = x.astype(np.float32) - _cx
-                normalized_y = y.astype(np.float32) - _cy
+                normalized_x = x - _cx
+                normalized_y = y - _cy
 
                 # Convert to world coordinates
                 world_x = normalized_x * depth[y, x] / _fx
                 world_y = normalized_y * depth[y, x] / _fy
                 world_z = depth[y, x]
 
-                pc = np.vstack((world_x, world_y, world_z)).T
+                pc = np.stack((world_x, world_y, world_z), axis=1)
 
-                point_cloud_h = np.hstack((pc, np.ones((pc.shape[0], 1))))
+                point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
                 if world:
-                    point_cloud_world = (pose @ point_cloud_h.T).T
-                    point_cloud_world = point_cloud_world[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
-
+                    point_cloud_world = point_cloud_h @ pose.T
+                    point_cloud_world = point_cloud_world[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
                     return point_cloud_world, mask
                 else:
-                    point_cloud = point_cloud_h[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
+                    point_cloud = point_cloud_h[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
                     return point_cloud, mask
 
             intrinsic_K = opengl_projection_matrix_to_intrinsics(
@@ -395,7 +396,7 @@ class Camera(RBC):
                 height=self.res[1],
             )
 
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
             cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
             pc, mask = backproject_depth_to_pointcloud(

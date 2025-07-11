@@ -190,9 +190,9 @@ def compute_sdf_data(mesh, res):
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
     voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
-    voxels = voxels.reshape([res, res, res])
+    voxels = voxels.reshape((res, res, res)).astype(gs.np_float, copy=False)
 
-    T_mesh_to_sdf = np.eye(4)
+    T_mesh_to_sdf = np.eye(4, dtype=gs.np_float)
     T_mesh_to_sdf[:3, :3] *= (res - 1) / (voxels_radius * 2)
     T_mesh_to_sdf[:3, 3] = (res - 1) / 2
 
@@ -583,7 +583,7 @@ def create_camera_frustum(camera, color):
     # Create the frustum mesh
     frustum_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     frustum_mesh.visual = trimesh.visual.ColorVisuals(
-        vertex_colors=np.tile(color, [len(frustum_mesh.vertices), 1]).astype(float)
+        vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(frustum_mesh.vertices), 1))
     )
     return trimesh.util.concatenate([camera_mesh, frustum_mesh])
 
@@ -883,7 +883,9 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
+        mesh.visual = trimesh.visual.ColorVisuals(
+            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(mesh.vertices), 1))
+        )
     return mesh
 
 
