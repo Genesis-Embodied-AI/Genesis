@@ -1514,24 +1514,24 @@ def random_quaternion(batch_size):
 
 
 def zero_pos():
-    return np.zeros(3)
+    return np.zeros(3, dtype=gs.np_float)
 
 
 def identity_quat():
-    return np.array([1.0, 0.0, 0.0, 0.0])
+    return np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
 
 
 def tc_zero_pos():
-    return torch.zeros(3, device=gs.device)
+    return torch.zeros(3, dtype=gs.tc_float, device=gs.device)
 
 
 def tc_identity_quat():
-    return torch.tensor([1.0, 0.0, 0.0, 0.0], device=gs.device)
+    return torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
 
 
 def nowhere():
     # let's inject a bit of humor here
-    return np.array([2333333, 6666666, 5201314])
+    return np.array([2333333, 6666666, 5201314], dtype=gs.np_float)
 
 
 def default_solver_params():
@@ -1548,11 +1548,11 @@ def default_friction():
 
 
 def default_dofs_kp(n=6):
-    return np.tile(100.0, n).astype(gs.np_float)
+    return np.full((n,), fill_value=100.0, dtype=gs.np_float)
 
 
 def default_dofs_kv(n=6):
-    return np.tile(10.0, n).astype(gs.np_float)
+    return np.full((n,), fill_value=10.0, dtype=gs.np_float)
 
 
 @ti.data_oriented
