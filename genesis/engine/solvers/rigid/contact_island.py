@@ -108,7 +108,7 @@ class ContactIsland:
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
-                impact = self.collider.contact_data[i_col, i_b]
+                impact = self.collider._collider_state.contact_data[i_col, i_b]
                 link_a = impact.link_a
                 link_b = impact.link_b
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
