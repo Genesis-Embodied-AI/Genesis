@@ -89,40 +89,24 @@ class PathPlanner(ABC):
         return qpos_cur, qpos_goal, qpos_start, envs_idx
 
     def get_exclude_geom_pairs(self, qpos_goal, qpos_start, envs_idx):
-        if self._solver.n_envs > 0:
-            self._entity.set_qpos(qpos_goal, envs_idx=envs_idx)
-        else:
-            self._entity.set_qpos(qpos_goal[0])
-        self._solver._kernel_detect_collision()
-        scene_contact_info = self._entity.get_contacts()
-        geom_a_goal = scene_contact_info["geom_a"]
-        geom_b_goal = scene_contact_info["geom_b"]
-        if self._solver.n_envs > 0:
-            valid_mask = scene_contact_info["valid_mask"]
-            geom_a_goal = geom_a_goal[valid_mask]
-            geom_b_goal = geom_b_goal[valid_mask]
+        collision_pairs = []
+        for qpos in [qpos_start, qpos_goal]:
+            if self._solver.n_envs > 0:
+                self._entity.set_qpos(qpos, envs_idx=envs_idx)
+            else:
+                self._entity.set_qpos(qpos[0])
+            self._solver._kernel_detect_collision()
+            scene_contact_info = self._entity.get_contacts()
+            geom_a = scene_contact_info["geom_a"]
+            geom_b = scene_contact_info["geom_b"]
+            if self._solver.n_envs > 0:
+                valid_mask = scene_contact_info["valid_mask"]
+                geom_a = geom_a[valid_mask]
+                geom_b = geom_b[valid_mask]
+            collision_pairs.append(torch.stack((geom_a, geom_b), dim=1))
 
-        if self._solver.n_envs > 0:
-            self._entity.set_qpos(qpos_start, envs_idx=envs_idx)
-        else:
-            self._entity.set_qpos(qpos_start[0])
-        self._solver._kernel_detect_collision()
-        scene_contact_info = self._entity.get_contacts()
-        geom_a_start = scene_contact_info["geom_a"]
-        geom_b_start = scene_contact_info["geom_b"]
-        if self._solver.n_envs > 0:
-            valid_mask = scene_contact_info["valid_mask"]
-            geom_a_start = geom_a_start[valid_mask]
-            geom_b_start = geom_b_start[valid_mask]
-
-        # NOTE: we will reduce the contacts in batch dim assuming internal geom collisions are the same for a robot
         unique_pairs = torch.unique(
-            torch.cat(
-                [
-                    torch.stack((geom_a_start, geom_b_start), dim=1),
-                    torch.stack((geom_a_goal, geom_b_goal), dim=1),
-                ]
-            ),
+            torch.cat(collision_pairs, dim=0),
             dim=0,
         )  # N', 2
         return unique_pairs

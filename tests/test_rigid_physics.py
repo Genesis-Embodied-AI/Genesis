@@ -1571,6 +1571,8 @@ def test_path_planning_avoidance(show_viewer):
     assert_allclose(free_path[0], 0, tol=gs.EPS)
     assert_allclose(free_path[-1], qpos, tol=gs.EPS)
 
+    qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
+    qpos[-2:] = 0.04
     avoidance_path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=300,
