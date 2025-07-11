@@ -209,7 +209,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(gs.np_float)
+    terrain.height_field_raw = height
     return terrain
 
 
@@ -269,7 +269,7 @@ def convert_heightfield_to_watertight_trimesh(
     vertices_top = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
     vertices_top[:, 0] = xx.flat
     vertices_top[:, 1] = yy.flat
-    vertices_top[:, 2] = hf.flatten() * vertical_scale
+    vertices_top[:, 2] = (hf * vertical_scale).flat
     triangles_top = -np.ones((2 * (num_rows - 1) * (num_cols - 1), 3), dtype=np.uint32)
     for i in range(num_rows - 1):
         ind0 = np.arange(0, num_cols - 1) + i * num_cols

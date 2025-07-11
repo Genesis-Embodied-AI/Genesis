@@ -272,7 +272,7 @@ class RigidEntity(Entity):
 
     def _load_terrain(self, morph, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
-        self.terrain_scale = np.array([morph.horizontal_scale, morph.vertical_scale])
+        self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
 
         g_infos = []
         if morph.visualization:

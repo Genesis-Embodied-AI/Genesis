@@ -190,9 +190,9 @@ def compute_sdf_data(mesh, res):
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
     voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
-    voxels = voxels.reshape([res, res, res])
+    voxels = voxels.reshape((res, res, res)).astype(gs.np_float, copy=False)
 
-    T_mesh_to_sdf = np.eye(4)
+    T_mesh_to_sdf = np.eye(4, dtype=gs.np_float)
     T_mesh_to_sdf[:3, :3] *= (res - 1) / (voxels_radius * 2)
     T_mesh_to_sdf[:3, 3] = (res - 1) / 2
 
@@ -583,7 +583,7 @@ def create_camera_frustum(camera, color):
     # Create the frustum mesh
     frustum_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     frustum_mesh.visual = trimesh.visual.ColorVisuals(
-        vertex_colors=np.tile(color, [len(frustum_mesh.vertices), 1]).astype(float)
+        vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(frustum_mesh.vertices), 1))
     )
     return trimesh.util.concatenate([camera_mesh, frustum_mesh])
 
@@ -883,7 +883,9 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
+        mesh.visual = trimesh.visual.ColorVisuals(
+            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(mesh.vertices), 1))
+        )
     return mesh
 
 
@@ -951,11 +953,10 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
     else:
         # get cell centroids
         cells = grid.cells.reshape(-1, 5)[:, 1:]
-        cell_center = grid.points[cells].mean(1)
+        cell_center = grid.points[cells].mean(axis=1)
 
         # extract cells below the 0 xy plane
-        mask = cell_center[:, 2] < 0
-        cell_ind = mask.nonzero()[0]
+        cell_ind = (cell_center[:, 2] < 0.0).nonzero(as_tuple=False)
         subgrid = grid.extract_cells(cell_ind)
 
         # advanced plotting
