@@ -693,14 +693,14 @@ class RigidSolver(Solver):
 
         self.qpos0 = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         if self.n_qs > 0:
-            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            init_qpos = self._batch_array(self.init_qpos)
             self.qpos0.from_numpy(init_qpos)
 
         # Check if the initial configuration is out-of-bounds
         self.qpos = ti.field(dtype=gs.ti_float, shape=self._batch_shape(self.n_qs_))
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
-            init_qpos = self._batch_array(self.init_qpos.astype(gs.np_float))
+            init_qpos = self._batch_array(self.init_qpos)
             for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
                     is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
@@ -1370,7 +1370,7 @@ class RigidSolver(Solver):
 
     def _init_envs_offset(self):
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
-        self.envs_offset.from_numpy(self._scene.envs_offset.astype(gs.np_float))
+        self.envs_offset.from_numpy(self._scene.envs_offset)
 
     def _init_sdf(self):
         self.sdf = SDF(self)
@@ -1382,9 +1382,9 @@ class RigidSolver(Solver):
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
 
-            scale = entity.terrain_scale.astype(gs.np_float)
+            scale = entity.terrain_scale
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
-            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
+            hf = entity.terrain_hf.astype(gs.np_float, copy=False) * scale[1]
             xyz_maxmin = np.array(
                 [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0],
                 dtype=gs.np_float,
@@ -4968,19 +4968,14 @@ class RigidSolver(Solver):
                 self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        _, link1_idx, _ = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
-        )
-        _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
-        )
-        self._kernel_delete_weld_constraint(link1_idx, link2_idx, envs_idx)
+        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        self._kernel_delete_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel
     def _kernel_delete_weld_constraint(
         self,
-        link1_idx: ti.types.ndarray(),
-        link2_idx: ti.types.ndarray(),
+        link1_idx: ti.i32,
+        link2_idx: ti.i32,
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
@@ -4989,8 +4984,8 @@ class RigidSolver(Solver):
             for i_e in range(self.n_equalities, self.constraint_solver.ti_n_equalities[i_b]):
                 if (
                     self.equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD
-                    and self.equalities_info[i_e, i_b].eq_obj1id == link1_idx[i_b]
-                    and self.equalities_info[i_e, i_b].eq_obj2id == link2_idx[i_b]
+                    and self.equalities_info[i_e, i_b].eq_obj1id == link1_idx
+                    and self.equalities_info[i_e, i_b].eq_obj2id == link2_idx
                 ):
                     if i_e < self.constraint_solver.ti_n_equalities[i_b] - 1:
                         self.equalities_info[i_e, i_b] = self.equalities_info[
@@ -5177,7 +5172,7 @@ class RigidSolver(Solver):
     def init_qpos(self):
         if len(self._entities) == 0:
             return np.array([])
-        return np.concatenate([entity.init_qpos for entity in self._entities])
+        return np.concatenate([entity.init_qpos for entity in self._entities], dtype=gs.np_float)
 
     @property
     def max_collision_pairs(self):
