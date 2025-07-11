@@ -953,11 +953,10 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
     else:
         # get cell centroids
         cells = grid.cells.reshape(-1, 5)[:, 1:]
-        cell_center = grid.points[cells].mean(1)
+        cell_center = grid.points[cells].mean(axis=1)
 
         # extract cells below the 0 xy plane
-        mask = cell_center[:, 2] < 0
-        cell_ind = mask.nonzero()[0]
+        cell_ind = (cell_center[:, 2] < 0.0).nonzero(as_tuple=False)
         subgrid = grid.extract_cells(cell_ind)
 
         # advanced plotting

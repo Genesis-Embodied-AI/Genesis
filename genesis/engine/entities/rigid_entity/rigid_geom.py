@@ -748,7 +748,7 @@ class RigidGeom(RBC):
         """
         Get the flattened signed distance field (SDF) of the geom.
         """
-        return self._sdf_val.flatten()
+        return self._sdf_val.reshape((-1,))
 
     @property
     def sdf_grad(self):
@@ -797,7 +797,7 @@ class RigidGeom(RBC):
         """
         Get the flattened closest vertex of each cell of the geom's signed distance field (SDF).
         """
-        return self._sdf_closest_vert.flatten()
+        return self._sdf_closest_vert.reshape((-1,))
 
     @property
     def T_mesh_to_sdf(self):

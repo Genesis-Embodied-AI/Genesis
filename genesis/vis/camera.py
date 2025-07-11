@@ -367,8 +367,8 @@ class Camera(RBC):
                 y, x = np.meshgrid(
                     np.arange(height, dtype=np.float32), np.arange(width, dtype=np.float32), indexing="ij"
                 )
-                x = x.flatten()
-                y = y.flatten()
+                x = x.reshape((-1,))
+                y = y.reshape((-1,))
 
                 # Normalize pixel coordinates
                 normalized_x = x - _cx
