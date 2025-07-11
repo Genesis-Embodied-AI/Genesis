@@ -79,6 +79,7 @@ class RigidSolver(Solver):
         enable_self_collision: bool = True
         enable_adjacent_collision: bool = False
         box_box_detection: bool = False
+        substep_dt: float = 0.01
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -237,6 +238,7 @@ class RigidSolver(Solver):
             enable_self_collision=getattr(self, "_enable_self_collision", True),
             enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
             box_box_detection=getattr(self, "_box_box_detection", False),
+            substep_dt=self._substep_dt,
         )
         # when the migration is finished, we will remove the about two lines
         # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
@@ -269,7 +271,11 @@ class RigidSolver(Solver):
             self._kernel_forward_kinematics_links_geoms(self._scene._envs_idx)
 
             self._init_invweight()
-            self._kernel_init_meaninertia()
+            self._kernel_init_meaninertia(
+                rigid_global_info=self._rigid_global_info,
+                entities_info=self.entities_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
     def _init_invweight(self):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
@@ -277,7 +283,16 @@ class RigidSolver(Solver):
             return
 
         # Compute mass matrix without any implicit damping terms
-        self._kernel_compute_mass_matrix(decompose=True)
+        self._kernel_compute_mass_matrix(
+            links_state=self.links_state,
+            links_info=self.links_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            decompose=True,
+        )
 
         # Define some proxies for convenience
         mass_mat_D_inv = self.mass_mat_D_inv.to_numpy()[:, 0]
@@ -364,10 +379,30 @@ class RigidSolver(Solver):
         self._kernel_init_invweight(links_invweight, dofs_invweight)
 
     @ti.kernel
-    def _kernel_compute_mass_matrix(self, decompose: ti.u1):
-        self._func_compute_mass_matrix(implicit_damping=False)
+    def _kernel_compute_mass_matrix(
+        self_unused,
+        # taichi variables
+        links_state: array_class.LinksState,
+        links_info: array_class.LinksInfo,
+        dofs_state: array_class.DofsState,
+        dofs_info: array_class.DofsInfo,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: ti.template(),
+        static_rigid_sim_config: ti.template(),
+        decompose: ti.u1,
+    ):
+        self_unused._func_compute_mass_matrix(
+            implicit_damping=False,
+            links_state=links_state,
+            links_info=links_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
         if decompose:
-            self._func_factor_mass(implicit_damping=False)
+            self_unused._func_factor_mass(implicit_damping=False)
 
     @ti.kernel
     def _kernel_init_invweight(
@@ -385,19 +420,28 @@ class RigidSolver(Solver):
                 self.dofs_info[I].invweight = dofs_invweight[I[0]]
 
     @ti.kernel
-    def _kernel_init_meaninertia(self):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_b in range(self._B):
-            if self.n_dofs > 0:
-                self.meaninertia[i_b] = 0.0
-                for i_e in range(self.n_entities):
-                    e_info = self.entities_info[i_e]
+    def _kernel_init_meaninertia(
+        self_unused,
+        # taichi variables
+        rigid_global_info: ti.template(),
+        entities_info: array_class.EntitiesInfo,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_dofs = rigid_global_info.mass_mat.shape[0]
+        _B = rigid_global_info.mass_mat.shape[2]
+        n_entities = entities_info.shape[0]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b in range(_B):
+            if n_dofs > 0:
+                rigid_global_info.meaninertia[i_b] = 0.0
+                for i_e in range(n_entities):
+                    e_info = entities_info[i_e]
                     for i_d in range(e_info.dof_start, e_info.dof_end):
-                        I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                        self.meaninertia[i_b] += self.mass_mat[i_d, i_d, i_b]
-                    self.meaninertia[i_b] = self.meaninertia[i_b] / self.n_dofs
+                        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        rigid_global_info.meaninertia[i_b] += rigid_global_info.mass_mat[i_d, i_d, i_b]
+                    rigid_global_info.meaninertia[i_b] = rigid_global_info.meaninertia[i_b] / n_dofs
             else:
-                self.meaninertia[i_b] = 1.0
+                rigid_global_info.meaninertia[i_b] = 1.0
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
@@ -441,6 +485,14 @@ class RigidSolver(Solver):
         self.mass_mat_L.fill(0)
         self.mass_mat_D_inv.fill(0)
         self.meaninertia.fill(0)
+
+        self._rigid_global_info.mass_mat = self.mass_mat
+        self._rigid_global_info.mass_mat_L = self.mass_mat_L
+
+        self._rigid_global_info.mass_mat_D_inv = self.mass_mat_D_inv
+        self._rigid_global_info._mass_mat_mask = self._mass_mat_mask
+        self._rigid_global_info.meaninertia = self.meaninertia
+        self._rigid_global_info.mass_parent_mask = self.mass_parent_mask
 
     def _init_dof_fields(self):
         if self._use_hibernation:
@@ -1518,168 +1570,178 @@ class RigidSolver(Solver):
         return vel_rot + vel_lin
 
     @ti.func
-    def _func_compute_mass_matrix(self, implicit_damping: ti.template()):
-        if ti.static(self._use_hibernation):
+    def _func_compute_mass_matrix(
+        self_unused,
+        implicit_damping: ti.template(),
+        # taichi variables
+        links_state,
+        links_info,
+        dofs_state,
+        dofs_info,
+        entities_info,
+        rigid_global_info,
+        static_rigid_sim_config: ti.template(),
+    ):
+        _B = links_state.shape[1]
+        n_links = links_state.shape[0]
+        n_entities = entities_info.shape[0]
+        n_dofs = dofs_state.shape[0]
+        rgi = rigid_global_info
+        if ti.static(static_rigid_sim_config.use_hibernation):
             # crb initialize
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_l_ in range(self.n_awake_links[i_b]):
-                    i_l = self.awake_links[i_l_, i_b]
-                    self.links_state[i_l, i_b].crb_inertial = self.links_state[i_l, i_b].cinr_inertial
-                    self.links_state[i_l, i_b].crb_pos = self.links_state[i_l, i_b].cinr_pos
-                    self.links_state[i_l, i_b].crb_quat = self.links_state[i_l, i_b].cinr_quat
-                    self.links_state[i_l, i_b].crb_mass = self.links_state[i_l, i_b].cinr_mass
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                for i_l_ in range(rgi.n_awake_links[i_b]):
+                    i_l = rgi.awake_links[i_l_, i_b]
+                    links_state[i_l, i_b].crb_inertial = links_state[i_l, i_b].cinr_inertial
+                    links_state[i_l, i_b].crb_pos = links_state[i_l, i_b].cinr_pos
+                    links_state[i_l, i_b].crb_quat = links_state[i_l, i_b].cinr_quat
+                    links_state[i_l, i_b].crb_mass = links_state[i_l, i_b].cinr_mass
 
             # crb
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_e_ in range(self.n_awake_entities[i_b]):
-                    i_e = self.awake_entities[i_e_, i_b]
-                    for i in range(self.entities_info[i_e].n_links):
-                        i_l = self.entities_info[i_e].link_end - 1 - i
-                        I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-                        i_p = self.links_info[I_l].parent_idx
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                for i_e_ in range(rgi.n_awake_entities[i_b]):
+                    i_e = rgi.awake_entities[i_e_, i_b]
+                    for i in range(entities_info[i_e].n_links):
+                        i_l = entities_info[i_e].link_end - 1 - i
+                        I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                        i_p = links_info[I_l].parent_idx
 
                         if i_p != -1:
-                            self.links_state[i_p, i_b].crb_inertial = (
-                                self.links_state[i_p, i_b].crb_inertial + self.links_state[i_l, i_b].crb_inertial
+                            links_state[i_p, i_b].crb_inertial = (
+                                links_state[i_p, i_b].crb_inertial + links_state[i_l, i_b].crb_inertial
                             )
-                            self.links_state[i_p, i_b].crb_mass = (
-                                self.links_state[i_p, i_b].crb_mass + self.links_state[i_l, i_b].crb_mass
+                            links_state[i_p, i_b].crb_mass = (
+                                links_state[i_p, i_b].crb_mass + links_state[i_l, i_b].crb_mass
                             )
 
-                            self.links_state[i_p, i_b].crb_pos = (
-                                self.links_state[i_p, i_b].crb_pos + self.links_state[i_l, i_b].crb_pos
+                            links_state[i_p, i_b].crb_pos = (
+                                links_state[i_p, i_b].crb_pos + links_state[i_l, i_b].crb_pos
                             )
-                            self.links_state[i_p, i_b].crb_quat = (
-                                self.links_state[i_p, i_b].crb_quat + self.links_state[i_l, i_b].crb_quat
+                            links_state[i_p, i_b].crb_quat = (
+                                links_state[i_p, i_b].crb_quat + links_state[i_l, i_b].crb_quat
                             )
 
             # mass_mat
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_l_ in range(self.n_awake_links[i_b]):
-                    i_l = self.awake_links[i_l_, i_b]
-                    I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-                    l_info = self.links_info[I_l]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                for i_l_ in range(rgi.n_awake_links[i_b]):
+                    i_l = rgi.awake_links[i_l_, i_b]
+                    I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                    l_info = links_info[I_l]
                     for i_d in range(l_info.dof_start, l_info.dof_end):
-                        self.dofs_state[i_d, i_b].f_ang, self.dofs_state[i_d, i_b].f_vel = gu.inertial_mul(
-                            self.links_state[i_l, i_b].crb_pos,
-                            self.links_state[i_l, i_b].crb_inertial,
-                            self.links_state[i_l, i_b].crb_mass,
-                            self.dofs_state[i_d, i_b].cdof_vel,
-                            self.dofs_state[i_d, i_b].cdof_ang,
+                        dofs_state[i_d, i_b].f_ang, dofs_state[i_d, i_b].f_vel = gu.inertial_mul(
+                            links_state[i_l, i_b].crb_pos,
+                            links_state[i_l, i_b].crb_inertial,
+                            links_state[i_l, i_b].crb_mass,
+                            dofs_state[i_d, i_b].cdof_vel,
+                            dofs_state[i_d, i_b].cdof_ang,
                         )
 
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
-                for i_e_ in range(self.n_awake_entities[i_b]):
-                    i_e = self.awake_entities[i_e_, i_b]
-                    e_info = self.entities_info[i_e]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_b in range(_B):
+                for i_e_ in range(rgi.n_awake_entities[i_b]):
+                    i_e = rgi.awake_entities[i_e_, i_b]
+                    e_info = entities_info[i_e]
                     for i_d in range(e_info.dof_start, e_info.dof_end):
                         for j_d in range(e_info.dof_start, e_info.dof_end):
-                            self.mass_mat[i_d, j_d, i_b] = (
-                                self.dofs_state[i_d, i_b].f_ang.dot(self.dofs_state[j_d, i_b].cdof_ang)
-                                + self.dofs_state[i_d, i_b].f_vel.dot(self.dofs_state[j_d, i_b].cdof_vel)
-                            ) * self.mass_parent_mask[i_d, j_d]
+                            rgi.mass_mat[i_d, j_d, i_b] = (
+                                dofs_state[i_d, i_b].f_ang.dot(dofs_state[j_d, i_b].cdof_ang)
+                                + dofs_state[i_d, i_b].f_vel.dot(dofs_state[j_d, i_b].cdof_vel)
+                            ) * rgi.mass_parent_mask[i_d, j_d]
 
                     # FIXME: Updating the lower-part of the mass matrix is irrelevant
                     for i_d in range(e_info.dof_start, e_info.dof_end):
                         for j_d in range(i_d + 1, e_info.dof_end):
-                            self.mass_mat[i_d, j_d, i_b] = self.mass_mat[j_d, i_d, i_b]
+                            rgi.mass_mat[i_d, j_d, i_b] = rgi.mass_mat[j_d, i_d, i_b]
 
                     # Take into account motor armature
                     for i_d in range(e_info.dof_start, e_info.dof_end):
-                        I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                        self.mass_mat[i_d, i_d, i_b] = self.mass_mat[i_d, i_d, i_b] + self.dofs_info[I_d].armature
+                        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        rgi.mass_mat[i_d, i_d, i_b] = rgi.mass_mat[i_d, i_d, i_b] + rgi.dofs_info[I_d].armature
 
                     # Take into account first-order correction terms for implicit integration scheme right away
                     if ti.static(implicit_damping):
                         for i_d in range(e_info.dof_start, e_info.dof_end):
-                            I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                            self.mass_mat[i_d, i_d, i_b] += self.dofs_info[I_d].damping * self._substep_dt
-                            if (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION) or (
-                                self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY
+                            I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                            rgi.mass_mat[i_d, i_d, i_b] += dofs_info[I_d].damping * static_rigid_sim_config.substep_dt
+                            if (dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION) or (
+                                dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY
                             ):
                                 # qM += d qfrc_actuator / d qvel
-                                self.mass_mat[i_d, i_d, i_b] += self.dofs_info[I_d].kv * self._substep_dt
+                                rgi.mass_mat[i_d, i_d, i_b] += dofs_info[I_d].kv * static_rigid_sim_config.substep_dt
         else:
             # crb initialize
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_l, i_b in ti.ndrange(self.n_links, self._B):
-                self.links_state[i_l, i_b].crb_inertial = self.links_state[i_l, i_b].cinr_inertial
-                self.links_state[i_l, i_b].crb_pos = self.links_state[i_l, i_b].cinr_pos
-                self.links_state[i_l, i_b].crb_quat = self.links_state[i_l, i_b].cinr_quat
-                self.links_state[i_l, i_b].crb_mass = self.links_state[i_l, i_b].cinr_mass
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_l, i_b in ti.ndrange(n_links, _B):
+                links_state[i_l, i_b].crb_inertial = links_state[i_l, i_b].cinr_inertial
+                links_state[i_l, i_b].crb_pos = links_state[i_l, i_b].cinr_pos
+                links_state[i_l, i_b].crb_quat = links_state[i_l, i_b].cinr_quat
+                links_state[i_l, i_b].crb_mass = links_state[i_l, i_b].cinr_mass
 
             # crb
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-                for i in range(self.entities_info[i_e].n_links):
-                    i_l = self.entities_info[i_e].link_end - 1 - i
-                    I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-                    i_p = self.links_info[I_l].parent_idx
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_e, i_b in ti.ndrange(n_entities, _B):
+                for i in range(entities_info[i_e].n_links):
+                    i_l = entities_info[i_e].link_end - 1 - i
+                    I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                    i_p = links_info[I_l].parent_idx
 
                     if i_p != -1:
-                        self.links_state[i_p, i_b].crb_inertial = (
-                            self.links_state[i_p, i_b].crb_inertial + self.links_state[i_l, i_b].crb_inertial
+                        links_state[i_p, i_b].crb_inertial = (
+                            links_state[i_p, i_b].crb_inertial + links_state[i_l, i_b].crb_inertial
                         )
-                        self.links_state[i_p, i_b].crb_mass = (
-                            self.links_state[i_p, i_b].crb_mass + self.links_state[i_l, i_b].crb_mass
-                        )
+                        links_state[i_p, i_b].crb_mass = links_state[i_p, i_b].crb_mass + links_state[i_l, i_b].crb_mass
 
-                        self.links_state[i_p, i_b].crb_pos = (
-                            self.links_state[i_p, i_b].crb_pos + self.links_state[i_l, i_b].crb_pos
-                        )
-                        self.links_state[i_p, i_b].crb_quat = (
-                            self.links_state[i_p, i_b].crb_quat + self.links_state[i_l, i_b].crb_quat
-                        )
+                        links_state[i_p, i_b].crb_pos = links_state[i_p, i_b].crb_pos + links_state[i_l, i_b].crb_pos
+                        links_state[i_p, i_b].crb_quat = links_state[i_p, i_b].crb_quat + links_state[i_l, i_b].crb_quat
 
             # mass_mat
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_l, i_b in ti.ndrange(self.n_links, self._B):
-                I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-                l_info = self.links_info[I_l]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_l, i_b in ti.ndrange(n_links, _B):
+                I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                l_info = links_info[I_l]
                 for i_d in range(l_info.dof_start, l_info.dof_end):
-                    self.dofs_state[i_d, i_b].f_ang, self.dofs_state[i_d, i_b].f_vel = gu.inertial_mul(
-                        self.links_state[i_l, i_b].crb_pos,
-                        self.links_state[i_l, i_b].crb_inertial,
-                        self.links_state[i_l, i_b].crb_mass,
-                        self.dofs_state[i_d, i_b].cdof_vel,
-                        self.dofs_state[i_d, i_b].cdof_ang,
+                    dofs_state[i_d, i_b].f_ang, dofs_state[i_d, i_b].f_vel = gu.inertial_mul(
+                        links_state[i_l, i_b].crb_pos,
+                        links_state[i_l, i_b].crb_inertial,
+                        links_state[i_l, i_b].crb_mass,
+                        dofs_state[i_d, i_b].cdof_vel,
+                        dofs_state[i_d, i_b].cdof_ang,
                     )
 
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_e, i_b in ti.ndrange(self.n_entities, self._B):
-                e_info = self.entities_info[i_e]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_e, i_b in ti.ndrange(n_entities, _B):
+                e_info = entities_info[i_e]
                 for i_d, j_d in ti.ndrange((e_info.dof_start, e_info.dof_end), (e_info.dof_start, e_info.dof_end)):
-                    self.mass_mat[i_d, j_d, i_b] = (
-                        self.dofs_state[i_d, i_b].f_ang.dot(self.dofs_state[j_d, i_b].cdof_ang)
-                        + self.dofs_state[i_d, i_b].f_vel.dot(self.dofs_state[j_d, i_b].cdof_vel)
-                    ) * self.mass_parent_mask[i_d, j_d]
+                    rgi.mass_mat[i_d, j_d, i_b] = (
+                        dofs_state[i_d, i_b].f_ang.dot(dofs_state[j_d, i_b].cdof_ang)
+                        + dofs_state[i_d, i_b].f_vel.dot(dofs_state[j_d, i_b].cdof_vel)
+                    ) * rgi.mass_parent_mask[i_d, j_d]
 
                 # FIXME: Updating the lower-part of the mass matrix is irrelevant
                 for i_d in range(e_info.dof_start, e_info.dof_end):
                     for j_d in range(i_d + 1, e_info.dof_end):
-                        self.mass_mat[i_d, j_d, i_b] = self.mass_mat[j_d, i_d, i_b]
+                        rgi.mass_mat[i_d, j_d, i_b] = rgi.mass_mat[j_d, i_d, i_b]
 
             # Take into account motor armature
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                self.mass_mat[i_d, i_d, i_b] = self.mass_mat[i_d, i_d, i_b] + self.dofs_info[I_d].armature
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in ti.ndrange(n_dofs, _B):
+                I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                rgi.mass_mat[i_d, i_d, i_b] = rgi.mass_mat[i_d, i_d, i_b] + dofs_info[I_d].armature
 
             # Take into account first-order correction terms for implicit integration scheme right away
             if ti.static(implicit_damping):
-                ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-                for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                    I_d = [i_d, i_b] if ti.static(self._options.batch_dofs_info) else i_d
-                    self.mass_mat[i_d, i_d, i_b] += self.dofs_info[I_d].damping * self._substep_dt
-                    if (self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION) or (
-                        self.dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY
+                ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+                for i_d, i_b in ti.ndrange(n_dofs, _B):
+                    I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                    rgi.mass_mat[i_d, i_d, i_b] += dofs_info[I_d].damping * static_rigid_sim_config.substep_dt
+                    if (dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.POSITION) or (
+                        dofs_state[i_d, i_b].ctrl_mode == gs.CTRL_MODE.VELOCITY
                     ):
                         # qM += d qfrc_actuator / d qvel
-                        self.mass_mat[i_d, i_d, i_b] += self.dofs_info[I_d].kv * self._substep_dt
+                        rgi.mass_mat[i_d, i_d, i_b] += dofs_info[I_d].kv * static_rigid_sim_config.substep_dt
 
     @ti.func
     def _func_factor_mass(self, implicit_damping: ti.template()):
@@ -1827,8 +1889,25 @@ class RigidSolver(Solver):
     # decomposed kernels should happen in the block below. This block will be handled by composer and composed into a single kernel
     @ti.func
     def _func_forward_dynamics(self):
+        # self_unused,
+        # implicit_damping: ti.template(),
+        # # taichi variables
+        # links_state,
+        # links_info,
+        # dofs_state,
+        # dofs_info,
+        # entities_info,
+        # rigid_global_info,
+        # static_rigid_sim_config,
         self._func_compute_mass_matrix(
-            implicit_damping=ti.static(self._integrator == gs.integrator.approximate_implicitfast)
+            implicit_damping=ti.static(self._integrator == gs.integrator.approximate_implicitfast),
+            links_state=self.links_state,
+            links_info=self.links_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self._func_factor_mass(implicit_damping=False)
         self._func_torque_and_passive_force()
