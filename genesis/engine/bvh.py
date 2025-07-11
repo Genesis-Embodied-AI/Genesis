@@ -140,7 +140,7 @@ class LBVH(RBC):
         self.hist_group = ti.field(ti.u32, shape=(self.n_batches, self.n_radix_sort_groups, 256 + 1))
         self.prefix_sum_group = ti.field(ti.u32, shape=(self.n_batches, self.n_radix_sort_groups + 1, 256))
         self.group_size = self.n_aabbs // self.n_radix_sort_groups
-        self.visited = ti.field(ti.u8, shape=(self.n_aabbs))
+        self.visited = ti.field(ti.u8, shape=(self.n_aabbs,))
 
         @ti.dataclass
         class Node:
@@ -325,6 +325,7 @@ class LBVH(RBC):
             idx = ti.i32(self.prefix_sum[i_b, code] + self.prefix_sum_group[i_b, i_g, code] + self.offset[i_b, i_a])
             # Use the group prefix sum to find the correct index
             self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
+
         # Swap the temporary and original morton codes
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
             self.morton_codes[i_b, i_a] = self.tmp_morton_codes[i_b, i_a]
@@ -486,6 +487,7 @@ class LBVH(RBC):
 class FEMSurfaceTetLBVH(LBVH):
     """
     FEMSurfaceTetLBVH is a specialized Linear BVH for FEM surface tetrahedrals.
+
     It extends the LBVH class to support filtering based on FEM surface tetrahedral elements.
     """
 
@@ -496,14 +498,15 @@ class FEMSurfaceTetLBVH(LBVH):
     @ti.func
     def filter(self, i_a, i_q):
         """
-        Filter function for FEM surface tets. Filter out tet that share vertices.\
+        Filter function for FEM surface tets. Filter out tet that share vertices.
+
         This is used to avoid self-collisions in FEM surface tets.
+
         i_a: index of the found AABB
         i_q: index of the query AABB
         """
-        result = False
-        if i_a >= i_q:
-            result = True
+
+        result = i_a >= i_q
         i_av = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_a]].el2v
         i_qv = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_q]].el2v
         for i, j in ti.static(ti.ndrange(4, 4)):
