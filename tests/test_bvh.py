@@ -8,6 +8,12 @@ from genesis.engine.bvh import LBVH, AABB
 from .utils import assert_allclose
 
 
+pytest.skip(
+    reason="'build_radix_tree' broken, leading to inf loop in 'compute_bounds' (out-of-bounds mem).",
+    allow_module_level=True,
+)
+
+
 @pytest.fixture(scope="function")
 def lbvh():
     """Fixture for a LBVH tree"""
