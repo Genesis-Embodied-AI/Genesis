@@ -121,15 +121,19 @@ class PathPlanner(ABC):
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(path.shape[1]):
-            if not mask[i_b]:
-                continue
-            num_samples = sample_ind[i_b, 1] - sample_ind[i_b, 0]
             for i_q in range(self._entity.n_qs):
-                start = path[sample_ind[i_b, 0], i_b, i_q]
-                end = path[sample_ind[i_b, 1], i_b, i_q]
-                step = (end - start) / num_samples
-                for i_s in range(num_samples):
-                    tensor[sample_ind[i_b, 0] + i_s, i_b, i_q] = start + step * i_s
+                for i_s in range(path.shape[0]):
+                    tensor[i_s, i_b, i_q] = path[i_s, i_b, i_q]
+        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(path.shape[1]):
+            if mask[i_b]:
+                num_samples = sample_ind[i_b, 1] - sample_ind[i_b, 0]
+                for i_q in range(self._entity.n_qs):
+                    start = path[sample_ind[i_b, 0], i_b, i_q]
+                    end = path[sample_ind[i_b, 1], i_b, i_q]
+                    step = (end - start) / num_samples
+                    for i_s in range(num_samples):
+                        tensor[sample_ind[i_b, 0] + i_s, i_b, i_q] = start + step * i_s
 
     def check_collision(
         self,
@@ -244,7 +248,7 @@ class PathPlanner(ABC):
         for i in range(iterations):
             ind = torch.multinomial(path_mask.T, 2).sort()[0]  # B, 2
             ind_mask = (ind[:, 1] - ind[:, 0]) > 1
-            result_path = path.clone()
+            result_path = torch.empty_like(path, dtype=gs.tc_float, device=gs.device)
             self.interpolate_path(path.contiguous(), ind, ind_mask, result_path)
             collision_mask = self.check_collision(
                 result_path,
