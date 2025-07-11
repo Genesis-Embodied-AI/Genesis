@@ -16,7 +16,7 @@ from genesis.engine.states.solvers import SimState
 from genesis.engine.simulator import Simulator
 from genesis.options import (
     AvatarOptions,
-    CouplerOptions,
+    LegacyCouplerOptions,
     FEMOptions,
     MPMOptions,
     PBDOptions,
@@ -82,7 +82,7 @@ class Scene(RBC):
     def __init__(
         self,
         sim_options: SimOptions | None = None,
-        coupler_options: CouplerOptions | None = None,
+        coupler_options: LegacyCouplerOptions | None = None,
         tool_options: ToolOptions | None = None,
         rigid_options: RigidOptions | None = None,
         avatar_options: AvatarOptions | None = None,
@@ -100,7 +100,7 @@ class Scene(RBC):
     ):
         # Handling of default arguments
         sim_options = sim_options or SimOptions()
-        coupler_options = coupler_options or CouplerOptions()
+        coupler_options = coupler_options or LegacyCouplerOptions()
         tool_options = tool_options or ToolOptions()
         rigid_options = rigid_options or RigidOptions()
         avatar_options = avatar_options or AvatarOptions()
@@ -200,7 +200,7 @@ class Scene(RBC):
     def _validate_options(
         self,
         sim_options: SimOptions,
-        coupler_options: CouplerOptions,
+        coupler_options: LegacyCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
         avatar_options: AvatarOptions,
@@ -217,8 +217,8 @@ class Scene(RBC):
         if not isinstance(sim_options, SimOptions):
             gs.raise_exception("`sim_options` should be an instance of `SimOptions`.")
 
-        if not isinstance(coupler_options, CouplerOptions):
-            gs.raise_exception("`coupler_options` should be an instance of `CouplerOptions`.")
+        if not isinstance(coupler_options, LegacyCouplerOptions):
+            gs.raise_exception("`coupler_options` should be an instance of `LegacyCouplerOptions`.")
 
         if not isinstance(tool_options, ToolOptions):
             gs.raise_exception("`tool_options` should be an instance of `ToolOptions`.")
