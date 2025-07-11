@@ -357,13 +357,21 @@ class MPR:
         self.simplex_support[i_s, i_b].v = v
 
     @ti.func
-    def mpr_discover_portal(self, i_ga, i_gb, i_b, center_a, center_b):
-        self.simplex_support[0, i_b].v1 = center_a
-        self.simplex_support[0, i_b].v2 = center_b
-        self.simplex_support[0, i_b].v = center_a - center_b
-        self.simplex_size[i_b] = 1
+    def mpr_discover_portal(
+        self_unused, 
+        mpr_state: ti.template(), 
+        i_ga, 
+        i_gb, 
+        i_b, 
+        center_a, 
+        center_b
+    ):
+        mpr_state.simplex_support[0, i_b].v1 = center_a
+        mpr_state.simplex_support[0, i_b].v2 = center_b
+        mpr_state.simplex_support[0, i_b].v = center_a - center_b
+        mpr_state.simplex_size[i_b] = 1
 
-        if (ti.abs(self.simplex_support[0, i_b].v) < self.CCD_EPS).all():
+        if (ti.abs(mpr_state.simplex_support[0, i_b].v) < self.CCD_EPS).all():
             self.simplex_support[0, i_b].v[0] += 10.0 * self.CCD_EPS
 
         direction = -self.simplex_support[0, i_b].v.normalized()
@@ -457,7 +465,18 @@ class MPR:
         return ret
 
     @ti.func
-    def guess_geoms_center(self, i_ga, i_gb, i_b, normal_ws):
+    def guess_geoms_center(
+        self_unused, 
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo, 
+        geoms_init_AABB: array_class.GeomsInitAABB,
+        static_rigid_sim_config: ti.template(),
+        mpr_static_config: ti.template(),
+        i_ga, 
+        i_gb, 
+        i_b, 
+        normal_ws
+    ):
         # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
         # proposed to extend its application to collision detection as it can provide the contact normal and penetration
         # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
@@ -485,20 +504,20 @@ class MPR:
         # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
         # signed distance is computed once again until to find a valid point. This procedure should be cheap.
 
-        g_state_a = self._solver.geoms_state[i_ga, i_b]
-        g_state_b = self._solver.geoms_state[i_gb, i_b]
-        g_info = self._solver.geoms_info[i_ga]
+        g_state_a = geoms_state[i_ga, i_b]
+        g_state_b = geoms_state[i_gb, i_b]
+        g_info = geoms_info[i_ga]
         center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
-        g_info = self._solver.geoms_info[i_gb]
+        g_info = geoms_info[i_gb]
         center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
 
         # Completely different center logics if a normal guess is provided
-        if ti.static(not self._solver._enable_mujoco_compatibility):
-            if (ti.abs(normal_ws) > self.CCD_EPS).any():
+        if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+            if (ti.abs(normal_ws) > mpr_static_config.CCD_EPS).any():
                 # Must start from the center of each bounding box
-                center_a_local = 0.5 * (self._solver.geoms_init_AABB[i_ga, 7] + self._solver.geoms_init_AABB[i_ga, 0])
+                center_a_local = 0.5 * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
                 center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
-                center_b_local = 0.5 * (self._solver.geoms_init_AABB[i_gb, 7] + self._solver.geoms_init_AABB[i_gb, 0])
+                center_b_local = 0.5 * (geoms_init_AABB[i_gb, 7] + geoms_init_AABB[i_gb, 0])
                 center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
                 delta = center_a - center_b
 
@@ -517,8 +536,8 @@ class MPR:
                         dir_offset = offset / offset_norm
                         dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_state_a.quat)
                         dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_state_b.quat)
-                        box_size_a = self._solver.geoms_init_AABB[i_ga, 7] - self._solver.geoms_init_AABB[i_ga, 0]
-                        box_size_b = self._solver.geoms_init_AABB[i_gb, 7] - self._solver.geoms_init_AABB[i_gb, 0]
+                        box_size_a = geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]
+                        box_size_b = geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]
                         length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
                         length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
 
@@ -530,8 +549,15 @@ class MPR:
         return center_a, center_b
 
     @ti.func
-    def func_mpr_contact_from_centers(self, i_ga, i_gb, i_b, center_a, center_b):
-        res = self.mpr_discover_portal(i_ga, i_gb, i_b, center_a, center_b)
+    def func_mpr_contact_from_centers(
+        self_unused, 
+        i_ga, 
+        i_gb, 
+        i_b, 
+        center_a, 
+        center_b
+    ):
+        res = self_unused.mpr_discover_portal(i_ga, i_gb, i_b, center_a, center_b)
 
         is_col = False
         pos = gs.ti_vec3([0.0, 0.0, 0.0])
@@ -550,6 +576,21 @@ class MPR:
         return is_col, normal, penetration, pos
 
     @ti.func
-    def func_mpr_contact(self_unused, i_ga, i_gb, i_b, normal_ws):
-        center_a, center_b = self.guess_geoms_center(i_ga, i_gb, i_b, normal_ws)
-        return self.func_mpr_contact_from_centers(i_ga, i_gb, i_b, center_a, center_b)
+    def func_mpr_contact(
+        self_unused, 
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo, 
+        geoms_init_AABB: array_class.GeomsInitAABB,
+        static_rigid_sim_config: ti.template(),
+        mpr_static_config: ti.template(),
+        mpr_state: ti.template(), 
+        i_ga, 
+        i_gb, 
+        i_b, 
+        normal_ws
+    ):
+        center_a, center_b = self_unused.guess_geoms_center(
+            geoms_state, geoms_info, geoms_init_AABB, static_rigid_sim_config, 
+            mpr_static_config, i_ga, i_gb, i_b, normal_ws
+        )
+        return self_unused.func_mpr_contact_from_centers(i_ga, i_gb, i_b, center_a, center_b)
