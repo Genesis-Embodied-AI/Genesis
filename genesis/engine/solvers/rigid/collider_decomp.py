@@ -77,14 +77,15 @@ class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
 
-        self._init_static_info()
-        self._init_collision_fields()
+        self._init_info()
+        self._init_state()
+        # self._init_collision_fields()
 
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
         self._gjk = GJK(rigid_solver) if self._solver._options.use_gjk_collision else None
 
-    def _init_static_info(self) -> None:
+    def _init_info(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
         if self._solver._options.use_gjk_collision:
             if self._solver._enable_mujoco_compatibility:
@@ -112,9 +113,23 @@ class Collider:
             ccd_algorithm=ccd_algorithm,
         )
 
-    def _init_collision_fields(self) -> None:
-        # Every information about collision is stored in this [global_info].
-        self._collider_state = array_class.ColliderState(self._solver, self._collider_info)
+    def _init_state(self) -> None:
+        # Compute number of possible collision pairs, as it is needed to initialize the collider state
+        n_possible_pairs, collision_pair_validity = self._compute_collision_pair_validity()
+        vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
+        n_vert_neighbors = len(vert_neighbors)
+
+        # Initialize [state], which stores every mutable collision data.
+        self._collider_state = array_class.ColliderState(
+            self._solver, n_possible_pairs, n_vert_neighbors, self._collider_info
+        )
+        self._init_collision_pair_validity(collision_pair_validity)
+        self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
+        self._init_max_contact_pairs(n_possible_pairs)
+        self._init_terrain_state()
+
+        # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state.
+        self._contacts_info_cache = {}
 
         # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
         # condition, while 'print' is slowing down the kernel even if every called in practice...
@@ -126,13 +141,132 @@ class Collider:
 
         self.reset()
 
+    def _compute_collision_pair_validity(self):
+        """
+        Compute the collision pair validity matrix.
+
+        For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
+        """
+        solver = self._solver
+        n_geoms = solver.n_geoms_
+        enable_self_collision = solver._static_rigid_sim_config.enable_self_collision
+        enable_adjacent_collision = solver._static_rigid_sim_config.enable_adjacent_collision
+        batch_links_info = solver._static_rigid_sim_config.batch_links_info
+
+        geoms_link_idx = solver.geoms_info.link_idx.to_numpy()
+        geoms_contype = solver.geoms_info.contype.to_numpy()
+        geoms_conaffinity = solver.geoms_info.conaffinity.to_numpy()
+        links_entity_idx = solver.links_info.entity_idx.to_numpy()
+        links_root_idx = solver.links_info.root_idx.to_numpy()
+        links_parent_idx = solver.links_info.parent_idx.to_numpy()
+        links_is_fixed = solver.links_info.is_fixed.to_numpy()
+        if batch_links_info:
+            links_entity_idx = links_entity_idx[:, 0]
+            links_root_idx = links_root_idx[:, 0]
+            links_parent_idx = links_parent_idx[:, 0]
+            links_is_fixed = links_is_fixed[:, 0]
+
+        n_possible_pairs = 0
+        collision_pair_validity = np.zeros((n_geoms, n_geoms), dtype=gs.np_int)
+        for i_ga in range(n_geoms):
+            for i_gb in range(i_ga + 1, n_geoms):
+                i_la = geoms_link_idx[i_ga]
+                i_lb = geoms_link_idx[i_gb]
+
+                # geoms in the same link
+                if i_la == i_lb:
+                    continue
+
+                # self collision
+                if links_root_idx[i_la] == links_root_idx[i_lb]:
+                    if not enable_self_collision:
+                        continue
+
+                    # adjacent links
+                    if not enable_adjacent_collision and (
+                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                    ):
+                        continue
+
+                # contype and conaffinity
+                if links_entity_idx[i_la] == links_entity_idx[i_lb] and not (
+                    (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
+                ):
+                    continue
+
+                # pair of fixed links wrt the world
+                if links_is_fixed[i_la] and links_is_fixed[i_lb]:
+                    continue
+
+                collision_pair_validity[i_ga, i_gb] = 1
+                n_possible_pairs += 1
+
+        return n_possible_pairs, collision_pair_validity
+
+    def _compute_verts_connectivity(self):
+        """
+        Compute the vertex connectivity.
+        """
+        vert_neighbors = []
+        vert_neighbor_start = []
+        vert_n_neighbors = []
+        offset = 0
+        for geom in self._solver.geoms:
+            vert_neighbors.append(geom.vert_neighbors + geom.vert_start)
+            vert_neighbor_start.append(geom.vert_neighbor_start + offset)
+            vert_n_neighbors.append(geom.vert_n_neighbors)
+            offset += len(geom.vert_neighbors)
+
+        if self._solver.n_verts > 0:
+            vert_neighbors = np.concatenate(vert_neighbors, dtype=gs.np_int)
+            vert_neighbor_start = np.concatenate(vert_neighbor_start, dtype=gs.np_int)
+            vert_n_neighbors = np.concatenate(vert_n_neighbors, dtype=gs.np_int)
+
+        return vert_neighbors, vert_neighbor_start, vert_n_neighbors
+
+    def _init_collision_pair_validity(self, collision_pair_validity):
+        self._collider_state.collision_pair_validity.from_numpy(collision_pair_validity)
+
+    def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
+        if self._solver.n_verts > 0:
+            self._collider_state.vert_neighbors.from_numpy(vert_neighbors)
+            self._collider_state.vert_neighbor_start.from_numpy(vert_neighbor_start)
+            self._collider_state.vert_n_neighbors.from_numpy(vert_n_neighbors)
+
+    def _init_max_contact_pairs(self, n_possible_pairs):
+        max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
+        max_contact_pairs = max_collision_pairs * self._collider_info.n_contacts_per_pair
+
+        self._collider_state._max_possible_pairs[None] = n_possible_pairs
+        self._collider_state._max_collision_pairs[None] = max_collision_pairs
+        self._collider_state._max_contact_pairs[None] = max_contact_pairs
+
+    def _init_terrain_state(self):
+        if self._collider_info.has_terrain:
+            solver = self._solver
+            links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
+            entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
+
+            scale = entity.terrain_scale.astype(gs.np_float)
+            rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
+            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
+            xyz_maxmin = np.array(
+                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0],
+                dtype=gs.np_float,
+            )
+
+            self._collider_state.terrain_hf.from_numpy(hf)
+            self._collider_state.terrain_rc.from_numpy(rc)
+            self._collider_state.terrain_scale.from_numpy(scale)
+            self._collider_state.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
+
     def reset(self, envs_idx: npt.NDArray[np.int32] | None = None) -> None:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(
             self._solver._rigid_global_info, self._solver._static_rigid_sim_config, self._collider_state, envs_idx
         )
-        self._collider_state._contacts_info_cache = {}
+        self._contacts_info_cache = {}
 
     @ti.kernel
     def _kernel_reset(
@@ -206,7 +340,7 @@ class Collider:
     def detection(self) -> None:
         # from genesis.utils.tools import create_timer
 
-        self._collider_state._contacts_info_cache = {}
+        self._contacts_info_cache = {}
         # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         self._func_update_aabbs(self._solver)
         # timer.stamp("func_update_aabbs")
@@ -2551,7 +2685,7 @@ class Collider:
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
-        contacts_info = self._collider_state._contacts_info_cache.get((as_tensor, to_torch))
+        contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
             return contacts_info.copy()
 
@@ -2627,7 +2761,7 @@ class Collider:
         )
 
         # Cache contact information before returning
-        self._collider_state._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
+        self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
 
         return contacts_info.copy()
 

@@ -133,7 +133,7 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            contact_data = self._collider.contact_data[i_col, i_b]
+            contact_data = self._collider._collider_state.contact_data[i_col, i_b]
             link_a = contact_data.link_a
             link_b = contact_data.link_b
             link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
@@ -523,7 +523,7 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            contact_data = self._collider.contact_data[i_col, i_b]
+            contact_data = self._collider._collider_state.contact_data[i_col, i_b]
 
             force = ti.Vector.zero(gs.ti_float, 3)
             d1, d2 = gu.ti_orthogonals(contact_data.normal)
@@ -531,7 +531,7 @@ class ConstraintSolverIsland:
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
                 n = d * contact_data.friction - contact_data.normal
                 force += n * self.efc_force[i_island_col * 4 + i, i_b]
-            self._collider.contact_data[i_col, i_b].force = force
+            self._collider._collider_state.contact_data[i_col, i_b].force = force
 
             self._solver.links_state[contact_data.link_a, i_b].contact_force = (
                 self._solver.links_state[contact_data.link_a, i_b].contact_force - force

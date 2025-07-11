@@ -34,23 +34,34 @@ class ColliderState:
     Class to store the mutable collider data, all of which type is [ti.fields].
     """
 
-    def __init__(self, solver, collider_info):
+    def __init__(self, solver, n_possible_pairs, n_vert_neighbors, collider_info):
+        """
+        Parameters:
+        ----------
+        n_possible_pairs: int
+            Maximum number of possible collision pairs based on geom configurations. For instance, when adjacent
+            collision is disabled, adjacent geoms are not considered in counting possible pairs.
+        n_vert_neighbors: int
+            Size of the vertex neighbors array.
+        """
         _B = solver._B
         f_batch = solver._batch_shape
         n_geoms = solver.n_geoms_
-        max_collision_pairs = solver._max_collision_pairs
+        n_verts = solver.n_verts_
+        max_collision_pairs = min(solver._max_collision_pairs, n_possible_pairs)
+        max_contact_pairs = max_collision_pairs * collider_info.n_contacts_per_pair
         use_hibernation = solver._static_rigid_sim_config.use_hibernation
+        box_box_detection = solver._static_rigid_sim_config.box_box_detection
 
         ############## vertex connectivity ##############
-        self._init_verts_connectivity(solver)
+        self.vert_neighbors = ti.field(dtype=gs.ti_int, shape=max(1, n_vert_neighbors))
+        self.vert_neighbor_start = ti.field(dtype=gs.ti_int, shape=n_verts)
+        self.vert_n_neighbors = ti.field(dtype=gs.ti_int, shape=n_verts)
 
         ############## broad phase SAP ##############
         # This buffer stores the AABBs along the search axis of all geoms
         struct_sort_buffer = ti.types.struct(value=gs.ti_float, i_g=gs.ti_int, is_max=gs.ti_int)
-        self.sort_buffer = struct_sort_buffer.field(
-            shape=f_batch(2 * n_geoms),
-            layout=ti.Layout.SOA,
-        )
+        self.sort_buffer = struct_sort_buffer.field(shape=f_batch(2 * n_geoms), layout=ti.Layout.SOA)
 
         # This buffer stores indexes of active geoms during SAP search
         if use_hibernation:
@@ -60,7 +71,6 @@ class ColliderState:
 
         # Stores the validity of the collision pairs
         self.collision_pair_validity = ti.field(dtype=gs.ti_int, shape=(n_geoms, n_geoms))
-        n_possible_pairs = self._init_collision_pair_validity(solver)
 
         # Whether or not this is the first time to run the broad phase for each batch
         self.first_time = ti.field(gs.ti_int, shape=_B)
@@ -70,15 +80,9 @@ class ColliderState:
         self._max_collision_pairs = ti.field(dtype=gs.ti_int, shape=())
         self._max_contact_pairs = ti.field(dtype=gs.ti_int, shape=())
 
-        self._max_possible_pairs[None] = n_possible_pairs
-        self._max_collision_pairs[None] = min(n_possible_pairs, max_collision_pairs)
-        self._max_contact_pairs[None] = self._max_collision_pairs[None] * collider_info.n_contacts_per_pair
-
         # Final results of the broad phase
         self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=_B)
-        self.broad_collision_pairs = ti.Vector.field(
-            2, dtype=gs.ti_int, shape=f_batch(max(1, self._max_collision_pairs[None]))
-        )
+        self.broad_collision_pairs = ti.Vector.field(2, dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs)))
 
         ############## narrow phase ##############
         struct_contact_data = ti.types.struct(
@@ -94,13 +98,12 @@ class ColliderState:
             link_b=gs.ti_int,
         )
         self.contact_data = struct_contact_data.field(
-            shape=f_batch(max(1, self._max_contact_pairs[None])),
+            shape=f_batch(max(1, max_contact_pairs)),
             layout=ti.Layout.SOA,
         )
         # total number of contacts, including hibernated contacts
         self.n_contacts = ti.field(gs.ti_int, shape=_B)
         self.n_contacts_hibernated = ti.field(gs.ti_int, shape=_B)
-        self._contacts_info_cache = {}
 
         # contact caching for warmstart collision detection
         struct_contact_cache = ti.types.struct(
@@ -108,18 +111,10 @@ class ColliderState:
             # penetration=gs.ti_float,
             normal=gs.ti_vec3,
         )
-        self.contact_cache = struct_contact_cache.field(
-            shape=f_batch((n_geoms, n_geoms)),
-            layout=ti.Layout.SOA,
-        )
-
-        # for faster compilation
-        if collider_info.has_terrain:
-            self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
-            self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
+        self.contact_cache = struct_contact_cache.field(shape=f_batch((n_geoms, n_geoms)), layout=ti.Layout.SOA)
 
         ########## Box-box contact detection ##########
-        if solver._box_box_detection:
+        if box_box_detection:
             # With the existing Box-Box collision detection algorithm, it is not clear where the contact points are
             # located depending of the pose and size of each box. In practice, up to 11 contact points have been
             # observed. The theoretical worst case scenario would be 2 cubes roughly the same size and same center,
@@ -138,108 +133,11 @@ class ColliderState:
             links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
 
-            scale = entity.terrain_scale.astype(gs.np_float)
-            rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
-            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
-            xyz_maxmin = np.array(
-                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0],
-                dtype=gs.np_float,
-            )
-
-            self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
+            self.terrain_hf = ti.field(dtype=gs.ti_float, shape=entity.terrain_hf.shape)
             self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
             self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
             self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
 
-            self.terrain_hf.from_numpy(hf)
-            self.terrain_rc.from_numpy(rc)
-            self.terrain_scale.from_numpy(scale)
-            self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
-
-    def _init_verts_connectivity(self, solver) -> None:
-        """
-        Initialize the vertex connectivity fields.
-        """
-        vert_neighbors = []
-        vert_neighbor_start = []
-        vert_n_neighbors = []
-        offset = 0
-        for geom in solver.geoms:
-            vert_neighbors.append(geom.vert_neighbors + geom.vert_start)
-            vert_neighbor_start.append(geom.vert_neighbor_start + offset)
-            vert_n_neighbors.append(geom.vert_n_neighbors)
-            offset += len(geom.vert_neighbors)
-
-        if solver.n_verts > 0:
-            vert_neighbors = np.concatenate(vert_neighbors, dtype=gs.np_int)
-            vert_neighbor_start = np.concatenate(vert_neighbor_start, dtype=gs.np_int)
-            vert_n_neighbors = np.concatenate(vert_n_neighbors, dtype=gs.np_int)
-
-        self.vert_neighbors = ti.field(dtype=gs.ti_int, shape=max(1, len(vert_neighbors)))
-        self.vert_neighbor_start = ti.field(dtype=gs.ti_int, shape=solver.n_verts_)
-        self.vert_n_neighbors = ti.field(dtype=gs.ti_int, shape=solver.n_verts_)
-
-        if solver.n_verts > 0:
-            self.vert_neighbors.from_numpy(vert_neighbors)
-            self.vert_neighbor_start.from_numpy(vert_neighbor_start)
-            self.vert_n_neighbors.from_numpy(vert_n_neighbors)
-
-    def _init_collision_pair_validity(self, solver):
-        """
-        Initialize the collision pair validity matrix.
-
-        For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
-        """
-        n_geoms = solver.n_geoms_
-        enable_self_collision = solver._static_rigid_sim_config.enable_self_collision
-        enable_adjacent_collision = solver._static_rigid_sim_config.enable_adjacent_collision
-        batch_links_info = solver._static_rigid_sim_config.batch_links_info
-
-        geoms_link_idx = solver.geoms_info.link_idx.to_numpy()
-        geoms_contype = solver.geoms_info.contype.to_numpy()
-        geoms_conaffinity = solver.geoms_info.conaffinity.to_numpy()
-        links_entity_idx = solver.links_info.entity_idx.to_numpy()
-        links_root_idx = solver.links_info.root_idx.to_numpy()
-        links_parent_idx = solver.links_info.parent_idx.to_numpy()
-        links_is_fixed = solver.links_info.is_fixed.to_numpy()
-        if batch_links_info:
-            links_entity_idx = links_entity_idx[:, 0]
-            links_root_idx = links_root_idx[:, 0]
-            links_parent_idx = links_parent_idx[:, 0]
-            links_is_fixed = links_is_fixed[:, 0]
-
-        n_possible_pairs = 0
-        for i_ga in range(n_geoms):
-            for i_gb in range(i_ga + 1, n_geoms):
-                i_la = geoms_link_idx[i_ga]
-                i_lb = geoms_link_idx[i_gb]
-
-                # geoms in the same link
-                if i_la == i_lb:
-                    continue
-
-                # self collision
-                if links_root_idx[i_la] == links_root_idx[i_lb]:
-                    if not enable_self_collision:
-                        continue
-
-                    # adjacent links
-                    if not enable_adjacent_collision and (
-                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
-                    ):
-                        continue
-
-                # contype and conaffinity
-                if links_entity_idx[i_la] == links_entity_idx[i_lb] and not (
-                    (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
-                ):
-                    continue
-
-                # pair of fixed links wrt the world
-                if links_is_fixed[i_la] and links_is_fixed[i_lb]:
-                    continue
-
-                self.collision_pair_validity[i_ga, i_gb] = 1
-                n_possible_pairs += 1
-
-        return n_possible_pairs
+            # for faster compilation
+            self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
+            self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
