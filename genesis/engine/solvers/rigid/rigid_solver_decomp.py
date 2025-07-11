@@ -2723,6 +2723,8 @@ class RigidSolver(Solver):
         torque, links_idx, envs_idx = self._sanitize_2D_io_variables(
             torque, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
         )
+        if self.n_envs == 0:
+            torque = torque.unsqueeze(0)
 
         if ref == "root_com":
             if local:
@@ -4912,64 +4914,58 @@ class RigidSolver(Solver):
             self.geoms_info[geoms_idx[i_g_]].friction = friction[i_g_]
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        _, link1_idx, _ = self._sanitize_1D_io_variables(
-            None, link1_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
-        )
-        _, link2_idx, envs_idx = self._sanitize_1D_io_variables(
-            None, link2_idx, self.n_links, envs_idx, idx_name="links_idx", skip_allocation=True, unsafe=unsafe
-        )
-        self._kernel_add_weld_constraint(link1_idx, link2_idx, envs_idx)
+        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        self._kernel_add_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel
     def _kernel_add_weld_constraint(
         self,
-        link1_idx: ti.types.ndarray(),
-        link2_idx: ti.types.ndarray(),
+        link1_idx: ti.i32,
+        link2_idx: ti.i32,
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b_ in ti.ndrange(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            if self.constraint_solver.ti_n_equalities[i_b] >= self.n_equalities_candidate:
-                self.constraint_solver.ti_n_equalities[i_b] = self.n_equalities_candidate - 1
-                print(
-                    f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Too many constraints, delete the last one."
-                    f"{formats.RESET}"
-                )
             i_e = self.constraint_solver.ti_n_equalities[i_b]
+            if i_e == self.n_equalities_candidate:
+                print(
+                    f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring dynamically registered weld constraint "
+                    f"to avoid exceeding max number of equality constraints ({self.n_equalities_candidate}). Please "
+                    f"increase the value of RigidSolver's option 'max_dynamic_constraints'.{formats.RESET}"
+                )
+            else:
+                shared_pos = self.links_state[link1_idx, i_b].pos
+                pos1 = gu.ti_inv_transform_by_trans_quat(
+                    shared_pos, self.links_state[link1_idx, i_b].pos, self.links_state[link1_idx, i_b].quat
+                )
+                pos2 = gu.ti_inv_transform_by_trans_quat(
+                    shared_pos, self.links_state[link2_idx, i_b].pos, self.links_state[link2_idx, i_b].quat
+                )
 
-            l1 = link1_idx[i_b]
-            l2 = link2_idx[i_b]
+                self.equalities_info[i_e, i_b].eq_type = gs.ti_int(gs.EQUALITY_TYPE.WELD)
+                self.equalities_info[i_e, i_b].eq_obj1id = link1_idx
+                self.equalities_info[i_e, i_b].eq_obj2id = link2_idx
 
-            shared_pos = self.links_state[l1, i_b].pos
-            pos1 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, self.links_state[l1, i_b].pos, self.links_state[l1, i_b].quat
-            )
-            pos2 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, self.links_state[l2, i_b].pos, self.links_state[l2, i_b].quat
-            )
+                for i_3 in ti.static(range(3)):
+                    self.equalities_info[i_e, i_b].eq_data[i_3 + 3] = pos1[i_3]
+                    self.equalities_info[i_e, i_b].eq_data[i_3] = pos2[i_3]
 
-            self.equalities_info[i_e, i_b].eq_type = gs.ti_int(gs.EQUALITY_TYPE.WELD)
-            self.equalities_info[i_e, i_b].eq_obj1id = l1
-            self.equalities_info[i_e, i_b].eq_obj2id = l2
+                relpose = gu.ti_quat_mul(
+                    gu.ti_inv_quat(self.links_state[link1_idx, i_b].quat), self.links_state[link2_idx, i_b].quat
+                )
 
-            for i_3 in ti.static(range(3)):
-                self.equalities_info[i_e, i_b].eq_data[i_3 + 3] = pos1[i_3]
-                self.equalities_info[i_e, i_b].eq_data[i_3] = pos2[i_3]
+                self.equalities_info[i_e, i_b].eq_data[6] = relpose[0]
+                self.equalities_info[i_e, i_b].eq_data[7] = relpose[1]
+                self.equalities_info[i_e, i_b].eq_data[8] = relpose[2]
+                self.equalities_info[i_e, i_b].eq_data[9] = relpose[3]
 
-            relpose = gu.ti_quat_mul(gu.ti_inv_quat(self.links_state[l1, i_b].quat), self.links_state[l2, i_b].quat)
+                self.equalities_info[i_e, i_b].eq_data[10] = 1.0
+                self.equalities_info[i_e, i_b].sol_params = ti.Vector(
+                    [2 * self._substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
+                )
 
-            self.equalities_info[i_e, i_b].eq_data[6] = relpose[0]
-            self.equalities_info[i_e, i_b].eq_data[7] = relpose[1]
-            self.equalities_info[i_e, i_b].eq_data[8] = relpose[2]
-            self.equalities_info[i_e, i_b].eq_data[9] = relpose[3]
-
-            self.equalities_info[i_e, i_b].eq_data[10] = 1.0
-            self.equalities_info[i_e, i_b].sol_params = ti.Vector(
-                [2 * self._substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
-            )
-
-            self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
+                self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
         _, link1_idx, _ = self._sanitize_1D_io_variables(

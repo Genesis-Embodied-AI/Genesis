@@ -796,14 +796,17 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_jacobian(self, link):
+    def get_jacobian(self, link, local_point=None):
         """
-        Get the Jacobian matrix for a target link.
+        Get the spatial Jacobian for a point on a target link.
 
         Parameters
         ----------
         link : RigidLink
             The target link.
+        local_point : torch.Tensor or None, shape (3,)
+            Coordinates of the point in the link’s *local* frame.
+            If None, the link origin is used (back-compat).
 
         Returns
         -------
@@ -818,7 +821,13 @@ class RigidEntity(Entity):
         if self.n_dofs == 0:
             gs.raise_exception("Entity has zero dofs.")
 
-        self._kernel_get_jacobian(link.idx)
+        if local_point is None:
+            self._kernel_get_jacobian_zero(link.idx)
+        else:
+            p_local = torch.as_tensor(local_point, dtype=gs.tc_float, device=gs.device)
+            if p_local.shape != (3,):
+                gs.raise_exception("Must be a vector of length 3")
+            self._kernel_get_jacobian(link.idx, p_local)
 
         jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
         if self._solver.n_envs == 0:
@@ -826,23 +835,34 @@ class RigidEntity(Entity):
 
         return jacobian
 
+    @ti.func
+    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_vec):
+        self._func_get_jacobian(
+            tgt_link_idx,
+            i_b,
+            p_vec,
+            ti.Vector.one(gs.ti_int, 3),
+            ti.Vector.one(gs.ti_int, 3),
+        )
+
     @ti.kernel
-    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
+        p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
         for i_b in range(self._solver._B):
-            self._func_get_jacobian(
-                tgt_link_idx,
-                i_b,
-                ti.Vector.one(gs.ti_int, 3),
-                ti.Vector.one(gs.ti_int, 3),
-            )
+            self._impl_get_jacobian(tgt_link_idx, i_b, p_vec)
+
+    @ti.kernel
+    def _kernel_get_jacobian_zero(self, tgt_link_idx: ti.i32):
+        for i_b in range(self._solver._B):
+            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
 
     @ti.func
-    def _func_get_jacobian(self, tgt_link_idx, i_b, pos_mask, rot_mask):
+    def _func_get_jacobian(self, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
-        tgt_link_pos = self._solver.links_state[tgt_link_idx, i_b].pos
+        tgt_link_state = self._solver.links_state[tgt_link_idx, i_b]
+        tgt_link_pos = tgt_link_state.pos + gu.ti_transform_by_quat(p_local, tgt_link_state.quat)
         i_l = tgt_link_idx
         while i_l > -1:
             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
@@ -1318,7 +1338,7 @@ class RigidEntity(Entity):
                         # update jacobian for ee link
                         i_l_ee = links_idx[i_ee]
                         self._func_get_jacobian(
-                            i_l_ee, i_b, pos_mask, rot_mask
+                            i_l_ee, i_b, ti.Vector.zero(gs.ti_float, 3), pos_mask, rot_mask
                         )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                         # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
