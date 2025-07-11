@@ -27,7 +27,7 @@ class ConstraintSolver:
 
         # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 3 constraints per equality
         self.len_constraints = (
-            5 * self._collider._max_contact_pairs
+            5 * rigid_solver.collider._collider_state._max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
             + self._solver.n_equalities_candidate * 6
         )
@@ -122,8 +122,8 @@ class ConstraintSolver:
     def add_collision_constraints(self):
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
-            for i_col in range(self._collider.n_contacts[i_b]):
-                contact_data = self._collider.contact_data[i_col, i_b]
+            for i_col in range(self._collider._collider_state.n_contacts[i_b]):
+                contact_data = self._collider._collider_state.contact_data[i_col, i_b]
                 link_a = contact_data.link_a
                 link_b = contact_data.link_b
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
@@ -778,8 +778,8 @@ class ConstraintSolver:
         ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self._B):
             const_start = self.n_constraints_equality[i_b]
-            for i_c in range(self._collider.n_contacts[i_b]):
-                contact_data = self._collider.contact_data[i_c, i_b]
+            for i_c in range(self._collider._collider_state.n_contacts[i_b]):
+                contact_data = self._collider._collider_state.contact_data[i_c, i_b]
 
                 force = ti.Vector.zero(gs.ti_float, 3)
                 d1, d2 = gu.ti_orthogonals(contact_data.normal)
@@ -788,7 +788,7 @@ class ConstraintSolver:
                     n = d * contact_data.friction - contact_data.normal
                     force += n * self.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
-                self._collider.contact_data[i_c, i_b].force = force
+                self._collider._collider_state.contact_data[i_c, i_b].force = force
 
                 self._solver.links_state[contact_data.link_a, i_b].contact_force = (
                     self._solver.links_state[contact_data.link_a, i_b].contact_force - force
