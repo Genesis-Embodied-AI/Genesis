@@ -55,18 +55,19 @@ class DataCollector:
         self.configs = configs
         self.data_queues = []
         self.processor_threads = []
+        self.output_handlers = []
         self.is_recording = False
         self.is_paused = False
-
         self.sim_dt = sensor._sim.dt
-
-        self.output_handlers = []
 
     def start_recording(self):
         """Start data recording."""
         if self.is_recording:
             self.is_paused = False
             return
+
+        self.is_recording = True
+        self.is_paused = False
 
         for idx, config in enumerate(self.configs):
             data_queue = queue.Queue(maxsize=config.buffer_size)
@@ -83,16 +84,13 @@ class DataCollector:
                 )
             config._steps_per_sample = steps_per_sample
 
-            thread = threading.Thread(target=self.make_process_callback(idx))
-            thread.start()
-            self.processor_threads.append(thread)
-
             handler = DataOutType.get_output_handler(config)
             handler.initialize()
             self.output_handlers.append(handler)
 
-        self.is_recording = True
-        self.is_paused = False
+            thread = threading.Thread(target=self.make_process_callback(idx))
+            thread.start()
+            self.processor_threads.append(thread)
 
     def pause_recording(self):
         """Pause data recording. Resume with `start_recording()`."""
@@ -134,15 +132,13 @@ class DataCollector:
             data_queue.put_nowait(data)
 
     def make_process_callback(self, handler_idx):
-        data_queue = self.data_queues[handler_idx]
         def _process_data():
             """Background thread that processes and outputs data"""
-            while self.is_recording or not data_queue.empty():
+            while self.is_recording or not self.data_queues[handler_idx].empty():
                 try:
-                    data = data_queue.get(timeout=1.0)
-                    for handler in self.output_handlers:
-                        handler.process(data)
-                    data_queue.task_done()
+                    data = self.data_queues[handler_idx].get(timeout=1.0)
+                    self.output_handlers[handler_idx].process(data)
+                    self.data_queues[handler_idx].task_done()
                 except queue.Empty:
                     continue
         return _process_data

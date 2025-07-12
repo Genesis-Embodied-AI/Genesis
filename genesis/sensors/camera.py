@@ -131,7 +131,6 @@ class Camera(Sensor):
         self._rgb_stacked = self._visualizer._context.env_separate_rigid
         self._other_stacked = self._visualizer._context.env_separate_rigid
 
-        self.set_pose(self._transform, self._pos, self._lookat, self._up)
         self._is_built = True
 
     def attach(self, rigid_link, offset_T, env_idx: int | None = None):
@@ -415,6 +414,7 @@ class Camera(Sensor):
         else:
             gs.raise_exception("We need a rasterizer to render depth and then convert it to pount cloud.")
 
+    @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None):
         """
         Set the pose of the camera.
@@ -449,14 +449,10 @@ class Camera(Sensor):
 
             self._transform = gu.pos_lookat_up_to_T(self._pos, self._lookat, self._up)
 
-        self._update_rasterizer_and_raytracer()
-   
-    def _update_rasterizer_and_raytracer(self):
-        if self._is_built:
-            if self._rasterizer is not None:
-                self._rasterizer.update_camera(self)
-            if self._raytracer is not None:
-                self._raytracer.update_camera(self)
+        if self._rasterizer is not None:
+            self._rasterizer.update_camera(self)
+        if self._raytracer is not None:
+            self._raytracer.update_camera(self)
 
     def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
         """
@@ -553,7 +549,10 @@ class Camera(Sensor):
             else:
                 self._fov = intrinsics_fov
 
-        self._update_rasterizer_and_raytracer()
+        if self._rasterizer is not None:
+            self._rasterizer.update_camera(self)
+        if self._raytracer is not None:
+            self._raytracer.update_camera(self)
     
     def read(self):
         """Render and returns the RGB frame of the camera as a numpy array."""
