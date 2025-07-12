@@ -173,22 +173,13 @@ class SAPCoupler(RBC):
             )
 
     def _init_sap_fields(self):
-        self.batch_active = ti.field(
-            dtype=ti.u1,
-            shape=self.sim._B,
-            needs_grad=False,
-        )
+        self.batch_active = ti.field(dtype=ti.u1, shape=self.sim._B, needs_grad=False)
         sap_state = ti.types.struct(
             gradient_norm=gs.ti_float,  # norm of the gradient
             momentum_norm=gs.ti_float,  # norm of the momentum
             impulse_norm=gs.ti_float,  # norm of the impulse
         )
-
-        self.sap_state = sap_state.field(
-            shape=self.sim._B,
-            needs_grad=False,
-            layout=ti.Layout.SOA,
-        )
+        self.sap_state = sap_state.field(shape=self.sim._B, needs_grad=False, layout=ti.Layout.SOA)
 
     def _init_fem_fields(self):
         fem_state_v = ti.types.struct(
@@ -199,9 +190,7 @@ class SAPCoupler(RBC):
         )
 
         self.fem_state_v = fem_state_v.field(
-            shape=(self.sim._B, self.fem_solver.n_vertices),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
+            shape=(self.sim._B, self.fem_solver.n_vertices), needs_grad=False, layout=ti.Layout.SOA
         )
 
         pcg_fem_state_v = ti.types.struct(
@@ -215,9 +204,7 @@ class SAPCoupler(RBC):
         )
 
         self.pcg_fem_state_v = pcg_fem_state_v.field(
-            shape=(self.sim._B, self.fem_solver.n_vertices),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
+            shape=(self.sim._B, self.fem_solver.n_vertices), needs_grad=False, layout=ti.Layout.SOA
         )
 
         linesearch_fem_state_v = ti.types.struct(
@@ -226,23 +213,20 @@ class SAPCoupler(RBC):
         )
 
         self.linesearch_fem_state_v = linesearch_fem_state_v.field(
-            shape=(self.sim._B, self.fem_solver.n_vertices),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
+            shape=(self.sim._B, self.fem_solver.n_vertices), needs_grad=False, layout=ti.Layout.SOA
         )
 
     def _init_rigid_fields(self):
         rigid_state_dof = ti.types.struct(
             v=gs.ti_float,  # vertex velocity
             v_diff=gs.ti_float,  # difference between current and previous velocity
+            mass_v_diff=gs.ti_float,  # mass weighted difference between current and previous velocity
             gradient=gs.ti_float,  # gradient vector
             impulse=gs.ti_float,  # impulse vector
         )
 
         self.rigid_state_dof = rigid_state_dof.field(
-            shape=(self.sim._B, self.rigid_solver.n_dofs),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
+            shape=(self.sim._B, self.rigid_solver.n_dofs), needs_grad=False, layout=ti.Layout.SOA
         )
 
         pcg_rigid_state_dof = ti.types.struct(
@@ -254,9 +238,15 @@ class SAPCoupler(RBC):
         )
 
         self.pcg_rigid_state_dof = pcg_rigid_state_dof.field(
-            shape=(self.sim._B, self.rigid_solver.n_dofs),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
+            shape=(self.sim._B, self.rigid_solver.n_dofs), needs_grad=False, layout=ti.Layout.SOA
+        )
+
+        linesearch_rigid_state_dof = ti.types.struct(
+            x_prev=gs.ti_float,  # solution vector
+            dp=gs.ti_float,  # A @ dv
+        )
+        self.linesearch_rigid_state_dof = linesearch_rigid_state_dof.field(
+            shape=(self.sim._B, self.rigid_solver.n_dofs), needs_grad=False, layout=ti.Layout.SOA
         )
 
     def _init_pcg_fields(self):
@@ -592,14 +582,9 @@ class SAPCoupler(RBC):
 
     @ti.func
     def compute_rigid_Ap(self):
-        rigid_solver = self.rigid_solver
-        self.pcg_rigid_state_dof.Ap.fill(0.0)
-        for i_b, i_d0, i_d1 in ti.ndrange(rigid_solver._B, rigid_solver.n_dofs, rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_rigid_state_dof.Ap[i_b, i_d1] += (
-                rigid_solver.mass_mat[i_d1, i_d0, i_b] * self.pcg_rigid_state_dof.p[i_b, i_d0]
-            )
+        self.compute_rigid_mass_mat_vec_product(
+            self.pcg_rigid_state_dof.p, self.pcg_rigid_state_dof.Ap, self.batch_pcg_active
+        )
 
     @ti.func
     def compute_elastic_products(self, i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, src):
@@ -679,37 +664,44 @@ class SAPCoupler(RBC):
             self.pcg_state[i_b].rTz += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
 
     @ti.func
+    def compute_rigid_mass_mat_vec_product(self, vec, out, active):
+        out.fill(0.0)
+        for i_b, i_d0, i_d1 in ti.ndrange(self._B, self.rigid_solver.n_dofs, self.rigid_solver.n_dofs):
+            if not active[i_b]:
+                continue
+            out[i_b, i_d1] += self.rigid_solver.mass_mat[i_d1, i_d0, i_b] * vec[i_b, i_d0]
+
+    @ti.func
     def rigid_solve(self, vec, out):
-        rigid_solver = self.rigid_solver
         # Step 1: Solve w st. L^T @ w = y
-        for i_b, i_e in ti.ndrange(self._B, rigid_solver.n_entities):
+        for i_b, i_e in ti.ndrange(self._B, self.rigid_solver.n_entities):
             if not self.batch_pcg_active[i_b]:
                 continue
-            entity_dof_start = rigid_solver.entities_info[i_e].dof_start
-            entity_dof_end = rigid_solver.entities_info[i_e].dof_end
-            n_dofs = rigid_solver.entities_info[i_e].n_dofs
+            entity_dof_start = self.rigid_solver.entities_info[i_e].dof_start
+            entity_dof_end = self.rigid_solver.entities_info[i_e].dof_end
+            n_dofs = self.rigid_solver.entities_info[i_e].n_dofs
             for i_d_ in range(n_dofs):
                 i_d = entity_dof_end - i_d_ - 1
                 out[i_b, i_d] = vec[i_b, i_d]
                 for j_d in range(i_d + 1, entity_dof_end):
-                    out[i_b, i_d] -= rigid_solver.mass_mat_L[j_d, i_d, i_b] * out[i_b, j_d]
+                    out[i_b, i_d] -= self.rigid_solver.mass_mat_L[j_d, i_d, i_b] * out[i_b, j_d]
 
         # Step 2: z = D^{-1} w
-        for i_b, i_d in ti.ndrange(self._B, rigid_solver.n_dofs):
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
             if not self.batch_pcg_active[i_b]:
                 continue
-            out[i_b, i_d] *= rigid_solver.mass_mat_D_inv[i_b, i_d]
+            out[i_b, i_d] *= self.rigid_solver.mass_mat_D_inv[i_b, i_d]
 
         # Step 3: Solve x st. L @ x = z
-        for i_b, i_e in ti.ndrange(self._B, rigid_solver.n_entities):
+        for i_b, i_e in ti.ndrange(self._B, self.rigid_solver.n_entities):
             if not self.batch_pcg_active[i_b]:
                 continue
-            entity_dof_start = rigid_solver.entities_info[i_e].dof_start
-            entity_dof_end = rigid_solver.entities_info[i_e].dof_end
-            n_dofs = rigid_solver.entities_info[i_e].n_dofs
+            entity_dof_start = self.rigid_solver.entities_info[i_e].dof_start
+            entity_dof_end = self.rigid_solver.entities_info[i_e].dof_end
+            n_dofs = self.rigid_solver.entities_info[i_e].n_dofs
             for i_d in range(entity_dof_start, entity_dof_end):
                 for j_d in range(entity_dof_start, i_d):
-                    out[i_b, i_d] -= rigid_solver.mass_mat_L[i_d, j_d, i_b] * out[i_b, j_d]
+                    out[i_b, i_d] -= self.rigid_solver.mass_mat_L[i_d, j_d, i_b] * out[i_b, j_d]
 
     @ti.kernel
     def init_rigid_pcg_solve(self):
@@ -894,61 +886,76 @@ class SAPCoupler(RBC):
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
 
-    def compute_total_energy(self, f: ti.i32, energy):
-        self.compute_fem_energy(f, energy)
-        # Contact
-        for contact in self.contacts:
-            if contact.has_contact:
-                contact.compute_energy(energy)
-
     @ti.kernel
-    def compute_fem_energy(self, f: ti.i32, energy: ti.template()):
-        fem_solver = self.fem_solver
-        dt2 = fem_solver._substep_dt**2
-        damping_alpha_factor = fem_solver._damping_alpha * fem_solver._substep_dt + 1.0
-        damping_beta_factor = fem_solver._damping_beta / fem_solver._substep_dt + 1.0
+    def compute_total_energy(self, f: ti.i32, energy: ti.template()):
+        energy.fill(0.0)
+        if ti.static(self.fem_solver.is_active()):
+            self.compute_fem_energy(f, energy)
+        if ti.static(self.rigid_solver.is_active()):
+            self.compute_rigid_energy(f, energy)
+        # Contact
+        for contact in ti.static(self.contacts):
+            contact.compute_energy(energy)
 
-        for i_b in ti.ndrange(self._B):
-            energy[i_b] = 0.0
-            if not self.batch_linesearch_active[i_b]:
-                continue
+    @ti.func
+    def compute_fem_energy(self, f: ti.i32, energy: ti.template()):
+        dt2 = self.fem_solver._substep_dt**2
+        damping_alpha_factor = self.fem_solver._damping_alpha * self.fem_solver._substep_dt + 1.0
+        damping_beta_factor = self.fem_solver._damping_beta / self.fem_solver._substep_dt + 1.0
 
         # Inertia
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+        for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.fem_state_v.v_diff[i_b, i_v] = (
-                self.fem_state_v.v[i_b, i_v] - fem_solver.elements_v[f + 1, i_v, i_b].vel
+                self.fem_state_v.v[i_b, i_v] - self.fem_solver.elements_v[f + 1, i_v, i_b].vel
             )
             energy[i_b] += (
                 0.5
-                * fem_solver.elements_v_info[i_v].mass_over_dt2
+                * self.fem_solver.elements_v_info[i_v].mass_over_dt2
                 * self.fem_state_v.v_diff[i_b, i_v].dot(self.fem_state_v.v_diff[i_b, i_v])
                 * dt2
                 * damping_alpha_factor
             )
 
         # Elastic
-        for i_b, i_e in ti.ndrange(self._B, fem_solver.n_elements):
+        for i_b, i_e in ti.ndrange(self._B, self.fem_solver.n_elements):
             if not self.batch_linesearch_active[i_b]:
                 continue
 
-            V_dt2 = fem_solver.elements_i[i_e].V * dt2
-            B = fem_solver.elements_i[i_e].B
+            V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
+            B = self.fem_solver.elements_i[i_e].B
             s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
-            i_v0, i_v1, i_v2, i_v3 = fem_solver.elements_i[i_e].el2v
+            i_v0, i_v1, i_v2, i_v3 = self.fem_solver.elements_i[i_e].el2v
 
             p9, H9_p9 = self.compute_elastic_products(i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, self.fem_state_v.v_diff)
             energy[i_b] += 0.5 * p9.dot(H9_p9) * damping_beta_factor * V_dt2
 
+    @ti.func
+    def compute_rigid_energy(self, f: ti.i32, energy: ti.template()):
+        # Kinetic energy
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.rigid_state_dof.v_diff[i_b, i_d] = (
+                self.rigid_state_dof.v[i_b, i_d] - self.rigid_solver.dofs_state[i_d, i_b].vel
+            )
+        self.compute_rigid_mass_mat_vec_product(
+            self.rigid_state_dof.v_diff, self.rigid_state_dof.m_v_diff, self.batch_linesearch_active
+        )
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            energy[i_b] += 0.5 * self.rigid_state_dof.v_diff[i_b, i_d] * self.rigid_state_dof.m_v_diff[i_b, i_d]
+
     def init_linesearch(self, f: ti.i32):
-        self._kernel_init_linesearch()
+        self._kernel_init_linesearch(1.0 / self._linesearch_tau)
         self.compute_total_energy(f, self.linesearch_state.prev_energy)
 
     def init_exact_linesearch(self, f: ti.i32):
-        self._kernel_init_exact_linesearch()
+        self._kernel_init_linesearch(self._linesearch_max_step_size)
+        self.compute_total_energy(f, self.linesearch_state.prev_energy)
         self.prepare_search_direction_data()
-        self.compute_fem_energy(f, self.linesearch_state.prev_energy)
         self.update_velocity_linesearch()
         self.compute_line_energy_gradient_hessian(f)
         self.check_initial_exact_linesearch_convergence()
@@ -981,20 +988,43 @@ class SAPCoupler(RBC):
                 self.batch_linesearch_active[i_b] = False
                 self.linesearch_state[i_b].step_size = self.linesearch_state[i_b].alpha_max
 
-    def compute_line_energy_gradient_hessian(self, f: ti.i32):
-        for contact in self.contacts:
-            if contact.has_contact:
-                contact.compute_energy_gamma_G()
-        self.compute_inertia_elastic_energy_alpha(f, self.linesearch_state.energy)
-        self.compute_inertia_elastic_gradient_alpha(f)
-        self.compute_inertia_elastic_hessian_alpha(f)
-        for contact in self.contacts:
-            if contact.has_contact:
-                contact.compute_gradient_hessian_alpha()
-
     @ti.kernel
-    def compute_inertia_elastic_gradient_alpha(self, f: ti.i32):
-        self.linesearch_state.dell_dalpha.fill(0.0)
+    def compute_line_energy_gradient_hessian(self, f: ti.i32):
+        self.init_linesearch_energy_gradient_hessian()
+        if ti.static(self.fem_solver.is_active()):
+            self.compute_fem_energy_alpha(f, self.linesearch_state.energy)
+            self.compute_fem_gradient_alpha(f)
+
+        if ti.static(self.rigid_solver.is_active()):
+            self.compute_rigid_energy_alpha(f, self.linesearch_state.energy)
+            self.compute_rigid_gradient_alpha(f)
+
+        for contact in ti.static(self.contacts):
+            contact.compute_energy_gamma_G()
+            contact.update_gradient_hessian_alpha()
+
+    @ti.func
+    def init_linesearch_energy_gradient_hessian(self):
+        energy = ti.static(self.linesearch_state.energy)
+        alpha = ti.static(self.linesearch_state.step_size)
+        for i_b in ti.ndrange(self._B):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+
+            # energy
+            energy[i_b] = (
+                self.linesearch_state.prev_energy[i_b]
+                + 0.5 * alpha[i_b] ** 2 * self.linesearch_state[i_b].d2ellA_dalpha2
+            )
+
+            # gradient
+            self.linesearch_state[i_b].dell_dalpha = 0.0
+
+            # hessian
+            self.linesearch_state.d2ell_dalpha2[i_b] = self.linesearch_state.d2ellA_dalpha2[i_b]
+
+    @ti.func
+    def compute_fem_gradient_alpha(self, f: ti.i32):
         dp = ti.static(self.linesearch_fem_state_v.dp)
         v = ti.static(self.fem_state_v.v)
         v_star = ti.static(self.fem_solver.elements_v.vel)
@@ -1003,38 +1033,49 @@ class SAPCoupler(RBC):
                 continue
             self.linesearch_state.dell_dalpha[i_b] += dp[i_b, i_v].dot(v[i_b, i_v] - v_star[f + 1, i_b, i_v])
 
-    @ti.kernel
-    def compute_inertia_elastic_hessian_alpha(self, f: ti.i32):
-        for i_b in ti.ndrange(self._B):
-            self.linesearch_state.d2ell_dalpha2[i_b] = self.linesearch_state.d2ellA_dalpha2[i_b]
+    @ti.func
+    def compute_rigid_gradient_alpha(self, f: ti.i32):
+        dp = ti.static(self.linesearch_rigid_state_dof.dp)
+        v = ti.static(self.rigid_state_dof.v)
+        v_star = ti.static(self.rigid_solver.dofs_state.vel)
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state.dell_dalpha[i_b] += dp[i_b, i_d] * (v[i_b, i_d] - v_star[i_d, i_b])
 
-    @ti.kernel
-    def compute_inertia_elastic_energy_alpha(self, f: ti.i32, energy: ti.template()):
+    @ti.func
+    def compute_fem_energy_alpha(self, f: ti.i32, energy: ti.template()):
         alpha = ti.static(self.linesearch_state.step_size)
         dp = ti.static(self.linesearch_fem_state_v.dp)
         v = ti.static(self.fem_state_v.v)
         v_star = ti.static(self.fem_solver.elements_v.vel)
-        for i_b in ti.ndrange(self._B):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            energy[i_b] = (
-                self.linesearch_state.prev_energy[i_b]
-                + 0.5 * alpha[i_b] ** 2 * self.linesearch_state[i_b].d2ellA_dalpha2
-            )
-
         for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             energy[i_b] += alpha[i_b] * dp[i_b, i_v].dot(v[i_b, i_v] - v_star[f + 1, i_b, i_v])
 
-    def prepare_search_direction_data(self):
-        self.prepare_inertia_elastic_search_direction_data()
-        for contact in self.contacts:
-            if contact.has_contact:
-                contact.prepare_search_direction_data()
-        self.compute_d2ellA_dalpha2()
+    @ti.func
+    def compute_rigid_energy_alpha(self, f: ti.i32, energy: ti.template()):
+        alpha = ti.static(self.linesearch_state.step_size)
+        dp = ti.static(self.linesearch_rigid_state_dof.dp)
+        v = ti.static(self.rigid_state_dof.v)
+        v_star = ti.static(self.rigid_solver.dofs_state.vel)
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            energy[i_b] += alpha[i_b] * dp[i_b, i_d] * (v[i_b, i_d] - v_star[i_d, i_b])
 
     @ti.kernel
+    def prepare_search_direction_data(self):
+        if ti.static(self.fem_solver.is_active()):
+            self.prepare_fem_search_direction_data()
+        if ti.static(self.rigid_solver.is_active()):
+            self.prepare_rigid_search_direction_data()
+        for contact in ti.static(self.contacts):
+            contact.prepare_search_direction_data()
+        self.compute_d2ellA_dalpha2()
+
+    @ti.func
     def compute_d2ellA_dalpha2(self):
         for i_b in ti.ndrange(self._B):
             self.linesearch_state[i_b].d2ellA_dalpha2 = 0.0
@@ -1046,43 +1087,47 @@ class SAPCoupler(RBC):
                 self.linesearch_fem_state_v[i_b, i_v].dp
             )
 
-    @ti.kernel
-    def prepare_inertia_elastic_search_direction_data(self):
+    @ti.func
+    def prepare_fem_search_direction_data(self):
         self._func_compute_fem_Ap(self.pcg_fem_state_v.x, self.linesearch_fem_state_v.dp, self.batch_linesearch_active)
 
+    @ti.func
+    def prepare_rigid_search_direction_data(self):
+        self.compute_rigid_mass_mat_vec_product(
+            self.pcg_rigid_state_dof.x, self.linesearch_rigid_state_dof.dp, self.batch_linesearch_active
+        )
+
     @ti.kernel
-    def _kernel_init_linesearch(self):
-        fem_solver = self.fem_solver
+    def _kernel_init_linesearch(self, step_size: float):
         for i_b in ti.ndrange(self._B):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
             if not self.batch_linesearch_active[i_b]:
                 continue
-            self.linesearch_state[i_b].step_size = 1.0 / ti.static(self._linesearch_tau)
+            self.linesearch_state[i_b].step_size = step_size
             self.linesearch_state[i_b].m = 0.0
 
-        # x_prev, m
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_fem_state_v[i_b, i_v].x_prev = self.fem_state_v.v[i_b, i_v]
-            self.linesearch_state[i_b].m += self.pcg_fem_state_v[i_b, i_v].x.dot(self.fem_state_v.gradient[i_b, i_v])
+        if ti.static(self.fem_solver.is_active()):
+            self._func_init_fem_linesearch()
+        if ti.static(self.rigid_solver.is_active()):
+            self._func_init_rigid_linesearch()
 
-    @ti.kernel
-    def _kernel_init_exact_linesearch(self):
-        fem_solver = self.fem_solver
-        for i_b in ti.ndrange(self._B):
-            self.batch_linesearch_active[i_b] = self.batch_active[i_b]
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].m = 0.0
-            self.linesearch_state[i_b].step_size = self._linesearch_max_step_size
-
-        # x_prev, m
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+    @ti.func
+    def _func_init_fem_linesearch(self):
+        for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.linesearch_state[i_b].m += self.pcg_fem_state_v[i_b, i_v].x.dot(self.fem_state_v.gradient[i_b, i_v])
             self.linesearch_fem_state_v[i_b, i_v].x_prev = self.fem_state_v.v[i_b, i_v]
+
+    @ti.func
+    def _func_init_rigid_linesearch(self):
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].m += self.pcg_rigid_state_dof[i_b, i_d].x.dot(
+                self.rigid_state_dof.gradient[i_b, i_d]
+            )
+            self.pcg_rigid_state_dof[i_b, i_d].x_prev = self.rigid_state_dof.v[i_b, i_d]
 
     @ti.kernel
     def check_initial_exact_linesearch_convergence(self):
@@ -1119,15 +1164,29 @@ class SAPCoupler(RBC):
 
     @ti.kernel
     def update_velocity_linesearch(self):
-        fem_solver = self.fem_solver
+        if ti.static(self.fem_solver.is_active()):
+            self.update_fem_velocity_linesearch()
+        if ti.static(self.rigid_solver.is_active()):
+            self.update_rigid_velocity_linesearch()
 
-        # update vel
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+    @ti.func
+    def update_fem_velocity_linesearch(self):
+        for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.fem_state_v.v[i_b, i_v] = (
                 self.linesearch_fem_state_v[i_b, i_v].x_prev
                 + self.linesearch_state[i_b].step_size * self.pcg_fem_state_v[i_b, i_v].x
+            )
+
+    @ti.func
+    def update_rigid_velocity_linesearch(self):
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.rigid_state_dof.v[i_b, i_d] = (
+                self.pcg_rigid_state_dof[i_b, i_d].x_prev
+                + self.linesearch_state[i_b].step_size * self.pcg_rigid_state_dof[i_b, i_d].x
             )
 
     @ti.kernel
@@ -1313,8 +1372,8 @@ class BaseContact(RBC):
     def update_has_contact(self):
         self._has_contact = self.n_contact_pairs[None] > 0
 
-    @ti.kernel
-    def compute_gradient_hessian_alpha(self):
+    @ti.func
+    def update_gradient_hessian_alpha(self):
         coupler = self.coupler
         dvc = ti.static(self.contact_pairs.sap_info.dvc)
         gamma = ti.static(self.contact_pairs.sap_info.gamma)
@@ -1338,23 +1397,21 @@ class BaseContact(RBC):
             w_rms = W.norm() / 3.0 * dt2_inv
             self.compute_contact_regularization(sap_info, i_p, w_rms, time_step)
 
-    @ti.kernel
+    @ti.func
     def compute_energy_gamma_G(self):
         pairs = ti.static(self.contact_pairs)
         sap_info = ti.static(pairs.sap_info)
-        coupler = self.coupler
         for i_p in range(self.n_contact_pairs[None]):
             vc = self.compute_vc(i_p)
             self.compute_contact_energy_gamma_G(sap_info, i_p, vc)
 
-    @ti.kernel
+    @ti.func
     def compute_energy(self, energy: ti.template()):
         pairs = ti.static(self.contact_pairs)
         sap_info = ti.static(pairs.sap_info)
-        coupler = self.coupler
         for i_p in range(self.n_contact_pairs[None]):
             i_b = pairs[i_p].batch_idx
-            if not self.batch_linesearch_active[i_b]:
+            if not self.coupler.batch_linesearch_active[i_b]:
                 continue
             vc = self.compute_vc(i_p)
             self.compute_contact_energy(sap_info, i_p, vc)
@@ -1524,7 +1581,7 @@ class RigidContact(BaseContact):
         coupler = self.coupler
         return self.compute_Jx(i_p, coupler.rigid_state_dof.v)
 
-    @ti.kernel
+    @ti.func
     def prepare_search_direction_data(self):
         pairs = ti.static(self.contact_pairs)
         sap_info = ti.static(pairs.sap_info)
@@ -1556,7 +1613,7 @@ class FEMContact(BaseContact):
             self.add_Jt_x(coupler.fem_state_v.impulse, i_p, sap_info[i_p].gamma)
             self.add_Jt_A_J_diag3x3(coupler.pcg_fem_state_v.diag3x3, i_p, sap_info[i_p].G)
 
-    @ti.kernel
+    @ti.func
     def prepare_search_direction_data(self):
         pairs = ti.static(self.contact_pairs)
         sap_info = ti.static(pairs.sap_info)

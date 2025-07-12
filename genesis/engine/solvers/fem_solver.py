@@ -359,11 +359,11 @@ class FEMSolver(Solver):
 
         if self.n_elements_max > 0:
             self._init_surface_info()
-        if self.tet_wrong_order[None] == 1:
-            raise RuntimeError(
-                "The order of vertices in the tetrahedral elements is not correct. "
-                "Please check the input mesh or the FEM solver implementation."
-            )
+            if self.tet_wrong_order[None] == 1:
+                raise RuntimeError(
+                    "The order of vertices in the tetrahedral elements is not correct. "
+                    "Please check the input mesh or the FEM solver implementation."
+                )
 
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
