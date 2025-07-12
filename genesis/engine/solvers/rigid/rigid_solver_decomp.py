@@ -1391,7 +1391,7 @@ class RigidSolver(Solver):
     def _init_collider(self):
         self.collider = Collider(self)
 
-        if self.collider._collider_info.has_terrain:
+        if self.collider._collider_static_config.has_terrain:
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
 

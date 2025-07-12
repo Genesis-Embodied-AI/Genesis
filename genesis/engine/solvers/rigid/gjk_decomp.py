@@ -2979,7 +2979,7 @@ class GJK:
         elif geom_type == gs.GEOM_TYPE.BOX:
             v, vid = self.support_field._func_support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
-            if ti.static(self._solver.collider._collider_info.has_terrain):
+            if ti.static(self._solver.collider._collider_static_config.has_terrain):
                 v, vid = self.support_field._func_support_prism(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.MESH and self._enable_mujoco_compatibility:
             # If mujoco-compatible, do exhaustive search for the vertex
