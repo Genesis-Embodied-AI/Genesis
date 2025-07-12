@@ -55,9 +55,9 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
 @ti.data_oriented
 class Collider:
     @dataclass(frozen=True)
-    class ColliderInfo:
+    class ColliderStaticConfig:
         """
-        Class to store the immutable collider data.
+        Class to store the IMMUTABLE variables that would require recompilation if changed.
         """
 
         # store static information here
@@ -77,15 +77,14 @@ class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
 
-        self._init_info()
-        self._init_state()
-        # self._init_collision_fields()
+        self._init_static_config()
+        self._init_collision_fields()
 
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
         self._gjk = GJK(rigid_solver) if self._solver._options.use_gjk_collision else None
 
-    def _init_info(self) -> None:
+    def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
         if self._solver._options.use_gjk_collision:
             if self._solver._enable_mujoco_compatibility:
@@ -98,8 +97,8 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
-        # Initialize the static info
-        self._collider_info = Collider.ColliderInfo(
+        # Initialize the static config
+        self._collider_static_config = Collider.ColliderStaticConfig(
             has_nonconvex_nonterrain=np.logical_and(
                 self._solver.geoms_info.is_convex.to_numpy() == 0,
                 self._solver.geoms_info.type.to_numpy() != gs.GEOM_TYPE.TERRAIN,
@@ -113,22 +112,23 @@ class Collider:
             ccd_algorithm=ccd_algorithm,
         )
 
-    def _init_state(self) -> None:
-        # Compute number of possible collision pairs, as it is needed to initialize the collider state
+    def _init_collision_fields(self) -> None:
+        # Pre-compute fields, as they are needed to initialize the collider state and info.
         n_possible_pairs, collision_pair_validity = self._compute_collision_pair_validity()
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
 
-        # Initialize [state], which stores every mutable collision data.
-        self._collider_state = array_class.ColliderState(
-            self._solver, n_possible_pairs, n_vert_neighbors, self._collider_info
-        )
+        # Initialize [state], which stores every MUTABLE collision data.
+        self._collider_state = array_class.ColliderState(self._solver, n_possible_pairs, self._collider_static_config)
+
+        # Initialize [info], which stores every IMMUTABLE collision data.
+        self._collider_info = array_class.ColliderInfo(self._solver, n_vert_neighbors, self._collider_static_config)
         self._init_collision_pair_validity(collision_pair_validity)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(n_possible_pairs)
         self._init_terrain_state()
 
-        # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state.
+        # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state / info.
         self._contacts_info_cache = {}
 
         # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
@@ -225,24 +225,24 @@ class Collider:
         return vert_neighbors, vert_neighbor_start, vert_n_neighbors
 
     def _init_collision_pair_validity(self, collision_pair_validity):
-        self._collider_state.collision_pair_validity.from_numpy(collision_pair_validity)
+        self._collider_info.collision_pair_validity.from_numpy(collision_pair_validity)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:
-            self._collider_state.vert_neighbors.from_numpy(vert_neighbors)
-            self._collider_state.vert_neighbor_start.from_numpy(vert_neighbor_start)
-            self._collider_state.vert_n_neighbors.from_numpy(vert_n_neighbors)
+            self._collider_info.vert_neighbors.from_numpy(vert_neighbors)
+            self._collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
+            self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
     def _init_max_contact_pairs(self, n_possible_pairs):
         max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
-        max_contact_pairs = max_collision_pairs * self._collider_info.n_contacts_per_pair
+        max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
 
-        self._collider_state._max_possible_pairs[None] = n_possible_pairs
-        self._collider_state._max_collision_pairs[None] = max_collision_pairs
-        self._collider_state._max_contact_pairs[None] = max_contact_pairs
+        self._collider_info._max_possible_pairs[None] = n_possible_pairs
+        self._collider_info._max_collision_pairs[None] = max_collision_pairs
+        self._collider_info._max_contact_pairs[None] = max_contact_pairs
 
     def _init_terrain_state(self):
-        if self._collider_info.has_terrain:
+        if self._collider_static_config.has_terrain:
             solver = self._solver
             links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
@@ -255,10 +255,10 @@ class Collider:
                 dtype=gs.np_float,
             )
 
-            self._collider_state.terrain_hf.from_numpy(hf)
-            self._collider_state.terrain_rc.from_numpy(rc)
-            self._collider_state.terrain_scale.from_numpy(scale)
-            self._collider_state.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
+            self._collider_info.terrain_hf.from_numpy(hf)
+            self._collider_info.terrain_rc.from_numpy(rc)
+            self._collider_info.terrain_scale.from_numpy(scale)
+            self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def reset(self, envs_idx: npt.NDArray[np.int32] | None = None) -> None:
         if envs_idx is None:
@@ -352,6 +352,7 @@ class Collider:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._collider_state,
+            self._collider_info,
         )
         # timer.stamp("func_broad_phase")
         self._func_narrow_phase_convex_vs_convex(
@@ -365,6 +366,7 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
             self._collider_info,
+            self._collider_static_config,
             self._mpr,
             self._gjk,
             self._solver.sdf,
@@ -378,10 +380,11 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
             self._collider_info,
+            self._collider_static_config,
             self._mpr,
         )
         # timer.stamp("func_narrow_phase")
-        if self._collider_info.has_terrain:
+        if self._collider_static_config.has_terrain:
             self._func_narrow_phase_any_vs_terrain(
                 self._solver.geoms_state,
                 self._solver.geoms_info,
@@ -390,10 +393,11 @@ class Collider:
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,
+                self._collider_static_config,
                 self._mpr,
             )
             # timer.stamp("_func_narrow_phase_any_vs_terrain")
-        if self._collider_info.has_nonconvex_nonterrain:
+        if self._collider_static_config.has_nonconvex_nonterrain:
             self._func_narrow_phase_nonconvex_vs_nonterrain(
                 self._solver.links_state,
                 self._solver.links_info,
@@ -406,6 +410,7 @@ class Collider:
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,
+                self._collider_static_config,
                 self._solver.sdf,
             )
             # timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
@@ -585,7 +590,7 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         verts_info: array_class.VertsInfo,
-        collider_state: ti.template(),
+        collider_info: ti.template(),
         sdf: ti.template(),
         i_ga,
         i_gb,
@@ -614,10 +619,10 @@ class Collider:
 
         while True:
             for i_neighbor_ in range(
-                collider_state.vert_neighbor_start[i_va],
-                collider_state.vert_neighbor_start[i_va] + collider_state.vert_n_neighbors[i_va],
+                collider_info.vert_neighbor_start[i_va],
+                collider_info.vert_neighbor_start[i_va] + collider_info.vert_n_neighbors[i_va],
             ):
-                i_neighbor = collider_state.vert_neighbors[i_neighbor_]
+                i_neighbor = collider_info.vert_neighbors[i_neighbor_]
                 pos_neighbor = gu.ti_transform_by_trans_quat(verts_info[i_neighbor].init_pos, ga_pos, ga_quat)
                 sd_neighbor = sdf.sdf_world(pos_neighbor, i_gb, i_b)
                 if (
@@ -642,10 +647,10 @@ class Collider:
 
         else:  # check edge surrounding it
             for i_neighbor_ in range(
-                collider_state.vert_neighbor_start[i_va],
-                collider_state.vert_neighbor_start[i_va] + collider_state.vert_n_neighbors[i_va],
+                collider_info.vert_neighbor_start[i_va],
+                collider_info.vert_neighbor_start[i_va] + collider_info.vert_n_neighbors[i_va],
             ):
-                i_neighbor = collider_state.vert_neighbors[i_neighbor_]
+                i_neighbor = collider_info.vert_neighbors[i_neighbor_]
 
                 p_0 = pos_v_closest
                 p_1 = gu.ti_transform_by_trans_quat(verts_info[i_neighbor].init_pos, ga_pos, ga_quat)
@@ -695,6 +700,7 @@ class Collider:
         geoms_init_AABB: array_class.GeomsInitAABB,
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         mpr: ti.template(),
         i_ga,
         i_gb,
@@ -705,7 +711,9 @@ class Collider:
         margin = gs.ti_float(0.0)
 
         is_return = False
-        tolerance = self_unused._func_compute_tolerance(geoms_info, geoms_init_AABB, collider_info, i_ga, i_gb, i_b)
+        tolerance = self_unused._func_compute_tolerance(
+            geoms_info, geoms_init_AABB, collider_static_config, i_ga, i_gb, i_b
+        )
         # pos = self._solver.geoms_state[i_ga, i_b].pos - self._solver.geoms_state[i_gb, i_b].pos
         # for i in range(3):
         #     if self._solver.terrain_xyz_maxmin[i] < pos[i] - r2 - margin or \
@@ -730,46 +738,46 @@ class Collider:
                 collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
             for i in ti.static(range(3)):
-                collider_state.prism[i, i_b][2] = collider_state.terrain_xyz_maxmin[5]
+                collider_state.prism[i, i_b][2] = collider_info.terrain_xyz_maxmin[5]
 
                 if (
-                    collider_state.terrain_xyz_maxmin[i] < collider_state.xyz_max_min[i + 3, i_b] - margin
-                    or collider_state.terrain_xyz_maxmin[i + 3] > collider_state.xyz_max_min[i, i_b] + margin
+                    collider_info.terrain_xyz_maxmin[i] < collider_state.xyz_max_min[i + 3, i_b] - margin
+                    or collider_info.terrain_xyz_maxmin[i + 3] > collider_state.xyz_max_min[i, i_b] + margin
                 ):
                     is_return = True
 
             if not is_return:
-                sh = collider_state.terrain_scale[0]
+                sh = collider_info.terrain_scale[0]
                 r_min = gs.ti_int(
-                    ti.floor((collider_state.xyz_max_min[3, i_b] - collider_state.terrain_xyz_maxmin[3]) / sh)
+                    ti.floor((collider_state.xyz_max_min[3, i_b] - collider_info.terrain_xyz_maxmin[3]) / sh)
                 )
                 r_max = gs.ti_int(
-                    ti.ceil((collider_state.xyz_max_min[0, i_b] - collider_state.terrain_xyz_maxmin[3]) / sh)
+                    ti.ceil((collider_state.xyz_max_min[0, i_b] - collider_info.terrain_xyz_maxmin[3]) / sh)
                 )
                 c_min = gs.ti_int(
-                    ti.floor((collider_state.xyz_max_min[4, i_b] - collider_state.terrain_xyz_maxmin[4]) / sh)
+                    ti.floor((collider_state.xyz_max_min[4, i_b] - collider_info.terrain_xyz_maxmin[4]) / sh)
                 )
                 c_max = gs.ti_int(
-                    ti.ceil((collider_state.xyz_max_min[1, i_b] - collider_state.terrain_xyz_maxmin[4]) / sh)
+                    ti.ceil((collider_state.xyz_max_min[1, i_b] - collider_info.terrain_xyz_maxmin[4]) / sh)
                 )
 
                 r_min = ti.max(0, r_min)
                 c_min = ti.max(0, c_min)
-                r_max = ti.min(collider_state.terrain_rc[0] - 1, r_max)
-                c_max = ti.min(collider_state.terrain_rc[1] - 1, c_max)
+                r_max = ti.min(collider_info.terrain_rc[0] - 1, r_max)
+                c_max = ti.min(collider_info.terrain_rc[1] - 1, c_max)
 
                 n_con = 0
                 for r in range(r_min, r_max):
                     nvert = 0
                     for c in range(c_min, c_max + 1):
                         for i in range(2):
-                            if n_con < ti.static(collider_info.n_contacts_per_pair):
+                            if n_con < ti.static(collider_static_config.n_contacts_per_pair):
                                 nvert = nvert + 1
                                 self_unused.add_prism_vert(
                                     collider_state,
-                                    sh * (r + i) + collider_state.terrain_xyz_maxmin[3],
-                                    sh * c + collider_state.terrain_xyz_maxmin[4],
-                                    collider_state.terrain_hf[r + i, c] + margin,
+                                    sh * (r + i) + collider_info.terrain_xyz_maxmin[3],
+                                    sh * c + collider_info.terrain_xyz_maxmin[4],
+                                    collider_info.terrain_hf[r + i, c] + margin,
                                     i_b,
                                 )
                                 if nvert > 2 and (
@@ -846,12 +854,12 @@ class Collider:
         links_info: array_class.LinksInfo,
         geoms_info: array_class.GeomsInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
+        collider_info: ti.template(),
         i_ga,
         i_gb,
         i_b,
     ):
-        is_valid = collider_state.collision_pair_validity[i_ga, i_gb]
+        is_valid = collider_info.collision_pair_validity[i_ga, i_gb]
 
         # hibernated <-> fixed links
         if ti.static(static_rigid_sim_config.use_hibernation):
@@ -878,6 +886,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to taichi
         collider_state: ti.template(),
+        collider_info: ti.template(),
     ):
         """
         Sweep and Prune (SAP) for broad-phase collision detection.
@@ -961,7 +970,7 @@ class Collider:
                                 links_info,
                                 geoms_info,
                                 static_rigid_sim_config,
-                                collider_state,
+                                collider_info,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -976,7 +985,7 @@ class Collider:
                                 continue
 
                             i_p = collider_state.n_broad_pairs[i_b]
-                            if i_p == collider_state._max_collision_pairs[None]:
+                            if i_p == collider_info._max_collision_pairs[None]:
                                 # print(self._warn_msg_max_collision_pairs)
                                 break
                             collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
@@ -1016,7 +1025,7 @@ class Collider:
                                     links_info,
                                     geoms_info,
                                     static_rigid_sim_config,
-                                    collider_state,
+                                    collider_info,
                                     i_ga,
                                     i_gb,
                                     i_b,
@@ -1049,7 +1058,7 @@ class Collider:
                                         links_info,
                                         geoms_info,
                                         static_rigid_sim_config,
-                                        collider_state,
+                                        collider_info,
                                         i_ga,
                                         i_gb,
                                         i_b,
@@ -1118,6 +1127,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         mpr: ti.template(),
         gjk: ti.template(),
         sdf: ti.template(),
@@ -1163,6 +1173,7 @@ class Collider:
                             static_rigid_sim_config,
                             collider_state,
                             collider_info,
+                            collider_static_config,
                             mpr,
                             gjk,
                             sdf,
@@ -1185,6 +1196,7 @@ class Collider:
                                 static_rigid_sim_config,
                                 collider_state,
                                 collider_info,
+                                collider_static_config,
                                 mpr,
                                 gjk,
                                 sdf,
@@ -1204,6 +1216,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         mpr: ti.template(),
     ):
         _B = collider_state.active_buffer.shape[1]
@@ -1226,6 +1239,7 @@ class Collider:
                             static_rigid_sim_config,
                             collider_state,
                             collider_info,
+                            collider_static_config,
                             mpr,
                             i_ga,
                             i_gb,
@@ -1235,7 +1249,14 @@ class Collider:
                 if ti.static(static_rigid_sim_config.box_box_detection):
                     if geoms_info[i_ga].type == gs.GEOM_TYPE.BOX and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX:
                         self_unused._func_box_box_contact(
-                            geoms_state, geoms_info, collider_state, collider_info, i_ga, i_gb, i_b
+                            geoms_state,
+                            geoms_info,
+                            collider_state,
+                            collider_info,
+                            collider_static_config,
+                            i_ga,
+                            i_gb,
+                            i_b,
                         )
 
     @ti.kernel
@@ -1248,6 +1269,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         mpr: ti.template(),
     ):
         """
@@ -1263,7 +1285,7 @@ class Collider:
                 i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
 
-                if ti.static(collider_info.has_terrain):
+                if ti.static(collider_static_config.has_terrain):
                     if geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN:
                         i_ga, i_gb = i_gb, i_ga
 
@@ -1274,6 +1296,7 @@ class Collider:
                             geoms_init_AABB,
                             collider_state,
                             collider_info,
+                            collider_static_config,
                             mpr,
                             i_ga,
                             i_gb,
@@ -1294,6 +1317,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         sdf: ti.template(),
     ):
         """
@@ -1309,14 +1333,14 @@ class Collider:
                 i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
 
-                if ti.static(collider_info.has_nonconvex_nonterrain):
+                if ti.static(collider_static_config.has_nonconvex_nonterrain):
                     if (
                         not (geoms_info[i_ga].is_convex and geoms_info[i_gb].is_convex)
                         and geoms_info[i_gb].type != gs.GEOM_TYPE.TERRAIN
                     ):
                         is_col = False
                         tolerance = self_unused._func_compute_tolerance(
-                            geoms_info, geoms_init_AABB, collider_info, i_ga, i_gb, i_b
+                            geoms_info, geoms_init_AABB, collider_static_config, i_ga, i_gb, i_b
                         )
                         for i in range(2):
                             if i == 1:
@@ -1369,7 +1393,7 @@ class Collider:
                                     for i_rot in range(1, 5):
                                         axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
-                                        qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation * axis)
+                                        qrot = gu.ti_rotvec_to_quat(collider_static_config.mc_perturbation * axis)
                                         self_unused._func_rotate_frame(
                                             geoms_state, geoms_info, i_ga, contact_pos_i, qrot, i_b
                                         )
@@ -1405,8 +1429,8 @@ class Collider:
                                                 # First-order correction of the normal direction
                                                 twist_rotvec = ti.math.clamp(
                                                     normal.cross(normal_i),
-                                                    -collider_info.mc_perturbation,
-                                                    collider_info.mc_perturbation,
+                                                    -collider_static_config.mc_perturbation,
+                                                    collider_static_config.mc_perturbation,
                                                 )
                                                 normal += twist_rotvec.cross(normal)
 
@@ -1472,6 +1496,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         mpr: ti.template(),
         i_ga,
         i_gb,
@@ -1508,10 +1533,10 @@ class Collider:
                 n_con = 1
                 contact_pos_0 = contact_pos
                 tolerance = self_unused._func_compute_tolerance(
-                    geoms_info, geoms_init_AABB, collider_info, i_ga, i_gb, i_b
+                    geoms_info, geoms_init_AABB, collider_static_config, i_ga, i_gb, i_b
                 )
                 for i_v in range(gb_info.vert_start, gb_info.vert_end):
-                    if n_con < ti.static(collider_info.n_contacts_per_pair):
+                    if n_con < ti.static(collider_static_config.n_contacts_per_pair):
                         pos_corner = gu.ti_transform_by_trans_quat(
                             verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
                         )
@@ -1548,7 +1573,7 @@ class Collider:
         i_b,
     ):
         i_c = collider_state.n_contacts[i_b]
-        if i_c == collider_state._max_contact_pairs[None]:
+        if i_c == collider_info._max_contact_pairs[None]:
             # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
             # condition, while 'print' is slowing down the kernel even if every called in practice...
             # print(self._warn_msg_max_collision_pairs)
@@ -1578,7 +1603,7 @@ class Collider:
         self_unused,
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
-        collider_info: ti.template(),
+        collider_static_config: ti.template(),
         i_ga,
         i_gb,
         i_b,
@@ -1593,7 +1618,7 @@ class Collider:
             aabb_size_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]).norm()
             aabb_size = ti.min(aabb_size_a, aabb_size_b)
 
-        return 0.5 * collider_info.mc_tolerance * aabb_size
+        return 0.5 * collider_static_config.mc_tolerance * aabb_size
 
     @ti.func
     def _func_contact_orthogonals(
@@ -1667,6 +1692,7 @@ class Collider:
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         mpr: ti.template(),
         gjk: ti.template(),
         sdf: ti.template(),
@@ -1684,6 +1710,7 @@ class Collider:
                     static_rigid_sim_config,
                     collider_state,
                     collider_info,
+                    collider_static_config,
                     mpr,
                     i_ga,
                     i_gb,
@@ -1702,7 +1729,9 @@ class Collider:
                 and geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
             )
 
-            tolerance = self_unused._func_compute_tolerance(geoms_info, geoms_init_AABB, collider_info, i_ga, i_gb, i_b)
+            tolerance = self_unused._func_compute_tolerance(
+                geoms_info, geoms_init_AABB, collider_static_config, i_ga, i_gb, i_b
+            )
 
             # Backup state before local perturbation
             ga_state = geoms_state[i_ga, i_b]
@@ -1731,7 +1760,7 @@ class Collider:
                     # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
                     # otherwise it would be more sensitive to ill-conditionning.
                     axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
-                    qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation * axis)
+                    qrot = gu.ti_rotvec_to_quat(collider_static_config.mc_perturbation * axis)
                     self_unused._func_rotate_frame(geoms_state, geoms_info, i_ga, contact_pos_0, qrot, i_b)
                     self_unused._func_rotate_frame(
                         geoms_state, geoms_info, i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b
@@ -1752,7 +1781,7 @@ class Collider:
                     else:
                         ### MPR, MJ_MPR
                         if ti.static(
-                            collider_info.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
+                            collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
                         ):
                             # Try using MPR before anything else
                             is_mpr_updated = False
@@ -1790,7 +1819,7 @@ class Collider:
 
                         ### GJK, MJ_GJK
                         elif ti.static(
-                            collider_info.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
+                            collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                         ):
                             gjk.func_gjk_contact(i_ga, i_gb, i_b)
 
@@ -1804,7 +1833,7 @@ class Collider:
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
                                         # Ignore contact points if the number of contacts exceeds the limit.
-                                        if i_c < ti.static(collider_info.n_contacts_per_pair):
+                                        if i_c < ti.static(collider_static_config.n_contacts_per_pair):
                                             contact_pos = gjk.contact_pos[i_b, i_c]
                                             normal = gjk.normal[i_b, i_c]
                                             self_unused._func_add_contact(
@@ -1825,7 +1854,7 @@ class Collider:
                                     contact_pos = gjk.contact_pos[i_b, 0]
                                     normal = gjk.normal[i_b, 0]
 
-                    if ti.static(collider_info.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                    if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         if try_sdf:
                             is_col_a = False
                             is_col_b = False
@@ -1872,8 +1901,8 @@ class Collider:
                             # Note that SDF does not take into account to direction of interest. As such, it cannot be
                             # used reliably for anything else than the point of deepest penetration.
                             prefer_sdf = (
-                                collider_info.mc_tolerance * penetration
-                                >= collider_info.mpr_to_sdf_overlap_ratio * tolerance
+                                collider_static_config.mc_tolerance * penetration
+                                >= collider_static_config.mpr_to_sdf_overlap_ratio * tolerance
                             )
 
                             if is_col_a and (
@@ -1922,7 +1951,9 @@ class Collider:
                             )
                             n_con = 1
 
-                        if ti.static(collider_info.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
+                        if ti.static(
+                            collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
+                        ):
                             collider_state.contact_cache[i_ga, i_gb, i_b].normal = normal
                     else:
                         # Clear collision normal cache if not in contact
@@ -1930,7 +1961,9 @@ class Collider:
                         collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
-                    if ti.static(collider_info.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
+                    if ti.static(
+                        collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
+                    ):
                         # 1. Project the contact point on both geometries
                         # 2. Revert the effect of small rotation
                         # 3. Update contact point
@@ -1957,7 +1990,9 @@ class Collider:
                         # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
                         # Rodrigues' rotation formula.
                         twist_rotvec = ti.math.clamp(
-                            normal.cross(normal_0), -collider_info.mc_perturbation, collider_info.mc_perturbation
+                            normal.cross(normal_0),
+                            -collider_static_config.mc_perturbation,
+                            collider_static_config.mc_perturbation,
                         )
                         normal += twist_rotvec.cross(normal)
 
@@ -1967,7 +2002,7 @@ class Collider:
                         # dynamics since zero-penetration contact points should not induce any force.
                         penetration = normal.dot(contact_point_b - contact_point_a)
 
-                    elif ti.static(collider_info.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                    elif ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         # Only change penetration to the initial one, because the normal vector could change abruptly
                         # under MuJoCo's GJK-EPA.
                         penetration = penetration_0
@@ -2027,6 +2062,7 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         collider_state: ti.template(),
         collider_info: ti.template(),
+        collider_static_config: ti.template(),
         i_ga,
         i_gb,
         i_b,
@@ -2539,7 +2575,7 @@ class Collider:
                             if ti.abs(b) > gs.EPS:
                                 for _j in ti.static(range(2)):
                                     j = 2 * _j - 1
-                                    if n < collider_info.box_MAXCONPAIR:
+                                    if n < collider_static_config.box_MAXCONPAIR:
                                         l = s[q] * j
                                         c1 = (l - a) / b
                                         if 0 <= c1 and c1 <= 1:
@@ -2575,7 +2611,7 @@ class Collider:
                     c1 = a * d - b * c
 
                     for i in range(4):
-                        if n < collider_info.box_MAXCONPAIR:
+                        if n < collider_static_config.box_MAXCONPAIR:
                             llx = lx if (i // 2) else -lx
                             lly = ly if (i % 2) else -ly
 
@@ -2616,7 +2652,7 @@ class Collider:
                     nf = n
 
                     for i in range(4):
-                        if n < collider_info.box_MAXCONPAIR:
+                        if n < collider_static_config.box_MAXCONPAIR:
                             x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
 
                             if nl == 0:
@@ -2712,7 +2748,7 @@ class Collider:
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
-                self._collider_info,
+                self._collider_static_config,
                 as_tensor,
                 iout,
                 fout,

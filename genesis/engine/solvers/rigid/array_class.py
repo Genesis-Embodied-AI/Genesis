@@ -31,10 +31,10 @@ class RigidGlobalInfo:
 @ti.data_oriented
 class ColliderState:
     """
-    Class to store the mutable collider data, all of which type is [ti.fields].
+    Class to store the MUTABLE collider data, all of which type is [ti.fields] (later we will support NDArrays).
     """
 
-    def __init__(self, solver, n_possible_pairs, n_vert_neighbors, collider_info):
+    def __init__(self, solver, n_possible_pairs, collider_static_config):
         """
         Parameters:
         ----------
@@ -47,16 +47,10 @@ class ColliderState:
         _B = solver._B
         f_batch = solver._batch_shape
         n_geoms = solver.n_geoms_
-        n_verts = solver.n_verts_
         max_collision_pairs = min(solver._max_collision_pairs, n_possible_pairs)
-        max_contact_pairs = max_collision_pairs * collider_info.n_contacts_per_pair
+        max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
         use_hibernation = solver._static_rigid_sim_config.use_hibernation
         box_box_detection = solver._static_rigid_sim_config.box_box_detection
-
-        ############## vertex connectivity ##############
-        self.vert_neighbors = ti.field(dtype=gs.ti_int, shape=max(1, n_vert_neighbors))
-        self.vert_neighbor_start = ti.field(dtype=gs.ti_int, shape=n_verts)
-        self.vert_n_neighbors = ti.field(dtype=gs.ti_int, shape=n_verts)
 
         ############## broad phase SAP ##############
         # This buffer stores the AABBs along the search axis of all geoms
@@ -68,9 +62,6 @@ class ColliderState:
             self.active_buffer_awake = ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms))
             self.active_buffer_hib = ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms))
         self.active_buffer = ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms))
-
-        # Stores the validity of the collision pairs
-        self.collision_pair_validity = ti.field(dtype=gs.ti_int, shape=(n_geoms, n_geoms))
 
         # Whether or not this is the first time to run the broad phase for each batch
         self.first_time = ti.field(gs.ti_int, shape=_B)
@@ -119,8 +110,8 @@ class ColliderState:
             # located depending of the pose and size of each box. In practice, up to 11 contact points have been
             # observed. The theoretical worst case scenario would be 2 cubes roughly the same size and same center,
             # with transform RPY = (45, 45, 45), resulting in 3 contact points per faces for a total of 16 points.
-            self.box_depth = ti.field(dtype=gs.ti_float, shape=f_batch(collider_info.box_MAXCONPAIR))
-            self.box_points = ti.field(gs.ti_vec3, shape=f_batch(collider_info.box_MAXCONPAIR))
+            self.box_depth = ti.field(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR))
+            self.box_points = ti.field(gs.ti_vec3, shape=f_batch(collider_static_config.box_MAXCONPAIR))
             self.box_pts = ti.field(gs.ti_vec3, shape=f_batch(6))
             self.box_lines = ti.field(gs.ti_vec6, shape=f_batch(4))
             self.box_linesu = ti.field(gs.ti_vec6, shape=f_batch(4))
@@ -129,7 +120,44 @@ class ColliderState:
             self.box_pu = ti.field(gs.ti_vec3, shape=f_batch(4))
 
         ########## Terrain contact detection ##########
-        if collider_info.has_terrain:
+        if collider_static_config.has_terrain:
+            # for faster compilation
+            self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
+            self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
+
+
+@ti.data_oriented
+class ColliderInfo:
+    """
+    Class to store the IMMUTABLE collider data, all of which type is [ti.fields] (later we will support NDArrays).
+    """
+
+    def __init__(self, solver, n_vert_neighbors, collider_static_config):
+        """
+        Parameters:
+        ----------
+        n_vert_neighbors: int
+            Size of the vertex neighbors array.
+        """
+        n_geoms = solver.n_geoms_
+        n_verts = solver.n_verts_
+
+        ############## vertex connectivity ##############
+        self.vert_neighbors = ti.field(dtype=gs.ti_int, shape=max(1, n_vert_neighbors))
+        self.vert_neighbor_start = ti.field(dtype=gs.ti_int, shape=n_verts)
+        self.vert_n_neighbors = ti.field(dtype=gs.ti_int, shape=n_verts)
+
+        ############## broad phase SAP ##############
+        # Stores the validity of the collision pairs
+        self.collision_pair_validity = ti.field(dtype=gs.ti_int, shape=(n_geoms, n_geoms))
+
+        # Number of possible pairs of collision, store them in a field to avoid recompilation
+        self._max_possible_pairs = ti.field(dtype=gs.ti_int, shape=())
+        self._max_collision_pairs = ti.field(dtype=gs.ti_int, shape=())
+        self._max_contact_pairs = ti.field(dtype=gs.ti_int, shape=())
+
+        ########## Terrain contact detection ##########
+        if collider_static_config.has_terrain:
             links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
             entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
 
@@ -137,10 +165,6 @@ class ColliderState:
             self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
             self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
             self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
-
-            # for faster compilation
-            self.xyz_max_min = ti.field(dtype=gs.ti_float, shape=f_batch(6))
-            self.prism = ti.field(dtype=gs.ti_vec3, shape=f_batch(6))
 
 
 # =========================================== MPR ===========================================

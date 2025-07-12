@@ -179,7 +179,7 @@ class MPR:
         elif geom_type == gs.GEOM_TYPE.BOX:
             v, _ = self.support_field._func_support_box(direction, i_g, i_b)
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
-            if ti.static(self._solver.collider._collider_info.has_terrain):
+            if ti.static(self._solver.collider._collider_static_config.has_terrain):
                 v, _ = self.support_field._func_support_prism(direction, i_g, i_b)
         else:
             v, _ = self.support_field._func_support_world(direction, i_g, i_b)
@@ -357,15 +357,7 @@ class MPR:
         self.simplex_support[i_s, i_b].v = v
 
     @ti.func
-    def mpr_discover_portal(
-        self_unused, 
-        mpr_state: ti.template(), 
-        i_ga, 
-        i_gb, 
-        i_b, 
-        center_a, 
-        center_b
-    ):
+    def mpr_discover_portal(self_unused, mpr_state: ti.template(), i_ga, i_gb, i_b, center_a, center_b):
         mpr_state.simplex_support[0, i_b].v1 = center_a
         mpr_state.simplex_support[0, i_b].v2 = center_b
         mpr_state.simplex_support[0, i_b].v = center_a - center_b
@@ -466,16 +458,16 @@ class MPR:
 
     @ti.func
     def guess_geoms_center(
-        self_unused, 
+        self_unused,
         geoms_state: array_class.GeomsState,
-        geoms_info: array_class.GeomsInfo, 
+        geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         static_rigid_sim_config: ti.template(),
         mpr_static_config: ti.template(),
-        i_ga, 
-        i_gb, 
-        i_b, 
-        normal_ws
+        i_ga,
+        i_gb,
+        i_b,
+        normal_ws,
     ):
         # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
         # proposed to extend its application to collision detection as it can provide the contact normal and penetration
@@ -549,14 +541,7 @@ class MPR:
         return center_a, center_b
 
     @ti.func
-    def func_mpr_contact_from_centers(
-        self_unused, 
-        i_ga, 
-        i_gb, 
-        i_b, 
-        center_a, 
-        center_b
-    ):
+    def func_mpr_contact_from_centers(self_unused, i_ga, i_gb, i_b, center_a, center_b):
         res = self_unused.mpr_discover_portal(i_ga, i_gb, i_b, center_a, center_b)
 
         is_col = False
@@ -577,20 +562,27 @@ class MPR:
 
     @ti.func
     def func_mpr_contact(
-        self_unused, 
+        self_unused,
         geoms_state: array_class.GeomsState,
-        geoms_info: array_class.GeomsInfo, 
+        geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         static_rigid_sim_config: ti.template(),
         mpr_static_config: ti.template(),
-        mpr_state: ti.template(), 
-        i_ga, 
-        i_gb, 
-        i_b, 
-        normal_ws
+        mpr_state: ti.template(),
+        i_ga,
+        i_gb,
+        i_b,
+        normal_ws,
     ):
         center_a, center_b = self_unused.guess_geoms_center(
-            geoms_state, geoms_info, geoms_init_AABB, static_rigid_sim_config, 
-            mpr_static_config, i_ga, i_gb, i_b, normal_ws
+            geoms_state,
+            geoms_info,
+            geoms_init_AABB,
+            static_rigid_sim_config,
+            mpr_static_config,
+            i_ga,
+            i_gb,
+            i_b,
+            normal_ws,
         )
         return self_unused.func_mpr_contact_from_centers(i_ga, i_gb, i_b, center_a, center_b)
