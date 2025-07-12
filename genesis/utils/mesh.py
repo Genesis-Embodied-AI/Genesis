@@ -857,49 +857,34 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
 
     return mesh
 
+
 def create_plane(size=1e3, color=None, normal=(0, 0, 1), render_as_one_sided: bool = True):
     thickness = 1e-2  # for safety
-    if render_as_one_sided:
-        half = size * 0.5
-        verts = np.array(
-            [
-                [-half, -half, 0.0],
-                [half, -half, 0.0],
-                [half, half, 0.0],
-                [-half, -half, 0.0],
-                [half, half, 0.0],
-                [-half, half, 0.0],
-            ],
-            dtype=np.float32,
-        )
-        faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
-        uv = np.array(
-            [
-                [0, 0],
-                [size, 0],
-                [size, size],
-                [0, 0],
-                [size, size],
-                [0, size],
-            ],
-            dtype=np.float32,
-        )
-        mesh = trimesh.Trimesh(verts, faces, process=False)
-    else:
-        mesh = trimesh.creation.box(extents=[size, size, thickness])
-        uv = np.array(
-            [
-                [0, 0],
-                [0, 0],
-                [0, size],
-                [0, size],
-                [size, 0],
-                [size, 0],
-                [size, size],
-                [size, size],
-            ],
-            dtype=np.float32,
-        )
+    half = size * 0.5
+    verts = np.array(
+        [
+            [-half, -half, 0.0],
+            [half, -half, 0.0],
+            [half, half, 0.0],
+            [-half, -half, 0.0],
+            [half, half, 0.0],
+            [-half, half, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+    uv = np.array(
+        [
+            [0, 0],
+            [size, 0],
+            [size, size],
+            [0, 0],
+            [size, size],
+            [0, size],
+        ],
+        dtype=np.float32,
+    )
+    mesh = trimesh.Trimesh(verts, faces, process=False)
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
