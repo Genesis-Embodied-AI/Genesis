@@ -141,16 +141,18 @@ class MPR:
         return ti.sqrt(dist), pdir
 
     @ti.func
-    def mpr_portal_dir(self, i_ga, i_gb, i_b):
-        v2v1 = self.simplex_support[2, i_b].v - self.simplex_support[1, i_b].v
-        v3v1 = self.simplex_support[3, i_b].v - self.simplex_support[1, i_b].v
+    def mpr_portal_dir(self_unused, mpr_state: ti.template(), i_ga, i_gb, i_b):
+        v2v1 = mpr_state.simplex_support[2, i_b].v - mpr_state.simplex_support[1, i_b].v
+        v3v1 = mpr_state.simplex_support[3, i_b].v - mpr_state.simplex_support[1, i_b].v
         direction = v2v1.cross(v3v1).normalized()
         return direction
 
     @ti.func
-    def mpr_portal_encapsules_origin(self, direction, i_ga, i_gb, i_b):
-        dot = self.simplex_support[1, i_b].v.dot(direction)
-        return dot > -self.CCD_EPS
+    def mpr_portal_encapsules_origin(
+        self, mpr_state: ti.template(), mpr_static_config: ti.template(), direction, i_ga, i_gb, i_b
+    ):
+        dot = mpr_state.simplex_support[1, i_b].v.dot(direction)
+        return dot > -mpr_static_config.CCD_EPS
 
     @ti.func
     def mpr_portal_can_encapsule_origin(self, v, direction):
@@ -167,9 +169,17 @@ class MPR:
         return dot1 < self.CCD_TOLERANCE + self.CCD_EPS * ti.max(1.0, dot1)
 
     @ti.func
-    def support_driver(self, direction, i_g, i_b):
+    def support_driver(
+        self_unused,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        support_field: SupportField,
+        direction,
+        i_g,
+        i_b,
+    ):
         v = ti.Vector.zero(gs.ti_float, 3)
-        geom_type = self._solver.geoms_info[i_g].type
+        geom_type = geoms_info[i_g].type
         if geom_type == gs.GEOM_TYPE.SPHERE:
             v = self.support_field._func_support_sphere(direction, i_g, i_b, False)
         elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
@@ -216,16 +226,16 @@ class MPR:
         return v_, vid
 
     @ti.func
-    def mpr_refine_portal(self, i_ga, i_gb, i_b):
+    def mpr_refine_portal(self_unused, mpr_state: ti.template(), mpr_static_config: ti.template(), i_ga, i_gb, i_b):
         ret = 1
         while True:
-            direction = self.mpr_portal_dir(i_ga, i_gb, i_b)
+            direction = self_unused.mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
 
-            if self.mpr_portal_encapsules_origin(direction, i_ga, i_gb, i_b):
+            if self_unused.mpr_portal_encapsules_origin(mpr_state, mpr_static_config, direction, i_ga, i_gb, i_b):
                 ret = 0
                 break
 
-            v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
+            v, v1, v2 = self_unused.compute_support(direction, i_ga, i_gb, i_b)
 
             if not self.mpr_portal_can_encapsule_origin(v, direction) or self.mpr_portal_reach_tolerance(
                 v, direction, i_ga, i_gb, i_b
@@ -267,19 +277,19 @@ class MPR:
         return (0.5 / sum_) * (p1 + p2)
 
     @ti.func
-    def mpr_find_penetr_touch(self, i_ga, i_gb, i_b):
+    def mpr_find_penetr_touch(self_unused, mpr_state: ti.template(), i_ga, i_gb, i_b):
         is_col = True
         penetration = gs.ti_float(0.0)
-        normal = -self.simplex_support[0, i_b].v.normalized()
-        pos = (self.simplex_support[1, i_b].v1 + self.simplex_support[1, i_b].v2) * 0.5
+        normal = -mpr_state.simplex_support[0, i_b].v.normalized()
+        pos = (mpr_state.simplex_support[1, i_b].v1 + mpr_state.simplex_support[1, i_b].v2) * 0.5
         return is_col, normal, penetration, pos
 
     @ti.func
-    def mpr_find_penetr_segment(self, i_ga, i_gb, i_b):
+    def mpr_find_penetr_segment(self_unused, mpr_state: ti.template(), i_ga, i_gb, i_b):
         is_col = True
-        penetration = self.simplex_support[1, i_b].v.norm()
-        normal = -self.simplex_support[1, i_b].v.normalized()
-        pos = (self.simplex_support[1, i_b].v1 + self.simplex_support[1, i_b].v2) * 0.5
+        penetration = mpr_state.simplex_support[1, i_b].v.norm()
+        normal = -mpr_state.simplex_support[1, i_b].v.normalized()
+        pos = (mpr_state.simplex_support[1, i_b].v1 + mpr_state.simplex_support[1, i_b].v2) * 0.5
 
         return is_col, normal, penetration, pos
 
@@ -357,91 +367,93 @@ class MPR:
         self.simplex_support[i_s, i_b].v = v
 
     @ti.func
-    def mpr_discover_portal(self_unused, mpr_state: ti.template(), i_ga, i_gb, i_b, center_a, center_b):
+    def mpr_discover_portal(
+        self_unused, mpr_state: ti.template(), mpr_static_config: ti.template(), i_ga, i_gb, i_b, center_a, center_b
+    ):
         mpr_state.simplex_support[0, i_b].v1 = center_a
         mpr_state.simplex_support[0, i_b].v2 = center_b
         mpr_state.simplex_support[0, i_b].v = center_a - center_b
         mpr_state.simplex_size[i_b] = 1
 
-        if (ti.abs(mpr_state.simplex_support[0, i_b].v) < self.CCD_EPS).all():
-            self.simplex_support[0, i_b].v[0] += 10.0 * self.CCD_EPS
+        if (ti.abs(mpr_state.simplex_support[0, i_b].v) < mpr_static_config.CCD_EPS).all():
+            mpr_state.simplex_support[0, i_b].v[0] += 10.0 * mpr_static_config.CCD_EPS
 
-        direction = -self.simplex_support[0, i_b].v.normalized()
+        direction = -mpr_state.simplex_support[0, i_b].v.normalized()
 
-        v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
+        v, v1, v2 = self_unused.compute_support(direction, i_ga, i_gb, i_b)
 
-        self.simplex_support[1, i_b].v1 = v1
-        self.simplex_support[1, i_b].v2 = v2
-        self.simplex_support[1, i_b].v = v
-        self.simplex_size[i_b] = 2
+        mpr_state.simplex_support[1, i_b].v1 = v1
+        mpr_state.simplex_support[1, i_b].v2 = v2
+        mpr_state.simplex_support[1, i_b].v = v
+        mpr_state.simplex_size[i_b] = 2
 
         dot = v.dot(direction)
 
         ret = 0
-        if dot < self.CCD_EPS:
+        if dot < mpr_static_config.CCD_EPS:
             ret = -1
         else:
-            direction = self.simplex_support[0, i_b].v.cross(self.simplex_support[1, i_b].v)
-            if direction.dot(direction) < self.CCD_EPS:
-                if (ti.abs(self.simplex_support[1, i_b].v) < self.CCD_EPS).all():
+            direction = mpr_state.simplex_support[0, i_b].v.cross(mpr_state.simplex_support[1, i_b].v)
+            if direction.dot(direction) < mpr_static_config.CCD_EPS:
+                if (ti.abs(mpr_state.simplex_support[1, i_b].v) < mpr_static_config.CCD_EPS).all():
                     ret = 1
                 else:
                     ret = 2
             else:
                 direction = direction.normalized()
-                v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
+                v, v1, v2 = self_unused.compute_support(direction, i_ga, i_gb, i_b)
                 dot = v.dot(direction)
-                if dot < self.CCD_EPS:
+                if dot < mpr_static_config.CCD_EPS:
                     ret = -1
                 else:
-                    self.simplex_support[2, i_b].v1 = v1
-                    self.simplex_support[2, i_b].v2 = v2
-                    self.simplex_support[2, i_b].v = v
-                    self.simplex_size[i_b] = 3
+                    mpr_state.simplex_support[2, i_b].v1 = v1
+                    mpr_state.simplex_support[2, i_b].v2 = v2
+                    mpr_state.simplex_support[2, i_b].v = v
+                    mpr_state.simplex_size[i_b] = 3
 
-                    va = self.simplex_support[1, i_b].v - self.simplex_support[0, i_b].v
-                    vb = self.simplex_support[2, i_b].v - self.simplex_support[0, i_b].v
+                    va = mpr_state.simplex_support[1, i_b].v - mpr_state.simplex_support[0, i_b].v
+                    vb = mpr_state.simplex_support[2, i_b].v - mpr_state.simplex_support[0, i_b].v
                     direction = va.cross(vb)
                     direction = direction.normalized()
 
-                    dot = direction.dot(self.simplex_support[0, i_b].v)
+                    dot = direction.dot(mpr_state.simplex_support[0, i_b].v)
                     if dot > 0:
-                        self.mpr_swap(1, 2, i_ga, i_gb, i_b)
+                        self_unused.mpr_swap(1, 2, i_ga, i_gb, i_b)
                         direction = -direction
 
                     # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
                     # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
                     # Since this deadlock happens very rarely, a simple fix is to abord computation after a few trials.
                     num_trials = gs.ti_int(0)
-                    while self.simplex_size[i_b] < 4:
-                        v, v1, v2 = self.compute_support(direction, i_ga, i_gb, i_b)
+                    while mpr_state.simplex_size[i_b] < 4:
+                        v, v1, v2 = self_unused.compute_support(direction, i_ga, i_gb, i_b)
                         dot = v.dot(direction)
-                        if dot < self.CCD_EPS:
+                        if dot < mpr_static_config.CCD_EPS:
                             ret = -1
                             break
 
                         cont = False
 
-                        va = self.simplex_support[1, i_b].v.cross(v)
-                        dot = va.dot(self.simplex_support[0, i_b].v)
-                        if dot < -self.CCD_EPS:
-                            self.simplex_support[2, i_b].v1 = v1
-                            self.simplex_support[2, i_b].v2 = v2
-                            self.simplex_support[2, i_b].v = v
+                        va = mpr_state.simplex_support[1, i_b].v.cross(v)
+                        dot = va.dot(mpr_state.simplex_support[0, i_b].v)
+                        if dot < -mpr_static_config.CCD_EPS:
+                            mpr_state.simplex_support[2, i_b].v1 = v1
+                            mpr_state.simplex_support[2, i_b].v2 = v2
+                            mpr_state.simplex_support[2, i_b].v = v
                             cont = True
 
                         if not cont:
-                            va = v.cross(self.simplex_support[2, i_b].v)
-                            dot = va.dot(self.simplex_support[0, i_b].v)
-                            if dot < -self.CCD_EPS:
-                                self.simplex_support[1, i_b].v1 = v1
-                                self.simplex_support[1, i_b].v2 = v2
-                                self.simplex_support[1, i_b].v = v
+                            va = v.cross(mpr_state.simplex_support[2, i_b].v)
+                            dot = va.dot(mpr_state.simplex_support[0, i_b].v)
+                            if dot < -mpr_static_config.CCD_EPS:
+                                mpr_state.simplex_support[1, i_b].v1 = v1
+                                mpr_state.simplex_support[1, i_b].v2 = v2
+                                mpr_state.simplex_support[1, i_b].v = v
                                 cont = True
 
                         if cont:
-                            va = self.simplex_support[1, i_b].v - self.simplex_support[0, i_b].v
-                            vb = self.simplex_support[2, i_b].v - self.simplex_support[0, i_b].v
+                            va = mpr_state.simplex_support[1, i_b].v - mpr_state.simplex_support[0, i_b].v
+                            vb = mpr_state.simplex_support[2, i_b].v - mpr_state.simplex_support[0, i_b].v
                             direction = va.cross(vb)
                             direction = direction.normalized()
                             num_trials = num_trials + 1
@@ -449,10 +461,10 @@ class MPR:
                                 ret = -1
                                 break
                         else:
-                            self.simplex_support[3, i_b].v1 = v1
-                            self.simplex_support[3, i_b].v2 = v2
-                            self.simplex_support[3, i_b].v = v
-                            self.simplex_size[i_b] = 4
+                            mpr_state.simplex_support[3, i_b].v1 = v1
+                            mpr_state.simplex_support[3, i_b].v2 = v2
+                            mpr_state.simplex_support[3, i_b].v = v
+                            mpr_state.simplex_size[i_b] = 4
 
         return ret
 
@@ -541,8 +553,10 @@ class MPR:
         return center_a, center_b
 
     @ti.func
-    def func_mpr_contact_from_centers(self_unused, i_ga, i_gb, i_b, center_a, center_b):
-        res = self_unused.mpr_discover_portal(i_ga, i_gb, i_b, center_a, center_b)
+    def func_mpr_contact_from_centers(
+        self_unused, mpr_state: ti.template(), mpr_static_config: ti.template(), i_ga, i_gb, i_b, center_a, center_b
+    ):
+        res = self_unused.mpr_discover_portal(mpr_state, mpr_static_config, i_ga, i_gb, i_b, center_a, center_b)
 
         is_col = False
         pos = gs.ti_vec3([0.0, 0.0, 0.0])
@@ -550,11 +564,11 @@ class MPR:
         penetration = gs.ti_float(0.0)
 
         if res == 1:
-            is_col, normal, penetration, pos = self.mpr_find_penetr_touch(i_ga, i_gb, i_b)
+            is_col, normal, penetration, pos = self_unused.mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
         elif res == 2:
-            is_col, normal, penetration, pos = self.mpr_find_penetr_segment(i_ga, i_gb, i_b)
+            is_col, normal, penetration, pos = self_unused.mpr_find_penetr_segment(mpr_state, i_ga, i_gb, i_b)
         elif res == 0:
-            res = self.mpr_refine_portal(i_ga, i_gb, i_b)
+            res = self_unused.mpr_refine_portal(i_ga, i_gb, i_b)
             if res >= 0:
                 is_col, normal, penetration, pos = self.mpr_find_penetration(i_ga, i_gb, i_b)
 
