@@ -858,7 +858,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(size=1e3, color=None, normal=(0, 0, 1), render_as_one_sided: bool = True):
+def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
     thickness = 1e-2  # for safety
     half = size * 0.5
     verts = np.array(
