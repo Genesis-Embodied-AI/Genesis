@@ -296,9 +296,7 @@ class RasterizerContext:
                             mesh=mesh,
                             poses=geom_T,
                             smooth=geom.surface.smooth if "collision" not in rigid_entity.surface.vis_mode else False,
-                            double_sided=(
-                                geom.surface.double_sided if "collision" not in rigid_entity.surface.vis_mode else False
-                            ),
+                            double_sided=rigid_entity.morph.double_sided,
                             is_floor=isinstance(rigid_entity._morph, gs.morphs.Plane),
                             env_shared=not self.env_separate_rigid,
                         )
