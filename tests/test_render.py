@@ -10,7 +10,6 @@ import genesis as gs
 def test_segmentation(segmentation_level, particle_mode):
     """Test segmentation rendering."""
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
         fem_options=gs.options.FEMOptions(use_implicit_solver=True),
         vis_options=gs.options.VisOptions(segmentation_level=segmentation_level),
         show_viewer=False,
@@ -64,7 +63,7 @@ def test_segmentation(segmentation_level, particle_mode):
     )
     scene.build()
 
-    seg_num = len(materials) + 3 if segmentation_level == "link" else len(materials) + 2
+    seg_num = len(materials) + (3 if segmentation_level == "link" else 2)
     idx_dict = camera.get_segmentation_idx_dict()
     assert len(idx_dict) == seg_num
     comp_key = 0
@@ -76,6 +75,4 @@ def test_segmentation(segmentation_level, particle_mode):
     for i in range(2):
         scene.step()
         _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
-        uni_count = len(np.unique(seg))
-        assert seg.min() == 0
-        assert seg.max() == uni_count - 1 == seg_num - 1
+        assert_allclose(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))

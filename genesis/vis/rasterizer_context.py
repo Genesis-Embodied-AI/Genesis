@@ -486,7 +486,7 @@ class RasterizerContext:
         if self.sim.mpm_solver.is_active():
             idx = self.rendered_envs_idx[0]
             particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, idx]
-            active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
+            active_all = self.sim.mpm_solver.particles_render.active.to_numpy(dtype=np.bool_)[:, idx]
             vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, idx, :]
 
             for mpm_entity in self.sim.mpm_solver.entities:
@@ -551,7 +551,7 @@ class RasterizerContext:
         if self.sim.sph_solver.is_active():
             idx = self.rendered_envs_idx[0]
             particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()[:, idx]
-            active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
+            active_all = self.sim.sph_solver.particles_render.active.to_numpy(dtype=np.bool_)[:, idx]
 
             for sph_entity in self.sim.sph_solver.entities:
                 if sph_entity.surface.vis_mode == "recon":
@@ -627,7 +627,7 @@ class RasterizerContext:
             idx = self.rendered_envs_idx[0]
             particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, idx]
             particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, idx]
-            active_all = self.sim.pbd_solver.particles_render.active.to_numpy().astype(bool)[:, idx]
+            active_all = self.sim.pbd_solver.particles_render.active.to_numpy(dtype=np.bool_)[:, idx]
             vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, idx]
 
             for pbd_entity in self.sim.pbd_solver.entities:
@@ -878,43 +878,15 @@ class RasterizerContext:
         self.seg_node_map.pop(seg_node)
 
     def generate_seg_vars(self):
-        # seg_idx: same as entity/link/geom's idx
-        # seg_idxc: seg_idx offset by 1, as 0 is reserved for empty space
+        # seg_key: same as entity/link/geom's idx
+        # seg_idxc: segmentation index of objects
         # seg_idxc_rgb: colorized seg_idxc internally used by renderer
-
-        # render node to seg_idxc_rgb
-        # seg_idxc_max = 0
-        # if self.sim.rigid_solver.is_active():
-        #     for rigid_entity in self.sim.rigid_solver.entities:
-        #         if rigid_entity.surface.vis_mode == "visual":
-        #             geoms = rigid_entity.vgeoms
-        #         else:
-        #             geoms = rigid_entity.geoms
-
-        #         for geom in geoms:
-        #             seg_idx = None
-        #             if self.segmentation_level == "geom":
-        #                 seg_idx = geom.idx
-        #                 assert False, "geom level segmentation not supported yet"
-        #             elif self.segmentation_level == "link":
-        #                 seg_idx = geom.link.idx
-        #             elif self.segmentation_level == "entity":
-        #                 seg_idx = geom.entity.idx
-        #             else:
-        #                 gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
-        #             seg_idxc = self.seg_idx_to_idxc(seg_idx)
-        #             self.seg_node_map[self.rigid_nodes[geom.uid]] = self.seg_idxc_to_idxc_rgb(seg_idxc)
-        #             seg_idxc_max = max(seg_idxc_max, seg_idxc)
-
         num_keys = len(self.seg_key_map)
-        prev_seed = np.random.get_state()  # to make sure color is consistent across runs
-        np.random.seed(42)
-        self.seg_idxc_to_color = np.random.randint(0, 255, (num_keys, 3), dtype=np.uint8)
-        self.seg_idxc_to_color[0, :] = 0  # background uses black
-        np.random.set_state(prev_seed)
+        rng = np.random.default_rng(seed=42)
+        self.seg_idxc_to_color = rng.integers(0, 255, size=(num_keys, 3), dtype=np.uint8)
+        self.seg_idxc_to_color[0] = 0  # background uses black
 
     def seg_key_to_idxc(self, seg_key):
-        # offset by 1 since (0, 0, 0) is reserved for background (nothing)
         seg_idxc = self.seg_key_map.setdefault(seg_key, len(self.seg_key_map))
         self.seg_idxc_map[seg_idxc] = seg_key
         return seg_idxc
@@ -931,7 +903,6 @@ class RasterizerContext:
         return seg_idxc_rgb
 
     def seg_idxc_to_key(self, seg_idxc):
-        # offset by 1 since (0, 0, 0) is reserved for background (nothing)
         return self.seg_idxc_map[seg_idxc]
 
     def seg_idxc_rgb_arr_to_idxc_arr(self, seg_idxc_rgb_arr):

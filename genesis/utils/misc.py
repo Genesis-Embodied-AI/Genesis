@@ -54,7 +54,7 @@ class redirect_libc_stderr:
 
     def __init__(self, fd):
         self.fd = fd
-        self.stderr_fileno = None  # Usually 2
+        self.stderr_fileno = None
         self.original_stderr_fileno = None
 
     # --------------------------------------------------
