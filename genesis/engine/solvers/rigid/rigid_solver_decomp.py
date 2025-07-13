@@ -695,7 +695,6 @@ class RigidSolver(Solver):
             # cd
             cd_ang=gs.ti_vec3,
             cd_vel=gs.ti_vec3,
-            root_COM=gs.ti_vec3,
             mass_sum=gs.ti_float,
             COM=gs.ti_vec3,
             mass_shift=gs.ti_float,
@@ -2441,7 +2440,7 @@ class RigidSolver(Solver):
             for i_l_ in range(rgi.n_awake_links[i_b]):
                 i_l = rgi.awake_links[i_l_, i_b]
 
-                links_state[i_l, i_b].root_COM = ti.Vector.zero(gs.ti_float, 3)
+                links_state[i_l, i_b].COM.fill(0.0)
                 links_state[i_l, i_b].mass_sum = 0.0
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2460,10 +2459,8 @@ class RigidSolver(Solver):
                 )
 
                 i_r = links_info[I_l].root_idx
-                ti.atomic_add(links_state[i_r, i_b].mass_sum, mass)
-
-                COM = mass * links_state[i_l, i_b].i_pos
-                ti.atomic_add(links_state[i_r, i_b].root_COM, COM)
+                links_state[i_r, i_b].mass_sum += mass
+                links_state[i_r, i_b].COM += mass * links_state[i_l, i_b].i_pos
 
             ti.loop_config(serialize=sstatic_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l_ in range(rgi.n_awake_links[i_b]):
@@ -2472,7 +2469,7 @@ class RigidSolver(Solver):
 
                 i_r = links_info[I_l].root_idx
                 if i_l == i_r:
-                    links_state[i_l, i_b].root_COM = links_state[i_l, i_b].root_COM / links_state[i_l, i_b].mass_sum
+                    links_state[i_l, i_b].COM = links_state[i_l, i_b].COM / links_state[i_l, i_b].mass_sum
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l_ in range(rgi.n_awake_links[i_b]):
@@ -2480,7 +2477,7 @@ class RigidSolver(Solver):
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
                 i_r = links_info[I_l].root_idx
-                links_state[i_l, i_b].root_COM = links_state[i_r, i_b].root_COM
+                links_state[i_l, i_b].COM = links_state[i_r, i_b].COM
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l_ in range(rgi.n_awake_links[i_b]):
@@ -2491,7 +2488,6 @@ class RigidSolver(Solver):
                 l_info = links_info[I_l]
 
                 i_r = links_info[I_l].root_idx
-                links_state[i_l, i_b].COM = links_state[i_r, i_b].root_COM
                 links_state[i_l, i_b].i_pos = links_state[i_l, i_b].i_pos - links_state[i_l, i_b].COM
 
                 i_inertial = l_info.inertial_i
@@ -2614,7 +2610,7 @@ class RigidSolver(Solver):
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l in range(n_links):
-                links_state[i_l, i_b].root_COM = ti.Vector.zero(gs.ti_float, 3)
+                links_state[i_l, i_b].COM.fill(0.0)
                 links_state[i_l, i_b].mass_sum = 0.0
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2632,10 +2628,8 @@ class RigidSolver(Solver):
                 )
 
                 i_r = links_info[I_l].root_idx
-                ti.atomic_add(links_state[i_r, i_b].mass_sum, mass)
-
-                COM = mass * links_state[i_l, i_b].i_pos
-                ti.atomic_add(links_state[i_r, i_b].root_COM, COM)
+                links_state[i_r, i_b].mass_sum += mass
+                links_state[i_r, i_b].COM += mass * links_state[i_l, i_b].i_pos
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l in range(n_links):
@@ -2644,14 +2638,14 @@ class RigidSolver(Solver):
                 i_r = links_info[I_l].root_idx
                 if i_l == i_r:
                     if links_state[i_l, i_b].mass_sum > 0.0:
-                        links_state[i_l, i_b].root_COM = links_state[i_l, i_b].root_COM / links_state[i_l, i_b].mass_sum
+                        links_state[i_l, i_b].COM = links_state[i_l, i_b].COM / links_state[i_l, i_b].mass_sum
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l in range(n_links):
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
                 i_r = links_info[I_l].root_idx
-                links_state[i_l, i_b].root_COM = links_state[i_r, i_b].root_COM
+                links_state[i_l, i_b].COM = links_state[i_r, i_b].COM
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_l in range(n_links):
@@ -2661,7 +2655,6 @@ class RigidSolver(Solver):
                 l_info = links_info[I_l]
 
                 i_r = links_info[I_l].root_idx
-                links_state[i_l, i_b].COM = links_state[i_r, i_b].root_COM
                 links_state[i_l, i_b].i_pos = links_state[i_l, i_b].i_pos - links_state[i_l, i_b].COM
 
                 i_inertial = l_info.inertial_i
