@@ -141,6 +141,8 @@ class HybridEntity(Entity):
                     part_soft=part_soft,
                 )
             )
+            if muscle_group is not None:
+                muscle_group = muscle_group.astype(gs.np_int, copy=False)
 
             # set muscle group
             mat_soft._n_groups = len(link_idcs)
@@ -154,10 +156,10 @@ class HybridEntity(Entity):
                     trans_local_to_global=gs.ti_vec3,
                     quat_local_to_global=gs.ti_vec4,
                 ).field(shape=(mat_soft.n_groups,), needs_grad=False, layout=ti.Layout.SOA)
-                part_soft_info.link_idx.from_numpy(np.array(link_idcs).astype(gs.np_int))
-                part_soft_info.geom_idx.from_numpy(np.array(geom_idcs).astype(gs.np_int))
-                part_soft_info.trans_local_to_global.from_numpy(np.array(trans_local_to_global).astype(gs.np_float))
-                part_soft_info.quat_local_to_global.from_numpy(np.array(quat_local_to_global).astype(gs.np_float))
+                part_soft_info.link_idx.from_numpy(np.asarray(link_idcs, dtype=gs.np_int))
+                part_soft_info.geom_idx.from_numpy(np.asarray(geom_idcs, dtype=gs.np_int))
+                part_soft_info.trans_local_to_global.from_numpy(np.asarray(trans_local_to_global, dtype=gs.np_float))
+                part_soft_info.quat_local_to_global.from_numpy(np.asarray(quat_local_to_global, dtype=gs.np_float))
 
                 part_soft_init_positions = ti.field(dtype=gs.ti_vec3, shape=(part_soft.init_particles.shape[0],))
                 part_soft_init_positions.from_torch(gs.Tensor(part_soft.init_particles))
@@ -352,7 +354,7 @@ class HybridEntity(Entity):
         # can only be called here (at sim build)
         if not self.material.use_default_coupling and self._muscle_group_cache is not None:
             self._part_soft.set_muscle(
-                muscle_group=gs.tensor(self._muscle_group_cache.astype(gs.np_int)),
+                muscle_group=gs.tensor(self._muscle_group_cache),
                 # no muscle direction as the soft body is actuated by rigid parts
             )
 
@@ -618,7 +620,7 @@ def default_func_instantiate_rigid_from_soft(
     # add rigid entity
     mesh_center = (mesh.vertices.max(0) + mesh.vertices.min(0)) / 2.0
     offset = (graph_pos[src_node] - mesh_center) * morph.scale
-    pos_rigid = morph.pos + offset.astype(gs.np_float)
+    pos_rigid = morph.pos + offset.astype(gs.np_float, copy=False)
     quat_rigid = morph.quat
     scale_rigid = morph.scale
     morph_rigid = gs.morphs.URDF(
@@ -700,11 +702,10 @@ def default_func_instantiate_rigid_soft_association_from_soft(
         dist_to_p1 = np.linalg.norm(positions - p1, axis=-1)
         dist_to_line = np.sqrt(dist_to_p0**2 - ((positions_proj_on_line_t[:, None] * line_vec) ** 2).sum(-1))
 
-        dist_to_link = (
-            dist_to_p0 * (positions_proj_on_line_t < 0).astype(float)
-            + dist_to_p1 * (positions_proj_on_line_t > 1).astype(float)
-            + dist_to_line * np.logical_and(positions_proj_on_line_t >= 0, positions_proj_on_line_t <= 1).astype(float)
-        )
+        is_clipped_low = positions_proj_on_line_t < 0.0
+        is_clipped_high = positions_proj_on_line_t > 1.0
+        is_valid = ~is_clipped_low & ~is_clipped_high
+        dist_to_link = dist_to_p0 * is_clipped_low + dist_to_p1 * is_clipped_high + dist_to_line * is_valid
 
         trans, quat = gu.transform_pos_quat_by_trans_quat(
             geom.init_pos, geom.init_quat, link.init_x_pos, link.init_x_quat
