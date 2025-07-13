@@ -104,7 +104,7 @@ class MPMSolver(Solver):
 
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # static particle info
@@ -112,7 +112,7 @@ class MPMSolver(Solver):
             mat_idx=gs.ti_int,
             mass=gs.ti_float,
             default_Jp=gs.ti_float,
-            free=ti.u1,
+            free=gs.ti_bool,
             # for muscle
             muscle_group=gs.ti_int,
             muscle_direction=gs.ti_vec3,
@@ -122,7 +122,7 @@ class MPMSolver(Solver):
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # construct fields
@@ -176,7 +176,7 @@ class MPMSolver(Solver):
 
         struct_vvert_state_render = ti.types.struct(
             pos=gs.ti_vec3,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
         self.vverts_render = struct_vvert_state_render.field(
             shape=self._batch_shape(max(1, self._n_vverts)), layout=ti.Layout.SOA
@@ -677,7 +677,7 @@ class MPMSolver(Solver):
     def _kernel_add_particles(
         self,
         f: ti.i32,
-        active: ti.u1,
+        active: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
         mat_idx: ti.i32,
@@ -801,7 +801,7 @@ class MPMSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        active: ti.u1,  # single scalar
+        active: ti.i32,  # single scalar
     ):
         # If 'active' is truly the same scalar across all batches:
         for i_p, i_b in ti.ndrange(n_particles, self._B):
