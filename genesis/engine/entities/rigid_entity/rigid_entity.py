@@ -407,6 +407,9 @@ class RigidEntity(Entity):
             j_info["dofs_stiffness"] = np.zeros(6)
             j_info["dofs_invweight"] = np.zeros(6)
             j_info["dofs_damping"] = np.zeros(6)
+            if isinstance(morph, gs.morphs.Drone):
+                mass_tot = sum(l_info["inertial_mass"] for l_info in l_infos)
+                j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
             j_info["dofs_armature"] = np.zeros(6)
             j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
@@ -1113,13 +1116,13 @@ class RigidEntity(Entity):
             gs.raise_exception("Target link not provided.")
 
         if len(poss) == 0:
-            poss = [None] * n_links
+            poss = [None for _ in range(n_links)]
             pos_mask = [False, False, False]
         elif len(poss) != n_links:
             gs.raise_exception("Accepting only `poss` with length equal to `links` or empty list.")
 
         if len(quats) == 0:
-            quats = [None] * n_links
+            quats = [None for _ in range(n_links)]
             rot_mask = [False, False, False]
         elif len(quats) != n_links:
             gs.raise_exception("Accepting only `quats` with length equal to `links` or empty list.")

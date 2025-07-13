@@ -178,7 +178,7 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
+                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].COM
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
