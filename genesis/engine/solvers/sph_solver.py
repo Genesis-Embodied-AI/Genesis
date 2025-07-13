@@ -77,7 +77,7 @@ class SPHSolver(Solver):
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
             reordered_idx=gs.ti_int,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # static particle info
@@ -94,7 +94,7 @@ class SPHSolver(Solver):
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # construct fields
