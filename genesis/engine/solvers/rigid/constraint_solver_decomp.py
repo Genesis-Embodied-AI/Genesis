@@ -1204,7 +1204,14 @@ class ConstraintSolver:
             )
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
-            self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
+            self._solver._func_solve_mass_batched(
+                self.grad,
+                self.Mgrad,
+                i_b,
+                entities_info=self._solver.entities_info,
+                rigid_global_info=self._solver._rigid_global_info,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            )
 
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(i_b)
