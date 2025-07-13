@@ -402,9 +402,9 @@ def inv_quat(quat):
 
 def inv_T(T):
     if isinstance(T, torch.Tensor):
-        T_inv = torch.zeros(T)
+        T_inv = torch.zeros_like(T)
     elif isinstance(T, np.ndarray):
-        T_inv = np.zeros(T)
+        T_inv = np.zeros_like(T)
     else:
         gs.raise_exception(f"the input must be torch.Tensor or np.ndarray. got: {type(T)=}")
 
