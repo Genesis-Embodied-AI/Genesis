@@ -1982,13 +1982,13 @@ class RigidSolver(Solver):
             )
 
             self._func_update_geoms(
-                i_b,
-                self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.links_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
+                i_b=i_b,
+                entities_info=self.entities_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
         self._func_forward_dynamics()
@@ -2583,34 +2583,35 @@ class RigidSolver(Solver):
         rigid_global_info,
         static_rigid_sim_config: ti.template(),
     ):
+        n_entities = entities_info.shape[0]
         if ti.static(static_rigid_sim_config.use_hibernation):
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
                 i_e = rigid_global_info.awake_entities[i_e_, i_b]
                 self_unused._func_forward_velocity_entity(
-                    i_e,
-                    i_b,
-                    entities_info,
-                    links_info,
-                    links_state,
-                    joints_info,
-                    dofs_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
+                    i_e=i_e,
+                    i_b=i_b,
+                    entities_info=entities_info,
+                    links_info=links_info,
+                    links_state=links_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
                 )
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_e in range(entities_info.shape[0]):
+            for i_e in range(n_entities):
                 self_unused._func_forward_velocity_entity(
-                    i_e,
-                    i_b,
-                    entities_info,
-                    links_info,
-                    links_state,
-                    joints_info,
-                    dofs_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
+                    i_e=i_e,
+                    i_b=i_b,
+                    entities_info=entities_info,
+                    links_info=links_info,
+                    links_state=links_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
                 )
 
     @ti.func
@@ -2813,6 +2814,7 @@ class RigidSolver(Solver):
         """
         NOTE: this only update geom pose, not its verts and else.
         """
+        n_geoms = geoms_info.shape[0]
         if ti.static(static_rigid_sim_config.use_hibernation):
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
@@ -2830,7 +2832,7 @@ class RigidSolver(Solver):
                     geoms_state[i_g, i_b].verts_updated = 0
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_g in range(entities_info.shape[0]):
+            for i_g in range(n_geoms):
                 g_info = geoms_info[i_g]
 
                 l_state = links_state[g_info.link_idx, i_b]
