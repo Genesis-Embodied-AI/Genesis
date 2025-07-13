@@ -158,8 +158,8 @@ class LBVH(RBC):
         # Nodes of the BVH, first n_aabbs - 1 are internal nodes, last n_aabbs are leaf nodes
         self.nodes = self.Node.field(shape=(self.n_batches, self.n_aabbs * 2 - 1))
         # Whether an internal node has been visited during traversal
-        self.internal_node_active = ti.field(ti.u1, shape=(self.n_batches, self.n_aabbs - 1))
-        self.internal_node_ready = ti.field(ti.u1, shape=(self.n_batches, self.n_aabbs - 1))
+        self.internal_node_active = ti.field(gs.ti_bool, shape=(self.n_batches, self.n_aabbs - 1))
+        self.internal_node_ready = ti.field(gs.ti_bool, shape=(self.n_batches, self.n_aabbs - 1))
 
         # Query results, vec3 of batch id, self id, query id
         self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
@@ -350,7 +350,7 @@ class LBVH(RBC):
                 self.internal_node_active[i_b, parent_idx] = True
 
     @ti.kernel
-    def _kernel_compute_bounds_one_layer(self) -> ti.u1:
+    def _kernel_compute_bounds_one_layer(self) -> ti.i32:
         for i_b, i in ti.ndrange(self.n_batches, self.n_aabbs - 1):
             if self.internal_node_active[i_b, i]:
                 left_bound = self.nodes[i_b, self.nodes[i_b, i].left].bound
