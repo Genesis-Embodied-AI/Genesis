@@ -396,11 +396,7 @@ class RigidSolver(Solver):
         entities_info: array_class.EntitiesInfo,
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
-<<<<<<< HEAD
         decompose: ti.i32,
-=======
-        decompose: ti.u1,
->>>>>>> 1454f79 (init weight)
     ):
         self_unused._func_compute_mass_matrix(
             implicit_damping=False,
