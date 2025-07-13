@@ -200,10 +200,10 @@ class PathPlanner(ABC):
         obj_geom_end: ti.int32 = -1,
     ):
         is_collision_detected = False
-        for i_c in range(self._solver.collider.n_contacts[i_b]):
+        for i_c in range(self._solver.collider._collider_state.n_contacts[i_b]):
             if not is_collision_detected:
-                i_ga = self._solver.collider.contact_data[i_c, i_b].geom_a
-                i_gb = self._solver.collider.contact_data[i_c, i_b].geom_b
+                i_ga = self._solver.collider._collider_state.contact_data[i_c, i_b].geom_a
+                i_gb = self._solver.collider._collider_state.contact_data[i_c, i_b].geom_b
 
                 is_ignored = False
                 for i_p in range(ignore_geom_pairs.shape[0]):
@@ -366,7 +366,19 @@ class RRT(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
+                    self._solver._func_forward_kinematics_entity(
+                        self._entity._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
                     self._solver._func_update_geoms(i_b)
 
     @ti.kernel
@@ -686,7 +698,19 @@ class RRTConnect(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
+                    self._solver._func_forward_kinematics_entity(
+                        self._entity._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
                     self._solver._func_update_geoms(i_b)
 
     @ti.kernel
