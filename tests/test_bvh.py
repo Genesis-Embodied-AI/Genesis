@@ -8,12 +8,6 @@ from genesis.engine.bvh import LBVH, AABB
 from .utils import assert_allclose
 
 
-pytest.skip(
-    reason="'build_radix_tree' broken, leading to inf loop in 'compute_bounds' (out-of-bounds mem).",
-    allow_module_level=True,
-)
-
-
 @pytest.fixture(scope="function")
 def lbvh():
     """Fixture for a LBVH tree"""
@@ -38,7 +32,7 @@ def test_morton_code(lbvh):
     for i_b in range(morton_codes.shape[0]):
         for i in range(1, morton_codes.shape[1]):
             assert (
-                morton_codes[i_b, i] > morton_codes[i_b, i - 1]
+                morton_codes[i_b, i, 0] > morton_codes[i_b, i - 1, 0]
             ), f"Morton codes are not sorted: {morton_codes[i_b, i]} < {morton_codes[i_b, i - 1]}"
 
 
