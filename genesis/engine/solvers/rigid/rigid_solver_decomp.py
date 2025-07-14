@@ -5733,17 +5733,17 @@ class RigidSolver(Solver):
                 "obj_b": obj_b,
                 "valid_mask": zeros((n_envs, 0), dtype=bool),
             }
-        rows = n_envs * stride
+        shape3 = (n_envs, stride, 3)
         if to_torch:
-            buf = torch.full((rows, 3), -1, dtype=gs.tc_int, device=gs.device)
+            buf = torch.full(shape3, -1, dtype=gs.tc_int, device=gs.device)
         else:
-            buf = np.full((rows, 3), -1, dtype=np.int32)
+            buf = np.full(shape3, -1, dtype=np.int32)
         self._kernel_collect_welds(buf)
         if n_envs == 1:
-            buf = buf[buf[:, 1] != -1]
-            return {"obj_a": buf[:, 1], "obj_b": buf[:, 2]}
+            sub = buf[0]
+            sub = sub[sub[:, 1] != -1]
+            return {"obj_a": sub[:, 1], "obj_b": sub[:, 2]}
 
-        buf = buf.reshape(n_envs, stride, 3)
         env_arr = buf[..., 0]
         obj_a = buf[..., 1]
         obj_b = buf[..., 2]
@@ -5772,10 +5772,9 @@ class RigidSolver(Solver):
             for j in range(n_eq):
                 rec = self.equalities_info[j, env]
                 if rec.eq_type == WELD and out < stride:
-                    dst = env * stride + out
-                    buf[dst, 0] = env
-                    buf[dst, 1] = rec.eq_obj1id
-                    buf[dst, 2] = rec.eq_obj2id
+                    buf[env, out, 0] = env
+                    buf[env, out, 1] = rec.eq_obj1id
+                    buf[env, out, 2] = rec.eq_obj2id
                     out += 1
 
     # ------------------------------------------------------------------------------------
