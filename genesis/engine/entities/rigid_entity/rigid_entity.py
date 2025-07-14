@@ -22,6 +22,7 @@ from genesis.utils.path_planing import RRT, RRTConnect
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
+from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 
@@ -3050,7 +3051,7 @@ class RigidEntity(Entity):
         return self._q_start + self.n_qs
 
     @property
-    def geoms(self):
+    def geoms(self) -> list[RigidGeom]:
         """The list of collision geoms (`RigidGeom`) in the entity."""
         if self.is_built:
             return self._geoms
@@ -3072,7 +3073,7 @@ class RigidEntity(Entity):
             return vgeoms
 
     @property
-    def links(self):
+    def links(self) -> list[RigidLink]:
         """The list of links (`RigidLink`) in the entity."""
         return self._links
 
