@@ -88,9 +88,22 @@ class PathPlanner(ABC):
             qpos_start = qpos_start.unsqueeze(0)
         return qpos_cur, qpos_goal, qpos_start, envs_idx
 
-    def get_exclude_geom_pairs(self, qpos_goal, qpos_start, envs_idx):
+    def get_exclude_geom_pairs(self, qposs, envs_idx):
+        """
+        Parameters
+        ----------
+        qposs : list of torch.Tensor
+            List of qpos tensors to ignore the collision check.
+        envs_idx : torch.Tensor
+            Environment indices.
+
+        Returns
+        -------
+        unique_pairs : torch.Tensor
+            Unique pairs of geom indices to ignore the collision check.
+        """
         collision_pairs = []
-        for qpos in [qpos_start, qpos_goal]:
+        for qpos in qposs:
             if self._solver.n_envs > 0:
                 self._entity.set_qpos(qpos, envs_idx=envs_idx)
             else:
@@ -323,6 +336,14 @@ class RRT(PathPlanner):
         q_limit_upper: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
+        """
+        Step 1 includes:
+        - generate random sample
+        - find nearest neighbor
+        - steer from nearest neighbor to random sample
+        - add new node
+        - set the steer result (to prepare for collision checking)
+        """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
@@ -399,6 +420,12 @@ class RRT(PathPlanner):
         obj_geom_start: ti.int32,
         obj_geom_end: ti.int32,
     ):
+        """
+        Step 2 includes:
+        - check collision
+        - if collision is detected, remove the new node
+        - if collision is not detected, check if the new node is within goal configuration
+        """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
@@ -448,7 +475,13 @@ class RRT(PathPlanner):
     ):
         qpos_cur = self._entity.get_qpos(envs_idx=envs_idx)
         qpos_cur, qpos_goal, qpos_start, envs_idx = self.format_input(qpos_cur, qpos_goal, qpos_start, envs_idx)
-        unique_pairs = self.get_exclude_geom_pairs(qpos_goal, qpos_start, envs_idx)
+        unique_pairs = self.get_exclude_geom_pairs([qpos_goal, qpos_start], envs_idx)
+
+        # NOTE: set qpos to start configuration
+        if self._solver.n_envs > 0:
+            self._entity.set_qpos(qpos_start, envs_idx=envs_idx)
+        else:
+            self._entity.set_qpos(qpos_start[0])
 
         is_plan_with_obj = False
         _pos, _quat = None, None
@@ -575,6 +608,9 @@ class RRT(PathPlanner):
         else:
             self._entity.set_qpos(qpos_cur)
 
+        if is_plan_with_obj:
+            self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
+
         if is_invalid.any():
             num_failure = int(is_invalid.sum().cpu())
             gs.logger.warning(f"rrt planning failed in {num_failure} environments")
@@ -644,6 +680,14 @@ class RRTConnect(PathPlanner):
         q_limit_upper: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
+        """
+        Step 1 includes:
+        - generate random sample
+        - find nearest neighbor
+        - steer from nearest neighbor to random sample
+        - add new node
+        - set the steer result (to prepare for collision checking)
+        """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
@@ -737,6 +781,12 @@ class RRTConnect(PathPlanner):
         obj_geom_start: ti.int32,
         obj_geom_end: ti.int32,
     ):
+        """
+        Step 2 includes:
+        - check collision
+        - if collision is detected, remove the new node
+        - if collision is not detected, check if the new node is within goal configuration
+        """
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
@@ -802,7 +852,13 @@ class RRTConnect(PathPlanner):
     ):
         qpos_cur = self._entity.get_qpos(envs_idx=envs_idx)
         qpos_cur, qpos_goal, qpos_start, envs_idx = self.format_input(qpos_cur, qpos_goal, qpos_start, envs_idx)
-        unique_pairs = self.get_exclude_geom_pairs(qpos_goal, qpos_start, envs_idx)
+        unique_pairs = self.get_exclude_geom_pairs([qpos_goal, qpos_start], envs_idx)
+
+        # NOTE: set qpos to start configuration
+        if self._solver.n_envs > 0:
+            self._entity.set_qpos(qpos_start, envs_idx=envs_idx)
+        else:
+            self._entity.set_qpos(qpos_start[0])
 
         is_plan_with_obj = False
         _pos, _quat = None, None
@@ -942,6 +998,9 @@ class RRTConnect(PathPlanner):
             self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
         else:
             self._entity.set_qpos(qpos_cur)
+
+        if is_plan_with_obj:
+            self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
 
         if is_invalid.any():
             num_failure = int(is_invalid.sum().cpu())
