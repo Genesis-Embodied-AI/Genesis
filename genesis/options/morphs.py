@@ -814,6 +814,9 @@ class Drone(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    default_base_ang_damping_scale : float, optional
+        Default angular damping applied on the floating base that will be rescaled by the total mass.
+        None to disable. Default to 1e-5.
     """
 
     model: str = "CF2X"
@@ -825,6 +828,7 @@ class Drone(FileMorph):
     merge_fixed_links: bool = True
     links_to_keep: Sequence[str] = ()
     default_armature: Optional[float] = 0.1
+    default_base_ang_damping_scale: Optional[float] = 1e-5
 
     def __init__(self, **data):
         super().__init__(**data)
