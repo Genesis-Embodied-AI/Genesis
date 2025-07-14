@@ -68,7 +68,15 @@ class SimOptions(Options):
             self._steps_local = None
 
 
-class LegacyCouplerOptions(Options):
+class BaseCouplerOptions(Options):
+    """
+    Base class for all coupler options.
+    """
+
+    pass
+
+
+class LegacyCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the inter-solver coupling.
 
@@ -90,8 +98,6 @@ class LegacyCouplerOptions(Options):
         Whether to enable coupling between FEM and MPM solvers. Defaults to True.
     fem_sph : bool, optional
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
-    hydroelastic_contact : bool, optional
-        Whether to enable hydroelastic contact. Defaults to False. Experimental
     """
 
     rigid_mpm: bool = True
@@ -104,7 +110,7 @@ class LegacyCouplerOptions(Options):
     fem_sph: bool = True
 
 
-class SAPCouplerOptions(LegacyCouplerOptions):
+class SAPCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
 
@@ -128,12 +134,6 @@ class SAPCouplerOptions(LegacyCouplerOptions):
         Friction regularization parameter for SAP. Defaults to 1e-3.
     pcg_threshold : float, optional
         Threshold for the Preconditioned Conjugate Gradient solver. Defaults to 1e-6.
-    use_exact_linesearch : bool, optional
-        Whether to use exact linesearch. Defaults to True.
-    linesearch_c : float, optional
-        Line search sufficient decrease parameter for backtracking linesearch. Defaults to 1e-4.
-    linesearch_tau : float, optional
-        Line search step size reduction factor for backtracking linesearch. Defaults to 0.8.
     linesearch_ftol : float, optional
         Line search sufficient value close to zero for exact linesearch. Defaults to 1e-6.
     linesearch_max_step_size : float, optional
@@ -144,6 +144,8 @@ class SAPCouplerOptions(LegacyCouplerOptions):
         Stiffness for point contact. Defaults to 1e8.
     fem_floor_type : str, optional
         Type of contact against the floor. Defaults to "tet". Can be "tet", "vert", or "none".
+        Tet would be the default choice for most cases.
+        Vert would be preferable when the mesh is very coarse, such as a single cube or a tetrahedron.
     fem_self_tet : bool, optional
         Whether to use tetrahedral based self-contact. Defaults to True.
     Note
@@ -161,9 +163,6 @@ class SAPCouplerOptions(LegacyCouplerOptions):
     sap_beta: float = 1.0
     sap_sigma: float = 1e-3
     pcg_threshold: float = 1e-6
-    use_exact_linesearch: bool = True
-    linesearch_c: float = 1e-4
-    linesearch_tau: float = 0.8
     linesearch_ftol: float = 1e-6
     linesearch_max_step_size: float = 1.5
     hydroelastic_stiffness: float = 1e8

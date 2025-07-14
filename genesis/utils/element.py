@@ -81,18 +81,14 @@ def split_all_surface_tets(verts, elems):
     if not all_on_surface.any():
         return verts, elems
     bad_elems = elems[all_on_surface]
+    new_verts = np.mean(verts[bad_elems], axis=1, dtype=np.float32)
     new_elems = []
-    new_verts = []
-    for elem in bad_elems:
-        v0, v1, v2, v3 = elem
-        idx = len(verts) + len(new_verts)
-        new_verts.append(0.25 * (verts[v0] + verts[v1] + verts[v2] + verts[v3]))
+    for idx, (v0, v1, v2, v3) in enumerate(bad_elems, len(verts)):
         new_elems.append([v0, v1, v2, idx])
         new_elems.append([v0, v1, idx, v3])
         new_elems.append([v0, idx, v2, v3])
         new_elems.append([idx, v1, v2, v3])
     new_elems = np.array(new_elems, dtype=np.int32)
-    new_verts = np.array(new_verts, dtype=np.float32)
     verts = np.concatenate([verts, new_verts], axis=0)
     # remove the bad elements from the original elements
     elems = np.concatenate([elems[~all_on_surface], new_elems], axis=0)

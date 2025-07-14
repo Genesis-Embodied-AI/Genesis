@@ -286,8 +286,8 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         min_pos_z = state.pos[..., 2].min()
         # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, 0.0, atol=2e-3
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+            min_pos_z, -1e-3, atol=1e-4
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3."
 
 
 @pytest.fixture(scope="session")
@@ -332,8 +332,8 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         min_pos_z = np.min(pos[..., 2])
         # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, 0.0, atol=1.1e-3
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+            min_pos_z, -1e-3, atol=1e-4
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3."
         BV, BF = igl.bounding_box(pos)
         x_scale = BV[0, 0] - BV[-1, 0]
         y_scale = BV[0, 1] - BV[-1, 1]
@@ -369,7 +369,7 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
             pos=(0.0, 0.0, 0.1),
             radius=0.1,
         ),
-        material=fem_material_linear_corotated_soft,
+        material=fem_material_linear_corotated,
     )
 
     # Add second FEM entity
@@ -390,10 +390,12 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
     for _ in range(200):
         scene.step()
 
-    for entity in scene.entities:
+    depths = [-1e-3, -2e-5]
+    atols = [2e-4, 4e-6]
+    for i, entity in enumerate(scene.entities):
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
         # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, 0.0, atol=5e-4
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+            min_pos_z, depths[i], atol=atols[i]
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to {depths[i]}."
