@@ -401,8 +401,8 @@ class ConstraintSolver:
 
         pos1 = rgi.qpos[i_qpos1, i_b]
         pos2 = rgi.qpos[i_qpos2, i_b]
-        ref1 = rgi.qpos[i_qpos1, i_b]
-        ref2 = rgi.qpos[i_qpos2, i_b]
+        ref1 = rgi.qpos0[i_qpos1, i_b]
+        ref2 = rgi.qpos0[i_qpos2, i_b]
 
         # TODO: zero objid2
         diff = pos2 - ref2
@@ -762,7 +762,13 @@ class ConstraintSolver:
                                 self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i, k, i_b]
 
                         if rank < self._solver.n_dofs:
-                            self._func_nt_hessian_direct(i_b)
+                            self._func_nt_hessian_direct(
+                                i_b,
+                                entities_info=self._solver.entities_info,
+                                constraint_state=self.constraint_state,
+                                rigid_global_info=self._solver._rigid_global_info,
+                                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                            )
                             updated = True
                 else:
                     if flag_update != -1:
@@ -791,96 +797,128 @@ class ConstraintSolver:
                                     self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i, k, i_b]
 
                         if rank < self._solver.n_dofs:
-                            self._func_nt_hessian_direct(i_b)
+                            self._func_nt_hessian_direct(
+                                i_b,
+                                entities_info=self._solver.entities_info,
+                                constraint_state=self.constraint_state,
+                                rigid_global_info=self._solver._rigid_global_info,
+                                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                            )
                             updated = True
 
     @ti.func
-    def _func_nt_hessian_direct(self, i_b):
+    def _func_nt_hessian_direct(
+        self_unused,
+        i_b,
+        entities_info,
+        constraint_state,
+        rigid_global_info,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_dofs = constraint_state.nt_H.shape[0]
+        n_entities = entities_info.shape[0]
         # H = M + J'*D*J
-        for i_d1 in range(self._solver.n_dofs):
-            for i_d2 in range(self._solver.n_dofs):
-                self.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
+        for i_d1 in range(n_dofs):
+            for i_d2 in range(n_dofs):
+                constraint_state.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
 
-        if ti.static(self.sparse_solve):
-            for i_c in range(self.n_constraints[i_b]):
-                jac_n_relevant_dofs = self.jac_n_relevant_dofs[i_c, i_b]
+        if ti.static(static_rigid_sim_config.sparse_solve):
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                jac_n_relevant_dofs = constraint_state.jac_n_relevant_dofs[i_c, i_b]
                 for i_d1_ in range(jac_n_relevant_dofs):
-                    i_d1 = self.jac_relevant_dofs[i_c, i_d1_, i_b]
-                    if ti.abs(self.jac[i_c, i_d1, i_b]) > gs.EPS:
+                    i_d1 = constraint_state.jac_relevant_dofs[i_c, i_d1_, i_b]
+                    if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > gs.EPS:
                         for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
-                            i_d2 = self.jac_relevant_dofs[i_c, i_d2_, i_b]  # i_d2 is strictly <= i_d1
-                            self.nt_H[i_d1, i_d2, i_b] = (
-                                self.nt_H[i_d1, i_d2, i_b]
-                                + self.jac[i_c, i_d2, i_b]
-                                * self.jac[i_c, i_d1, i_b]
-                                * self.efc_D[i_c, i_b]
-                                * self.active[i_c, i_b]
+                            i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]  # i_d2 is strictly <= i_d1
+                            constraint_state.nt_H[i_d1, i_d2, i_b] = (
+                                constraint_state.nt_H[i_d1, i_d2, i_b]
+                                + constraint_state.jac[i_c, i_d2, i_b]
+                                * constraint_state.jac[i_c, i_d1, i_b]
+                                * constraint_state.efc_D[i_c, i_b]
+                                * constraint_state.active[i_c, i_b]
                             )
         else:
-            for i_c in range(self.n_constraints[i_b]):
-                for i_d1 in range(self._solver.n_dofs):
-                    if ti.abs(self.jac[i_c, i_d1, i_b]) > gs.EPS:
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                for i_d1 in range(n_dofs):
+                    if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > gs.EPS:
                         for i_d2 in range(i_d1 + 1):
-                            self.nt_H[i_d1, i_d2, i_b] = (
-                                self.nt_H[i_d1, i_d2, i_b]
-                                + self.jac[i_c, i_d2, i_b]
-                                * self.jac[i_c, i_d1, i_b]
-                                * self.efc_D[i_c, i_b]
-                                * self.active[i_c, i_b]
+                            constraint_state.nt_H[i_d1, i_d2, i_b] = (
+                                constraint_state.nt_H[i_d1, i_d2, i_b]
+                                + constraint_state.jac[i_c, i_d2, i_b]
+                                * constraint_state.jac[i_c, i_d1, i_b]
+                                * constraint_state.efc_D[i_c, i_b]
+                                * constraint_state.active[i_c, i_b]
                             )
 
-        for i_d1 in range(self._solver.n_dofs):
-            for i_d2 in range(i_d1 + 1, self._solver.n_dofs):
-                self.nt_H[i_d1, i_d2, i_b] = self.nt_H[i_d2, i_d1, i_b]
+        for i_d1 in range(n_dofs):
+            for i_d2 in range(i_d1 + 1, n_dofs):
+                constraint_state.nt_H[i_d1, i_d2, i_b] = constraint_state.nt_H[i_d2, i_d1, i_b]
 
-        for i_e in range(self._solver.n_entities):
-            e_info = self._solver.entities_info[i_e]
+        for i_e in range(n_entities):
+            e_info = entities_info[i_e]
             for i_d1 in range(e_info.dof_start, e_info.dof_end):
                 for i_d2 in range(e_info.dof_start, e_info.dof_end):
-                    self.nt_H[i_d1, i_d2, i_b] = self.nt_H[i_d1, i_d2, i_b] + self._solver.mass_mat[i_d1, i_d2, i_b]
+                    constraint_state.nt_H[i_d1, i_d2, i_b] = (
+                        constraint_state.nt_H[i_d1, i_d2, i_b] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                    )
                 # self.nt_ori_H[i_d1, i_d2, i_b] = self.nt_H[i_d1, i_d2, i_b]
 
-        self._func_nt_chol_factor(i_b)
+        self_unused._func_nt_chol_factor(i_b, constraint_state)
 
     @ti.func
-    def _func_nt_chol_factor(self, i_b):
-        rank = self._solver.n_dofs
-        for i_d in range(self._solver.n_dofs):
-            tmp = self.nt_H[i_d, i_d, i_b]
+    def _func_nt_chol_factor(
+        self_unused,
+        i_b,
+        constraint_state,
+    ):
+        n_dofs = constraint_state.nt_H.shape[0]
+        rank = n_dofs
+        for i_d in range(n_dofs):
+            tmp = constraint_state.nt_H[i_d, i_d, i_b]
             for j_d in range(i_d):
-                tmp = tmp - (self.nt_H[i_d, j_d, i_b] * self.nt_H[i_d, j_d, i_b])
+                tmp = tmp - (constraint_state.nt_H[i_d, j_d, i_b] * constraint_state.nt_H[i_d, j_d, i_b])
 
             if tmp < gs.EPS:
                 tmp = gs.EPS
                 rank = rank - 1
-            self.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
+            constraint_state.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
 
-            tmp = 1.0 / self.nt_H[i_d, i_d, i_b]
+            tmp = 1.0 / constraint_state.nt_H[i_d, i_d, i_b]
 
-            for j_d in range(i_d + 1, self._solver.n_dofs):
+            for j_d in range(i_d + 1, n_dofs):
                 dot = gs.ti_float(0.0)
                 for k_d in range(i_d):
-                    dot = dot + self.nt_H[j_d, k_d, i_b] * self.nt_H[i_d, k_d, i_b]
+                    dot = dot + constraint_state.nt_H[j_d, k_d, i_b] * constraint_state.nt_H[i_d, k_d, i_b]
 
-                self.nt_H[j_d, i_d, i_b] = (self.nt_H[j_d, i_d, i_b] - dot) * tmp
+                constraint_state.nt_H[j_d, i_d, i_b] = (constraint_state.nt_H[j_d, i_d, i_b] - dot) * tmp
 
     @ti.func
-    def _func_nt_chol_solve(self, i_b):
-        for i_d in range(self._solver.n_dofs):
-            self.Mgrad[i_d, i_b] = self.grad[i_d, i_b]
+    def _func_nt_chol_solve(
+        self_unused,
+        i_b,
+        constraint_state,
+    ):
+        n_dofs = constraint_state.Mgrad.shape[0]
+        for i_d in range(n_dofs):
+            constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
 
-        for i_d in range(self._solver.n_dofs):
+        for i_d in range(n_dofs):
             for j_d in range(i_d):
-                self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - (self.nt_H[i_d, j_d, i_b] * self.Mgrad[j_d, i_b])
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] - (
+                    constraint_state.nt_H[i_d, j_d, i_b] * constraint_state.Mgrad[j_d, i_b]
+                )
 
-            self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
+            constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_d, i_d, i_b]
 
-        for i_d_ in range(self._solver.n_dofs):
-            i_d = self._solver.n_dofs - 1 - i_d_
-            for j_d in range(i_d + 1, self._solver.n_dofs):
-                self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - self.nt_H[j_d, i_d, i_b] * self.Mgrad[j_d, i_b]
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            for j_d in range(i_d + 1, n_dofs):
+                constraint_state.Mgrad[i_d, i_b] = (
+                    constraint_state.Mgrad[i_d, i_b]
+                    - constraint_state.nt_H[j_d, i_d, i_b] * constraint_state.Mgrad[j_d, i_b]
+                )
 
-            self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
+            constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_d, i_d, i_b]
 
     def reset(self, envs_idx=None):
         if envs_idx is None:
@@ -941,7 +979,13 @@ class ConstraintSolver:
         # from genesis.utils.tools import create_timer
 
         # timer = create_timer(name="resolve", level=3, ti_sync=True, skip_first_call=True)
-        self._func_init_solver()
+        self._func_init_solver(
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            constraint_state=self.constraint_state,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
         # timer.stamp("_func_init_solver")
         self._func_solve()
         # timer.stamp("_func_solve")
@@ -1308,10 +1352,25 @@ class ConstraintSolver:
                     self.cg_prev_grad[i_d, i_b] = self.grad[i_d, i_b]
                     self.cg_prev_Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b]
 
-            self._func_update_constraint(i_b, self.qacc, self.Ma, self.cost)
+            self._func_update_constraint(
+                i_b,
+                self.qacc,
+                self.Ma,
+                self.cost,
+                dofs_state=self._solver.dofs_state,
+                constraint_state=self.constraint_state,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            )
 
             if ti.static(self._solver_type == gs.constraint_solver.CG):
-                self._func_update_gradient(i_b)
+                self._func_update_gradient(
+                    i_b,
+                    dofs_state=self._solver.dofs_state,
+                    entities_info=self._solver.entities_info,
+                    rigid_global_info=self._solver._rigid_global_info,
+                    constraint_state=self.constraint_state,
+                    static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                )
 
                 self.cg_beta[i_b] = gs.ti_float(0.0)
                 self.cg_pg_dot_pMg[i_b] = gs.ti_float(0.0)
@@ -1328,137 +1387,256 @@ class ConstraintSolver:
                 improvement = self.prev_cost[i_b] - self.cost[i_b]
                 if improvement > 0:
                     self._func_nt_hessian_incremental(i_b)
-                    self._func_update_gradient(i_b)
+                    self._func_update_gradient(
+                        i_b,
+                        dofs_state=self._solver.dofs_state,
+                        entities_info=self._solver.entities_info,
+                        rigid_global_info=self._solver._rigid_global_info,
+                        constraint_state=self.constraint_state,
+                        static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                    )
                     for i_d in range(self._solver.n_dofs):
                         self.search[i_d, i_b] = -self.Mgrad[i_d, i_b]
 
     @ti.func
-    def _func_update_constraint(self, i_b, qacc, Ma, cost):
-        self.prev_cost[i_b] = cost[i_b]
+    def _func_update_constraint(
+        self_unused,
+        i_b,
+        qacc,
+        Ma,
+        cost,
+        dofs_state,
+        constraint_state,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_dofs = constraint_state.qfrc_constraint.shape[0]
+
+        constraint_state.prev_cost[i_b] = cost[i_b]
         cost[i_b] = gs.ti_float(0.0)
-        self.gauss[i_b] = gs.ti_float(0.0)
+        constraint_state.gauss[i_b] = gs.ti_float(0.0)
 
-        for i_c in range(self.n_constraints[i_b]):
-            if ti.static(self._solver_type == gs.constraint_solver.Newton):
-                self.prev_active[i_c, i_b] = self.active[i_c, i_b]
-            self.active[i_c, i_b] = 1
-            if i_c >= self.n_constraints_equality[i_b]:
-                self.active[i_c, i_b] = self.Jaref[i_c, i_b] < 0
-            self.efc_force[i_c, i_b] = -self.efc_D[i_c, i_b] * self.Jaref[i_c, i_b] * self.active[i_c, i_b]
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+            constraint_state.active[i_c, i_b] = 1
+            if i_c >= constraint_state.n_constraints_equality[i_b]:
+                constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+            constraint_state.efc_force[i_c, i_b] = (
+                -constraint_state.efc_D[i_c, i_b] * constraint_state.Jaref[i_c, i_b] * constraint_state.active[i_c, i_b]
+            )
 
-        if ti.static(self.sparse_solve):
-            for i_d in range(self._solver.n_dofs):
-                self.qfrc_constraint[i_d, i_b] = gs.ti_float(0.0)
-            for i_c in range(self.n_constraints[i_b]):
-                for i_d_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = self.jac_relevant_dofs[i_c, i_d_, i_b]
-                    self.qfrc_constraint[i_d, i_b] = (
-                        self.qfrc_constraint[i_d, i_b] + self.jac[i_c, i_d, i_b] * self.efc_force[i_c, i_b]
+        if ti.static(static_rigid_sim_config.sparse_solve):
+            for i_d in range(n_dofs):
+                constraint_state.qfrc_constraint[i_d, i_b] = gs.ti_float(0.0)
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                    constraint_state.qfrc_constraint[i_d, i_b] = (
+                        constraint_state.qfrc_constraint[i_d, i_b]
+                        + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
                     )
         else:
-            for i_d in range(self._solver.n_dofs):
+            for i_d in range(n_dofs):
                 qfrc_constraint = gs.ti_float(0.0)
-                for i_c in range(self.n_constraints[i_b]):
-                    qfrc_constraint += self.jac[i_c, i_d, i_b] * self.efc_force[i_c, i_b]
-                self.qfrc_constraint[i_d, i_b] = qfrc_constraint
+                for i_c in range(constraint_state.n_constraints[i_b]):
+                    qfrc_constraint += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
         # (Mx - Mx') * (x - x')
-        for i_d in range(self._solver.n_dofs):
-            v = (
-                0.5
-                * (Ma[i_d, i_b] - self._solver.dofs_state[i_d, i_b].force)
-                * (qacc[i_d, i_b] - self._solver.dofs_state[i_d, i_b].acc_smooth)
-            )
-            self.gauss[i_b] = self.gauss[i_b] + v
+        for i_d in range(n_dofs):
+            v = 0.5 * (Ma[i_d, i_b] - dofs_state[i_d, i_b].force) * (qacc[i_d, i_b] - dofs_state[i_d, i_b].acc_smooth)
+            constraint_state.gauss[i_b] = constraint_state.gauss[i_b] + v
             cost[i_b] = cost[i_b] + v
 
         # D * (Jx - aref) ** 2
-        for i_c in range(self.n_constraints[i_b]):
+        for i_c in range(constraint_state.n_constraints[i_b]):
             cost[i_b] = cost[i_b] + 0.5 * (
-                self.efc_D[i_c, i_b] * self.Jaref[i_c, i_b] * self.Jaref[i_c, i_b] * self.active[i_c, i_b]
+                constraint_state.efc_D[i_c, i_b]
+                * constraint_state.Jaref[i_c, i_b]
+                * constraint_state.Jaref[i_c, i_b]
+                * constraint_state.active[i_c, i_b]
             )
 
     @ti.func
-    def _func_update_gradient(self, i_b):
-        for i_d in range(self._solver.n_dofs):
-            self.grad[i_d, i_b] = (
-                self.Ma[i_d, i_b] - self._solver.dofs_state[i_d, i_b].force - self.qfrc_constraint[i_d, i_b]
+    def _func_update_gradient(
+        self_unused,
+        i_b,
+        dofs_state,
+        entities_info,
+        rigid_global_info,
+        constraint_state,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_dofs = constraint_state.grad.shape[0]
+
+        for i_d in range(n_dofs):
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state[i_d, i_b].force - constraint_state.qfrc_constraint[i_d, i_b]
             )
 
-        if ti.static(self._solver_type == gs.constraint_solver.CG):
-            self._solver._func_solve_mass_batched(
-                self.grad,
-                self.Mgrad,
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+            self_unused._solver._func_solve_mass_batched(
+                constraint_state.grad,
+                constraint_state.Mgrad,
                 i_b,
-                entities_info=self._solver.entities_info,
-                rigid_global_info=self._solver._rigid_global_info,
-                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
 
-        elif ti.static(self._solver_type == gs.constraint_solver.Newton):
-            self._func_nt_chol_solve(i_b)
+        elif ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            self_unused._func_nt_chol_solve(
+                i_b,
+                constraint_state=constraint_state,
+            )
 
     @ti.func
-    def initialize_Jaref(self, qacc):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._B):
-            for i_c in range(self.n_constraints[i_b]):
-                Jaref = -self.aref[i_c, i_b]
-                if ti.static(self.sparse_solve):
-                    for i_d_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                        i_d = self.jac_relevant_dofs[i_c, i_d_, i_b]
-                        Jaref += self.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    def initialize_Jaref(
+        self_unused,
+        qacc,
+        constraint_state,
+        static_rigid_sim_config: ti.template(),
+    ):
+        _B = constraint_state.jac.shape[2]
+        n_dofs = constraint_state.jac.shape[1]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                Jaref = -constraint_state.aref[i_c, i_b]
+                if ti.static(static_rigid_sim_config.sparse_solve):
+                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                        i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                        Jaref += constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
                 else:
-                    for i_d in range(self._solver.n_dofs):
-                        Jaref += self.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-                self.Jaref[i_c, i_b] = Jaref
+                    for i_d in range(n_dofs):
+                        Jaref += constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+                constraint_state.Jaref[i_c, i_b] = Jaref
 
     @ti.func
-    def initialize_Ma(self, Ma, qacc):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_e, i_d1_, i_b in ti.ndrange(self._solver.n_entities, self._solver.entity_max_dofs, self._B):
-            e_info = self._solver.entities_info[i_e]
-            if i_d1_ < e_info.n_dofs:
+    def initialize_Ma(
+        self_unused,
+        Ma,
+        qacc,
+        entities_info,
+        rigid_global_info,
+        static_rigid_sim_config: ti.template(),
+    ):
+        rgi = rigid_global_info
+        _B = rgi.mass_mat.shape[2]
+        n_entities = entities_info.shape[0]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_e, i_b in ti.ndrange(n_entities, _B):
+            e_info = entities_info[i_e]
+            for i_d1_ in range(e_info.n_dofs):
                 i_d1 = e_info.dof_start + i_d1_
                 Ma_ = gs.ti_float(0.0)
                 for i_d2 in range(e_info.dof_start, e_info.dof_end):
-                    Ma_ += self._solver.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+                    Ma_ += rgi.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
                 Ma[i_d1, i_b] = Ma_
 
     @ti.kernel
-    def _func_init_solver(self):
+    def _func_init_solver(
+        self_unused,
+        dofs_state: array_class.DofsState,
+        entities_info: array_class.EntitiesInfo,
+        constraint_state: ti.template(),
+        rigid_global_info: ti.template(),
+        static_rigid_sim_config: ti.template(),
+    ):
+        _B = dofs_state.acc_smooth.shape[1]
+        n_dofs = dofs_state.acc_smooth.shape[0]
         # check if warm start
-        self.initialize_Jaref(self.qacc_ws)
+        self_unused.initialize_Jaref(
+            qacc=constraint_state.qacc_ws,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
-        self.initialize_Ma(self.Ma_ws, self.qacc_ws)
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._B):
-            self._func_update_constraint(i_b, self.qacc_ws, self.Ma_ws, self.cost_ws)
+        self_unused.initialize_Ma(
+            Ma=constraint_state.Ma_ws,
+            qacc=constraint_state.qacc_ws,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
-        self.initialize_Jaref(self._solver.dofs_state.acc_smooth)
-        self.initialize_Ma(self.Ma, self._solver.dofs_state.acc_smooth)
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._B):
-            self._func_update_constraint(i_b, self._solver.dofs_state.acc_smooth, self.Ma, self.cost)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            self_unused._func_update_constraint(
+                i_b,
+                qacc=constraint_state.qacc_ws,
+                Ma=constraint_state.Ma_ws,
+                cost=constraint_state.cost_ws,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+        self_unused.initialize_Jaref(
+            qacc=dofs_state.acc_smooth,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(self._solver.n_dofs, self._B):
-            if self.cost_ws[i_b] < self.cost[i_b]:
-                self.qacc[i_d, i_b] = self.qacc_ws[i_d, i_b]
-                self.Ma[i_d, i_b] = self.Ma_ws[i_d, i_b]
+        self_unused.initialize_Ma(
+            Ma=constraint_state.Ma,
+            qacc=dofs_state.acc_smooth,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            self_unused._func_update_constraint(
+                i_b,
+                qacc=dofs_state.acc_smooth,
+                Ma=constraint_state.Ma,
+                cost=constraint_state.cost,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            if constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
+                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+                constraint_state.Ma[i_d, i_b] = constraint_state.Ma_ws[i_d, i_b]
             else:
-                self.qacc[i_d, i_b] = self._solver.dofs_state.acc_smooth[i_d, i_b]
-        self.initialize_Jaref(self.qacc)
+                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+        self_unused.initialize_Jaref(
+            qacc=constraint_state.qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
         # end warm start
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._B):
-            self._func_update_constraint(i_b, self.qacc, self.Ma, self.cost)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            self_unused._func_update_constraint(
+                i_b,
+                qacc=constraint_state.qacc,
+                Ma=constraint_state.Ma,
+                cost=constraint_state.cost,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+            if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+                self_unused._func_nt_hessian_direct(
+                    i_b,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
 
-            if ti.static(self._solver_type == gs.constraint_solver.Newton):
-                self._func_nt_hessian_direct(i_b)
+            self_unused._func_update_gradient(
+                i_b,
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
-            self._func_update_gradient(i_b)
-
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(self._solver.n_dofs, self._B):
-            self.search[i_d, i_b] = -self.Mgrad[i_d, i_b]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
