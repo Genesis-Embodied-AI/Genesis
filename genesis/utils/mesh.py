@@ -859,15 +859,10 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
 
 
 def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
-    """
-    Returns
-        vmesh – single‑sided top face for the rasterizer
-        cmesh – wafer‑thin closed box for physics
-    """
     thickness = 1e-2
-    cmesh = trimesh.creation.box(extents=[size, size, thickness])
-    cmesh.vertices[:, 2] -= thickness / 2
-    cmesh.vertices = gu.transform_by_R(cmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
+    mesh = trimesh.creation.box(extents=[size, size, thickness])
+    mesh.vertices[:, 2] -= thickness / 2
+    mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
     half = size * 0.5
     verts = np.array(
@@ -907,7 +902,7 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
             vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
         )
 
-    return vmesh, cmesh
+    return vmesh, mesh
 
 
 def generate_tetgen_config_from_morph(morph):
