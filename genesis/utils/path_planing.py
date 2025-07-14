@@ -567,9 +567,6 @@ class RRT(PathPlanner):
         else:
             self._entity.set_qpos(qpos_cur)
 
-        if is_plan_with_obj:
-            self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
-
         if is_invalid.any():
             num_failure = int(is_invalid.sum().cpu())
             gs.logger.warning(f"rrt planning failed in {num_failure} environments")
@@ -929,9 +926,6 @@ class RRTConnect(PathPlanner):
             self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
         else:
             self._entity.set_qpos(qpos_cur)
-
-        if is_plan_with_obj:
-            self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
 
         if is_invalid.any():
             num_failure = int(is_invalid.sum().cpu())
