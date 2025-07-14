@@ -14,7 +14,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  linux-gpu:
+  production:
+    name: Production (Coreweave H100)
+
     runs-on: [self-hosted, coreweave]
 
     env:
