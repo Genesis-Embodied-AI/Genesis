@@ -44,6 +44,17 @@ class RigidGlobalInfo:
 
 
 @ti.data_oriented
+class ConstraintState:
+    """
+    Class to store the mutable constraint data, all of which type is [ti.fields].
+    """
+
+    def __init__(self, solver):
+        f_batch = solver._batch_shape
+        self.n_constraints = ti.field(dtype=gs.ti_int, shape=f_batch())
+
+
+@ti.data_oriented
 class ColliderState:
     """
     Class to store the mutable collider data, all of which type is [ti.fields].
