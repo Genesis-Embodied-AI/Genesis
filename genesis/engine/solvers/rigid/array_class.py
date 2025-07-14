@@ -169,12 +169,6 @@ class ColliderInfo:
 
 # =========================================== MPR ===========================================
 @ti.data_oriented
-class MPRInfo:
-
-    pass
-
-
-@ti.data_oriented
 class MPRState:
     def __init__(self, f_batch):
         struct_support = ti.types.struct(
