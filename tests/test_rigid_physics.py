@@ -408,6 +408,74 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
+def test_dynamic_weld(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
+        surface=gs.surfaces.Plastic(color=(1, 0, 0)),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/universal_robots_ur5e/ur5e.xml",
+        ),
+    )
+    scene.build(n_envs=4, env_spacing=(3.0, 3.0))
+
+    end_effector = robot.get_link("ee_virtual_link")
+
+    # Compute up and down robot configurations
+    ee_pos_up = np.array((0.65, 0.0, 0.5), dtype=gs.np_float)
+    ee_pos_down = np.array((0.65, 0.0, 0.15), dtype=gs.np_float)
+    qpos_up = robot.inverse_kinematics(
+        link=end_effector,
+        pos=np.tile(ee_pos_up, (4, 1)),
+        quat=np.tile(np.array((0.0, 1.0, 0.0, 0.0), dtype=gs.np_float), (4, 1)),
+    )
+    qpos_down = robot.inverse_kinematics(
+        link=end_effector,
+        pos=np.tile(ee_pos_down, (4, 1)),
+        quat=np.tile(np.array((0.0, 1.0, 0.0, 0.0), dtype=gs.np_float), (4, 1)),
+    )
+
+    # move to pre-grasp pose
+    robot.control_dofs_position(qpos_up)
+    for i in range(120):
+        scene.step()
+
+    # reach
+    robot.control_dofs_position(qpos_down)
+    for i in range(70):
+        scene.step()
+
+    # add weld constraint and move back up
+    scene.sim.rigid_solver.add_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1, 2))
+    robot.control_dofs_position(qpos_up)
+    for i in range(60):
+        scene.step()
+    cubes_pos, cubes_quat = cube.get_pos(), cube.get_quat()
+    assert_allclose(torch.diff(cubes_quat, dim=0), 0.0, tol=1e-3)
+    assert_allclose(torch.diff(cubes_pos[[0, 1, 2]], dim=0), 0.0, tol=tol)
+    assert_allclose(cubes_pos[-1] - cubes_pos[0], ee_pos_down - ee_pos_up, tol=1e-2)
+
+    # drop
+    scene.sim.rigid_solver.delete_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1))
+    for i in range(110):
+        scene.step()
+    cubes_pos, cubes_quat = cube.get_pos(), cube.get_quat()
+    assert_allclose(torch.diff(cubes_quat, dim=0), 0.0, tol=1e-3)
+    assert_allclose(torch.diff(cubes_pos[[0, 1, 3]], dim=0), 0.0, tol=1e-2)
+    assert_allclose(cubes_pos[2] - cubes_pos[0], ee_pos_up - ee_pos_down, tol=1e-3)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -1438,8 +1506,8 @@ def move_cube(use_suction, mode, show_viewer):
 
     # grasp
     if use_suction:
-        link_cube = np.array([cube.get_link("box_baselink").idx], dtype=gs.np_int)
-        link_franka = np.array([franka.get_link("hand").idx], dtype=gs.np_int)
+        link_cube = cube.get_link("box_baselink").idx
+        link_franka = franka.get_link("hand").idx
         scene.sim.rigid_solver.add_weld_constraint(link_cube, link_franka)
     else:
         franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -1600,8 +1668,8 @@ def test_path_planning_avoidance(show_viewer):
             # Check if the cube is colliding with the robot
             scene.rigid_solver._kernel_forward_dynamics()
             scene.rigid_solver._func_constraint_force()
-            for i in range(scene.rigid_solver.collider.n_contacts.to_numpy()[0]):
-                contact_data = scene.rigid_solver.collider.contact_data[i, 0]
+            for i in range(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]):
+                contact_data = scene.rigid_solver.collider._collider_state.contact_data[i, 0]
                 if any(i_g in tuple(range(len(cubes))) for i_g in (contact_data.link_a, contact_data.link_b)):
                     max_penetration = max(max_penetration, contact_data.penetration)
 
@@ -1896,7 +1964,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 
 # FIXME: GJK collision detection algorithm is failing on some platform.
 @pytest.mark.required
-@pytest.mark.parametrize("euler", [(90, 0, 90), (76, 15, 90)])
+@pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer, gjk_collision):
@@ -1960,7 +2028,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
 
     # Make sure that all the geometries in the scene are convex
     assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
-    assert not gs_sim.rigid_solver.collider._has_nonconvex_nonterrain
+    assert not gs_sim.rigid_solver.collider._collider_info.has_nonconvex_nonterrain
 
     # There should be only one geometry for the apple as it can be convexify without decomposition,
     # but for the others it is hard to tell... Let's use some reasonable guess.
@@ -2170,6 +2238,49 @@ def test_terrain_size(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.merge_fixed_links(False)
+@pytest.mark.parametrize("model_name", ["pendulum"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_jacobian(gs_sim, tol):
+    pendulum = gs_sim.entities[0]
+    angle = 0.7
+    pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
+    gs_sim.scene.step()
+
+    link = pendulum.get_link("PendulumArm_0")
+
+    p_local = np.array([0.05, -0.02, 0.12], dtype=gs.np_float)
+    J_o = tensor_to_array(pendulum.get_jacobian(link))
+    J_p = tensor_to_array(pendulum.get_jacobian(link, p_local))
+
+    c, s = np.cos(angle), np.sin(angle)
+    Rx = np.array(
+        [
+            [1, 0, 0],
+            [0, c, -s],
+            [0, s, c],
+        ],
+        dtype=gs.np_float,
+    )
+    r_world = Rx @ p_local
+    r_cross = np.array(
+        [
+            [0, -r_world[2], r_world[1]],
+            [r_world[2], 0, -r_world[0]],
+            [-r_world[1], r_world[0], 0],
+        ],
+        dtype=gs.np_float,
+    )
+
+    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
+    lin_expected = lin_o - r_cross @ ang_o
+
+    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
+    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
@@ -2257,9 +2368,9 @@ def test_urdf_parsing(show_viewer, tol):
     entities[(False, True)].set_dofs_velocity(door_vel, 6)
     entities[(True, False)].set_dofs_velocity(door_vel)
     entities[(True, True)].set_dofs_velocity(door_vel)
-    link_1 = np.array([entities[(True, True)].link_start], dtype=gs.np_int)
+    link_1 = entities[(True, True)].link_start
     for key in ((False, False), (False, True)):
-        link_2 = np.array([entities[key].link_start], dtype=gs.np_int)
+        link_2 = entities[key].link_start
         scene.rigid_solver.add_weld_constraint(link_1, link_2)
 
     for i in range(2000):
@@ -2452,7 +2563,7 @@ def test_drone_advanced(show_viewer):
             drone.set_propellels_rpm(torch.full((4,), 50000.0))
         scene.step()
         if i > 350:
-            assert scene.rigid_solver.collider.n_contacts.to_numpy()[0] == 2
+            assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] == 2
             assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=2e-3)
 
     # Push the drones symmetrically and wait for them to collide
@@ -2462,7 +2573,7 @@ def test_drone_advanced(show_viewer):
         for drone in drones:
             drone.set_propellels_rpm(torch.full((4,), 50000.0))
         scene.step()
-        if scene.rigid_solver.collider.n_contacts.to_numpy()[0] > 2:
+        if scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] > 2:
             break
     else:
         raise AssertionError
@@ -2523,7 +2634,7 @@ def test_data_accessor(n_envs, batched, tol):
     for _ in range(400):
         gs_sim.step()
 
-        gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()
+        gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()
         assert len(gs_n_contacts) == max(n_envs, 1)
         for as_tensor in (False, True):
             for to_torch in (False, True):

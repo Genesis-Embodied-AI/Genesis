@@ -400,6 +400,22 @@ def inv_quat(quat):
     return _quat
 
 
+def inv_T(T):
+    if isinstance(T, torch.Tensor):
+        T_inv = torch.zeros_like(T)
+    elif isinstance(T, np.ndarray):
+        T_inv = np.zeros_like(T)
+    else:
+        gs.raise_exception(f"the input must be torch.Tensor or np.ndarray. got: {type(T)=}")
+
+    trans, R = T[..., :3, 3], T[..., :3, :3]
+    T_inv[..., 3, 3] = 1.0
+    T_inv[..., :3, 3] = -R.T @ trans
+    T_inv[..., :3, :3] = R.T
+
+    return T_inv
+
+
 def normalize(x, eps: float = 1e-12):
     if isinstance(x, torch.Tensor):
         return x / x.norm(p=2, dim=-1).clamp(min=eps, max=None).unsqueeze(-1)
@@ -1277,7 +1293,7 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
 
 @nb.jit(nopython=True, cache=True)
 def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
-    if isinstance(cos_theta, float):
+    if isinstance(cos_theta, (float, np.float32, np.float64)):
         assert axis.ndim == 1
     else:
         assert axis.ndim - 1 == cos_theta.ndim
@@ -1289,7 +1305,7 @@ def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.nda
 
     axis_norm = np.sqrt(np.sum(np.square(axis.reshape((-1, 3))), -1).reshape((*axis.shape[:-1], 1)))
     axis = axis / axis_norm
-    if not isinstance(cos_theta, float):
+    if not isinstance(cos_theta, (float, np.float32, np.float64)):
         cos_theta = cos_theta[..., None]
     sin_theta = np.sqrt(1.0 - cos_theta**2)
     cos1_axis = (1.0 - cos_theta) * axis
@@ -1498,24 +1514,24 @@ def random_quaternion(batch_size):
 
 
 def zero_pos():
-    return np.zeros(3)
+    return np.zeros(3, dtype=gs.np_float)
 
 
 def identity_quat():
-    return np.array([1.0, 0.0, 0.0, 0.0])
+    return np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
 
 
 def tc_zero_pos():
-    return torch.zeros(3, device=gs.device)
+    return torch.zeros(3, dtype=gs.tc_float, device=gs.device)
 
 
 def tc_identity_quat():
-    return torch.tensor([1.0, 0.0, 0.0, 0.0], device=gs.device)
+    return torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
 
 
 def nowhere():
     # let's inject a bit of humor here
-    return np.array([2333333, 6666666, 5201314])
+    return np.array([2333333, 6666666, 5201314], dtype=gs.np_float)
 
 
 def default_solver_params():
@@ -1532,11 +1548,11 @@ def default_friction():
 
 
 def default_dofs_kp(n=6):
-    return np.tile(100.0, n).astype(gs.np_float)
+    return np.full((n,), fill_value=100.0, dtype=gs.np_float)
 
 
 def default_dofs_kv(n=6):
-    return np.tile(10.0, n).astype(gs.np_float)
+    return np.full((n,), fill_value=10.0, dtype=gs.np_float)
 
 
 @ti.data_oriented

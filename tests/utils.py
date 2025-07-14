@@ -762,7 +762,7 @@ def check_mujoco_data_consistency(
     mj_qfrc_actuator = mj_sim.data.qfrc_actuator
     assert_allclose(gs_qfrc_actuator, mj_qfrc_actuator[mj_dofs_idx], tol=tol)
 
-    gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()[0]
+    gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]
     mj_n_contacts = mj_sim.data.ncon
     assert gs_n_contacts == mj_n_contacts
     gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
@@ -770,7 +770,7 @@ def check_mujoco_data_consistency(
     assert gs_n_constraints == mj_n_constraints
 
     if gs_n_constraints:
-        gs_contact_pos = gs_sim.rigid_solver.collider.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
+        gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
         mj_contact_pos = mj_sim.data.contact.pos
         # Sort based on the axis with the largest variation
         max_var_axis = 0
@@ -785,10 +785,14 @@ def check_mujoco_data_consistency(
         gs_sidx = np.argsort(gs_contact_pos[:, max_var_axis])
         mj_sidx = np.argsort(mj_contact_pos[:, max_var_axis])
         assert_allclose(gs_contact_pos[gs_sidx], mj_contact_pos[mj_sidx], tol=tol)
-        gs_contact_normal = gs_sim.rigid_solver.collider.contact_data.normal.to_numpy()[:gs_n_contacts, 0]
+        gs_contact_normal = gs_sim.rigid_solver.collider._collider_state.contact_data.normal.to_numpy()[
+            :gs_n_contacts, 0
+        ]
         mj_contact_normal = -mj_sim.data.contact.frame[:, :3]
         assert_allclose(gs_contact_normal[gs_sidx], mj_contact_normal[mj_sidx], tol=tol)
-        gs_penetration = gs_sim.rigid_solver.collider.contact_data.penetration.to_numpy()[:gs_n_contacts, 0]
+        gs_penetration = gs_sim.rigid_solver.collider._collider_state.contact_data.penetration.to_numpy()[
+            :gs_n_contacts, 0
+        ]
         mj_penetration = -mj_sim.data.contact.dist
         assert_allclose(gs_penetration[gs_sidx], mj_penetration[mj_sidx], tol=tol)
 
