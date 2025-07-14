@@ -323,17 +323,27 @@ class SAPCoupler(RBC):
     def couple(self, f):
         if self.has_contact:
             self.sap_solve(f)
-            if self.fem_solver.is_active():
-                self.update_fem_vel(f)
+            self.update_vel(f)
 
     def couple_grad(self, f):
         gs.raise_exception("couple_grad is not available for SAPCoupler. Please use Coupler instead.")
 
     @ti.kernel
+    def update_vel(self, f: ti.i32):
+        if ti.static(self.fem_solver.is_active()):
+            self.update_fem_vel(f)
+        if ti.static(self.rigid_solver.is_active()):
+            self.update_rigid_vel(f)
+
+    @ti.func
     def update_fem_vel(self, f: ti.i32):
-        fem_solver = self.fem_solver
-        for i_b, i_v in ti.ndrange(fem_solver._B, fem_solver.n_vertices):
+        for i_b, i_v in ti.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
             self.fem_solver.elements_v[f + 1, i_v, i_b].vel = self.fem_state_v.v[i_b, i_v]
+
+    @ti.func
+    def update_rigid_vel(self, f: ti.i32):
+        for i_b, i_d in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_dofs):
+            self.rigid_solver.dofs_state[i_d, i_b].vel = self.rigid_state_dof.v[i_b, i_d]
 
     @ti.kernel
     def fem_compute_pressure_gradient(self, f: ti.i32):
@@ -424,13 +434,13 @@ class SAPCoupler(RBC):
             if not self.batch_active[i_b]:
                 continue
             self.sap_state[i_b].gradient_norm += (
-                self.rigid_state_dof.gradient[i_b, i_d].norm_sqr() / rigid_solver.mass_mat[i_d, i_d, i_b]
+                self.rigid_state_dof.gradient[i_b, i_d] ** 2 / rigid_solver.mass_mat[i_d, i_d, i_b]
             )
             self.sap_state[i_b].momentum_norm += (
-                self.rigid_state_dof.v[i_b, i_d].norm_sqr() * rigid_solver.mass_mat[i_d, i_d, i_b]
+                self.rigid_state_dof.v[i_b, i_d] ** 2 * rigid_solver.mass_mat[i_d, i_d, i_b]
             )
             self.sap_state[i_b].impulse_norm += (
-                self.rigid_state_dof.impulse[i_b, i_d].norm_sqr() / rigid_solver.mass_mat[i_d, i_d, i_b]
+                self.rigid_state_dof.impulse[i_b, i_d] ** 2 / rigid_solver.mass_mat[i_d, i_d, i_b]
             )
 
     @ti.kernel
@@ -497,7 +507,7 @@ class SAPCoupler(RBC):
     def init_rigid_non_contact_gradient(self, f: ti.i32):
         rigid_solver = self.rigid_solver
         for i_b, i_d in ti.ndrange(rigid_solver._B, rigid_solver.n_dofs):
-            self.rigid_state_dof.gradient[i_b, i_d].fill(0.0)
+            self.rigid_state_dof.gradient[i_b, i_d] = 0.0
             self.rigid_state_dof.v_diff[i_b, i_d] = (
                 self.rigid_state_dof.v[i_b, i_d] - rigid_solver.dofs_state[i_d, i_b].vel
             )
@@ -552,7 +562,7 @@ class SAPCoupler(RBC):
         for i_b, i_d in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_dofs):
             if not self.batch_active[i_b]:
                 continue
-            self.rigid_state_dof[i_b, i_d].impulse.fill(0.0)
+            self.rigid_state_dof[i_b, i_d].impulse = 0.0
 
     def compute_preconditioner(self):
         if self.fem_solver.is_active():
@@ -785,7 +795,7 @@ class SAPCoupler(RBC):
                 continue
             ti.atomic_add(
                 self.pcg_state[i_b].pTAp,
-                self.pcg_rigid_state_dof[i_b, i_d].p.dot(self.pcg_rigid_state_dof[i_b, i_d].Ap),
+                self.pcg_rigid_state_dof[i_b, i_d].p * self.pcg_rigid_state_dof[i_b, i_d].Ap,
             )
 
     @ti.func
@@ -941,12 +951,12 @@ class SAPCoupler(RBC):
                 self.rigid_state_dof.v[i_b, i_d] - self.rigid_solver.dofs_state[i_d, i_b].vel
             )
         self.compute_rigid_mass_mat_vec_product(
-            self.rigid_state_dof.v_diff, self.rigid_state_dof.m_v_diff, self.batch_linesearch_active
+            self.rigid_state_dof.v_diff, self.rigid_state_dof.mass_v_diff, self.batch_linesearch_active
         )
         for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
             if not self.batch_linesearch_active[i_b]:
                 continue
-            energy[i_b] += 0.5 * self.rigid_state_dof.v_diff[i_b, i_d] * self.rigid_state_dof.m_v_diff[i_b, i_d]
+            energy[i_b] += 0.5 * self.rigid_state_dof.v_diff[i_b, i_d] * self.rigid_state_dof.mass_v_diff[i_b, i_d]
 
     def init_linesearch(self, f: ti.i32):
         self._kernel_init_linesearch(1.0 / self._linesearch_tau)
@@ -1124,20 +1134,38 @@ class SAPCoupler(RBC):
         for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
             if not self.batch_linesearch_active[i_b]:
                 continue
-            self.linesearch_state[i_b].m += self.pcg_rigid_state_dof[i_b, i_d].x.dot(
-                self.rigid_state_dof.gradient[i_b, i_d]
+            self.linesearch_state[i_b].m += (
+                self.pcg_rigid_state_dof[i_b, i_d].x * self.rigid_state_dof.gradient[i_b, i_d]
             )
-            self.pcg_rigid_state_dof[i_b, i_d].x_prev = self.rigid_state_dof.v[i_b, i_d]
+
+            self.linesearch_rigid_state_dof[i_b, i_d].x_prev = self.rigid_state_dof.v[i_b, i_d]
 
     @ti.kernel
     def check_initial_exact_linesearch_convergence(self):
-        fem_solver = self.fem_solver
         for i_b in ti.ndrange(self._B):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.batch_linesearch_active[i_b] = self.linesearch_state[i_b].dell_dalpha > 0.0
+
+        if ti.static(self.fem_solver.is_active()):
+            self.update_initial_fem_state()
+        if ti.static(self.rigid_solver.is_active()):
+            self.update_initial_rigid_state()
+
+        for i_b in range(self._B):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            if (
+                -self.linesearch_state[i_b].m
+                < self._sap_convergence_atol + self._sap_convergence_rtol * self.linesearch_state[i_b].prev_energy
+            ):
+                self.batch_linesearch_active[i_b] = False
+                self.linesearch_state[i_b].step_size = 1.0
+
+    @ti.func
+    def update_initial_fem_state(self):
         # When tolerance is small but gradient norm is small, take step 1.0 and end
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+        for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             if (
@@ -1147,15 +1175,20 @@ class SAPCoupler(RBC):
                 self.fem_state_v.v[i_b, i_v] = (
                     self.linesearch_fem_state_v[i_b, i_v].x_prev + self.pcg_fem_state_v[i_b, i_v].x
                 )
-        for i_b, i_v in ti.ndrange(self._B, fem_solver.n_vertices):
+
+    @ti.func
+    def update_initial_rigid_state(self):
+        # When tolerance is small but gradient norm is small, take step 1.0 and end
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
             if not self.batch_linesearch_active[i_b]:
                 continue
             if (
                 -self.linesearch_state[i_b].m
                 < self._sap_convergence_atol + self._sap_convergence_rtol * self.linesearch_state[i_b].prev_energy
             ):
-                self.batch_linesearch_active[i_b] = False
-                self.linesearch_state[i_b].step_size = 1.0
+                self.rigid_state_dof.v[i_b, i_d] = (
+                    self.linesearch_rigid_state_dof[i_b, i_d].x_prev + self.pcg_rigid_state_dof[i_b, i_d].x
+                )
 
     def one_linesearch_iter(self, f: ti.i32):
         self.update_velocity_linesearch()
@@ -1185,7 +1218,7 @@ class SAPCoupler(RBC):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.rigid_state_dof.v[i_b, i_d] = (
-                self.pcg_rigid_state_dof[i_b, i_d].x_prev
+                self.linesearch_rigid_state_dof[i_b, i_d].x_prev
                 + self.linesearch_state[i_b].step_size * self.pcg_rigid_state_dof[i_b, i_d].x
             )
 
@@ -2361,7 +2394,6 @@ class RigidFloorVertContact(RigidContact):
                 pairs[i_p].dof_start = dof_start
                 sap_info[i_p].k = C
                 sap_info[i_p].phi0 = distance
-                sap_info[i_p].taud = 0.1  # Drake uses 100ms as default
                 sap_info[i_p].mu = rigid_solver.geoms_info.coup_friction[i_g]
 
     @ti.func
