@@ -32,7 +32,7 @@ class Entity(RBC):
         gs.logger.info(
             f"Adding ~<{self._repr_type()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
         )
-    
+
     def add_sensor(self, sensor_type, **sensor_kwargs):
         """
         Add a sensor to the entity.
@@ -83,7 +83,7 @@ class Entity(RBC):
     @property
     def material(self):
         return self._material
-    
+
     @property
     def sensors(self):
         return self._sensors

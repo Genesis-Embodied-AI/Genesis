@@ -1,6 +1,7 @@
 import taichi as ti
 import genesis as gs
 
+from typing import List, Optional
 from genesis.repr_base import RBC
 from genesis.engine.entities.base_entity import Entity
 from .data_collector import DataCollector, DataOutType, DataStreamConfig
@@ -22,10 +23,8 @@ class Sensor(RBC):
         ), f"{type(self)} can only be added to entities of type {self.get_valid_entity_types()}, got {type(entity)}."
         self._entity = entity
         self._sim = entity._sim
-        self._data_collector: DataCollector = None
-        self._is_built = False
+        self._data_collector = None
 
-    @gs.assert_unbuilt
     def build(self):
         """
         Initializes the sensor. Called during scene.build().
@@ -33,24 +32,37 @@ class Sensor(RBC):
         pass
 
     @gs.assert_built
-    def read(self, envs_idx=None):
+    def read(self, envs_idx: Optional[List[int]] = None):
         """
         Read the sensor's internal buffer and return the latest data.
         """
-        raise NotImplementedError()
+        self._check_envs_idx(envs_idx)
+        raise NotImplementedError("The Sensor subclass must implement `read()`.")
 
     @gs.assert_built
     def step(self):
         """
-        Step the sensor to update its internal state.
-        This is called during the simulation step.
+        This is called by the Simulator during after physics steps.
+        Generally, sensor state should only be updated during `read()`.
         """
         if self._data_collector:
             self._data_collector.step(self._sim.cur_step_global)
 
+    def _check_envs_idx(self, envs_idx: Optional[List[int]]):
+        if self.n_envs == 0 and envs_idx is not None:
+            gs.logger.warning("envs_idx is ignored when n_envs=0, as there is only one environment.")
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- properties -------------------------------------
+    # ------------------------------------------------------------------------------------
+
     @property
     def n_envs(self):
         return self._sim.n_envs
+
+    @property
+    def _B(self):
+        return self._sim._B
 
     @property
     def entity(self):
@@ -60,12 +72,16 @@ class Sensor(RBC):
     def is_built(self):
         return self._entity.is_built
 
+    @property
+    def is_recording(self):
+        return self._data_collector is not None and self._data_collector.is_recording
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- data collection ----------------------------------
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def start_recording(self, filename, hz=None):
+    def start_recording(self, filename):
         """
         Start recording data from the sensor.
         Default to CSV data handler.
@@ -82,11 +98,18 @@ class Sensor(RBC):
         """
         Pause data recording from the sensor.
         """
-        self._data_collector.pause_recording()
+        if self._data_collector:
+            self._data_collector.pause_recording()
+        else:
+            gs.logger.warning("Sensor: start_recording() should have been called before pause_recording().")
 
     @gs.assert_built
     def stop_recording(self):
         """
         Stop data recording from the sensor.
         """
-        self._data_collector.stop_recording()
+        if self._data_collector:
+            self._data_collector.stop_recording()
+            self._data_collector = None
+        else:
+            gs.logger.warning("Sensor: start_recording() should have been called before stop_recording().")

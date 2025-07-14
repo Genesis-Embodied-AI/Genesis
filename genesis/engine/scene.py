@@ -436,7 +436,7 @@ class Scene(RBC):
             )
         child_link._parent_idx = parent_link.idx
         parent_link._child_idxs.append(child_link.idx)
-    
+
     @gs.assert_unbuilt
     def add_sensor(
         self,
@@ -446,12 +446,16 @@ class Scene(RBC):
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: str | None = None,
-        **sensor_kwargs
+        **sensor_kwargs,
     ):
-        """Add a sensor to the scene."""
+        """
+        Add a new entity with a sensor to the scene.
+        If the material is not specified, a Static entity will be created.
+        Note that each sensor type is only compatible with specific entity types.
+        """
         if material is None:
             material = gs.materials.Static()
-        
+
         entity = self.add_entity(
             morph=morph,
             material=material,
@@ -517,12 +521,16 @@ class Scene(RBC):
         denoise=True,
     ):
         """
-        Add a camera to the scene. The camera model can be either 'pinhole' or 'thinlens'. The 'pinhole' model is a simple camera model that captures light rays from a single point in space. The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size, allowing for depth of field effects. When 'pinhole' is used, the `aperture` and `focal_len` parameters are ignored.
+        Add a camera to the scene.
+        Note: This is an alias for scene.add_sensor(Camera, ...)
 
         Parameters
         ----------
         model : str
             Specifies the camera model. Options are 'pinhole' or 'thinlens'.
+            The 'pinhole' model is a simple camera model that captures light rays from a single point in space.
+            The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size,
+                allowing for depth of field effects.
         res : tuple of int, shape (2,)
             The resolution of the camera, specified as a tuple (width, height).
         pos : tuple of float, shape (3,)
@@ -534,7 +542,7 @@ class Scene(RBC):
         fov : float
             The vertical field of view of the camera in degrees.
         aperture : float
-            The aperture size of the camera, controlling depth of field.
+            The aperture size of the camera, controlling depth of field. Used only if model='thinlens'.
         focus_dist : float | None
             The focus distance of the camera. If None, it will be auto-computed using `pos` and `lookat`.
         GUI : bool
@@ -546,10 +554,11 @@ class Scene(RBC):
 
         Returns
         -------
-        camera : genesis.Camera
+        camera : genesis.sensor.Camera
             The created camera object.
         """
-        return self.add_sensor(Camera,
+        return self.add_sensor(
+            Camera,
             visualizer=self._visualizer,
             model=model,
             res=res,
@@ -1164,6 +1173,15 @@ class Scene(RBC):
             solver.load_ckpt_from_numpy(arrays)
 
         self._t = state.get("step_index", self._t)
+
+    def stop_recording_all(self):
+        """
+        Stops all active sensor data recordings for the scene.
+        """
+        for entity in self._sim._entities:
+            for sensor in entity.sensors:
+                if sensor.is_recording:
+                    sensor.stop_recording()
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

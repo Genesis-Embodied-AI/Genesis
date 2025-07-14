@@ -6,6 +6,7 @@ import csv
 import os
 import numpy as np
 from typing import List, Optional
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from genesis.utils.misc import tensor_to_array
@@ -103,10 +104,6 @@ class DataCollector:
             handler.cleanup()
             self.processor_threads[i].join()
 
-    def destroy(self):
-        if self.is_active:
-            self.stop_recording()
-
     def step(self, cur_step_global: int):
         """
         If recording, process data every `steps_per_sample` steps.
@@ -141,6 +138,7 @@ class DataCollector:
                     self.data_queues[handler_idx].task_done()
                 except queue.Empty:
                     continue
+
         return _process_data
 
     @property
@@ -312,9 +310,7 @@ class CsvFileOutput(DataOutput):
         Determines how often the data is saved to disk. None = only at cleanup, 0 = every write, >0 = every N writes.
     """
 
-    def __init__(
-        self, config: DataStreamConfig, filename: str, flush_interval: Optional[int] = None
-    ):
+    def __init__(self, config: DataStreamConfig, filename: str, flush_interval: Optional[int] = None):
         super().__init__(config)
         assert filename.endswith(".csv"), "CSV output must be a CSV file"
         self.filename = filename
@@ -330,8 +326,10 @@ class CsvFileOutput(DataOutput):
         self.csv_writer = csv.writer(self.file_handle)
 
     def process(self, data):
-        row_data = np.atleast_1d(tensor_to_array(data))
-        self.csv_writer.writerow(row_data)
+        # data = np.atleast_1d(data) # Data shape may not be homogeneous
+        if not isinstance(data, Iterable):
+            data = [data]
+        self.csv_writer.writerow(data)
         if self.flush_interval is not None:
             self.flush_counter += 1
             if self.flush_counter >= self.flush_interval:

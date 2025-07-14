@@ -144,7 +144,7 @@ class Visualizer(RBC):
                     self._rasterizer.add_camera(camera)
                 if self._raytracer is not None:
                     self._raytracer.add_camera(camera)
-                    camera._rgb_stacked = False # TODO: Raytracer currently does not support batch rendering
+                    camera._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
                 camera.set_pose(camera._transform, camera._pos, camera._lookat, camera._up)
 
             # need to update viewer once here, because otherwise camera will update scene if render is called right

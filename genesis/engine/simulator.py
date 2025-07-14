@@ -183,11 +183,11 @@ class Simulator(RBC):
 
         self._entities.append(entity)
         return entity
-    
+
     def _add_force_field(self, force_field):
         for solver in self._solvers:
             solver._add_force_field(force_field)
-    
+
     def build(self):
         self.n_envs = self.scene.n_envs
         self._B = self.scene._B
@@ -276,7 +276,7 @@ class Simulator(RBC):
 
         if self.rigid_solver.is_active():
             self.rigid_solver._kernel_clear_external_force()
-        
+
         for entity in self._entities:
             for sensor in entity._sensors:
                 sensor.step()

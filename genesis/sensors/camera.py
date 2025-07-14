@@ -15,8 +15,8 @@ from .data_collector import DataCollector, DataStreamConfig, DataOutType
 
 class Camera(Sensor):
     """
-    Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
-    The camera also comes with handy tools such as video recording.
+    A camera which can be used to render RGB, depth, and segmentation images.
+    Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
 
     Parameters
     ----------
@@ -55,9 +55,10 @@ class Camera(Sensor):
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
     """
+
     @staticmethod
     def get_valid_entity_types():
-        return (StaticEntity)
+        return StaticEntity
 
     def __init__(
         self,
@@ -553,7 +554,7 @@ class Camera(Sensor):
             self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
-    
+
     def read(self):
         """Render and returns the RGB frame of the camera as a numpy array."""
         rgb_arr, _, _, _ = self.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
@@ -595,10 +596,7 @@ class Camera(Sensor):
                 if self._rgb_stacked:
                     kwargs["frames_idx"] = self._visualizer._context.rendered_envs_idx
 
-                config = DataStreamConfig(
-                    out_type=out_type,
-                    handler_kwargs=kwargs
-                )
+                config = DataStreamConfig(out_type=out_type, handler_kwargs=kwargs)
                 self._data_collector = DataCollector(self, config)
 
             self._data_collector.start_recording()
@@ -615,12 +613,11 @@ class Camera(Sensor):
 
         if self._auto_render:
             self._data_collector.pause_recording()
-    
+
     def _get_default_video_filename(self):
         caller_file = inspect.stack()[-1].filename
         return (
-            os.path.splitext(os.path.basename(caller_file))[0]
-            + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+            os.path.splitext(os.path.basename(caller_file))[0] + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
         )
 
     @gs.assert_built
@@ -642,7 +639,7 @@ class Camera(Sensor):
 
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
-        
+
         if self._auto_render:
             self._data_collector.stop_recording()
 
@@ -658,7 +655,7 @@ class Camera(Sensor):
                 gs.tools.animate(self._recorded_imgs, filename, fps)
 
             self._recorded_imgs.clear()
-        
+
         self._in_recording = False
 
     def _repr_brief(self):
