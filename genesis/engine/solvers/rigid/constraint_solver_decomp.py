@@ -1017,48 +1017,74 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
         # timer.stamp("_func_solve")
-        self._func_update_qacc()
+        self._func_update_qacc(
+            dofs_state=self._solver.dofs_state,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
         # timer.stamp("_func_update_qacc")
-        self._func_update_contact_force()
+        self._func_update_contact_force(
+            links_state=self._solver.links_state,
+            collider_state=self._collider._collider_state,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
         # timer.stamp("compute force")
 
     @ti.kernel
-    def _func_update_contact_force(self):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_l, i_b in ti.ndrange(self._solver.n_links, self._B):
-            self._solver.links_state[i_l, i_b].contact_force = ti.Vector.zero(gs.ti_float, 3)
+    def _func_update_contact_force(
+        self_unused,
+        links_state: array_class.LinksState,
+        collider_state: ti.template(),
+        constraint_state: ti.template(),
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_links = links_state.contact_force.shape[0]
+        _B = links_state.contact_force.shape[1]
 
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self._B):
-            const_start = self.n_constraints_equality[i_b]
-            for i_c in range(self._collider._collider_state.n_contacts[i_b]):
-                contact_data = self._collider._collider_state.contact_data[i_c, i_b]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_l, i_b in ti.ndrange(n_links, _B):
+            links_state[i_l, i_b].contact_force = ti.Vector.zero(gs.ti_float, 3)
+
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            const_start = constraint_state.n_constraints_equality[i_b]
+            for i_c in range(collider_state.n_contacts[i_b]):
+                contact_data = collider_state.contact_data[i_c, i_b]
 
                 force = ti.Vector.zero(gs.ti_float, 3)
                 d1, d2 = gu.ti_orthogonals(contact_data.normal)
                 for i_dir in range(4):
                     d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
                     n = d * contact_data.friction - contact_data.normal
-                    force += n * self.efc_force[i_c * 4 + i_dir + const_start, i_b]
+                    force += n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
-                self._collider._collider_state.contact_data[i_c, i_b].force = force
+                collider_state.contact_data[i_c, i_b].force = force
 
-                self._solver.links_state[contact_data.link_a, i_b].contact_force = (
-                    self._solver.links_state[contact_data.link_a, i_b].contact_force - force
+                links_state[contact_data.link_a, i_b].contact_force = (
+                    links_state[contact_data.link_a, i_b].contact_force - force
                 )
-                self._solver.links_state[contact_data.link_b, i_b].contact_force = (
-                    self._solver.links_state[contact_data.link_b, i_b].contact_force + force
+                links_state[contact_data.link_b, i_b].contact_force = (
+                    links_state[contact_data.link_b, i_b].contact_force + force
                 )
 
     @ti.kernel
-    def _func_update_qacc(self):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(self._solver.n_dofs, self._B):
-            self._solver.dofs_state[i_d, i_b].acc = self.qacc[i_d, i_b]
-            self._solver.dofs_state[i_d, i_b].qf_constraint = self.qfrc_constraint[i_d, i_b]
-            self._solver.dofs_state[i_d, i_b].force += self.qfrc_constraint[i_d, i_b]
+    def _func_update_qacc(
+        self_unused,
+        dofs_state: array_class.DofsState,
+        constraint_state: ti.template(),
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_dofs = dofs_state.acc.shape[0]
+        _B = dofs_state.acc.shape[1]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            dofs_state[i_d, i_b].acc = constraint_state.qacc[i_d, i_b]
+            dofs_state[i_d, i_b].qf_constraint = constraint_state.qfrc_constraint[i_d, i_b]
+            dofs_state[i_d, i_b].force += constraint_state.qfrc_constraint[i_d, i_b]
 
-            self.qacc_ws[i_d, i_b] = self.qacc[i_d, i_b]
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            self_unused.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
     @ti.kernel
     def _func_solve(
