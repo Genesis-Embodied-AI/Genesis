@@ -379,7 +379,15 @@ class RRT(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    self._solver._func_update_geoms(i_b)
+                    self._solver._func_update_geoms(
+                        i_b,
+                        self._solver.entities_info,
+                        self._solver.geoms_info,
+                        self._solver.geoms_state,
+                        self._solver.links_state,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
 
     @ti.kernel
     def _kernel_rrt_step2(
@@ -708,7 +716,15 @@ class RRTConnect(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    self._solver._func_update_geoms(i_b)
+                    self._solver._func_update_geoms(
+                        i_b,
+                        self._solver.entities_info,
+                        self._solver.geoms_info,
+                        self._solver.geoms_state,
+                        self._solver.links_state,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
 
     @ti.kernel
     def _kernel_rrt_connect_step2(

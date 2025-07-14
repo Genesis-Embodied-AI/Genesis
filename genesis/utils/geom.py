@@ -874,6 +874,12 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
     return T
 
 
+def T_to_trans_quat(T, *, out=None):
+    trans = T[..., :3, 3]
+    quat = R_to_quat(T[..., :3, :3])
+    return trans, quat
+
+
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
     if out is None:
