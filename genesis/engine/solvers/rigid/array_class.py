@@ -11,21 +11,47 @@ DofsState = ti.template()
 DofsInfo = ti.template()
 GeomsState = ti.template()
 GeomsInfo = ti.template()
-GeomsInitAABB = ti.template()
+GeomsInitAABB = ti.template()  # TODO: move to rigid global info
 LinksState = ti.template()
 LinksInfo = ti.template()
+JointsInfo = ti.template()
+JointsState = ti.template()
+VertsState = ti.template()
 VertsInfo = ti.template()
 EdgesInfo = ti.template()
+FacesInfo = ti.template()
+VVertsInfo = ti.template()
+VFacesInfo = ti.template()
+VGeomsInfo = ti.template()
+EntitiesState = ti.template()
+EntitiesInfo = ti.template()
+EqualitiesInfo = ti.template()
 
 
 @ti.data_oriented
 class RigidGlobalInfo:
-    def __init__(self, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
+    def __init__(self, solver, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
         self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
         self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
 
+        self.qpos0 = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+        self.qpos = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+
+        # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+
 
 # =========================================== Collider ===========================================
+
+
+@ti.data_oriented
+class ConstraintState:
+    """
+    Class to store the mutable constraint data, all of which type is [ti.fields].
+    """
+
+    def __init__(self, solver):
+        f_batch = solver._batch_shape
+        self.n_constraints = ti.field(dtype=gs.ti_int, shape=f_batch())
 
 
 @ti.data_oriented

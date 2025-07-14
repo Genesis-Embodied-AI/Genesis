@@ -62,19 +62,19 @@ class FEMSolver(Solver):
 
     def init_batch_fields(self):
         self.batch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
 
         self.batch_pcg_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
 
         self.batch_linesearch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
@@ -122,7 +122,7 @@ class FEMSolver(Solver):
 
         # element state without gradient
         element_state_el_ng = ti.types.struct(
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # element info (properties that remain static through time)
@@ -235,7 +235,7 @@ class FEMSolver(Solver):
         surface_state = ti.types.struct(
             tri2v=gs.ti_ivec3,  # vertex index of a triangle
             tri2el=gs.ti_int,  # element index of a triangle
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # for rendering (this is more of a surface)
