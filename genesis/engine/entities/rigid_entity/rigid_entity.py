@@ -148,8 +148,8 @@ class RigidEntity(Entity):
 
         elif isinstance(morph, gs.options.morphs.Plane):
             tmesh, cmesh = mu.create_plane(normal=morph.normal)
-            geom_data = None
-            geom_type = gs.GEOM_TYPE.MESH
+            geom_data = np.asarray(morph.normal)
+            geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
 
         else:
