@@ -959,7 +959,7 @@ class Renderer(object):
             fragment_shader = "point_shadow.frag"
             geometry_shader = "point_shadow.geom"
         elif (
-            bool(program_flags & ProgramFlags.USE_MATERIAL)
+            program_flags & ProgramFlags.USE_MATERIAL
             and not flags & RenderFlags.DEPTH_ONLY
             and not flags & RenderFlags.FLAT
             and not flags & RenderFlags.SEG
@@ -969,7 +969,7 @@ class Renderer(object):
             if primitive.double_sided:
                 geometry_shader = "mesh_double_sided.geom"
                 defines["DOUBLE_SIDED"] = 1
-        elif bool(program_flags & (ProgramFlags.VERTEX_NORMALS | ProgramFlags.FACE_NORMALS)):
+        elif program_flags & (ProgramFlags.VERTEX_NORMALS | ProgramFlags.FACE_NORMALS):
             vertex_shader = "vertex_normals.vert"
             if primitive.mode == GLTF.POINTS:
                 geometry_shader = "vertex_normals_pc.geom"
@@ -1034,7 +1034,7 @@ class Renderer(object):
             defines["FACE_NORMALS"] = 1
 
         # Set up material texture defines
-        if bool(program_flags & ProgramFlags.USE_MATERIAL):
+        if program_flags & ProgramFlags.USE_MATERIAL:
             tf = primitive.material.tex_flags
             if tf & TexFlags.NORMAL:
                 defines["HAS_NORMAL_TEX"] = 1
