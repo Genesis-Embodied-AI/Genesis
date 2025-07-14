@@ -155,6 +155,7 @@ def parse_terrain(morph: Terrain, surface):
             heightfield,
             horizontal_scale=morph.horizontal_scale,
             vertical_scale=morph.vertical_scale,
+            surface=surface,
             uv_scale=morph.uv_scale if need_uvs else None,
         )
 
@@ -214,7 +215,12 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
 
 
 def convert_heightfield_to_watertight_trimesh(
-    height_field_raw, horizontal_scale, vertical_scale, slope_threshold=None, uv_scale=None
+    height_field_raw,
+    horizontal_scale,
+    vertical_scale,
+    surface,
+    slope_threshold=None,
+    uv_scale=None,
 ):
     """
     Adapted from Issac Gym's `convert_heightfield_to_trimesh` function.
@@ -284,6 +290,21 @@ def convert_heightfield_to_watertight_trimesh(
         triangles_top[start + 1 : stop : 2, 0] = ind0
         triangles_top[start + 1 : stop : 2, 1] = ind2
         triangles_top[start + 1 : stop : 2, 2] = ind3
+
+    if not surface.double_sided:
+        if uv_scale is not None:
+            uv_top = np.column_stack(
+                (
+                    (xx.flat - xx.min()) / (xx.max() - xx.min()) * uv_scale,
+                    (yy.flat - yy.min()) / (yy.max() - yy.min()) * uv_scale,
+                )
+            )
+            visual = trimesh.visual.TextureVisuals(uv=uv_top)
+        else:
+            visual = None
+
+        mesh = trimesh.Trimesh(vertices_top, triangles_top, visual=visual, process=False)
+        return mesh, mesh
 
     # bottom plane
     z_min = np.min(vertices_top[:, 2]) - 1.0
