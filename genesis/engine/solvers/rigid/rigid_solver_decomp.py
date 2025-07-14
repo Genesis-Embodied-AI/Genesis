@@ -79,6 +79,7 @@ class RigidSolver(Solver):
         enable_multi_contact: bool = True
         enable_self_collision: bool = True
         enable_adjacent_collision: bool = False
+        enable_collision: bool = False
         box_box_detection: bool = False
         integrator: gs.integrator = gs.integrator.implicitfast
         sparse_solve: bool = False
@@ -247,6 +248,7 @@ class RigidSolver(Solver):
             enable_multi_contact=getattr(self, "_enable_multi_contact", True),
             enable_self_collision=getattr(self, "_enable_self_collision", True),
             enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
+            enable_collision=getattr(self, "_enable_collision", False),
             box_box_detection=getattr(self, "_box_box_detection", False),
             integrator=getattr(self, "_integrator", gs.integrator.implicitfast),
             sparse_solve=getattr(self._options, "sparse_solve", False),
@@ -1306,24 +1308,27 @@ class RigidSolver(Solver):
 
     @ti.kernel
     def _kernel_adjust_link_inertia(
-        self,
+        self_unused,
         link_idx: ti.i32,
         ratio: ti.f32,
+        links_info: array_class.LinksInfo,
+        static_rigid_sim_config: ti.template(),
     ):
-        if ti.static(self._options.batch_links_info):
-            for i_b in range(self._B):
+        if ti.static(static_rigid_sim_config.batch_links_info):
+            _B = links_info.shape[1]
+            for i_b in range(_B):
                 for j in ti.static(range(2)):
-                    self.links_info[link_idx, i_b].invweight[j] /= ratio
-                self.links_info[link_idx, i_b].inertial_mass *= ratio
+                    links_info[link_idx, i_b].invweight[j] /= ratio
+                links_info[link_idx, i_b].inertial_mass *= ratio
                 for j1, j2 in ti.static(ti.ndrange(3, 3)):
-                    self.links_info[link_idx, i_b].inertial_i[j1, j2] *= ratio
+                    links_info[link_idx, i_b].inertial_i[j1, j2] *= ratio
         else:
-            for i_b in range(self._B):
+            for i_b in range(1):
                 for j in ti.static(range(2)):
-                    self.links_info[link_idx].invweight[j] /= ratio
-                self.links_info[link_idx].inertial_mass *= ratio
+                    links_info[link_idx].invweight[j] /= ratio
+                links_info[link_idx].inertial_mass *= ratio
                 for j1, j2 in ti.static(ti.ndrange(3, 3)):
-                    self.links_info[link_idx].inertial_i[j1, j2] *= ratio
+                    links_info[link_idx].inertial_i[j1, j2] *= ratio
 
     def _init_vgeom_fields(self):
         struct_vgeom_info = ti.types.struct(
@@ -1558,6 +1563,8 @@ class RigidSolver(Solver):
     def _init_envs_offset(self):
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
         self.envs_offset.from_numpy(self._scene.envs_offset)
+
+        self._rigid_global_info.envs_offset = self.envs_offset
 
     def _init_sdf(self):
         self.sdf = SDF(self)
@@ -2051,8 +2058,17 @@ class RigidSolver(Solver):
         )
 
     @ti.kernel
-    def _kernel_clear_external_force(self):
-        self._func_clear_external_force()
+    def _kernel_clear_external_force(
+        self_unused,
+        links_state: array_class.LinksState,
+        rigid_global_info: ti.template(),
+        static_rigid_sim_config: ti.template(),
+    ):
+        self_unused._func_clear_external_force(
+            links_state=links_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
     def substep(self):
         # from genesis.utils.tools import create_timer
@@ -2303,50 +2319,64 @@ class RigidSolver(Solver):
         return collision_pairs
 
     @ti.kernel
-    def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
+    def _kernel_forward_kinematics_links_geoms(
+        self_unused,
+        envs_idx: ti.types.ndarray(),
+        links_state: array_class.LinksState,
+        links_info: array_class.LinksInfo,
+        joints_state: array_class.JointsState,
+        joints_info: array_class.JointsInfo,
+        dofs_state: array_class.DofsState,
+        dofs_info: array_class.DofsInfo,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: ti.template(),
+        static_rigid_sim_config: ti.template(),
+    ):
         for i_b in envs_idx:
-            self._func_forward_kinematics(
+            self_unused._func_forward_kinematics(
                 i_b,
-                self.links_state,
-                self.links_info,
-                self.joints_state,
-                self.joints_info,
-                self.dofs_state,
-                self.dofs_info,
-                self.entities_info,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
-            self._func_COM_links(
+            self_unused._func_COM_links(
                 i_b,
-                self.links_state,
-                self.links_info,
-                self.joints_state,
-                self.joints_info,
-                self.dofs_state,
-                self.dofs_info,
-                self.entities_info,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
-            self._func_forward_velocity(
+            self_unused._func_forward_velocity(
                 i_b,
-                entities_info=self.entities_info,
-                links_info=self.links_info,
-                links_state=self.links_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
-            self._func_update_geoms(
+            self_unused._func_update_geoms(
                 i_b,
-                self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.links_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
+                entities_info=entities_info,
+                geoms_info=geoms_info,
+                geoms_state=geoms_state,
+                links_state=links_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
 
     def _func_constraint_force(self):
@@ -2366,12 +2396,13 @@ class RigidSolver(Solver):
         # timer.stamp("constraint_solver.handle_constraints")
 
     @ti.kernel
-    def _func_constraint_clear(self):
-        self.constraint_solver.n_constraints.fill(0)
-        if ti.static(not self._use_contact_island):
-            self.constraint_solver.n_constraints_equality.fill(0)
+    def _func_constraint_clear(self_unused, constraint_state: ti.template(), static_rigid_sim_config: ti.template()):
 
-        if self._enable_collision:
+        constraint_state.n_constraints.fill(0)
+        if ti.static(not self._use_contact_island):
+            constraint_state.n_constraints_equality.fill(0)
+
+        if static_rigid_sim_config.enable_collision:
             if ti.static(self._use_hibernation):
                 self.n_contacts_hibernated.fill(0)
 
@@ -3138,15 +3169,23 @@ class RigidSolver(Solver):
             self.geoms_state[i_g, i_b].aabb_max = upper
 
     @ti.kernel
-    def _kernel_update_vgeoms(self):
+    def _kernel_update_vgeoms(
+        self_unused,
+        vgeoms_info: array_class.VgeomsInfo,
+        vgeoms_state: array_class.VgeomsState,
+        links_state: array_class.LinksState,
+        static_rigid_sim_config: ti.template(),
+    ):
         """
         Vgeoms are only for visualization purposes.
         """
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g, i_b in ti.ndrange(self.n_vgeoms, self._B):
-            g_info = self.vgeoms_info[i_g]
-            l = self.links_state[g_info.link_idx, i_b]
-            self.vgeoms_state[i_g, i_b].pos, self.vgeoms_state[i_g, i_b].quat = gu.ti_transform_pos_quat_by_trans_quat(
+        n_vgeoms = vgeoms_info.link_idx.shape[0]
+        _B = links_state.shape[1]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_g, i_b in ti.ndrange(n_vgeoms, _B):
+            g_info = vgeoms_info[i_g]
+            l = links_state[g_info.link_idx, i_b]
+            vgeoms_state[i_g, i_b].pos, vgeoms_state[i_g, i_b].quat = gu.ti_transform_pos_quat_by_trans_quat(
                 g_info.pos, g_info.quat, l.pos, l.quat
             )
 
@@ -3320,21 +3359,27 @@ class RigidSolver(Solver):
         else:
             raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
 
-        self._kernel_apply_links_external_force(force, links_idx, envs_idx, ref, 1 if local else 0)
+        self._kernel_apply_links_external_force(
+            force, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
+        )
 
     @ti.kernel
     def _kernel_apply_links_external_force(
-        self,
+        self_unused,
         force: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         ref: ti.template(),
         local: ti.template(),
+        links_state: array_class.LinksState,
+        static_rigid_sim_config: ti.template(),
     ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             force_i = ti.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.ti_float)
-            self._func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local)
+            self_unused._func_apply_link_external_force(
+                force_i, links_idx[i_l_], envs_idx[i_b_], ref, local, links_state
+            )
 
     def apply_links_external_torque(
         self,
@@ -3383,21 +3428,27 @@ class RigidSolver(Solver):
         else:
             raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
 
-        self._kernel_apply_links_external_torque(torque, links_idx, envs_idx, ref, 1 if local else 0)
+        self._kernel_apply_links_external_torque(
+            torque, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
+        )
 
     @ti.kernel
     def _kernel_apply_links_external_torque(
-        self,
+        self_unused,
         torque: ti.types.ndarray(),
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         ref: ti.template(),
         local: ti.template(),
+        links_state: array_class.LinksState,
+        static_rigid_sim_config: ti.template(),
     ):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             torque_i = ti.Vector([torque[i_b_, i_l_, 0], torque[i_b_, i_l_, 1], torque[i_b_, i_l_, 2]], dt=gs.ti_float)
-            self._func_apply_link_external_torque(torque_i, links_idx[i_l_], envs_idx[i_b_], ref, local)
+            self_unused._func_apply_link_external_torque(
+                torque_i, links_idx[i_l_], envs_idx[i_b_], ref, local, links_state
+            )
 
     @ti.func
     def _func_apply_external_force(self, pos, force, link_idx, env_idx):
@@ -3406,47 +3457,71 @@ class RigidSolver(Solver):
         self.links_state[link_idx, env_idx].cfrc_applied_vel -= force
 
     @ti.func
-    def _func_apply_link_external_force(self, force, link_idx, env_idx, ref: ti.template(), local: ti.template()):
+    def _func_apply_link_external_force(
+        self_unused,
+        force,
+        link_idx,
+        env_idx,
+        ref: ti.template(),
+        local: ti.template(),
+        links_state: array_class.LinksState,
+    ):
         torque = ti.Vector.zero(gs.ti_float, 3)
         if ti.static(ref == 1):  # link's CoM
             if ti.static(local == 1):
-                force = gu.ti_transform_by_quat(force, self.links_state[link_idx, env_idx].i_quat)
-            torque = self.links_state[link_idx, env_idx].i_pos.cross(force)
+                force = gu.ti_transform_by_quat(force, links_state[link_idx, env_idx].i_quat)
+            torque = links_state[link_idx, env_idx].i_pos.cross(force)
         if ti.static(ref == 2):  # link's origin
             if ti.static(local == 1):
-                force = gu.ti_transform_by_quat(force, self.links_state[link_idx, env_idx].quat)
-            torque = (self.links_state[link_idx, env_idx].pos - self.links_state[link_idx, env_idx].COM).cross(force)
+                force = gu.ti_transform_by_quat(force, links_state[link_idx, env_idx].quat)
+            torque = (links_state[link_idx, env_idx].pos - links_state[link_idx, env_idx].COM).cross(force)
 
-        self.links_state[link_idx, env_idx].cfrc_applied_vel -= force
-        self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
+        links_state[link_idx, env_idx].cfrc_applied_vel -= force
+        links_state[link_idx, env_idx].cfrc_applied_ang -= torque
 
     @ti.func
     def _func_apply_external_torque(self, torque, link_idx, env_idx):
         self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
 
     @ti.func
-    def _func_apply_link_external_torque(self, torque, link_idx, env_idx, ref: ti.template(), local: ti.template()):
+    def _func_apply_link_external_torque(
+        self_unused,
+        torque,
+        link_idx,
+        env_idx,
+        ref: ti.template(),
+        local: ti.template(),
+        links_state: array_class.LinksState,
+    ):
         if ti.static(ref == 1 and local == 1):  # link's CoM
-            torque = gu.ti_transform_by_quat(torque, self.links_state[link_idx, env_idx].i_quat)
+            torque = gu.ti_transform_by_quat(torque, links_state[link_idx, env_idx].i_quat)
         if ti.static(ref == 2 and local == 1):  # link's origin
-            torque = gu.ti_transform_by_quat(torque, self.links_state[link_idx, env_idx].quat)
+            torque = gu.ti_transform_by_quat(torque, links_state[link_idx, env_idx].quat)
 
-        self.links_state[link_idx, env_idx].cfrc_applied_ang -= torque
+        links_state[link_idx, env_idx].cfrc_applied_ang -= torque
 
     @ti.func
-    def _func_clear_external_force(self):
-        if ti.static(self._use_hibernation):
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_b in range(self._B):
-                for i_l_ in range(self.n_awake_links[i_b]):
-                    i_l = self.awake_links[i_l_, i_b]
-                    self.links_state[i_l, i_b].cfrc_applied_ang = ti.Vector.zero(gs.ti_float, 3)
-                    self.links_state[i_l, i_b].cfrc_applied_vel = ti.Vector.zero(gs.ti_float, 3)
+    def _func_clear_external_force(
+        self_unused,
+        links_state,
+        rigid_global_info,
+        static_rigid_sim_config: ti.template(),
+    ):
+        _B = links_state.shape[1]
+        n_links = links_state.shape[0]
+        rgi = rigid_global_info
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_b in range(_B):
+                for i_l_ in range(rgi.n_awake_links[i_b]):
+                    i_l = rgi.awake_links[i_l_, i_b]
+                    links_state[i_l, i_b].cfrc_applied_ang = ti.Vector.zero(gs.ti_float, 3)
+                    links_state[i_l, i_b].cfrc_applied_vel = ti.Vector.zero(gs.ti_float, 3)
         else:
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-            for i_l, i_b in ti.ndrange(self.n_links, self._B):
-                self.links_state[i_l, i_b].cfrc_applied_ang = ti.Vector.zero(gs.ti_float, 3)
-                self.links_state[i_l, i_b].cfrc_applied_vel = ti.Vector.zero(gs.ti_float, 3)
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i_l, i_b in ti.ndrange(n_links, _B):
+                links_state[i_l, i_b].cfrc_applied_ang = ti.Vector.zero(gs.ti_float, 3)
+                links_state[i_l, i_b].cfrc_applied_vel = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.func
     def _func_torque_and_passive_force(
@@ -4183,18 +4258,35 @@ class RigidSolver(Solver):
         self._kernel_update_geoms_render_T(self._geoms_render_T)
 
     @ti.kernel
-    def _kernel_update_vgeoms_render_T(self, vgeoms_render_T: ti.types.ndarray()):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-        for i_g, i_b in ti.ndrange(self.n_vgeoms, self._B):
+    def _kernel_update_vgeoms_render_T(
+        self_unused,
+        vgeoms_render_T: ti.types.ndarray(),
+        vgeoms_info: array_class.VgeomsInfo,
+        vgeoms_state: array_class.VgeomsState,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_vgeoms = vgeoms_info.link_idx.shape[0]
+        _B = links_state.shape[1]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_g, i_b in ti.ndrange(n_vgeoms, _B):
             geom_T = gu.ti_trans_quat_to_T(
-                self.vgeoms_state[i_g, i_b].pos + self.envs_offset[i_b],
-                self.vgeoms_state[i_g, i_b].quat,
+                vgeoms_state[i_g, i_b].pos + rigid_global_info.envs_offset[i_b],
+                vgeoms_state[i_g, i_b].quat,
             )
             for i, j in ti.static(ti.ndrange(4, 4)):
                 vgeoms_render_T[i_g, i_b, i, j] = ti.cast(geom_T[i, j], ti.float32)
 
     def update_vgeoms_render_T(self):
-        self._kernel_update_vgeoms_render_T(self._vgeoms_render_T)
+        self._kernel_update_vgeoms_render_T(
+            self._vgeoms_render_T,
+            vgeoms_info=self.vgeoms_info,
+            vgeoms_state=self.vgeoms_state,
+            links_state=self.links_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
     def get_state(self, f):
         if self.is_active():
@@ -5564,6 +5656,7 @@ class RigidSolver(Solver):
         KF: ti.float32,
         KM: ti.float32,
         invert: ti.i32,
+        links_state: array_class.LinksState,
     ):
         """
         Set the RPM of propellers of a drone entity.
@@ -5581,8 +5674,8 @@ class RigidSolver(Solver):
                 if invert:
                     torque = -torque
 
-                self._func_apply_link_external_force(force, i_l, i_b, 1, 1)
-                self._func_apply_link_external_torque(torque, i_l, i_b, 1, 1)
+                self._func_apply_link_external_force(force, i_l, i_b, 1, 1, links_state)
+                self._func_apply_link_external_torque(torque, i_l, i_b, 1, 1, links_state)
 
     @ti.kernel
     def _update_drone_propeller_vgeoms(
