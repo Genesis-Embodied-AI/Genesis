@@ -58,7 +58,7 @@ class Collider:
     @dataclass(frozen=True)
     class ColliderStaticConfig:
         """
-        Class to store the IMMUTABLE variables that would require recompilation if changed.
+        Class to store the IMMUTABLE primitives that would require recompilation if changed.
         """
 
         # store static information here

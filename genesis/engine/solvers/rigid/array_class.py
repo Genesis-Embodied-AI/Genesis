@@ -40,7 +40,7 @@ class RigidGlobalInfo:
         # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
 
 
-# =========================================== Collider ===========================================
+# =========================================== Constraint ===========================================
 
 
 @ti.data_oriented
@@ -52,6 +52,9 @@ class ConstraintState:
     def __init__(self, solver):
         f_batch = solver._batch_shape
         self.n_constraints = ti.field(dtype=gs.ti_int, shape=f_batch())
+
+
+# =========================================== Collider ===========================================
 
 
 @ti.data_oriented
