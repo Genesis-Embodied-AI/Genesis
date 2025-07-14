@@ -178,7 +178,7 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].COM
+                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
@@ -1001,14 +1001,7 @@ class ConstraintSolverIsland:
                 i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                 i_e = self.contact_island.entity_id[i_e_, i_b]
                 self._solver._mass_mat_mask[i_e_, i_b] = 1
-            self._solver._func_solve_mass_batched(
-                self.grad,
-                self.Mgrad,
-                i_b,
-                entities_info=self._solver.entities_info,
-                rigid_global_info=self._solver._rigid_global_info,
-                static_rigid_sim_config=self._solver._static_rigid_sim_config,
-            )
+            self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
             for i_e in range(self._solver.n_entities):
                 self._solver._mass_mat_mask[i_e, i_b] = 1
 
