@@ -16,6 +16,7 @@ import genesis.engine.solvers.rigid.array_class as array_class
 
 from .mpr_decomp import MPR
 from .gjk_decomp import GJK
+from .support_field_decomp import SupportField
 
 from enum import IntEnum
 
@@ -83,6 +84,10 @@ class Collider:
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
         self._gjk = GJK(rigid_solver) if self._solver._options.use_gjk_collision else None
+
+        # Support field used for mpr and gjk. Rather than having separate support fields for each algorithm, keep only
+        # one copy here to save memory and maintain cleaner code.
+        self._support_field = SupportField(rigid_solver)
 
     def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
@@ -367,9 +372,14 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
+            self._mpr._mpr_state,
+            self._mpr._mpr_static_config,
+            self._support_field._support_field_info,
+            self._support_field._support_field_static_config,
             self._mpr,
             self._gjk,
             self._solver.sdf,
+            self._support_field,
         )
         self._func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
@@ -381,7 +391,7 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
-            self._mpr,
+            self._support_field,
         )
         # timer.stamp("func_narrow_phase")
         if self._collider_static_config.has_terrain:
@@ -394,7 +404,12 @@ class Collider:
                 self._collider_state,
                 self._collider_info,
                 self._collider_static_config,
+                self._mpr._mpr_state,
+                self._mpr._mpr_static_config,
+                self._support_field._support_field_info,
+                self._support_field._support_field_static_config,
                 self._mpr,
+                self._support_field,
             )
             # timer.stamp("_func_narrow_phase_any_vs_terrain")
         if self._collider_static_config.has_nonconvex_nonterrain:
@@ -698,10 +713,16 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
+        static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
         collider_static_config: ti.template(),
+        mpr_state: ti.template(),
+        mpr_static_config: ti.template(),
+        support_field_info: ti.template(),
+        support_field_static_config: ti.template(),
         mpr: ti.template(),
+        support_field: ti.template(),
         i_ga,
         i_gb,
         i_b,
@@ -734,7 +755,19 @@ class Collider:
                     direction[i_axis] = 1.0
                 else:
                     direction[i_axis] = -1.0
-                v1 = mpr.support_driver(direction, i_ga, i_b)
+                v1 = mpr.support_driver(
+                    geoms_state,
+                    geoms_info,
+                    support_field,
+                    support_field_info,
+                    support_field_static_config,
+                    collider_state,
+                    collider_info,
+                    collider_static_config,
+                    direction,
+                    i_ga,
+                    i_b,
+                )
                 collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
             for i in ti.static(range(3)):
@@ -795,7 +828,22 @@ class Collider:
                                     geoms_state[i_gb, i_b].quat = gu.ti_identity_quat()
 
                                     is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
-                                        i_ga, i_gb, i_b, center_a, center_b
+                                        geoms_state,
+                                        geoms_info,
+                                        static_rigid_sim_config,
+                                        collider_state,
+                                        collider_info,
+                                        collider_static_config,
+                                        mpr_state,
+                                        mpr_static_config,
+                                        support_field_info,
+                                        support_field_static_config,
+                                        support_field,
+                                        i_ga,
+                                        i_gb,
+                                        i_b,
+                                        center_a,
+                                        center_b,
                                     )
                                     if is_col:
                                         normal = gu.ti_transform_by_quat(normal, gb_quat)
@@ -1128,9 +1176,16 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         collider_static_config: ti.template(),
+        mpr_state: ti.template(),
+        mpr_static_config: ti.template(),
+        support_field_info: ti.template(),
+        support_field_static_config: ti.template(),
+        # FIXME: We need mpr, gjk, sdf, and support_field for now to call their class functions. After migration is
+        # done, remove these arguments as the class functions will be called directly.
         mpr: ti.template(),
         gjk: ti.template(),
         sdf: ti.template(),
+        support_field: ti.template(),
     ):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
@@ -1174,9 +1229,14 @@ class Collider:
                             collider_state,
                             collider_info,
                             collider_static_config,
+                            mpr_state,
+                            mpr_static_config,
+                            support_field_info,
+                            support_field_static_config,
                             mpr,
                             gjk,
                             sdf,
+                            support_field,
                             i_ga,
                             i_gb,
                             i_b,
@@ -1197,9 +1257,14 @@ class Collider:
                                 collider_state,
                                 collider_info,
                                 collider_static_config,
+                                mpr_state,
+                                mpr_static_config,
+                                support_field_info,
+                                support_field_static_config,
                                 mpr,
                                 gjk,
                                 sdf,
+                                support_field,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -1217,7 +1282,9 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         collider_static_config: ti.template(),
-        mpr: ti.template(),
+        # FIXME: We need support_field for now to call its class functions. After migration is done, remove these
+        # arguments as the class functions will be called directly.
+        support_field: ti.template(),
     ):
         _B = collider_state.active_buffer.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -1240,7 +1307,7 @@ class Collider:
                             collider_state,
                             collider_info,
                             collider_static_config,
-                            mpr,
+                            support_field,
                             i_ga,
                             i_gb,
                             i_b,
@@ -1270,7 +1337,14 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         collider_static_config: ti.template(),
+        mpr_state: ti.template(),
+        mpr_static_config: ti.template(),
+        support_field_info: ti.template(),
+        support_field_static_config: ti.template(),
+        # FIXME: We need mpr and support_field for now to call their class functions. After migration is done, remove
+        # these arguments as the class functions will be called directly.
         mpr: ti.template(),
+        support_field: ti.template(),
     ):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1294,10 +1368,16 @@ class Collider:
                             geoms_state,
                             geoms_info,
                             geoms_init_AABB,
+                            static_rigid_sim_config,
                             collider_state,
                             collider_info,
                             collider_static_config,
+                            mpr_state,
+                            mpr_static_config,
+                            support_field_info,
+                            support_field_static_config,
                             mpr,
+                            support_field,
                             i_ga,
                             i_gb,
                             i_b,
@@ -1497,7 +1577,7 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         collider_static_config: ti.template(),
-        mpr: ti.template(),
+        support_field: ti.template(),
         i_ga,
         i_gb,
         i_b,
@@ -1511,7 +1591,7 @@ class Collider:
         plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
         normal = -plane_dir.normalized()
 
-        v1, _ = mpr.support_field._func_support_box(normal, i_gb, i_b)
+        v1, _ = support_field._func_support_box(geoms_state, geoms_info, normal, i_gb, i_b)
         penetration = normal.dot(v1 - ga_state.pos)
 
         if penetration > 0.0:
@@ -1693,9 +1773,14 @@ class Collider:
         collider_state: ti.template(),
         collider_info: ti.template(),
         collider_static_config: ti.template(),
+        mpr_state: ti.template(),
+        mpr_static_config: ti.template(),
+        support_field_info: ti.template(),
+        support_field_static_config: ti.template(),
         mpr: ti.template(),
         gjk: ti.template(),
         sdf: ti.template(),
+        support_field: ti.template(),
         i_ga,
         i_gb,
         i_b,
@@ -1711,7 +1796,7 @@ class Collider:
                     collider_state,
                     collider_info,
                     collider_static_config,
-                    mpr,
+                    support_field,
                     i_ga,
                     i_gb,
                     i_b,
@@ -1774,7 +1859,19 @@ class Collider:
                         plane_dir = gu.ti_transform_by_quat(plane_dir, geoms_state[i_ga, i_b].quat)
                         normal = -plane_dir.normalized()
 
-                        v1 = mpr.support_driver(normal, i_gb, i_b)
+                        v1 = mpr.support_driver(
+                            geoms_state,
+                            geoms_info,
+                            support_field,
+                            support_field_info,
+                            support_field_static_config,
+                            collider_state,
+                            collider_info,
+                            collider_static_config,
+                            normal,
+                            i_gb,
+                            i_b,
+                        )
                         penetration = normal.dot(v1 - geoms_state[i_ga, i_b].pos)
                         contact_pos = v1 - 0.5 * penetration * normal
                         is_col = penetration > 0
@@ -1800,7 +1897,22 @@ class Collider:
 
                                 if not is_mpr_updated:
                                     is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                                        i_ga, i_gb, i_b, normal_ws
+                                        geoms_state,
+                                        geoms_info,
+                                        geoms_init_AABB,
+                                        static_rigid_sim_config,
+                                        collider_state,
+                                        collider_info,
+                                        collider_static_config,
+                                        mpr_state,
+                                        mpr_static_config,
+                                        support_field_info,
+                                        support_field_static_config,
+                                        support_field,
+                                        i_ga,
+                                        i_gb,
+                                        i_b,
+                                        normal_ws,
                                     )
                                     is_mpr_updated = True
 

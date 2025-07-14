@@ -187,3 +187,16 @@ class MPRState:
             layout=ti.Layout.SOA,
         )
         self.simplex_size = ti.field(gs.ti_int, shape=f_batch())
+
+
+# =========================================== SupportField ===========================================
+@ti.data_oriented
+class SupportFieldInfo:
+    """
+    Class to store the IMMUTABLE support field data, all of which type is [ti.fields] (later we will support NDArrays).
+    """
+
+    def __init__(self, n_geoms, n_support_cells):
+        self.support_cell_start = ti.field(dtype=gs.ti_int, shape=n_geoms)
+        self.support_v = ti.Vector.field(3, dtype=gs.ti_float, shape=max(1, n_support_cells))
+        self.support_vid = ti.field(dtype=gs.ti_int, shape=max(1, n_support_cells))

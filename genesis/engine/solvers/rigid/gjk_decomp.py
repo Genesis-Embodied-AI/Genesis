@@ -2971,21 +2971,39 @@ class GJK:
 
         geom_type = self._solver.geoms_info[i_g].type
         if geom_type == gs.GEOM_TYPE.SPHERE:
-            v = self.support_field._func_support_sphere(direction, i_g, i_b, shrink_sphere)
+            v = self.support_field._func_support_sphere(
+                self._solver.geoms_state, self._solver.geoms_info, direction, i_g, i_b, shrink_sphere
+            )
         elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-            v = self.support_field._func_support_ellipsoid(direction, i_g, i_b)
+            v = self.support_field._func_support_ellipsoid(
+                self._solver.geoms_state, self._solver.geoms_info, direction, i_g, i_b
+            )
         elif geom_type == gs.GEOM_TYPE.CAPSULE:
-            v = self.support_field._func_support_capsule(direction, i_g, i_b, shrink_sphere)
+            v = self.support_field._func_support_capsule(
+                self._solver.geoms_state, self._solver.geoms_info, direction, i_g, i_b, shrink_sphere
+            )
         elif geom_type == gs.GEOM_TYPE.BOX:
-            v, vid = self.support_field._func_support_box(direction, i_g, i_b)
+            v, vid = self.support_field._func_support_box(
+                self._solver.geoms_state, self._solver.geoms_info, direction, i_g, i_b
+            )
         elif geom_type == gs.GEOM_TYPE.TERRAIN:
             if ti.static(self._solver.collider._collider_static_config.has_terrain):
-                v, vid = self.support_field._func_support_prism(direction, i_g, i_b)
+                v, vid = self.support_field._func_support_prism(
+                    self._solver.collider._collider_state, direction, i_g, i_b
+                )
         elif geom_type == gs.GEOM_TYPE.MESH and self._enable_mujoco_compatibility:
             # If mujoco-compatible, do exhaustive search for the vertex
             v, vid = self.support_mesh(direction, i_g, i_b, i_o)
         else:
-            v, vid = self.support_field._func_support_world(direction, i_g, i_b)
+            v, vid = self.support_field._func_support_world(
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self.support_field._support_field_info,
+                self.support_field._support_field_static_config,
+                direction,
+                i_g,
+                i_b,
+            )
         return v, vid
 
     @ti.func
@@ -3414,9 +3432,19 @@ class GJK:
         geom_type = self._solver.geoms_info[i_g].type
         count = 1
         if geom_type == gs.GEOM_TYPE.BOX:
-            count = self.support_field._func_count_supports_box(d, i_g, i_b)
+            count = self.support_field._func_count_supports_box(
+                self._solver.geoms_state, self._solver.geoms_info, d, i_g, i_b
+            )
         elif geom_type == gs.GEOM_TYPE.MESH:
-            count = self.support_field._func_count_supports_world(d, i_g, i_b)
+            count = self.support_field._func_count_supports_world(
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self.support_field._support_field_info,
+                self.support_field._support_field_static_config,
+                d,
+                i_g,
+                i_b,
+            )
         return count
 
     @ti.func
