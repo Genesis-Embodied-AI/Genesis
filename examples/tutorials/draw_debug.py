@@ -34,7 +34,10 @@ def main():
 
     # Debug line
     debug_line = scene.draw_debug_line(
-        start=(0.5, -0.25, 0.5), end=(0.5, 0.25, 0.5), radius=0.01, color=(1, 0, 0, 1)
+        start=np.array((0.5, -0.25, 0.5)),
+        end=np.array((0.5, 0.25, 0.5)),
+        radius=0.01,
+        color=(1, 0, 0, 1),
     )  # Red
 
     # Debug arrow
