@@ -3,6 +3,8 @@ import pytest
 
 import genesis as gs
 
+from .utils import assert_allclose
+
 
 @pytest.mark.required
 @pytest.mark.parametrize("segmentation_level", ["entity", "link"])
