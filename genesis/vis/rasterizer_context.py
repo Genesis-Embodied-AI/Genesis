@@ -265,9 +265,9 @@ class RasterizerContext:
             for tool_entity in self.sim.tool_solver.entities:
                 if tool_entity.mesh is not None:
                     mesh = trimesh.Trimesh(
-                        tool_entity.mesh.init_vertices_np,
+                        tool_entity.mesh.raw_vertices,
                         tool_entity.mesh.faces_np.reshape([-1, 3]),
-                        tool_entity.mesh.init_vertex_normals_np,
+                        tool_entity.mesh.raw_vertex_normals,
                         process=False,
                     )
                     mesh.visual = mu.surface_uvs_to_trimesh_visual(tool_entity.surface, n_verts=len(mesh.vertices))
