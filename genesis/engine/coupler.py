@@ -694,7 +694,7 @@ class SAPCoupler(RBC):
         self.fem_pressure.from_numpy(fem_pressure_np)
         self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(fem_solver._B, fem_solver.n_elements))
         self.fem_floor_contact_pair_type = ti.types.struct(
-            active=ti.u1,  # whether the contact pair is active
+            active=gs.ti_bool,  # whether the contact pair is active
             batch_idx=gs.ti_int,  # batch index
             geom_idx=gs.ti_int,  # index of the FEM element
             intersection_code=gs.ti_int,  # intersection code for the element
@@ -747,7 +747,7 @@ class SAPCoupler(RBC):
 
     def init_sap_fields(self):
         self.batch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )
@@ -757,7 +757,7 @@ class SAPCoupler(RBC):
 
     def init_pcg_fields(self):
         self.batch_pcg_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )
@@ -796,7 +796,7 @@ class SAPCoupler(RBC):
 
     def init_linesearch_fields(self):
         self.batch_linesearch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )

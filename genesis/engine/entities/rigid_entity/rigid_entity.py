@@ -407,6 +407,9 @@ class RigidEntity(Entity):
             j_info["dofs_stiffness"] = np.zeros(6)
             j_info["dofs_invweight"] = np.zeros(6)
             j_info["dofs_damping"] = np.zeros(6)
+            if isinstance(morph, gs.morphs.Drone):
+                mass_tot = sum(l_info["inertial_mass"] for l_info in l_infos)
+                j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
             j_info["dofs_armature"] = np.zeros(6)
             j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
@@ -1113,13 +1116,13 @@ class RigidEntity(Entity):
             gs.raise_exception("Target link not provided.")
 
         if len(poss) == 0:
-            poss = [None] * n_links
+            poss = [None for _ in range(n_links)]
             pos_mask = [False, False, False]
         elif len(poss) != n_links:
             gs.raise_exception("Accepting only `poss` with length equal to `links` or empty list.")
 
         if len(quats) == 0:
-            quats = [None] * n_links
+            quats = [None for _ in range(n_links)]
             rot_mask = [False, False, False]
         elif len(quats) != n_links:
             gs.raise_exception("Accepting only `quats` with length equal to `links` or empty list.")
@@ -1300,8 +1303,19 @@ class RigidEntity(Entity):
             for i_sample in range(max_samples):
                 for _ in range(max_solver_iters):
                     # run FK to update link states using current q
-                    self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
-
+                    self._solver._func_forward_kinematics_entity(
+                        self._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
                     # compute error
                     solved = True
                     for i_ee in range(n_links):
@@ -1386,7 +1400,19 @@ class RigidEntity(Entity):
 
                 if not solved:
                     # re-compute final error if exited not due to solved
-                    self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+                    self._solver._func_forward_kinematics_entity(
+                        self._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
                     solved = True
                     for i_ee in range(n_links):
                         i_l_ee = links_idx[i_ee]
@@ -1480,7 +1506,19 @@ class RigidEntity(Entity):
             # restore original qpos and link state
             for i_q in range(self.n_qs):
                 self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
-            self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+            self._solver._func_forward_kinematics_entity(
+                self._idx_in_solver,
+                i_b,
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.joints_state,
+                self._solver.joints_info,
+                self._solver.dofs_state,
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
     @gs.assert_built
     def forward_kinematics(self, qpos, qs_idx_local=None, links_idx_local=None, envs_idx=None):
@@ -1549,7 +1587,19 @@ class RigidEntity(Entity):
             # set new qpos
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
             # run FK
-            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+            self._solver._func_forward_kinematics_entity(
+                self._idx_in_solver,
+                envs_idx[i_b_],
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.joints_state,
+                self._solver.joints_info,
+                self._solver.dofs_state,
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
@@ -1563,7 +1613,19 @@ class RigidEntity(Entity):
             # restore original qpos
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
             # run FK
-            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+            self._solver._func_forward_kinematics_entity(
+                self._idx_in_solver,
+                envs_idx[i_b_],
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.joints_state,
+                self._solver.joints_info,
+                self._solver.dofs_state,
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
