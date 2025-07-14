@@ -303,8 +303,7 @@ def convert_heightfield_to_watertight_trimesh(
         else:
             visual = None
 
-        mesh = trimesh.Trimesh(vertices_top, triangles_top, visual=visual, process=False)
-        return mesh, mesh
+        vmesh_single = trimesh.Trimesh(vertices_top, triangles_top, visual=visual, process=False)
 
     # bottom plane
     z_min = np.min(vertices_top[:, 2]) - 1.0
@@ -403,15 +402,16 @@ def convert_heightfield_to_watertight_trimesh(
 
         uv_simp = uvs[idx_map]
 
-        mesh = trimesh.Trimesh(
+        vmesh_full = trimesh.Trimesh(
             v_simp,
             f_simp,
             visual=trimesh.visual.TextureVisuals(uv=uv_simp),
         )
     else:
-        mesh = trimesh.Trimesh(v_simp, f_simp)
+        vmesh_full = trimesh.Trimesh(v_simp, f_simp)
 
-    return mesh, sdf_mesh
+    vmesh_out = vmesh_single if not surface.double_sided else vmesh_full
+    return vmesh_out, sdf_mesh
 
 
 def mesh_to_heightfield(
