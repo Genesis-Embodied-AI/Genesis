@@ -299,7 +299,7 @@ class LBVH(RBC):
                 (i_g + 1) * self.group_size,
             )
             for i_a in range(start, end):
-                code = ti.int32((self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF)
+                code = (self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF
                 self.offset[i_b, i_a] = self.hist_group[i_b, i_g, code]
                 self.hist_group[i_b, i_g, code] = self.hist_group[i_b, i_g, code] + 1
 
@@ -319,7 +319,7 @@ class LBVH(RBC):
 
         # Reorder morton codes
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
-            code = ti.i32((self.morton_codes[i_b, i_a] >> (i * 8)) & 0xFF)
+            code = (self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF
             i_g = ti.min(i_a // self.group_size, self.n_radix_sort_groups - 1)
             idx = ti.i32(self.prefix_sum[i_b, code] + self.prefix_sum_group[i_b, i_g, code] + self.offset[i_b, i_a])
             # Use the group prefix sum to find the correct index
@@ -463,15 +463,13 @@ class LBVH(RBC):
                 if aabbs[i_b, i_q].intersects(node.bound):
                     # If it's a leaf node, add the AABB index to the query results
                     if node.left == -1 and node.right == -1:
-                        code = self.morton_codes[i_b, node_idx - (self.n_aabbs - 1)]
-                        i_a = ti.i32(code & ti.u64(0xFFFFFFFF))
+                        i_a = ti.i32(self.morton_codes[i_b, node_idx - (self.n_aabbs - 1)][1])
                         # Check if the filter condition is met
                         if self.filter(i_a, i_q):
                             continue
                         idx = ti.atomic_add(self.query_result_count[None], 1)
                         if idx < self.max_n_query_results:
-                            code = self.morton_codes[i_b, node_idx - (self.n_aabbs - 1)][1]
-                            self.query_result[idx] = gs.ti_ivec3(i_b, ti.i32(code), i_q)  # Store the AABB index
+                            self.query_result[idx] = gs.ti_ivec3(i_b, i_a, i_q)  # Store the AABB index
                     else:
                         # Push children onto the stack
                         if node.right != -1:
