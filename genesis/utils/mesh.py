@@ -873,23 +873,22 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
         dtype=np.float32,
     )
     faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
-    uv = np.array(
-        [
-            [0, 0],
-            [size, 0],
-            [size, size],
-            [0, 0],
-            [size, size],
-            [0, size],
-        ],
-        dtype=np.float32,
-    )
     mesh = trimesh.Trimesh(verts, faces, process=False)
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
         mesh.visual = trimesh.visual.TextureVisuals(
-            uv=uv,
+            uv=np.array(
+                [
+                    [0, 0],
+                    [size, 0],
+                    [size, size],
+                    [0, 0],
+                    [size, size],
+                    [0, size],
+                ],
+                dtype=np.float32,
+            ),
             material=trimesh.visual.material.SimpleMaterial(
                 image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png")),
             ),
