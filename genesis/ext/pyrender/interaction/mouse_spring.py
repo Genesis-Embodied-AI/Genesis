@@ -45,9 +45,11 @@ class MouseSpring:
 
         pos_err_v: Vec3 = control_point - link_pos
         vel_err_v: Vec3 = Vec3.zero() - lin_vel
-        inv_mass: float = float(1.0 / link.get_mass() if 0.0 < link.get_mass() else 0.0)
+        inv_mass: float = float(1.0 / link.get_mass() if link.get_mass() > 0.0 else 0.0)
 
         inv_dt: float = 1.0 / delta_time
+        # these are temporary values, till we fix an issue with apply_links_external_force.
+        # after fixing it, use tau = damp = 1.0:
         tau: float = 1.0 / 2
         damp: float = 1.0 * 2
 
@@ -69,14 +71,6 @@ class MouseSpring:
         force_tensor: torch.Tensor = total_force.as_tensor().unsqueeze(0)
         link.solver.apply_links_external_force(force_tensor, (link.idx,), ref='link_com', local=False)
 
-        # print("vel", lin_vel, "total_impulse", total_impulse)
-        # print("exp", lin_vel + total_force * inv_mass * link.solver.dt, "at dt", link.solver.dt, "inv dt", inv_dt)
-
-
     @property
     def is_attached(self) -> bool:
         return self.held_geom is not None
-
-
-def _solve_mouse_spring():
-    pass
