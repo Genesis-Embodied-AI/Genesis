@@ -3,7 +3,7 @@ import pytest
 
 import genesis as gs
 
-from .utils import assert_allclose
+from .utils import assert_array_equal
 
 
 @pytest.mark.required
@@ -77,4 +77,4 @@ def test_segmentation(segmentation_level, particle_mode):
     for i in range(2):
         scene.step()
         _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
-        assert_allclose(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
+        assert_array_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
