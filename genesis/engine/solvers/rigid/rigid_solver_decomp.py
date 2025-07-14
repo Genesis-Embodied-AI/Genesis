@@ -80,9 +80,15 @@ class RigidSolver(Solver):
         enable_self_collision: bool = True
         enable_adjacent_collision: bool = False
         box_box_detection: bool = False
-        substep_dt: float = 0.01
         integrator: gs.integrator = gs.integrator.implicitfast
-        enable_mujoco_compatibility: bool = False
+        sparse_solve: bool = False
+        solver_type: gs.constraint_solver = gs.constraint_solver.CG
+        # dynamic properties
+        substep_dt: float = 0.01
+        iterations: int = 10
+        tolerance: float = 1e-6
+        ls_iterations: int = 10
+        ls_tolerance: float = 1e-6
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -242,9 +248,17 @@ class RigidSolver(Solver):
             enable_self_collision=getattr(self, "_enable_self_collision", True),
             enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
             box_box_detection=getattr(self, "_box_box_detection", False),
-            substep_dt=self._substep_dt,
             integrator=getattr(self, "_integrator", gs.integrator.implicitfast),
+            sparse_solve=getattr(self._options, "sparse_solve", False),
+            solver_type=getattr(self._options, "constraint_solver", gs.constraint_solver.CG),
+            # dynamic properties
+            substep_dt=self._substep_dt,
+            iterations=getattr(self._options, "iterations", 10),
+            tolerance=getattr(self._options, "tolerance", 1e-6),
+            ls_iterations=getattr(self._options, "ls_iterations", 10),
+            ls_tolerance=getattr(self._options, "ls_tolerance", 1e-6),
         )
+
         # when the migration is finished, we will remove the about two lines
         # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
         self._rigid_global_info = array_class.RigidGlobalInfo(
