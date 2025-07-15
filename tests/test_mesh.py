@@ -298,7 +298,10 @@ def test_usd_parse(usd_filename):
         )
 
 
-@pytest.mark.skipif(sys.version_info[:2] != (3, 10), reason="USD Baking works only in Python == 3.10 now")
+@pytest.mark.skipif(
+    sys.version_info[:2] != (3, 10) or sys.platform not in ("Linux", "Windows"),
+    reason="USD Baking only works in Python == 3.10 and OS == ('Linux', 'Windows') now."
+)
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
