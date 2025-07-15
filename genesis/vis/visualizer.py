@@ -156,6 +156,7 @@ class Visualizer(RBC):
                 self._viewer.update(auto_refresh=True)
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
+                self._rasterizer.update_scene()
                 self._rasterizer.render_camera(self._cameras[0])
 
     def update(self, force=True, auto=None):

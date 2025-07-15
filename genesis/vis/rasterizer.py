@@ -18,6 +18,7 @@ class Rasterizer(RBC):
         self._camera_targets = dict()
         self._offscreen = self._viewer is None
         self._renderer = None
+        self._buffer_updates = None
 
     def build(self):
         if self._context is None:
@@ -57,6 +58,16 @@ class Rasterizer(RBC):
     def render_camera(self, camera, rgb=True, depth=False, segmentation=False, normal=False):
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = None, None, None, None
         if self._offscreen:
+            # Set the context
+            self._renderer.make_current()
+
+            # Update the buffers
+            if self._buffer_updates is None:
+                gs.raise_exception("Buffers were not set before rendering. Please call 'update_scene' method.")
+
+            self._context.jit.update_buffer(self._buffer_updates)
+
+            # Render
             if rgb or depth or normal:
                 retval = self._renderer.render(
                     self._context._scene,
@@ -82,7 +93,14 @@ class Rasterizer(RBC):
                     normal=False,
                     seg=True,
                 )
+
+            # Unset the context
+            self._renderer.make_uncurrent()
         else:
+            # Update the buffers
+            self._context.jit.update_buffer(self._buffer_updates)
+
+            # Render
             if rgb or depth or normal:
                 retval = self._viewer._pyrender_viewer.render_offscreen(
                     self._camera_nodes[camera.uid],
@@ -111,8 +129,7 @@ class Rasterizer(RBC):
         return rgb_arr, depth_arr, seg_idxc_arr, normal_arr
 
     def update_scene(self):
-        buffer_updates = self._context.update()
-        self._context.jit.update_buffer(buffer_updates)
+        self._buffer_updates = self._context.update()
 
     def destroy(self):
         for node in self._camera_nodes.values():
