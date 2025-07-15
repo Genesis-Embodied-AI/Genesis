@@ -2026,7 +2026,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
 
     # Make sure that all the geometries in the scene are convex
     assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
-    assert not gs_sim.rigid_solver.collider._collider_info.has_nonconvex_nonterrain
+    assert not gs_sim.rigid_solver.collider._collider_static_config.has_nonconvex_nonterrain
 
     # There should be only one geometry for the apple as it can be convexify without decomposition,
     # but for the others it is hard to tell... Let's use some reasonable guess.
