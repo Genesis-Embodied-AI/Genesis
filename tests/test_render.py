@@ -13,7 +13,6 @@ from .utils import assert_allclose, assert_array_equal
 @pytest.mark.required
 @pytest.mark.parametrize("segmentation_level", ["entity", "link"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
 def test_segmentation(segmentation_level, particle_mode):
     """Test segmentation rendering."""
     scene = gs.Scene(
@@ -87,7 +86,6 @@ def test_segmentation(segmentation_level, particle_mode):
 
 @pytest.mark.required
 @pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -243,7 +241,6 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
