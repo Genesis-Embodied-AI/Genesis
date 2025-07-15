@@ -65,8 +65,11 @@ class Viewer(RBC):
         if opengl_platform_orig is None:
             if gs.platform == "Windows":
                 all_opengl_platforms = ("wgl",)  # same as "native"
+            elif gs.platform == "Linux":
+                # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
-                all_opengl_platforms = ("native", "egl", "glx")  # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native",)
         else:
             if gs.platform == "Windows" and opengl_platform_orig == "osmesa":
                 gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is not supported on Windows OS.")
