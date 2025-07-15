@@ -217,7 +217,7 @@ class MPRState:
 class GJKState:
     def __init__(self, solver, static_rigid_sim_config, gjk_static_config):
         _B = solver._B
-        polytope_max_faces = 6 * gjk_static_config.epa_max_iterations
+        polytope_max_faces = gjk_static_config.polytope_max_faces
         max_contacts_per_pair = gjk_static_config.max_contacts_per_pair
         max_contact_polygon_verts = gjk_static_config.max_contact_polygon_verts
 
