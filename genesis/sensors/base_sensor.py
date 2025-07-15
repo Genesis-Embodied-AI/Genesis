@@ -4,7 +4,7 @@ import genesis as gs
 from typing import List, Optional
 from genesis.repr_base import RBC
 from genesis.engine.entities.base_entity import Entity
-from .data_collector import DataCollector, DataOutType, DataStreamConfig
+from .data_collector import DataCollector, DataRecordingOptions
 
 
 @ti.data_oriented
@@ -23,7 +23,7 @@ class Sensor(RBC):
         ), f"{type(self)} can only be added to entities of type {self.get_valid_entity_types()}, got {type(entity)}."
         self._entity = entity
         self._sim = entity._sim
-        self._data_collector = None
+        self._data_collector: Optional[DataCollector] = None
 
     def build(self):
         """
@@ -81,16 +81,11 @@ class Sensor(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def start_recording(self, filename):
+    def start_recording(self, options: DataRecordingOptions):
         """
         Start recording data from the sensor.
-        Default to CSV data handler.
         """
-        config = DataStreamConfig(
-            out_type=DataOutType.CSV,
-            handler_kwargs=dict(filename=filename),
-        )
-        self._data_collector = DataCollector(self, config)
+        self._data_collector = DataCollector(self, options)
         self._data_collector.start_recording()
 
     @gs.assert_built

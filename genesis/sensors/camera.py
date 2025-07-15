@@ -4,13 +4,14 @@ import time
 
 import cv2
 import numpy as np
+from typing import Optional
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 from genesis.engine.entities import StaticEntity
 from .base_sensor import Sensor
-from .data_collector import DataCollector, DataStreamConfig, DataOutType
+from .data_collector import DataCollector, DataRecordingOptions
 
 
 class Camera(Sensor):
@@ -561,44 +562,27 @@ class Camera(Sensor):
         return rgb_arr
 
     @gs.assert_built
-    def start_recording(self, auto_render=False, filename=None, fps=None, hz=None, out_type=DataOutType.VIDEO):
+    def start_recording(self, options: Optional[DataRecordingOptions] = None):
         """
         Start recording on the camera.
 
+        Recording can be done in "manual mode" where frames are only captured when `camera.render()` is called,
+        or if `options` is provided, frames are captured automatically based on the data recording options.
+
         Parameters
         ----------
-        auto_render : bool, optional
-            When `auto_render` is True, images will automatically be rendered at the specified `hz` based on sim dt.
-            If `auto_render` is False, images are stored when rendered by `camera.render()`
-        filename : str, optional
-            Name of the output video file. If None, the default is `{caller_file_name}_cam_{cam.idx}.mp4`.
-        fps : int, optional
-            Used only when `auto_render` is True.
-            The frames per second of the output video file. If None, real-time fps will be used based on hz.
-        hz : int, optional
-            Used only when `auto_render` is True.
-            The frequency at which images are rendered and stored.  If None, it will be set to the simulation's dt.
-        out_type: DataOutType, optional
-            Used only when `auto_render` is True.
-            The output type for video recording. Options are `DataOutType.VIDEO` or `DataOutType.VIDEO_STREAM`.
+        options: DataRecordingOptions, optional
+            Data recording options for the camera.  If None, manual mode will be used.
         """
         self._in_recording = True
-        self._auto_render = auto_render
-        self.filename = filename or self._get_default_video_filename()
 
-        if auto_render:
-            if self._data_collector is None:
-                assert out_type in [DataOutType.VIDEO, DataOutType.VIDEO_STREAM], "DataOutType should be video."
+        if self._data_collector is not None:
+            if options is not None:
+                gs.logger.warning("Ignoring new recording options, since active recording already exists.")
+            self._data_collector.start_recording()
 
-                kwargs = dict(filename=self.filename, fps=fps)
-                if out_type == DataOutType.VIDEO_STREAM:
-                    kwargs["shape"] = self._res
-                if self._rgb_stacked:
-                    kwargs["frames_idx"] = self._visualizer._context.rendered_envs_idx
-
-                config = DataStreamConfig(out_type=out_type, handler_kwargs=kwargs)
-                self._data_collector = DataCollector(self, config)
-
+        elif options is not None:
+            self._data_collector = DataCollector(self, options)
             self._data_collector.start_recording()
 
     @gs.assert_built
@@ -611,14 +595,8 @@ class Camera(Sensor):
             gs.raise_exception("Recording not started.")
         self._in_recording = False
 
-        if self._auto_render:
+        if self._data_collector is not None:
             self._data_collector.pause_recording()
-
-    def _get_default_video_filename(self):
-        caller_file = inspect.stack()[-1].filename
-        return (
-            os.path.splitext(os.path.basename(caller_file))[0] + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
-        )
 
     @gs.assert_built
     def stop_recording(self, save_to_filename=None, fps=60):
@@ -640,12 +618,12 @@ class Camera(Sensor):
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
 
-        if self._auto_render:
+        if self._data_collector:
             self._data_collector.stop_recording()
+            self._data_collector = None
 
         else:
-            filename = save_to_filename or self.filename
-
+            filename = save_to_filename or self._get_default_video_filename()
             if self._rgb_stacked:
                 for env_idx in self._visualizer._context.rendered_envs_idx:
                     env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
@@ -653,10 +631,14 @@ class Camera(Sensor):
                     gs.tools.animate(env_imgs, f"{env_name}_{env_idx}{env_ext}", fps)
             else:
                 gs.tools.animate(self._recorded_imgs, filename, fps)
-
             self._recorded_imgs.clear()
 
         self._in_recording = False
+
+    def _get_default_video_filename(self):
+        caller_file = inspect.stack()[-1].filename
+        caller_name = os.path.splitext(os.path.basename(caller_file))[0]
+        return f'{caller_name}_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
 
     def _repr_brief(self):
         return f"{self._repr_type()}: idx: {self._idx}, pos: {self._pos}, lookat: {self._lookat}"
