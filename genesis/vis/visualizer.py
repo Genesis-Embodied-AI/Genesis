@@ -60,6 +60,12 @@ class Visualizer(RBC):
             self._connected_to_display = False
 
         if show_viewer:
+            if gs.global_scene_list:
+                raise gs.raise_exception(
+                    "Interactive viewer not supported when managing multiple scenes. Please set `show_viewer=False` "
+                    "or call `scene.destroy`."
+                )
+
             if viewer_options.res is None:
                 viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
