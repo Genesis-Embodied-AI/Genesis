@@ -1,13 +1,16 @@
 import hashlib
 import math
 import os
+import json
 import pickle as pkl
 from functools import lru_cache
-
+from pathlib import Path
 
 import numpy as np
 import trimesh
 from PIL import Image
+import OpenEXR
+import Imath
 
 import coacd
 import igl
@@ -17,18 +20,21 @@ import tetgen
 import genesis as gs
 
 from . import geom as gu
+from .usda import BAKE_EXT
 from .misc import (
     get_assets_dir,
     get_cvx_cache_dir,
+    get_exr_cache_dir,
     get_gsd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
     get_tet_cache_dir,
+    get_usd_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
-
+exr_compressions = {}
 
 class MeshInfo:
     def __init__(self):
@@ -128,6 +134,26 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
         verts.tobytes(), faces.tobytes(), str(edge_len_abs).encode(), str(edge_len_ratio).encode(), str(fix).encode()
     )
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
+
+
+def get_exr_path(file_path, file_size):
+    hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
+    return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
+
+
+def get_usd_bake_path(file_path, file_size):
+    hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
+    return os.path.join(get_usd_cache_dir(), f"{hashkey}.{BAKE_EXT}")
+
+
+def update_exr_compression_json():
+    json_file = os.path.join(get_exr_cache_dir(), "compression.json")
+    if not os.path.exists(json_file):
+        with open(json_file, "w") as f:
+            json.dump(exr_compressions, f)
+    else:
+        with (json_file, "w") as f:
+            exr_compressions.update(json.load(f))
 
 
 def get_hashkey(*args):
@@ -970,3 +996,37 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
             plotter.add_mesh(pv_data, "r", "wireframe")
             plotter.add_legend([[" Input Mesh ", "r"], [" Tessellated Mesh ", "black"]])
             plotter.show()
+
+
+def check_exr_compression(exr_path):
+    exr_path_obj = Path(exr_path)
+    exr_real_path = exr_path_obj.resolve().as_posix()
+    exr_file_size = exr_path_obj.stat().st_size
+
+    update_exr_compression_json()
+    new_exr_path = get_exr_path(exr_real_path, exr_file_size)
+    need_recomp = exr_compressions.get(new_exr_path)
+    if need_recomp is None:
+        exr_file = OpenEXR.InputFile(exr_path)
+        exr_header = exr_file.header()
+
+        if exr_header["compression"].v > Imath.Compression.PIZ_COMPRESSION:
+            gs.logger.warning(
+                f"EXR image {exr_path}'s compression type {exr_header['compression']} is not supported. "
+                f"Converting to compression type ZIP_COMPRESSION and saving to {new_exr_path}."
+            )
+
+            channel_data = {channel: exr_file.channel(channel) for channel in exr_header["channels"]}
+            exr_header["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
+            os.makedirs(os.path.dirname(new_exr_path), exist_ok=True)
+            new_exr_file = OpenEXR.OutputFile(new_exr_path, exr_header)
+            new_exr_file.writePixels(channel_data)
+            new_exr_file.close()
+            need_recomp = True
+        else:
+            need_recomp = False
+
+        exr_file.close()
+        exr_compressions[new_exr_path] = need_recomp
+    
+    return new_exr_path if need_recomp else exr_path

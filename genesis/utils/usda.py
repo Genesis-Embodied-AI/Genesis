@@ -19,7 +19,6 @@ except ImportError as e:
 
 import genesis as gs
 from . import mesh as mu
-from .usda_bake import BAKE_EXT
 
 cs_encode = {
     "raw": "linear",
@@ -27,7 +26,6 @@ cs_encode = {
     "auto": None,
     "": None,
 }
-
 yup_rotation = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
 
 
@@ -234,16 +232,29 @@ def replace_asset_symlinks(stage):
             gs.logger.warning(f"Replace symlink {asset_path} with real file {real_path}.")
 
 
+def decompress_usdz(path):
+    usdz_folder = get_usdz_folder(path)
+    zipfiles = Usd.ZipFile.Open(path)
+    for file_name in zipfiles.GetFileNames():
+        file_data = io.BytesIO(zipfiles.GetFile(file_name))
+        file_path = os.path.join(, file_name)
+        file_folder = os.path.dirname(file_path)
+        os.makedirs(file_folder, exist_ok=True)
+        with open(file_path, "wb") as out:
+            out.write(file_data.read())
+
+
 def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
     path_obj = Path(path)
     zipfiles = Usd.ZipFile.Open(path) if path_obj.suffix.lower() == ".usdz" else None
 
     # detect bake file caches
     is_bake_cache_found = False
-    baked_path_obj = path_obj.with_name(path_obj.stem + f"_baked.{BAKE_EXT}")
-    baked_path = str(baked_path_obj)
+    baked_path = mu.get_usd_bake_path(path_obj.resolve().as_posix(), path_obj.stat().st_size)
+    baked_path_obj = Path(baked_path)
+    baked_folder_obj = baked_path_obj.parent
     if bake_cache and baked_path_obj.exists():
-        path = str(baked_path_obj)
+        path = baked_path
         is_bake_cache_found = True
         gs.logger.info(f"Baked assets detected and used: {path}")
 
@@ -279,12 +290,17 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 raise OSError("USD baking does not support backend CPU.")
 
             replace_asset_symlinks(stage)
+            baked_folder_obj.mkdir(parents=True, exist_ok=True)
 
             commands = [
                 "python",
                 baker_file,
-                "--usd_file",
+                "--input_file",
                 path,
+                "--output_dir",
+                baked_folder_obj.as_posix(),
+                "--output_filename",
+                baked_path_obj.stem,
                 "--usd_material_paths",
                 *baked_material_paths,
                 "--device",
@@ -320,7 +336,6 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 materials[baked_material_id] = (baked_material, uv_name)
 
             if not bake_cache:
-                baked_folder_obj = baked_path_obj.parent
                 baked_path_obj.unlink()
                 for baked_texture_obj in baked_folder_obj.glob("baked_textures*"):
                     shutil.rmtree(baked_texture_obj)

@@ -320,11 +320,11 @@ def test_usd_bake(usd_file):
     texture_folders = [folder for folder in os.listdir(usd_dir) if folder.startswith("baked_textures")]
     assert len(texture_folders) == len(gs_usd_meshes)
 
-    baked_usd_file = f"{os.path.splitext(usd_file)[0]}_baked.{usda_utils.BAKE_EXT}"
-    os.remove(baked_usd_file)
-    for file in os.listdir(usd_dir):
-        if file.startswith("baked_textures"):
-            shutil.rmtree(os.path.join(usd_dir, file))
+    # os.remove(baked_usd_file)
+    # for file in os.listdir(usd_dir):
+    #     if file.startswith("baked_textures"):
+    #         shutil.rmtree(os.path.join(usd_dir, file))
+    gs.utils.misc.clean_cache_files()
 
 
 @pytest.mark.required
