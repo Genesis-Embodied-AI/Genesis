@@ -52,7 +52,8 @@ def omni_bootstrap(device=0, log_level="warning"):
     return app
 
 
-def bake_usd_material(input_file, output_dir, output_filename, usd_material_paths, device=0, log_level="error"):
+def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_level="error"):
+    # def bake_usd_material(input_file, output_dir, output_filename, usd_material_paths, device=0, log_level="error"):
     # sys.stdout = open(os.devnull, "w")
     logs = []
 
@@ -92,9 +93,7 @@ def bake_usd_material(input_file, output_dir, output_filename, usd_material_path
     # export usd
     start_time = time.time()
     # baked_file = os.path.join(output_dir, f"{output_filename}.{BAKE_EXT}")
-    collector = omni.kit.usd.collect.Collector(
-        stage.GetRootLayer().identifier, os.path.join(output_dir, output_filename)
-    )
+    collector = omni.kit.usd.collect.Collector(stage.GetRootLayer().identifier, output_dir)
     task = asyncio.ensure_future(collector.collect())
     while not task.done():
         app.update()  # Otherwise it will be blocked by omni.kit.app.get_app().next_update_async()
@@ -112,7 +111,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_file", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--output_filename", type=str, required=True)
+    # parser.add_argument("--output_filename", type=str, required=True)
     parser.add_argument("--usd_material_paths", type=str, nargs="+", required=True)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--log_level", type=str, default="warning")
@@ -122,5 +121,10 @@ if __name__ == "__main__":
         min(max(logging.getLevelName(args.log_level.upper()), logging.INFO), logging.ERROR)
     ).lower()
     bake_usd_material(
-        args.input_file, args.output_dir, args.output_filename, args.usd_material_paths, args.device, log_level
+        # args.input_file, args.output_dir, args.output_filename, args.usd_material_paths, args.device, log_level
+        args.input_file,
+        args.output_dir,
+        args.usd_material_paths,
+        args.device,
+        log_level,
     )

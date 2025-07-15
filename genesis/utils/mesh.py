@@ -36,6 +36,7 @@ from .misc import (
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
 exr_compressions = {}
 
+
 class MeshInfo:
     def __init__(self):
         self.surface = None
@@ -141,9 +142,14 @@ def get_exr_path(file_path, file_size):
     return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
 
 
+def get_usd_zip_path(file_path, file_size):
+    hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
+    return os.path.join(get_usd_cache_dir(), "zip", hashkey)
+
+
 def get_usd_bake_path(file_path, file_size):
     hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
-    return os.path.join(get_usd_cache_dir(), f"{hashkey}.{BAKE_EXT}")
+    return os.path.join(get_usd_cache_dir(), "bake", hashkey)
 
 
 def update_exr_compression_json():
@@ -152,7 +158,7 @@ def update_exr_compression_json():
         with open(json_file, "w") as f:
             json.dump(exr_compressions, f)
     else:
-        with (json_file, "w") as f:
+        with open(json_file, "r") as f:
             exr_compressions.update(json.load(f))
 
 
@@ -1028,5 +1034,5 @@ def check_exr_compression(exr_path):
 
         exr_file.close()
         exr_compressions[new_exr_path] = need_recomp
-    
+
     return new_exr_path if need_recomp else exr_path

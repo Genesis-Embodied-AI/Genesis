@@ -42,15 +42,15 @@ def get_input_attribute_value(shader, input_name, input_type=None):
     return None, None
 
 
-def get_texture_image(image_path, zipfiles):
-    if zipfiles is not None:
-        image_data = zipfiles.GetFile(image_path.path)
-        if image_data is not None:
-            return np.asarray(Image.open(io.BytesIO(image_data)))
+def get_texture_image(image_path):
+    # if zipfiles is not None:
+    #     image_data = zipfiles.GetFile(image_path.path)
+    #     if image_data is not None:
+    #         return np.asarray(Image.open(io.BytesIO(image_data)))
     return np.asarray(Image.open(image_path.resolvedPath))
 
 
-def parse_preview_surface(shader, output_name, zipfiles):
+def parse_preview_surface(shader, output_name):
     shader_id = shader.GetShaderId()
     if shader_id == "UsdPreviewSurface":
         uvname = None
@@ -63,7 +63,7 @@ def parse_preview_surface(shader, output_name, zipfiles):
                 component_uvname = None
             else:  # texture shader
                 component_image, component_overencode, component_uvname = parse_preview_surface(
-                    component, component_output, zipfiles
+                    component, component_output
                 )
                 if component_overencode is not None:
                     component_encode = component_overencode
@@ -129,7 +129,7 @@ def parse_preview_surface(shader, output_name, zipfiles):
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
         if texture is not None:
-            texture_image = get_texture_image(texture, zipfiles)
+            texture_image = get_texture_image(texture)
             if output_name == "r":
                 texture_image = texture_image[:, :, 0]
             elif output_name == "g":
@@ -148,7 +148,7 @@ def parse_preview_surface(shader, output_name, zipfiles):
         texture_encode = get_input_attribute_value(shader, "sourceColorSpace", "value")[0] or "sRGB"
         texture_encode = cs_encode[texture_encode]
         texture_uvs_shader, texture_uvs_output = get_input_attribute_value(shader, "st", "attribute")
-        texture_uvs_name = parse_preview_surface(texture_uvs_shader, texture_uvs_output, zipfiles)
+        texture_uvs_name = parse_preview_surface(texture_uvs_shader, texture_uvs_output)
 
         return texture_image, texture_encode, texture_uvs_name
 
@@ -157,7 +157,7 @@ def parse_preview_surface(shader, output_name, zipfiles):
         return primvar_name
 
 
-def parse_usd_material(material, surface, zipfiles):
+def parse_usd_material(material, surface):
     surface_outputs = material.GetSurfaceOutputs()
     material_dict, uv_name = None, None
     material_surface = None
@@ -173,7 +173,7 @@ def parse_usd_material(material, surface, zipfiles):
         surface_shader_id = surface_shader.GetShaderId()
 
         if surface_shader_implement == "id" and surface_shader_id == "UsdPreviewSurface":
-            material_dict, uv_name = parse_preview_surface(surface_shader, surface_output_name, zipfiles)
+            material_dict, uv_name = parse_preview_surface(surface_shader, surface_output_name)
             require_bake = False
             break
 
@@ -232,27 +232,44 @@ def replace_asset_symlinks(stage):
             gs.logger.warning(f"Replace symlink {asset_path} with real file {real_path}.")
 
 
-def decompress_usdz(path):
-    usdz_folder = get_usdz_folder(path)
-    zipfiles = Usd.ZipFile.Open(path)
-    for file_name in zipfiles.GetFileNames():
-        file_data = io.BytesIO(zipfiles.GetFile(file_name))
-        file_path = os.path.join(, file_name)
-        file_folder = os.path.dirname(file_path)
-        os.makedirs(file_folder, exist_ok=True)
-        with open(file_path, "wb") as out:
-            out.write(file_data.read())
+def decompress_usdz(usdz_path):
+    usdz_path_obj = Path(usdz_path)
+    usdz_real_path = usdz_path_obj.resolve().as_posix()
+    usdz_file_size = usdz_path_obj.stat().st_size
+    usdz_folder = mu.get_usd_zip_path(usdz_real_path, usdz_file_size)
+
+    # The first file in the package must be a native usd file.
+    # See https://openusd.org/docs/Usdz-File-Format-Specification.html
+    zip_files = Usd.ZipFile.Open(usdz_real_path)
+    zip_filelist = zip_files.GetFileNames()
+    root_file = zip_filelist[0]
+    if not root_file.lower().endswith(gs.options.morphs.USD_FORMAT[:-1]):
+        gs.raise_exception(f"Invalid usdz root file: {root_file}")
+    root_path = os.path.join(usdz_folder, root_file)
+
+    if not os.path.exists(root_path):
+        for file_name in zip_filelist:
+            file_data = io.BytesIO(zip_files.GetFile(file_name))
+            file_path = os.path.join(usdz_folder, file_name)
+            file_folder = os.path.dirname(file_path)
+            os.makedirs(file_folder, exist_ok=True)
+            with open(file_path, "wb") as out:
+                out.write(file_data.read())
+    return root_path
 
 
 def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
     path_obj = Path(path)
-    zipfiles = Usd.ZipFile.Open(path) if path_obj.suffix.lower() == ".usdz" else None
+    if path_obj.suffix.lower() == gs.options.morphs.USD_FORMAT[-1]:
+        path = decompress_usdz(path)
+        path_obj = Path(path)
 
     # detect bake file caches
     is_bake_cache_found = False
-    baked_path = mu.get_usd_bake_path(path_obj.resolve().as_posix(), path_obj.stat().st_size)
+    baked_folder = mu.get_usd_bake_path(path_obj.resolve().as_posix(), path_obj.stat().st_size)
+    baked_path = os.path.join(baked_folder, path_obj.name)
     baked_path_obj = Path(baked_path)
-    baked_folder_obj = baked_path_obj.parent
+    # baked_folder_obj = baked_path_obj.parent
     if bake_cache and baked_path_obj.exists():
         path = baked_path
         is_bake_cache_found = True
@@ -276,7 +293,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
             material_pack = materials.get(material_id, None)
 
             if material_pack is None:
-                material, uv_name, require_bake = parse_usd_material(material_usd, surface, zipfiles)
+                material, uv_name, require_bake = parse_usd_material(material_usd, surface)
                 materials[material_id] = (material, uv_name)
                 if not is_bake_cache_found and require_bake:
                     baked_materials[material_id] = material_usd.GetPath()
@@ -290,7 +307,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 raise OSError("USD baking does not support backend CPU.")
 
             replace_asset_symlinks(stage)
-            baked_folder_obj.mkdir(parents=True, exist_ok=True)
+            os.makedirs(baked_folder, exist_ok=True)
 
             commands = [
                 "python",
@@ -298,9 +315,9 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 "--input_file",
                 path,
                 "--output_dir",
-                baked_folder_obj.as_posix(),
-                "--output_filename",
-                baked_path_obj.stem,
+                baked_folder,
+                # "--output_filename",
+                # baked_path_obj.stem,
                 "--usd_material_paths",
                 *baked_material_paths,
                 "--device",
@@ -332,13 +349,11 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
             stage = Usd.Stage.Open(baked_path)
             for baked_material_id, baked_material_path in baked_materials.items():
                 baked_material_usd = UsdShade.Material(stage.GetPrimAtPath(baked_material_path))
-                baked_material, uv_name, require_bake = parse_usd_material(baked_material_usd, surface, zipfiles)
+                baked_material, uv_name, require_bake = parse_usd_material(baked_material_usd, surface)
                 materials[baked_material_id] = (baked_material, uv_name)
 
-            if not bake_cache:
-                baked_path_obj.unlink()
-                for baked_texture_obj in baked_folder_obj.glob("baked_textures*"):
-                    shutil.rmtree(baked_texture_obj)
+            for baked_texture_obj in Path(baked_folder).glob("baked_textures*"):
+                shutil.rmtree(baked_texture_obj)
 
     # parse geometries
     for prim in stage.Traverse():
