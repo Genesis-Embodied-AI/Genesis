@@ -23,10 +23,12 @@ class Camera(Sensor):
     ----------
     entity: genesis.StaticEntity
         The entity object that the camera is attached to.
-    visualizer : genesis.Visualizer
-        The visualizer object that the camera is associated with.
     idx : int
         The index of the camera.
+    name: str
+        The name of the camera.
+    visualizer : genesis.Visualizer
+        The visualizer object that the camera is associated with.
     model : str
         Specifies the camera model. Options are 'pinhole' or 'thinlens'.
     res : tuple of int, shape (2,)
@@ -64,8 +66,9 @@ class Camera(Sensor):
     def __init__(
         self,
         entity,
+        idx,
+        name,
         visualizer,
-        idx=0,
         model="pinhole",  # pinhole or thinlens
         res=(320, 320),
         pos=(0.5, 2.5, 3.5),
@@ -81,8 +84,9 @@ class Camera(Sensor):
         far=100.0,
         transform=None,
     ):
-        super().__init__(entity)
-        self._idx = len(visualizer._cameras)
+        super().__init__(entity, idx, name)
+
+        self._visualizer = visualizer
         visualizer._cameras.append(self)
 
         self._uid = gs.UID()
@@ -101,7 +105,6 @@ class Camera(Sensor):
         self._up = up
         self._transform = transform
         self._aspect_ratio = self._res[0] / self._res[1]
-        self._visualizer = visualizer
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
@@ -638,7 +641,7 @@ class Camera(Sensor):
     def _get_default_video_filename(self):
         caller_file = inspect.stack()[-1].filename
         caller_name = os.path.splitext(os.path.basename(caller_file))[0]
-        return f'{caller_name}_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+        return f'{caller_name}_{self.name}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
 
     def _repr_brief(self):
         return f"{self._repr_type()}: idx: {self._idx}, pos: {self._pos}, lookat: {self._lookat}"

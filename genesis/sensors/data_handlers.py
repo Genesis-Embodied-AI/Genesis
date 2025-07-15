@@ -220,14 +220,13 @@ class NPZFileWriter(DataHandler):
         self.all_data.append(data)
 
     def cleanup(self):
-        np_data = self.all_data
+        gs.logger.info(f'Saving data to "~<{self.filename}>~"...')
         try:
             np.savez_compressed(self.filename, np.array(self.all_data))
         except ValueError as error:
             gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
             np.savez_compressed(self.filename, np.array(self.all_data, dtype=object))
-
-        gs.logger.info(f"Data saved to ~<{self.filename}>~.")
+        gs.logger.info("NPZ data saved.")
 
 
 class CallbackHandler(DataHandler):

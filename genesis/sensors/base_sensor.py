@@ -11,19 +11,30 @@ from .data_collector import DataCollector, DataRecordingOptions
 class Sensor(RBC):
     """
     Base class for all types of sensors.
+    A sensor must have a read() method that returns the sensor data.
+    Every sensor has an associated entity, which the sensor is "attached" to.
+
+    Parameters
+    ----------
+    entity: Entity
+        The entity that the sensor is attached to.
+    name: str, optional
+        The name of the sensor. If not provided, the class name and sensor idx will be used.
     """
 
     @staticmethod
     def get_valid_entity_types():
         raise NotImplementedError()
 
-    def __init__(self, entity: Entity):
+    def __init__(self, entity: Entity, idx: int, name=None):
         assert isinstance(
             entity, self.get_valid_entity_types()
         ), f"{type(self)} can only be added to entities of type {self.get_valid_entity_types()}, got {type(entity)}."
         self._entity = entity
         self._sim = entity._sim
         self._data_collector: Optional[DataCollector] = None
+        self._idx = idx
+        self._name = name or f"{self.__class__.__name__}_{self._entity._uid}_{self._idx}"
 
     def build(self):
         """
@@ -55,6 +66,15 @@ class Sensor(RBC):
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def idx(self):
+        """Local index of the sensor within its entity."""
+        return self._idx
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def n_envs(self):

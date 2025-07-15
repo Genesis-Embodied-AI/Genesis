@@ -22,8 +22,8 @@ class RigidContactSensor(Sensor):
     def get_valid_entity_types():
         return RigidEntity
 
-    def __init__(self, entity, link_idx=None):
-        super().__init__(entity)
+    def __init__(self, entity, idx, name, link_idx=None):
+        super().__init__(entity, idx, name)
         self._cls = self.__class__
         self.link_idx = link_idx if link_idx is not None else entity.base_link_idx
 
@@ -85,8 +85,8 @@ class RigidContactForceGridSensor(RigidContactSensor):
     Sensor that returns local contact forces as a grid based on its associated RigidLink's collision info.
     """
 
-    def __init__(self, entity, link_idx=None, grid_size=(1, 1, 1)):
-        super().__init__(entity, link_idx)
+    def __init__(self, entity, idx, name, link_idx=None, grid_size=(1, 1, 1)):
+        super().__init__(entity, idx, name, link_idx)
         self.grid_size = np.array(grid_size, dtype=np.int32)
 
     def build(self):
