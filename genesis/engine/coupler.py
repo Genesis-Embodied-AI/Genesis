@@ -694,7 +694,7 @@ class SAPCoupler(RBC):
         self.fem_pressure.from_numpy(fem_pressure_np)
         self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(fem_solver._B, fem_solver.n_elements))
         self.fem_floor_contact_pair_type = ti.types.struct(
-            active=gs.ti_int,  # whether the contact pair is active
+            active=gs.ti_bool,  # whether the contact pair is active
             batch_idx=gs.ti_int,  # batch index
             geom_idx=gs.ti_int,  # index of the FEM element
             intersection_code=gs.ti_int,  # intersection code for the element
@@ -747,7 +747,7 @@ class SAPCoupler(RBC):
 
     def init_sap_fields(self):
         self.batch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )
@@ -757,7 +757,7 @@ class SAPCoupler(RBC):
 
     def init_pcg_fields(self):
         self.batch_pcg_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )
@@ -796,7 +796,7 @@ class SAPCoupler(RBC):
 
     def init_linesearch_fields(self):
         self.batch_linesearch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )
@@ -904,7 +904,7 @@ class SAPCoupler(RBC):
         # Compute data for each contact pair
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
             pair = self.fem_floor_contact_pairs[i_c]
-            self.fem_floor_contact_pairs[i_c].active = 1  # mark the contact pair as active
+            self.fem_floor_contact_pairs[i_c].active = True  # mark the contact pair as active
             i_b = pair.batch_idx
             i_e = pair.geom_idx
             intersection_code = pair.intersection_code
@@ -956,7 +956,7 @@ class SAPCoupler(RBC):
             rigid_g = self.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
             if total_area < gs.EPS or rigid_g < gs.EPS:
-                self.fem_floor_contact_pairs[i_c].active = 0
+                self.fem_floor_contact_pairs[i_c].active = False
                 continue
             g = self.default_deformable_g * rigid_g / (self.default_deformable_g + rigid_g)  # harmonic average
             rigid_k = total_area * g
@@ -1004,7 +1004,7 @@ class SAPCoupler(RBC):
         fem_solver = self.fem_solver
 
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
-            if pairs[i_c].active == 0:
+            if not pairs[i_c].active:
                 continue
             i_b = pairs[i_c].batch_idx
             i_e = pairs[i_c].geom_idx
@@ -1103,7 +1103,7 @@ class SAPCoupler(RBC):
         fem_solver = self.fem_solver
 
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
-            if pairs[i_c].active == 0:
+            if not pairs[i_c].active:
                 continue
             i_b = pairs[i_c].batch_idx
             i_e = pairs[i_c].geom_idx
@@ -1171,7 +1171,7 @@ class SAPCoupler(RBC):
         fem_solver = self.fem_solver
 
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
-            if pairs[i_c].active == 0:
+            if not pairs[i_c].active:
                 continue
             i_b = pairs[i_c].batch_idx
             if not self.batch_linesearch_active[i_b]:
@@ -1284,7 +1284,7 @@ class SAPCoupler(RBC):
 
         pairs = ti.static(self.fem_floor_contact_pairs)
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
-            if pairs[i_c].active == 0:
+            if not pairs[i_c].active:
                 continue
             i_b = pairs[i_c].batch_idx
             i_e = pairs[i_c].geom_idx
@@ -1444,20 +1444,18 @@ class SAPCoupler(RBC):
         for i_c in range(self.n_fem_floor_contact_pairs[None]):
             pair = self.fem_floor_contact_pairs[i_c]
             i_b = pair.batch_idx
-            if not self.batch_linesearch_active[i_b] or pair.active == 0:
+            if not self.batch_linesearch_active[i_b] or not pair.active:
                 continue
             energy[i_b] += pair.energy
 
     @ti.kernel
     def init_linesearch(self, f: ti.i32):
         fem_solver = self.fem_solver
-        dt = ti.static(self.sim._substep_dt)
-        dt2 = dt**2
         for i_b in ti.ndrange(self._B):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
             if not self.batch_linesearch_active[i_b]:
                 continue
-            self.linesearch_state[i_b].step_size = 1.0 / ti.static(self._linesearch_tau)
+            self.linesearch_state[i_b].step_size = 1.0 / self._linesearch_tau
             self.linesearch_state[i_b].m = 0.0
 
         # x_prev, m

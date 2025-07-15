@@ -101,6 +101,7 @@ class Emitter(RBC):
         else:
             gs.raise_exception(f"Unsupported nozzle shape: {droplet_shape}.")
 
+        direction = np.asarray(direction, dtype=gs.np_float)
         if np.linalg.norm(direction) < gs.EPS:
             gs.raise_exception("Zero-length direction.")
         else:
@@ -108,7 +109,6 @@ class Emitter(RBC):
 
         p_size = self._solver.particle_size if p_size is None else p_size
 
-        pos = np.array(pos)
         if droplet_length is None:
             # Use the speed to determine the length of the droplet in the emitting direction
             droplet_length = speed * self._solver.substep_dt * self._sim.substeps + self._acc_droplet_len
@@ -147,9 +147,11 @@ class Emitter(RBC):
             else:
                 gs.raise_exception()
 
-            positions = gu.transform_by_T(
-                positions, gu.trans_R_to_T(pos, gu.z_to_R(direction) @ gu.axis_angle_to_R(np.array([0, 0, 1]), theta))
-            ).astype(gs.np_float)
+            positions = gu.transform_by_trans_R(
+                positions.astype(gs.np_float, copy=False),
+                np.asarray(pos, dtype=gs.np_float),
+                gu.z_up_to_R(direction) @ gu.axis_angle_to_R(np.array([0.0, 0.0, 1.0], dtype=gs.np_float), theta),
+            )
 
             positions = np.tile(positions[np.newaxis], (self._sim._B, 1, 1))
 
@@ -159,8 +161,8 @@ class Emitter(RBC):
             n_particles = positions.shape[1]
 
             # Expand vels with batch dimension
-            vels = np.tile(direction * speed, (n_particles, 1)).astype(gs.np_float)
-            vels = np.tile(vels[np.newaxis], (self._sim._B, 1, 1))
+            vels = speed * direction
+            vels = np.tile(vels.reshape((1, 1, -1)), (self._sim._B, n_particles, 1))
 
             if n_particles > self._entity.n_particles:
                 gs.logger.warning(
@@ -204,17 +206,21 @@ class Emitter(RBC):
         Parameters:
         ----------
         source_radius: float, optional
-            The radius of the sphere source. Particles will be emitted from a shell with inner radius using 0.8 * source_radius and outer radius using source_radius.
+            The radius of the sphere source. Particles will be emitted from a shell with inner radius using
+            '0.8 * source_radius' and outer radius using source_radius.
         pos: array_like, shape=(3,)
             The center of the sphere source.
         speed: float
             The speed of the emitted particles.
         particle_size: float | None
-            The size (diameter) of the emitted particles. The actual number of particles emitted is determined by the volume of the sphere source and the size of the particles. If None, the solver's particle size is used. Note that this particle size only affects computation for number of particles emitted, not the actual size of the particles in simulation and rendering.
+            The size (diameter) of the emitted particles. The actual number of particles emitted is determined by the
+            volume of the sphere source and the size of the particles. If None, the solver's particle size is used.
+            Note that this particle size only affects computation for number of particles emitted, not the actual size
+            of the particles in simulation and rendering.
         """
         assert self._entity is not None
 
-        pos = np.array(pos)
+        pos = np.asarray(pos, dtype=gs.np_float)
 
         if particle_size is None:
             particle_size = self._solver.particle_size
@@ -225,20 +231,20 @@ class Emitter(RBC):
             inner_radius=source_radius * 0.4,
             sampler=self._entity.sampler,
         )
-
-        positions = gu.transform_by_T(positions_, gu.trans_to_T(pos)).astype(gs.np_float)
+        positions = pos + positions_
 
         if not self._solver.boundary.is_inside(positions):
             gs.raise_exception("Emitted particles are outside the boundary.")
 
-        n_particles = len(positions)
-        dists = np.linalg.norm(positions_, axis=1, keepdims=True)
-        positions[np.where(dists < gs.EPS)[0]] = np.array([gs.EPS, gs.EPS, gs.EPS])
-        vels = (positions_ / dists * speed).astype(gs.np_float)
+        dists = np.linalg.norm(positions_, axis=1)
+        positions[dists < gs.EPS] = gs.EPS
+        vels = (speed / (dists + gs.EPS)) * positions_
 
+        n_particles = len(positions)
         if n_particles > self._entity.n_particles:
             gs.logger.warning(
-                f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum number of particles ({self._entity.n_particles})."
+                f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum number "
+                f"of particles ({self._entity.n_particles})."
             )
 
         self._solver._kernel_set_particles_pos(

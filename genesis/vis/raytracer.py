@@ -251,9 +251,9 @@ class Raytracer:
             for tool_entity in self.sim.tool_solver.entities:
                 self.add_rigid(
                     name=str(tool_entity.uid),
-                    vertices=tool_entity.mesh.init_vertices_np,
+                    vertices=tool_entity.mesh.raw_vertices,
                     triangles=tool_entity.mesh.faces_np,
-                    normals=tool_entity.mesh.init_vertex_normals_np,
+                    normals=tool_entity.mesh.raw_vertex_normals,
                     uvs=np.array([]),
                 )
 
