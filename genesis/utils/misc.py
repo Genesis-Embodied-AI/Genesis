@@ -57,6 +57,9 @@ class redirect_libc_stderr:
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
+    # --------------------------------------------------
+    # Enter: duplicate stderr → tmp, dup2(target) → stderr
+    # --------------------------------------------------
     def __enter__(self):
         self.stderr_fileno = sys.stderr.fileno()
         self.original_stderr_fileno = os.dup(self.stderr_fileno)

@@ -207,7 +207,7 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
     return asset_path
 
 
-def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
+def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=""):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
     if tol is not None:
         atol = tol
@@ -230,8 +230,8 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
-def assert_array_equal(actual, desired, *, err_msg=None):
-    np.testing.assert_array_equal(actual, desired, err_msg=err_msg)
+def assert_array_equal(actual, desired, *, err_msg=""):
+    assert_allclose(actual, desired, atol=0.0, rtol=0.0, err_msg=err_msg)
 
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
