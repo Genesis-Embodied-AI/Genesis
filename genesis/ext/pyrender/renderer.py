@@ -983,7 +983,7 @@ class Renderer(object):
             vertex_shader = "segmentation.vert"
             fragment_shader = "segmentation.frag"
             if primitive.double_sided:
-                geometry_shader = "mesh_double_sided.geom"
+                geometry_shader = "segmentation_double_sided.geom"
                 defines["DOUBLE_SIDED"] = 1
         else:
             vertex_shader = "mesh_depth.vert"
