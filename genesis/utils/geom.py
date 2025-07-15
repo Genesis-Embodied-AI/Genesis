@@ -930,7 +930,7 @@ def transform_quat_by_quat(v, u):
 
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
-    assert u.shape == v.shape
+    assert u.shape == v.shape, f"{u.shape=} and {v.shape=}"
     assert u.ndim >= 1
 
     if all(isinstance(e, torch.Tensor) for e in (u, v)):

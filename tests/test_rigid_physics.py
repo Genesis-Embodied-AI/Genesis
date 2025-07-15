@@ -1579,8 +1579,9 @@ def test_suction_cup(mode, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(show_viewer):
+def test_path_planning_avoidance(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -1622,13 +1623,17 @@ def test_path_planning_avoidance(show_viewer):
         ),
         vis_mode="collision",
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     hand = franka.get_link("hand")
-    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
-    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
+    if n_envs > 0:
+        hand_pos_ref = torch.tensor([[0.3, 0.25, 0.25]] * n_envs, device=gs.device)
+        hand_quat_ref = torch.tensor([[0.3073, 0.5303, 0.7245, -0.2819]] * n_envs, device=gs.device)
+    else:
+        hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
+        hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos[-2:] = 0.04
+    qpos[..., -2:] = 0.04
 
     free_path = franka.plan_path(
         qpos_goal=qpos,
@@ -1640,7 +1645,7 @@ def test_path_planning_avoidance(show_viewer):
     assert_allclose(free_path[-1], qpos, tol=gs.EPS)
 
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos[-2:] = 0.04
+    qpos[..., -2:] = 0.04
     avoidance_path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=300,
@@ -1671,7 +1676,7 @@ def test_path_planning_avoidance(show_viewer):
 
         assert_allclose(hand_pos_ref, hand.get_pos(), tol=5e-4)
         hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
-        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[1:]), torch.abs(hand_quat_diff[0]))
+        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[...,1:]), torch.abs(hand_quat_diff[...,0]))
         assert_allclose(theta, 0.0, tol=5e-3)
 
 
