@@ -1,9 +1,9 @@
 import os
 import argparse
 import logging
+import asyncio
 
 os.environ["OMNI_KIT_ACCEPT_EULA"] = "yes"
-BAKE_EXT = "usd"
 
 
 def omni_bootstrap(device=0, log_level="warning"):
@@ -41,6 +41,8 @@ def omni_bootstrap(device=0, log_level="warning"):
         "--enable",
         "omni.kit.viewport.rtx",
         "--enable",
+        "omni.kit.usd.collect",
+        "--enable",
         "omni.replicator.core",
         "--enable",
         "omni.mdl.distill_and_bake",
@@ -50,7 +52,7 @@ def omni_bootstrap(device=0, log_level="warning"):
     return app
 
 
-def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error"):
+def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_level="error"):
     # sys.stdout = open(os.devnull, "w")
     logs = []
 
@@ -64,11 +66,11 @@ def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error")
     import omni.usd
     import omni.mdl.distill_and_bake
     import omni.replicator.core
+    import omni.kit.usd.collect
 
     # open stage
     start_time = time.time()
-    omni.usd.get_context().open_stage(usd_file)
-    stage = omni.usd.get_context().get_stage()
+    omni.usd.get_context().open_stage(input_file)
     logs.append(f"\tOpen stage: {time.time() - start_time}s.")
 
     # create render product
@@ -80,20 +82,24 @@ def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error")
 
     # distill the material
     start_time = time.time()
-    baked_folder = os.path.dirname(usd_file)
 
     for usd_material_path in usd_material_paths:
         material_prim = stage.GetPrimAtPath(usd_material_path)
-        distiller = omni.mdl.distill_and_bake.MdlDistillAndBake(material_prim, ouput_folder=baked_folder)
+        distiller = omni.mdl.distill_and_bake.MdlDistillAndBake(material_prim, ouput_folder=output_dir)
         distiller.distill()
     logs.append(f"\tDistill: {time.time() - start_time}s, {material_prim}.")
 
     # export usd
     start_time = time.time()
-    baked_file = f"{os.path.splitext(usd_file)[0]}_baked.{BAKE_EXT}"
-    stage.GetRootLayer().Export(baked_file)
-    logs.append(f"\tExport: {time.time() - start_time}s, {baked_file}.")
+    # baked_file = os.path.join(output_dir, f"{output_filename}.{BAKE_EXT}")
+    collector = omni.kit.usd.collect.Collector(stage.GetRootLayer().identifier, output_dir)
+    task = asyncio.ensure_future(collector.collect())
+    while not task.done():
+        app.update()  # Otherwise it will be blocked by omni.kit.app.get_app().next_update_async()
+    success, baked_file = task.result()
+    # stage.GetRootLayer().Export(baked_file)
 
+    logs.append(f"\tExport: {time.time() - start_time}s, {baked_file}.")
     print("Distill USD material:\n" + "\n".join(logs))
 
     # close omniverse app
@@ -102,7 +108,8 @@ def bake_usd_material(usd_file, usd_material_paths, device=0, log_level="error")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--usd_file", type=str, required=True)
+    parser.add_argument("--input_file", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--usd_material_paths", type=str, nargs="+", required=True)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--log_level", type=str, default="warning")
@@ -111,4 +118,10 @@ if __name__ == "__main__":
     log_level = logging.getLevelName(
         min(max(logging.getLevelName(args.log_level.upper()), logging.INFO), logging.ERROR)
     ).lower()
-    bake_usd_material(args.usd_file, args.usd_material_paths, args.device, log_level)
+    bake_usd_material(
+        args.input_file,
+        args.output_dir,
+        args.usd_material_paths,
+        args.device,
+        log_level,
+    )

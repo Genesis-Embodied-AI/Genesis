@@ -341,16 +341,16 @@ class Mesh(RBC):
         If the morph is a Mesh morph (morphs.Mesh), it could contain multiple submeshes, so we return a list.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
-            if morph.file.endswith(("obj", "ply", "stl")):
+            if morph.is_format(gs.options.morphs.MESH_FORMAT):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
 
-            elif morph.file.endswith(("glb", "gltf")):
+            elif morph.is_format(gs.options.morphs.GLTF_FORMAT):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
 
-            elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
+            elif morph.is_format(gs.options.morphs.USD_FORMAT):
                 import genesis.utils.usda as usda_utils
 
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
