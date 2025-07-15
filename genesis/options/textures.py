@@ -145,16 +145,8 @@ class ImageTexture(Texture):
                     )
             self.image_array = arr
 
-        # calculate channel
-        if self.image_array is None:
-            if isinstance(self.resolution, (tuple, list)):
-                H, W = self.resolution
-            else:
-                H = W = self.resolution
-
-            # Default to 3-channel RGB
-            white = np.array([255, 255, 255], dtype=np.uint8)
-            self.image_array = np.full((H, W, 3), white, dtype=np.uint8)
+        # just calculate channel
+        if self.image_array is None:    # It means we use image_path.
             self._mean_color = np.array([1.0, 1.0, 1.0], dtype=np.float16)
             self._channel = 3
         else:

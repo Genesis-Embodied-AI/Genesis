@@ -33,7 +33,6 @@ from .misc import (
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
-exr_compressions = {}
 
 
 class MeshInfo:
@@ -149,18 +148,6 @@ def get_usd_zip_path(file_path):
 def get_usd_bake_path(file_path):
     hashkey = get_file_hashkey(file_path)
     return os.path.join(get_usd_cache_dir(), "bake", hashkey)
-
-
-def update_exr_compression_json():
-    exr_cache_dir = get_exr_cache_dir()
-    os.makedirs(exr_cache_dir, exist_ok=True)
-    json_file = os.path.join(exr_cache_dir, "compression.json")
-    if not os.path.exists(json_file):
-        with open(json_file, "w") as f:
-            json.dump(exr_compressions, f)
-    else:
-        with open(json_file, "r") as f:
-            exr_compressions.update(json.load(f))
 
 
 def get_file_hashkey(file):
@@ -1015,14 +1002,13 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
 
 
 def check_exr_compression(exr_path):
-    update_exr_compression_json()
-    new_exr_path = get_exr_path(exr_path)
-    need_recomp = exr_compressions.get(new_exr_path)
-    if need_recomp is None:
-        exr_file = OpenEXR.InputFile(exr_path)
-        exr_header = exr_file.header()
-
-        if exr_header["compression"].v > Imath.Compression.PIZ_COMPRESSION:
+    exr_file = OpenEXR.InputFile(exr_path)
+    exr_header = exr_file.header()
+    if exr_header["compression"].v > Imath.Compression.PIZ_COMPRESSION:
+        new_exr_path = get_exr_path(exr_path)
+        if os.path.exists(new_exr_path):
+            gs.logger.info(f"Assets of fixed compression detected and used: {new_exr_path}.")
+        else:
             gs.logger.warning(
                 f"EXR image {exr_path}'s compression type {exr_header['compression']} is not supported. "
                 f"Converting to compression type ZIP_COMPRESSION and saving to {new_exr_path}."
@@ -1030,15 +1016,13 @@ def check_exr_compression(exr_path):
 
             channel_data = {channel: exr_file.channel(channel) for channel in exr_header["channels"]}
             exr_header["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
+
             os.makedirs(os.path.dirname(new_exr_path), exist_ok=True)
             new_exr_file = OpenEXR.OutputFile(new_exr_path, exr_header)
             new_exr_file.writePixels(channel_data)
             new_exr_file.close()
-            need_recomp = True
-        else:
-            need_recomp = False
+            
+        exr_path = new_exr_path
 
-        exr_file.close()
-        exr_compressions[new_exr_path] = need_recomp
-
-    return new_exr_path if need_recomp else exr_path
+    exr_file.close()
+    return exr_path
