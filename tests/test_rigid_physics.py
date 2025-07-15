@@ -2628,3 +2628,45 @@ def test_mesh_to_heightfield(tmp_path, show_viewer):
     # speed is around 0
     qvel = ball.get_dofs_velocity()
     assert_allclose(qvel, 0, atol=1e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_cartesian_space_variables(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # by default, enable_mujoco_compatibility=False
+            # the test will fail if enable_mujoco_compatibility=True
+            enable_mujoco_compatibility=False,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    scene.build()
+
+    for _ in range(2):
+        for link in box.links:
+            force = torch.tensor(np.array([0, 0, 0])).unsqueeze(0)
+            acc = 50.0
+            force[0, 0] = acc * link.inertial_mass
+            pos = link.get_pos()
+            vel = link.get_vel()
+
+            dof_vel = link.solver.get_dofs_velocity()
+            dof_pos = link.solver.get_qpos()
+
+            assert_allclose(dof_vel[:3], vel, atol=tol)
+            assert_allclose(dof_pos[:3], pos, atol=tol)
+
+            link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
+
+        scene.step()
