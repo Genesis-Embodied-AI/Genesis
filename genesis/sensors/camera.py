@@ -29,6 +29,7 @@ class Camera(Sensor):
         The name of the camera.
     visualizer : genesis.Visualizer
         The visualizer object that the camera is associated with.
+        # , rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False
     model : str
         Specifies the camera model. Options are 'pinhole' or 'thinlens'.
     res : tuple of int, shape (2,)
@@ -57,6 +58,16 @@ class Camera(Sensor):
         The far plane of the camera.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
+    rgb : bool, optional
+        Whether to return RGB image(s) for read().
+    depth : bool, optional
+        Whether to return depth image(s) for read().
+    segmentation : bool, optional
+        Whether to return segmentation mask(s) for read().
+    colorize_seg : bool, optional
+        If True, the segmentation mask will be colorized for read().
+    normal : bool, optional
+        Whether to return the surface normal for read().
     """
 
     @staticmethod
@@ -83,6 +94,11 @@ class Camera(Sensor):
         near=0.05,
         far=100.0,
         transform=None,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
     ):
         super().__init__(entity, idx, name)
 
@@ -104,6 +120,12 @@ class Camera(Sensor):
         self._lookat = lookat
         self._up = up
         self._transform = transform
+        self._rgb = rgb
+        self._depth = depth
+        self._segmentation = segmentation
+        self._colorize_seg = colorize_seg
+        self._normal = normal
+
         self._aspect_ratio = self._res[0] / self._res[1]
         self._is_built = False
         self._attached_link = None
@@ -561,8 +583,17 @@ class Camera(Sensor):
 
     def read(self):
         """Render and returns the RGB frame of the camera as a numpy array."""
-        rgb_arr, _, _, _ = self.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-        return rgb_arr
+        imgs = self.render(
+            rgb=self._rgb,
+            depth=self._depth,
+            segmentation=self._segmentation,
+            colorize_seg=self._colorize_seg,
+            normal=self._normal,
+        )
+        actual_imgs = [img for img in imgs if img is not None]
+        if len(actual_imgs) == 1:
+            return actual_imgs[0]
+        return actual_imgs
 
     @gs.assert_built
     def start_recording(self, options: Optional[DataRecordingOptions] = None):
