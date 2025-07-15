@@ -127,24 +127,27 @@ class RigidEntity(Entity):
         if isinstance(morph, gs.options.morphs.Box):
             extents = np.array(morph.size)
             tmesh = mu.create_box(extents=extents)
+            cmesh = tmesh
             geom_data = extents
             geom_type = gs.GEOM_TYPE.BOX
             link_name_prefix = "box"
 
         elif isinstance(morph, gs.options.morphs.Sphere):
             tmesh = mu.create_sphere(radius=morph.radius)
+            cmesh = tmesh
             geom_data = np.array([morph.radius])
             geom_type = gs.GEOM_TYPE.SPHERE
             link_name_prefix = "sphere"
 
         elif isinstance(morph, gs.options.morphs.Cylinder):
             tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
+            cmesh = tmesh
             geom_data = None
             geom_type = gs.GEOM_TYPE.MESH
             link_name_prefix = "cylinder"
 
         elif isinstance(morph, gs.options.morphs.Plane):
-            tmesh = mu.create_plane(normal=morph.normal)
+            tmesh, cmesh = mu.create_plane(normal=morph.normal)
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
@@ -167,7 +170,7 @@ class RigidEntity(Entity):
                 dict(
                     contype=1,
                     conaffinity=1,
-                    mesh=gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()),
+                    mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
                     sol_params=gu.default_solver_params(),
