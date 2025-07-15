@@ -208,7 +208,7 @@ class OffscreenRenderer(object):
 
             self._platform = OSMesaPlatform(self.viewport_width, self.viewport_height)
         else:
-            raise ValueError("Unsupported PyOpenGL platform: {}".format(os.environ["PYOPENGL_PLATFORM"]))
+            raise ValueError("Unsupported PyOpenGL platform: {}".format(platform))
         self._platform.init_context()
         self._platform.make_current()
 
