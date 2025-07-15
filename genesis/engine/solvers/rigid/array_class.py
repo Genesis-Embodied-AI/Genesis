@@ -212,6 +212,165 @@ class MPRState:
         self.simplex_size = ti.field(gs.ti_int, shape=f_batch())
 
 
+# =========================================== GJK ===========================================
+@ti.data_oriented
+class GJKState:
+    def __init__(self, solver, static_rigid_sim_config, gjk_static_config):
+        _B = solver._B
+        polytope_max_faces = 6 * gjk_static_config.epa_max_iterations
+        max_contacts_per_pair = gjk_static_config.max_contacts_per_pair
+        max_contact_polygon_verts = gjk_static_config.max_contact_polygon_verts
+
+        # Cache to store the previous support points for support mesh function.
+        self.support_mesh_prev_vertex_id = ti.field(dtype=gs.ti_int, shape=(_B, 2))
+
+        ### GJK simplex
+        struct_simplex_vertex = ti.types.struct(
+            # Support points on the two objects
+            obj1=gs.ti_vec3,
+            obj2=gs.ti_vec3,
+            # Support point IDs on the two objects
+            id1=gs.ti_int,
+            id2=gs.ti_int,
+            # Vertex on Minkowski difference
+            mink=gs.ti_vec3,
+        )
+        struct_simplex = ti.types.struct(
+            # Number of vertices in the simplex
+            nverts=gs.ti_int,
+            # Distance from the origin to the simplex
+            dist=gs.ti_float,
+        )
+        struct_simplex_buffer = ti.types.struct(
+            # Normals of the simplex faces
+            normal=gs.ti_vec3,
+            # Signed distances of the simplex faces from the origin
+            sdist=gs.ti_float,
+        )
+        self.simplex_vertex = struct_simplex_vertex.field(shape=(_B, 4))
+        self.simplex_buffer = struct_simplex_buffer.field(shape=(_B, 4))
+        self.simplex = struct_simplex.field(shape=(_B,))
+
+        # Only when we enable MuJoCo compatibility, we use the simplex vertex and buffer for intersection checks.
+        if static_rigid_sim_config.enable_mujoco_compatibility:
+            self.simplex_vertex_intersect = struct_simplex_vertex.field(shape=(_B, 4))
+            self.simplex_buffer_intersect = struct_simplex_buffer.field(shape=(_B, 4))
+            self.nsimplex = ti.field(dtype=gs.ti_int, shape=(_B,))
+
+        # In safe GJK, if the initial simplex is degenerate and the geometries are discrete, we go through vertices
+        # on the Minkowski difference to find a vertex that would make a valid simplex. To prevent iterating through
+        # the same vertices again during initial simplex construction, we keep the vertex ID of the last vertex that
+        # we searched, so that we can start searching from the next vertex.
+        self.last_searched_simplex_vertex_id = ti.field(dtype=gs.ti_int, shape=(_B,))
+
+        ### EPA polytope
+        struct_polytope_vertex = struct_simplex_vertex
+        struct_polytope_face = ti.types.struct(
+            # Indices of the vertices forming the face on the polytope
+            verts_idx=gs.ti_ivec3,
+            # Indices of adjacent faces, one for each edge: [v1,v2], [v2,v3], [v3,v1]
+            adj_idx=gs.ti_ivec3,
+            # Projection of the origin onto the face, can be used as face normal
+            normal=gs.ti_vec3,
+            # Square of 2-norm of the normal vector, negative means deleted face
+            dist2=gs.ti_float,
+            # Index of the face in the polytope map, -1 for not in the map, -2 for deleted
+            map_idx=gs.ti_int,
+        )
+        # Horizon is used for representing the faces to delete when the polytope is expanded by inserting a new vertex.
+        struct_polytope_horizon_data = ti.types.struct(
+            # Indices of faces on horizon
+            face_idx=gs.ti_int,
+            # Corresponding edge of each face on the horizon
+            edge_idx=gs.ti_int,
+        )
+        struct_polytope = ti.types.struct(
+            # Number of vertices in the polytope
+            nverts=gs.ti_int,
+            # Number of faces in the polytope (it could include deleted faces)
+            nfaces=gs.ti_int,
+            # Number of faces in the polytope map (only valid faces on polytope)
+            nfaces_map=gs.ti_int,
+            # Number of edges in the horizon
+            horizon_nedges=gs.ti_int,
+            # Support point on the Minkowski difference where the horizon is created
+            horizon_w=gs.ti_vec3,
+        )
+
+        self.polytope = struct_polytope.field(shape=(_B,))
+        self.polytope_verts = struct_polytope_vertex.field(shape=(_B, 5 + gjk_static_config.epa_max_iterations))
+        self.polytope_faces = struct_polytope_face.field(shape=(_B, polytope_max_faces))
+        self.polytope_horizon_data = struct_polytope_horizon_data.field(
+            shape=(_B, 6 + gjk_static_config.epa_max_iterations)
+        )
+
+        # Face indices that form the polytope. The first [nfaces_map] indices are the faces that form the polytope.
+        self.polytope_faces_map = ti.Vector.field(n=polytope_max_faces, dtype=gs.ti_int, shape=(_B,))
+
+        # Stack to use for visiting faces during the horizon construction. The size is (# max faces * 3),
+        # because a face has 3 edges.
+        self.polytope_horizon_stack = struct_polytope_horizon_data.field(shape=(_B, polytope_max_faces * 3))
+
+        # Data structures for multi-contact detection based on MuJoCo's implementation.
+        if gjk_static_config.enable_mujoco_multi_contact:
+            struct_contact_face = ti.types.struct(
+                # Vertices from the two colliding faces
+                vert1=gs.ti_vec3,
+                vert2=gs.ti_vec3,
+                endverts=gs.ti_vec3,
+                # Normals of the two colliding faces
+                normal1=gs.ti_vec3,
+                normal2=gs.ti_vec3,
+                # Face ID of the two colliding faces
+                id1=gs.ti_int,
+                id2=gs.ti_int,
+            )
+            # Struct for storing temp. contact normals
+            struct_contact_normal = ti.types.struct(
+                endverts=gs.ti_vec3,
+                # Normal vector of the contact point
+                normal=gs.ti_vec3,
+                # Face ID
+                id=gs.ti_int,
+            )
+            struct_contact_halfspace = ti.types.struct(
+                # Halfspace normal
+                normal=gs.ti_vec3,
+                # Halfspace distance from the origin
+                dist=gs.ti_float,
+            )
+            self.contact_faces = struct_contact_face.field(shape=(_B, max_contact_polygon_verts))
+            self.contact_normals = struct_contact_normal.field(shape=(_B, max_contact_polygon_verts))
+            self.contact_halfspaces = struct_contact_halfspace.field(shape=(_B, max_contact_polygon_verts))
+            self.contact_clipped_polygons = gs.ti_vec3.field(shape=(_B, 2, max_contact_polygon_verts))
+
+        # Whether or not the MuJoCo's contact manifold detection algorithm was used for the current pair.
+        self.multi_contact_flag = ti.field(dtype=gs.ti_int, shape=(_B,))
+
+        ### Final results
+        # Witness information
+        struct_witness = ti.types.struct(
+            # Witness points on the two objects
+            point_obj1=gs.ti_vec3,
+            point_obj2=gs.ti_vec3,
+        )
+        self.witness = struct_witness.field(shape=(_B, max_contacts_per_pair))
+        self.n_witness = ti.field(dtype=gs.ti_int, shape=(_B,))
+
+        # Contact information, the namings are the same as those from the calling function. Even if they could be
+        # redundant, we keep them for easier use from the calling function.
+        self.n_contacts = ti.field(dtype=gs.ti_int, shape=(_B,))
+        self.contact_pos = gs.ti_vec3.field(shape=(_B, max_contacts_per_pair))
+        self.normal = gs.ti_vec3.field(shape=(_B, max_contacts_per_pair))
+        self.is_col = ti.field(dtype=gs.ti_int, shape=(_B,))
+        self.penetration = ti.field(dtype=gs.ti_float, shape=(_B,))
+
+        # Distance between the two objects.
+        # If the objects are separated, the distance is positive.
+        # If the objects are intersecting, the distance is negative (depth).
+        self.distance = ti.field(dtype=gs.ti_float, shape=(_B,))
+
+
 # =========================================== SupportField ===========================================
 @ti.data_oriented
 class SupportFieldInfo:
