@@ -2080,14 +2080,77 @@ class RigidSolver(Solver):
             links_info=self.links_info,
             links_state=self.links_state,
             joints_info=self.joints_info,
+            joints_state=self.joints_state,
             entities_state=self.entities_state,
             entities_info=self.entities_info,
+            geoms_info=self.geoms_info,
             geoms_state=self.geoms_state,
             collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         # timer.stamp("kernel_step_2")
+
+    @ti.func
+    def _func_update_cartesian_space(
+        self_unused,
+        i_b,
+        links_state,
+        links_info,
+        joints_state,
+        joints_info,
+        dofs_state,
+        dofs_info,
+        geoms_info,
+        geoms_state,
+        entities_info,
+        rigid_global_info,
+        static_rigid_sim_config: ti.template(),
+    ):
+        self_unused._func_forward_kinematics(
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        self_unused._func_COM_links(
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        self_unused._func_forward_velocity(
+            i_b,
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+        self_unused._func_update_geoms(
+            i_b=i_b,
+            entities_info=entities_info,
+            geoms_info=geoms_info,
+            geoms_state=geoms_state,
+            links_state=links_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
     @ti.kernel
     def _kernel_step_1(
@@ -2104,54 +2167,24 @@ class RigidSolver(Solver):
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
     ):
-
-        _B = links_state.shape[1]
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            self_unused._func_forward_kinematics(
-                i_b,
-                links_state=links_state,
-                links_info=links_info,
-                joints_state=joints_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                dofs_info=dofs_info,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_COM_links(
-                i_b,
-                links_state=links_state,
-                links_info=links_info,
-                joints_state=joints_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                dofs_info=dofs_info,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_forward_velocity(
-                i_b,
-                entities_info=entities_info,
-                links_info=links_info,
-                links_state=links_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-
-            self_unused._func_update_geoms(
-                i_b=i_b,
-                entities_info=entities_info,
-                geoms_info=geoms_info,
-                geoms_state=geoms_state,
-                links_state=links_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
+            _B = links_state.shape[1]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                self_unused._func_update_cartesian_space(
+                    i_b=i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_state=joints_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    dofs_info=dofs_info,
+                    geoms_info=geoms_info,
+                    geoms_state=geoms_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
 
         self_unused._func_forward_dynamics(
             links_state=links_state,
@@ -2230,8 +2263,10 @@ class RigidSolver(Solver):
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
         joints_info: array_class.JointsInfo,
+        joints_state: array_class.JointsState,
         entities_state: array_class.EntitiesState,
         entities_info: array_class.EntitiesInfo,
+        geoms_info: array_class.GeomsInfo,
         geoms_state: array_class.GeomsState,
         collider_state: ti.template(),
         rigid_global_info: ti.template(),
@@ -2287,6 +2322,25 @@ class RigidSolver(Solver):
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
+        if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+            _B = links_state.shape[1]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                self_unused._func_update_cartesian_space(
+                    i_b=i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_state=joints_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    dofs_info=dofs_info,
+                    geoms_info=geoms_info,
+                    geoms_state=geoms_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+
     def _kernel_detect_collision(self):
         self.collider.clear()
         self.collider.detection()
@@ -2305,48 +2359,19 @@ class RigidSolver(Solver):
     @ti.kernel
     def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
         for i_b in envs_idx:
-            self._func_forward_kinematics(
-                i_b,
-                self.links_state,
-                self.links_info,
-                self.joints_state,
-                self.joints_info,
-                self.dofs_state,
-                self.dofs_info,
-                self.entities_info,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-            )
-            self._func_COM_links(
-                i_b,
-                self.links_state,
-                self.links_info,
-                self.joints_state,
-                self.joints_info,
-                self.dofs_state,
-                self.dofs_info,
-                self.entities_info,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-            )
-            self._func_forward_velocity(
-                i_b,
-                entities_info=self.entities_info,
-                links_info=self.links_info,
+            self._func_update_cartesian_space(
+                i_b=i_b,
                 links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
                 joints_info=self.joints_info,
                 dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-            self._func_update_geoms(
-                i_b,
-                self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.links_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
             )
 
     def _func_constraint_force(self):
