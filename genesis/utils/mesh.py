@@ -20,7 +20,6 @@ import tetgen
 import genesis as gs
 
 from . import geom as gu
-from .usda import BAKE_EXT
 from .misc import (
     get_assets_dir,
     get_cvx_cache_dir,
@@ -137,29 +136,39 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
 
 
-def get_exr_path(file_path, file_size):
-    hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
+def get_exr_path(file_path):
+    hashkey = get_file_hashkey(file_path)
     return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
 
 
-def get_usd_zip_path(file_path, file_size):
-    hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
+def get_usd_zip_path(file_path):
+    hashkey = get_file_hashkey(file_path)
     return os.path.join(get_usd_cache_dir(), "zip", hashkey)
 
 
-def get_usd_bake_path(file_path, file_size):
-    hashkey = get_hashkey(file_path.encode(), str(file_size).encode())
+def get_usd_bake_path(file_path):
+    hashkey = get_file_hashkey(file_path)
     return os.path.join(get_usd_cache_dir(), "bake", hashkey)
 
 
 def update_exr_compression_json():
-    json_file = os.path.join(get_exr_cache_dir(), "compression.json")
+    exr_cache_dir = get_exr_cache_dir()
+    os.makedirs(exr_cache_dir, exist_ok=True)
+    json_file = os.path.join(exr_cache_dir, "compression.json")
     if not os.path.exists(json_file):
         with open(json_file, "w") as f:
             json.dump(exr_compressions, f)
     else:
         with open(json_file, "r") as f:
             exr_compressions.update(json.load(f))
+
+
+def get_file_hashkey(file):
+    file_obj = Path(file)
+    return get_hashkey(
+        file_obj.resolve().as_posix().encode(),
+        str(file_obj.stat().st_size).encode()
+    )
 
 
 def get_hashkey(*args):
@@ -1005,12 +1014,8 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
 
 
 def check_exr_compression(exr_path):
-    exr_path_obj = Path(exr_path)
-    exr_real_path = exr_path_obj.resolve().as_posix()
-    exr_file_size = exr_path_obj.stat().st_size
-
     update_exr_compression_json()
-    new_exr_path = get_exr_path(exr_real_path, exr_file_size)
+    new_exr_path = get_exr_path(exr_path)
     need_recomp = exr_compressions.get(new_exr_path)
     if need_recomp is None:
         exr_file = OpenEXR.InputFile(exr_path)

@@ -218,13 +218,13 @@ def replace_asset_symlinks(stage):
 
     for asset_path in asset_paths:
         if not os.path.islink(asset_path):
-            return
+            continue
 
         real_path = os.path.realpath(asset_path)
         path_ext = os.path.splitext(asset_path)[1]
         real_path_ext = os.path.splitext(real_path)[1]
         if path_ext.lower() == real_path_ext.lower():
-            return
+            continue
 
         os.unlink(asset_path)
         if os.path.isfile(real_path):
@@ -233,14 +233,11 @@ def replace_asset_symlinks(stage):
 
 
 def decompress_usdz(usdz_path):
-    usdz_path_obj = Path(usdz_path)
-    usdz_real_path = usdz_path_obj.resolve().as_posix()
-    usdz_file_size = usdz_path_obj.stat().st_size
-    usdz_folder = mu.get_usd_zip_path(usdz_real_path, usdz_file_size)
+    usdz_folder = mu.get_usd_zip_path(usdz_path)
 
     # The first file in the package must be a native usd file.
     # See https://openusd.org/docs/Usdz-File-Format-Specification.html
-    zip_files = Usd.ZipFile.Open(usdz_real_path)
+    zip_files = Usd.ZipFile.Open(usdz_path)
     zip_filelist = zip_files.GetFileNames()
     root_file = zip_filelist[0]
     if not root_file.lower().endswith(gs.options.morphs.USD_FORMAT[:-1]):
@@ -255,22 +252,21 @@ def decompress_usdz(usdz_path):
             os.makedirs(file_folder, exist_ok=True)
             with open(file_path, "wb") as out:
                 out.write(file_data.read())
+        gs.logger.warning(f"USDZ file {usdz_path} decompressed to {root_path}.")
+    else:
+        gs.logger.info(f"Decompressed assets detected and used: {root_path}.")
     return root_path
 
 
 def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
-    path_obj = Path(path)
-    if path_obj.suffix.lower() == gs.options.morphs.USD_FORMAT[-1]:
+    if path.lower().endswith(gs.options.morphs.USD_FORMAT[-1]):
         path = decompress_usdz(path)
-        path_obj = Path(path)
 
     # detect bake file caches
     is_bake_cache_found = False
-    baked_folder = mu.get_usd_bake_path(path_obj.resolve().as_posix(), path_obj.stat().st_size)
-    baked_path = os.path.join(baked_folder, path_obj.name)
-    baked_path_obj = Path(baked_path)
-    # baked_folder_obj = baked_path_obj.parent
-    if bake_cache and baked_path_obj.exists():
+    baked_folder = mu.get_usd_bake_path(path)
+    baked_path = os.path.join(baked_folder, os.path.basename(path))
+    if bake_cache and os.path.exists(baked_path):
         path = baked_path
         is_bake_cache_found = True
         gs.logger.info(f"Baked assets detected and used: {path}")
@@ -316,8 +312,6 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 path,
                 "--output_dir",
                 baked_folder,
-                # "--output_filename",
-                # baked_path_obj.stem,
                 "--usd_material_paths",
                 *baked_material_paths,
                 "--device",
@@ -344,7 +338,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
         except (subprocess.CalledProcessError, OSError) as e:
             gs.logger.warning(f"Baking process failed: {e} (Note that USD baking may only support Python 3.10 now.)")
 
-        if baked_path_obj.exists():
+        if os.path.exists(baked_path):
             gs.logger.warning(f"USD materials baked to file {baked_path}")
             stage = Usd.Stage.Open(baked_path)
             for baked_material_id, baked_material_path in baked_materials.items():
@@ -454,9 +448,10 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 mesh_info.set_property(
                     surface=material,
                     metadata={
-                        "path": path,
+                        "path": path,   # unbaked file or cache
                         "name": material_id if group_by_material else mesh_id,
-                        "baked": material_id in baked_materials,
+                        "require_bake": material_id in baked_materials,
+                        "bake_success": material_id in baked_materials and material is not None,
                     },
                 )
             mesh_info.append(points, triangles, normals, uvs)

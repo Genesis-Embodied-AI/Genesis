@@ -314,17 +314,14 @@ def test_usd_bake(usd_file):
         group_by_material=True,
         scale=1.0,
         surface=gs.surfaces.Default(),
+        bake_cache=False
     )
-    gs_usd_meshes = [gs_usd_mesh for gs_usd_mesh in gs_usd_meshes if gs_usd_mesh.metadata["baked"]]
-    usd_dir = os.path.dirname(usd_file)
-    texture_folders = [folder for folder in os.listdir(usd_dir) if folder.startswith("baked_textures")]
-    assert len(texture_folders) == len(gs_usd_meshes)
-
-    # os.remove(baked_usd_file)
-    # for file in os.listdir(usd_dir):
-    #     if file.startswith("baked_textures"):
-    #         shutil.rmtree(os.path.join(usd_dir, file))
-    gs.utils.misc.clean_cache_files()
+    for gs_usd_mesh in gs_usd_meshes:
+        require_bake = gs_usd_mesh.metadata["require_bake"]
+        bake_success = gs_usd_mesh.metadata["bake_success"]
+        assert not require_bake or require_bake and bake_success
+    baked_folder = mu.get_usd_bake_path(gs_usd_meshes[0].metadata["path"])
+    shutil.rmtree(baked_folder)
 
 
 @pytest.mark.required

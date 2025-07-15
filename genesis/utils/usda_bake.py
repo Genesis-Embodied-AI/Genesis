@@ -53,7 +53,6 @@ def omni_bootstrap(device=0, log_level="warning"):
 
 
 def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_level="error"):
-    # def bake_usd_material(input_file, output_dir, output_filename, usd_material_paths, device=0, log_level="error"):
     # sys.stdout = open(os.devnull, "w")
     logs = []
 
@@ -111,7 +110,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_file", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    # parser.add_argument("--output_filename", type=str, required=True)
     parser.add_argument("--usd_material_paths", type=str, nargs="+", required=True)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--log_level", type=str, default="warning")
@@ -121,7 +119,6 @@ if __name__ == "__main__":
         min(max(logging.getLevelName(args.log_level.upper()), logging.INFO), logging.ERROR)
     ).lower()
     bake_usd_material(
-        # args.input_file, args.output_dir, args.output_filename, args.usd_material_paths, args.device, log_level
         args.input_file,
         args.output_dir,
         args.usd_material_paths,
