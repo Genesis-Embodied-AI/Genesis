@@ -327,7 +327,7 @@ class Box(URDFType):
 
     @size.setter
     def size(self, value):
-        self._size = np.asanyarray(value).astype(np.float64)
+        self._size = np.asanyarray(value, dtype=np.float64)
         self._meshes = []
 
     @property
@@ -548,7 +548,7 @@ class Mesh(URDFType):
     @scale.setter
     def scale(self, value):
         if value is not None:
-            value = np.asanyarray(value).astype(np.float64)
+            value = np.asanyarray(value, dtype=np.float64)
         self._scale = value
 
     @property
@@ -888,7 +888,7 @@ class Material(URDFType):
     @color.setter
     def color(self, value):
         if value is not None:
-            value = np.asanyarray(value).astype(np.float32)
+            value = np.asanyarray(value, dtype=np.float32)
             value = np.clip(value, 0.0, 1.0)
             if value.shape != (4,):
                 raise ValueError("Color must be a (4,) float")
@@ -1192,7 +1192,7 @@ class Inertial(URDFType):
 
     @inertia.setter
     def inertia(self, value):
-        value = np.asanyarray(value).astype(np.float64)
+        value = np.asanyarray(value, dtype=np.float64)
         if not np.allclose(value, value.T):
             raise ValueError("Inertia must be a symmetric matrix")
         self._inertia = value
@@ -3391,14 +3391,14 @@ class URDF(URDFType):
         elif isinstance(ct, dict):
             if len(ct) > 0:
                 for k in ct:
-                    val = np.asanyarray(ct[k]).astype(np.float64)
+                    val = np.asanyarray(ct[k], dtype=np.float64)
                     if traj_len is None:
                         traj_len = len(val)
                     elif traj_len != len(val):
                         raise ValueError("Trajectories must be same length")
                     ct_np[k] = val
         elif isinstance(ct, (list, tuple, np.ndarray)):
-            ct = np.asanyarray(ct).astype(np.float64)
+            ct = np.asanyarray(ct, dtype=np.float64)
             if ct.ndim == 1:
                 ct = ct.reshape(-1, 1)
             if ct.ndim != 2 or ct.shape[1] != len(self.actuated_joints):

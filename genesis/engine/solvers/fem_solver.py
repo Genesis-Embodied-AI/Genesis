@@ -62,19 +62,19 @@ class FEMSolver(Solver):
 
     def init_batch_fields(self):
         self.batch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
 
         self.batch_pcg_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
 
         self.batch_linesearch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
@@ -122,7 +122,7 @@ class FEMSolver(Solver):
 
         # element state without gradient
         element_state_el_ng = ti.types.struct(
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # element info (properties that remain static through time)
@@ -235,7 +235,7 @@ class FEMSolver(Solver):
         surface_state = ti.types.struct(
             tri2v=gs.ti_ivec3,  # vertex index of a triangle
             tri2el=gs.ti_int,  # element index of a triangle
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # for rendering (this is more of a surface)
@@ -1094,14 +1094,14 @@ class FEMSolver(Solver):
         for i_e, i_b in ti.ndrange(n_elems_local, self._B):
             i_global = i_e + el_start
             self.elements_el[f, i_global, i_b].actu = 0.0
-            self.elements_el_ng[f, i_global, i_b].active = 1
+            self.elements_el_ng[f, i_global, i_b].active = True
 
         for i_s in range(n_surfaces):
             i_global = i_s + s_start
             for j in ti.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
             self.surface[i_global].tri2el = tri2el[i_s] + el_start
-            self.surface[i_global].active = 1
+            self.surface[i_global].active = True
 
     @ti.kernel
     def _kernel_set_elements_pos(

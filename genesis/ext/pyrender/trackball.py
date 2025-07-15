@@ -37,11 +37,11 @@ class Trackball(object):
             The center of the scene in world coordinates.
             The trackball will revolve around this point.
         """
-        self._size = np.array(size)
+        self._size = np.asarray(size, dtype=np.float32)
         self._scale = float(scale)
 
-        self._pose = pose
-        self._n_pose = pose
+        self._pose = pose.copy()
+        self._n_pose = pose.copy()
 
         self._target = target
         self._n_target = target
@@ -118,7 +118,7 @@ class Trackball(object):
             azimuth_transform = transformations.rotation_matrix(azimuth_angle, world_up_axis, target)
 
             # Compute current elevation angle
-            pose_after_azimuth = azimuth_transform.dot(self._pose)
+            pose_after_azimuth = azimuth_transform @ self._pose
             eye_after_azimuth = pose_after_azimuth[:3, 3]
             view_dir = target - eye_after_azimuth
             current_elevation_angle = -np.arctan2(view_dir[2], np.linalg.norm(view_dir[:2]))
@@ -144,7 +144,7 @@ class Trackball(object):
 
             # Apply the elevation rotation
             elevation_rotation = transformations.rotation_matrix(delta_elevation_angle, elevation_axis, target)
-            self._n_pose = elevation_rotation.dot(pose_after_azimuth)
+            self._n_pose = elevation_rotation @ pose_after_azimuth
 
             # Prevent locking the camera in the up/down direction
             self._pdown[1] -= (desired_elevation_angle - clamped_elevation_angle) * mindim
@@ -161,7 +161,7 @@ class Trackball(object):
 
             rot_mat = transformations.rotation_matrix(theta, z_axis, target)
 
-            self._n_pose = rot_mat.dot(self._pose)
+            self._n_pose = rot_mat @ self._pose
 
         # Interpret drag as a camera pan in view plane
         elif self._state == Trackball.STATE_PAN:
@@ -172,7 +172,7 @@ class Trackball(object):
             self._n_target = self._target + translation
             t_tf = np.eye(4)
             t_tf[:3, 3] = translation
-            self._n_pose = t_tf.dot(self._pose)
+            self._n_pose = t_tf @ self._pose
 
         # Interpret drag as a zoom motion
         elif self._state == Trackball.STATE_ZOOM:
@@ -185,7 +185,7 @@ class Trackball(object):
             translation = -np.sign(dy) * ratio * radius * z_axis
             t_tf = np.eye(4)
             t_tf[:3, 3] = translation
-            self._n_pose = t_tf.dot(self._pose)
+            self._n_pose = t_tf @ self._pose
 
     def scroll(self, clicks):
         """Zoom using a mouse scroll wheel motion.
@@ -205,21 +205,21 @@ class Trackball(object):
         elif clicks < 0:
             mult = (1.0 / ratio) ** abs(clicks)
 
-        z_axis = self._n_pose[:3, 2].flatten()
-        eye = self._n_pose[:3, 3].flatten()
+        z_axis = self._n_pose[:3, 2]
+        eye = self._n_pose[:3, 3]
         radius = np.linalg.norm(eye - target)
         translation = (mult * radius - radius) * z_axis
         t_tf = np.eye(4)
         t_tf[:3, 3] = translation
-        self._n_pose = t_tf.dot(self._n_pose)
+        self._n_pose = t_tf @ self._n_pose
 
-        z_axis = self._pose[:3, 2].flatten()
-        eye = self._pose[:3, 3].flatten()
+        z_axis = self._pose[:3, 2]
+        eye = self._pose[:3, 3]
         radius = np.linalg.norm(eye - target)
         translation = (mult * radius - radius) * z_axis
         t_tf = np.eye(4)
         t_tf[:3, 3] = translation
-        self._pose = t_tf.dot(self._pose)
+        self._pose = t_tf @ self._pose
 
     def rotate(self, azimuth, axis=None):
         """Rotate the trackball about the "Up" axis by azimuth radians.
@@ -231,17 +231,17 @@ class Trackball(object):
         """
         target = self._target
 
-        y_axis = self._n_pose[:3, 1].flatten()
+        y_axis = self._n_pose[:3, 1]
         if axis is not None:
             y_axis = axis
         x_rot_mat = transformations.rotation_matrix(azimuth, y_axis, target)
-        self._n_pose = x_rot_mat.dot(self._n_pose)
+        self._n_pose = x_rot_mat @ self._n_pose
 
-        y_axis = self._pose[:3, 1].flatten()
+        y_axis = self._pose[:3, 1]
         if axis is not None:
             y_axis = axis
         x_rot_mat = transformations.rotation_matrix(azimuth, y_axis, target)
-        self._pose = x_rot_mat.dot(self._pose)
+        self._pose = x_rot_mat @ self._pose
 
     def set_camera_pose(self, pose):
         """Set the camera pose.

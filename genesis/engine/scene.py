@@ -666,13 +666,10 @@ class Scene(RBC):
         # compute offset values for visualizing each env
         if not isinstance(env_spacing, (list, tuple)) or len(env_spacing) != 2:
             gs.raise_exception("`env_spacing` should be a tuple of length 2.")
-        idx_x = np.floor(np.arange(self._B) / self.n_envs_per_row)
-        idx_y = np.arange(self._B) % self.n_envs_per_row
-        idx_z = np.arange(self._B)
-        offset_x = idx_x * self.env_spacing[0]
-        offset_y = idx_y * self.env_spacing[1]
-        offset_z = idx_z * 0.0
-        self.envs_offset = np.vstack([offset_x, offset_y, offset_z]).T
+        offset_x = (np.arange(self._B) // self.n_envs_per_row) * self.env_spacing[0]
+        offset_y = (np.arange(self._B) % self.n_envs_per_row) * self.env_spacing[1]
+        offset_z = np.zeros((self._B,))
+        self.envs_offset = np.stack((offset_x, offset_y, offset_z), axis=-1, dtype=gs.np_float)
 
         # move to center
         if center_envs_at_origin:

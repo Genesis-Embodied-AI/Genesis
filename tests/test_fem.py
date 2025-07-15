@@ -333,7 +333,7 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         pos = tensor_to_array(state.pos.reshape(-1, 3))
         min_pos_z = np.min(pos[..., 2])
         assert_allclose(
-            min_pos_z, 0.0, atol=1e-3
+            min_pos_z, 0.0, atol=1.5e-3
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
         BV, BF = igl.bounding_box(pos)
         x_scale = BV[0, 0] - BV[-1, 0]

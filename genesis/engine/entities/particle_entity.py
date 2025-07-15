@@ -177,17 +177,17 @@ class ParticleEntity(Entity):
 
         kdtree = KDTree(self._particles)
         _, support_idxs = kdtree.query(self._vverts, k=self.solver._n_vvert_supports)
-        support_idxs = np.clip(support_idxs, 0, len(self._particles) - 1)
+        support_idxs = np.clip(support_idxs.astype(gs.np_int, copy=False), 0, len(self._particles) - 1)
         all_ps = self._particles[support_idxs]
-        Ps = np.stack([all_ps[:, i, :] for i in range(self.solver._n_vvert_supports - 1)], axis=2) - np.expand_dims(
-            all_ps[:, -1, :], axis=2
-        )
+        Ps = np.stack(
+            [all_ps[:, i, :] for i in range(self.solver._n_vvert_supports - 1)], axis=2, dtype=gs.np_float
+        ) - np.expand_dims(all_ps[:, -1, :], axis=2)
 
         _kernel_add_vverts_to_solver(
-            vverts=self._vverts.astype(gs.np_float),
-            particles=self._particles.astype(gs.np_float),
-            P_invs=np.linalg.pinv(Ps).astype(gs.np_float),
-            support_idxs_local=support_idxs.astype(gs.np_int),
+            vverts=self._vverts,
+            particles=self._particles,
+            P_invs=np.linalg.pinv(Ps),
+            support_idxs_local=support_idxs,
         )
 
     def sample(self):
@@ -230,13 +230,11 @@ class ParticleEntity(Entity):
 
                 particles_i += np.array(morph_i.pos)
                 particles.append(particles_i)
-
         elif isinstance(self._morph, (gs.options.morphs.Primitive, gs.options.morphs.Mesh)):
             particles = self._vmesh.particlize(self._particle_size, self.sampler)
-
+            particles = particles.astype(gs.np_float, order="C", copy=False)
         elif isinstance(self._morph, gs.options.morphs.Nowhere):
             particles = pu.nowhere_particles(self._morph.n_particles)
-
         else:
             gs.raise_exception(f"Unsupported morph: {self._morph}.")
 
@@ -244,23 +242,22 @@ class ParticleEntity(Entity):
             gs.raise_exception("Entity has zero particles.")
 
         if isinstance(self._morph, gs.options.morphs.Nowhere):
-            origin = gu.nowhere().astype(gs.np_float)
-            self._vverts = np.array([])
-            self._vfaces = np.array([])
-
+            origin = gu.nowhere()
+            self._vverts = np.array([], dtype=gs.np_float)
+            self._vfaces = np.array([], dtype=gs.np_float)
         elif isinstance(self._morph, gs.options.morphs.MeshSet):
             for i in range(len(self._morph.files)):
-                pos_i = np.array(self._morph.poss[i])
-                quat_i = np.array(gu.euler_to_quat(self._morph.eulers[i]))
+                pos_i, euler_i = map(np.asarray, (self._morph.poss[i], self._morph.eulers[i]))
+                quat_i = gs.utils.geom.xyz_to_quat(euler_i, rpy=True, degrees=True)
                 self._vmesh[i].apply_transform(gu.trans_quat_to_T(pos_i, quat_i))
 
                 # NOTE: particles are transformed already
                 # particles[i] = gu.transform_by_trans_quat(particles[i], pos_i, quat_i)
 
             self.mesh_set_group_ids = np.concatenate(
-                [np.ones((v.shape[0],), dtype=gs.np_int) * i for i, v in enumerate(particles)]
+                [np.full((len(v),), fill_value=i, dtype=gs.np_int) for i, v in enumerate(particles)]
             )
-            particles = np.concatenate(particles)
+            particles = np.concatenate(particles, dtype=gs.np_float)
             if not self._solver.boundary.is_inside(particles):  # HACK no check
                 gs.raise_exception(
                     f"Entity has particles outside solver boundary. Note that for MPMSolver, boundary is slightly tighter than the specified domain due to safety padding.\n\nCurrent boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\nmax: {particles.max(0)}\n"
@@ -277,35 +274,42 @@ class ParticleEntity(Entity):
                 vertex_normals=combined_vert_normals,
             )
             self._vmesh = mu.trimesh_to_mesh(combined_tmesh, 1, self._surface)
-            if self._need_skinning:
-                self._vverts = np.array(self._vmesh.verts)
-                self._vfaces = np.array(self._vmesh.faces)
-            else:
-                self._vverts = np.array([])
-                self._vfaces = np.array([])
-            origin = np.mean(self._morph.poss, dtype=gs.np_float)
 
+            if self._need_skinning:
+                self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
+                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
+            else:
+                self._vverts = np.array([], dtype=gs.np_float)
+                self._vfaces = np.array([], dtype=gs.np_float)
+            origin = np.mean(self._morph.poss, dtype=gs.np_float)
         else:
             # transform vmesh
-            self._vmesh.apply_transform(gu.trans_quat_to_T(np.array(self._morph.pos), np.array(self._morph.quat)))
+            pos, quat = map(np.asarray, (self._morph.pos, self._morph.quat))
+            self._vmesh.apply_transform(gu.trans_quat_to_T(pos, quat))
             # transform particles
-            origin = np.array(self._morph.pos, dtype=gs.np_float)
-            particles = gu.transform_by_trans_quat(particles, np.array(self._morph.pos), np.array(self._morph.quat))
-            # rotate
+            particles = gu.transform_by_trans_quat(
+                particles,
+                np.asarray(self._morph.pos, dtype=gs.np_float),
+                np.asarray(self._morph.quat, dtype=gs.np_float),
+            )
 
             if not self._solver.boundary.is_inside(particles):
                 gs.raise_exception(
-                    f"Entity has particles outside solver boundary. Note that for MPMSolver, boundary is slightly tighter than the specified domain due to safety padding.\n\nCurrent boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\nmax: {particles.max(0)}\n"
+                    "Entity has particles outside solver boundary. Note that for MPMSolver, boundary is slightly "
+                    "tighter than the specified domain due to safety padding.\n\n"
+                    "Current boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\n"
+                    "max: {particles.max(0)}\n"
                 )
 
             if self._need_skinning:
-                self._vverts = np.array(self._vmesh.verts)
-                self._vfaces = np.array(self._vmesh.faces)
+                self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
+                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
             else:
-                self._vverts = np.array([])
-                self._vfaces = np.array([])
+                self._vverts = np.array([], dtype=gs.np_float)
+                self._vfaces = np.array([], dtype=gs.np_float)
+            origin = np.array(self._morph.pos, dtype=gs.np_float)
 
-        self._particles = particles.astype(gs.np_float, order="C", copy=False)
+        self._particles = particles
         self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(origin)
         self._n_particles = len(self._particles)
 

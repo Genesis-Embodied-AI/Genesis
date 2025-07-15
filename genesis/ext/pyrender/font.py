@@ -83,8 +83,7 @@ class Font(object):
             # Generate texture
             face = self._face
             face.load_char(chr(i))
-            buf = face.glyph.bitmap.buffer
-            src = (np.array(buf) / 255.0).astype(np.float32)
+            src = np.asarray(face.glyph.bitmap.buffer, dtype=np.float32) / 255.0
             src = src.reshape((face.glyph.bitmap.rows, face.glyph.bitmap.width))
             tex = Texture(
                 sampler=Sampler(

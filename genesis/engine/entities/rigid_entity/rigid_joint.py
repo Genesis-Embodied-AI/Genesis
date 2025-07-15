@@ -67,13 +67,6 @@ class RigidJoint(RBC):
         self._dofs_kv = dofs_kv
         self._dofs_force_range = dofs_force_range
 
-        # NOTE: temp hack to use 0 damping/armature for drone
-        if isinstance(self._entity, gs.engine.entities.DroneEntity) and self._type == gs.JOINT_TYPE.FREE:
-            import numpy as np
-
-            self._dofs_damping = np.zeros_like(self._dofs_damping)
-            self._dofs_armature = np.zeros_like(self._dofs_armature)
-
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------

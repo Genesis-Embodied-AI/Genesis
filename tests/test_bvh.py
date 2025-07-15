@@ -32,7 +32,7 @@ def test_morton_code(lbvh):
     for i_b in range(morton_codes.shape[0]):
         for i in range(1, morton_codes.shape[1]):
             assert (
-                morton_codes[i_b, i] > morton_codes[i_b, i - 1]
+                morton_codes[i_b, i, 0] > morton_codes[i_b, i - 1, 0]
             ), f"Morton codes are not sorted: {morton_codes[i_b, i]} < {morton_codes[i_b, i - 1]}"
 
 

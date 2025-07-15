@@ -65,9 +65,14 @@ class Viewer(RBC):
         if opengl_platform_orig is None:
             if gs.platform == "Windows":
                 all_opengl_platforms = ("wgl",)  # same as "native"
+            elif gs.platform == "Linux":
+                # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
-                all_opengl_platforms = ("native", "egl", "glx")  # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native",)
         else:
+            if gs.platform == "Windows" and opengl_platform_orig == "osmesa":
+                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is not supported on Windows OS.")
             all_opengl_platforms = (opengl_platform_orig,)
 
         for i, platform in enumerate(all_opengl_platforms):
@@ -108,11 +113,10 @@ class Viewer(RBC):
 
                 if i == len(all_opengl_platforms) - 1:
                     raise
-            finally:
-                if opengl_platform_orig is None:
-                    del os.environ["PYOPENGL_PLATFORM"]
-                else:
-                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
+
+            # Select PyOpenGL backend compatible with `pyrender.OffscreenRenderer`
+            if platform not in ("osmesa", "pyglet", "egl"):
+                os.environ["PYOPENGL_PLATFORM"] = "pyglet"
 
         self.lock = ViewerLock(self._pyrender_viewer)
 

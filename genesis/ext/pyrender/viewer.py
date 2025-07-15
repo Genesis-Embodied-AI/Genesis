@@ -56,7 +56,7 @@ from .constants import (
     TextAlign,
 )
 from .interaction.viewer_interaction import ViewerInteraction
-from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE
+from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
@@ -793,8 +793,10 @@ class Viewer(pyglet.window.Window):
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with one or more buttons held down."""
-        self._trackball.drag(np.array([x, y]))
-        return self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
+        result = self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
+        if result is not EVENT_HANDLED:
+            result = self._trackball.drag(np.array([x, y]))
+        return result
 
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a mouse release."""

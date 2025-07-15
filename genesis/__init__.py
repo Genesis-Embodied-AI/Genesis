@@ -28,7 +28,11 @@ from .constants import GS_ARCH, TI_ARCH
 from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
-from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device
+from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device, get_cache_dir
+
+
+os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(get_cache_dir(), "numba"))
+
 
 _initialized = False
 backend = None
@@ -117,6 +121,15 @@ def init(
     ti_int = ti.i32
     np_int = np.int32
     tc_int = torch.int32
+
+    # Bool
+    # Note that `ti.u1` is broken on Apple Metal and output garbage.
+    global ti_bool
+    global np_bool
+    global tc_bool
+    ti_bool = ti.u1 if backend != gs_backend.metal else ti.i32
+    np_bool = np.bool_
+    tc_bool = torch.bool
 
     # let's use GLSL convention: https://learnwebgl.brown37.net/12_shader_language/glsl_data_types.html
     global ti_vec2
