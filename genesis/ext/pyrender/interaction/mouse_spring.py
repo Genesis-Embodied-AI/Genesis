@@ -7,6 +7,9 @@ from .vec3 import Pose, Quat, Vec3, Color
 
 from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 
+MOUSE_SPRING_POSITION_CORRECTION_FACTOR = 1.0 / 2
+MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR = 1.0 * 2
+
 def _ensure_torch_imported() -> None:
     global torch
     import torch
@@ -50,8 +53,8 @@ class MouseSpring:
         inv_dt: float = 1.0 / delta_time
         # these are temporary values, till we fix an issue with apply_links_external_force.
         # after fixing it, use tau = damp = 1.0:
-        tau: float = 1.0 / 2
-        damp: float = 1.0 * 2
+        tau: float = MOUSE_SPRING_POSITION_CORRECTION_FACTOR
+        damp: float = MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR
 
         total_impulse: Vec3 = Vec3.zero()
 
@@ -67,6 +70,7 @@ class MouseSpring:
             lin_vel += imp * dir * inv_mass
             total_impulse.v[i] = imp
 
+        # Apply the new force
         total_force = total_impulse * inv_dt
         force_tensor: torch.Tensor = total_force.as_tensor().unsqueeze(0)
         link.solver.apply_links_external_force(force_tensor, (link.idx,), ref='link_com', local=False)
