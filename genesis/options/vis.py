@@ -17,12 +17,14 @@ class ViewerOptions(Options):
     ----------
     res : tuple, shape (2,), optional
         The resolution of the viewer. If not set, will auto-compute using resolution of the connected display.
-    run_in_thread: bool
-        Whether to run the viewer in a background thread. This option is not supported on MacOS. True by default if available.
+    run_in_thread : bool
+        Whether to run the viewer in a background thread. This option is not supported on MacOS. True by default if
+        available.
     refresh_rate : int
         The refresh rate of the viewer.
     max_FPS : int | None
-        The FPS (frames per second) the viewer will be capped at. Note that this will also synchronize the simulation speed. If not set, the viewer will render at maximum speed.
+        The FPS (frames per second) the viewer will be capped at. Note that this will also synchronize the simulation
+        speed. If not set, the viewer will render at maximum speed.
     camera_pos : tuple of float, shape (3,)
         The position of the viewer's camera.
     camera_lookat : tuple of float, shape (3,)
