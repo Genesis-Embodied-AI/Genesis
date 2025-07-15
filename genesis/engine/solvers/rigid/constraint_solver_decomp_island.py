@@ -24,7 +24,7 @@ class ConstraintSolverIsland:
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
         self.len_constraints = (
-            5 * self._collider._collider_state._max_contact_pairs[None]
+            5 * self._collider._collider_info._max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)
