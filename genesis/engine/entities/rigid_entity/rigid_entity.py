@@ -431,7 +431,7 @@ class RigidEntity(Entity):
             for i_l in range(root_idx, len(l_infos)):
                 l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in links_j_infos[i_l]:
-                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
+                    j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
         # Remove the world link if "useless", i.e. free or fixed joint without any geometry attached
         if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
@@ -464,7 +464,7 @@ class RigidEntity(Entity):
             for l_info, link_j_infos in zip(l_infos, links_j_infos):
                 l_info["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in link_j_infos:
-                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
+                    j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
