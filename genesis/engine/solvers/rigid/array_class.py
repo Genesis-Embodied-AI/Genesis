@@ -23,6 +23,7 @@ FacesInfo = ti.template()
 VVertsInfo = ti.template()
 VFacesInfo = ti.template()
 VGeomsInfo = ti.template()
+VGeomsState = ti.template()
 EntitiesState = ti.template()
 EntitiesInfo = ti.template()
 EqualitiesInfo = ti.template()
@@ -55,6 +56,17 @@ class ConstraintState:
 
 
 # =========================================== Collider ===========================================
+
+
+@ti.data_oriented
+class ConstraintState:
+    """
+    Class to store the mutable constraint data, all of which type is [ti.fields].
+    """
+
+    def __init__(self, solver):
+        f_batch = solver._batch_shape
+        self.n_constraints = ti.field(dtype=gs.ti_int, shape=f_batch())
 
 
 @ti.data_oriented

@@ -130,14 +130,15 @@ class Visualizer(RBC):
 
         self._context.reset()
 
-        # Need to update viewer once here, because otherwise camera will update scene if render is called right after
-        # build, which will lead to segfault.
-        if self._viewer is not None:
-            if self._viewer.is_alive():
-                self._viewer.update(auto_refresh=True)
-
         if self._raytracer is not None:
             self._raytracer.reset()
+
+        if self.viewer_lock is not None:
+            for camera in self._cameras:
+                self._rasterizer.render_camera(camera)
+
+            if self._viewer is not None:
+                self._viewer.update(auto_refresh=True)
 
     def build(self):
         self._context.build(self._scene)
@@ -155,15 +156,8 @@ class Visualizer(RBC):
         for camera in self._cameras:
             camera._build()
 
-        if self._cameras:
-            # need to update viewer once here, because otherwise camera will update scene if render is called right
-            # after build, which will lead to segfault.
-            if self._viewer is not None:
-                self._viewer.update(auto_refresh=True)
-            else:
-                # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
-                self._rasterizer.update_scene()
-                self._rasterizer.render_camera(self._cameras[0])
+        # Make sure that the viewer is fully compiled and in a clean state
+        self.reset()
 
     def update(self, force=True, auto=None):
         if force:  # force update
@@ -187,7 +181,12 @@ class Visualizer(RBC):
 
             if self._scene.rigid_solver.is_active():
                 self._scene.rigid_solver.update_geoms_render_T()
-                self._scene.rigid_solver._kernel_update_vgeoms()
+                self._scene.rigid_solver._kernel_update_vgeoms(
+                    vgeoms_info=self._scene.rigid_solver.vgeoms_info,
+                    vgeoms_state=self._scene.rigid_solver.vgeoms_state,
+                    links_state=self._scene.rigid_solver.links_state,
+                    static_rigid_sim_config=self._scene.rigid_solver._static_rigid_sim_config,
+                )
 
                 # drone propellers
                 for entity in self._scene.rigid_solver.entities:
@@ -198,7 +197,12 @@ class Visualizer(RBC):
 
             if self._scene.avatar_solver.is_active():
                 self._scene.avatar_solver.update_geoms_render_T()
-                self._scene.avatar_solver._kernel_update_vgeoms()
+                self._scene.avatar_solver._kernel_update_vgeoms(
+                    vgeoms_info=self._scene.avatar_solver.vgeoms_info,
+                    vgeoms_state=self._scene.avatar_solver.vgeoms_state,
+                    links_state=self._scene.avatar_solver.links_state,
+                    static_rigid_sim_config=self._scene.avatar_solver._static_rigid_sim_config,
+                )
                 self._scene.avatar_solver.update_vgeoms_render_T()
 
             if self._scene.mpm_solver.is_active():
