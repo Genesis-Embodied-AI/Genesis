@@ -149,7 +149,9 @@ class Visualizer(RBC):
         if self._raytracer is not None:
             self._raytracer.reset()
 
-        if self.viewer_lock is not None:
+        # Ideally the code below should be skipped when viewer_lock is a DummyViewerLock.
+        # Temporary workaround: Skip when using batch renderer.
+        if self.viewer_lock is not None and not self._use_batch_renderer:
             for camera in self._cameras:
                 self._rasterizer.render_camera(camera)
 
