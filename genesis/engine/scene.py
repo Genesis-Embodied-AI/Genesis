@@ -17,6 +17,7 @@ from genesis.engine.simulator import Simulator
 from genesis.options import (
     AvatarOptions,
     BaseCouplerOptions,
+    LegacyCouplerOptions,
     FEMOptions,
     MPMOptions,
     PBDOptions,
@@ -100,7 +101,7 @@ class Scene(RBC):
     ):
         # Handling of default arguments
         sim_options = sim_options or SimOptions()
-        coupler_options = coupler_options or BaseCouplerOptions()
+        coupler_options = coupler_options or LegacyCouplerOptions()
         tool_options = tool_options or ToolOptions()
         rigid_options = rigid_options or RigidOptions()
         avatar_options = avatar_options or AvatarOptions()

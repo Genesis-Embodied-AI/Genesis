@@ -7,6 +7,7 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
+    BaseCouplerOptions,
     LegacyCouplerOptions,
     SAPCouplerOptions,
     FEMOptions,
@@ -75,7 +76,7 @@ class Simulator(RBC):
         self,
         scene: "Scene",
         options: SimOptions,
-        coupler_options: LegacyCouplerOptions,
+        coupler_options: BaseCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
         avatar_options: AvatarOptions,
@@ -137,8 +138,12 @@ class Simulator(RBC):
         # coupler
         if isinstance(self.coupler_options, SAPCouplerOptions):
             self._coupler = SAPCoupler(self, self.coupler_options)
-        else:
+        elif isinstance(self.coupler_options, LegacyCouplerOptions):
             self._coupler = LegacyCoupler(self, self.coupler_options)
+        else:
+            gs.raise_exception(
+                f"Coupler options {self.coupler_options} not supported. Please use SAPCouplerOptions or LegacyCouplerOptions."
+            )
 
         # states
         self._queried_states = QueriedStates()
