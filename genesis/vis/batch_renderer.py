@@ -113,7 +113,7 @@ class BatchRenderer(RBC):
     def update_scene(self):
         self._visualizer._context.update()
 
-    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False):
+    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False, aliasing=False):
         """
         Render all cameras in the batch.
 
@@ -129,6 +129,8 @@ class BatchRenderer(RBC):
             Whether to render the normal image.
         force_render : bool, optional
             Whether to force render the scene.
+        aliasing : bool, optional
+            Whether to apply anti-aliasing.
 
         Returns
         -------
@@ -142,14 +144,12 @@ class BatchRenderer(RBC):
         if segmentation:
             raise NotImplementedError("Segmentation rendering is not implemented")
 
-        # TODO: anti-aliasing is to be implemented
-        dummy_antialiasing = False
-        render_options = np.array([rgb, depth, normal, segmentation, dummy_antialiasing], dtype=np.uint32)
+        render_options = (rgb, depth, normal, segmentation, aliasing)
 
         if (
             not force_render
             and self._last_t == self._visualizer.scene.t
-            and np.all(self._last_render_options == render_options)
+            and self._last_render_options == render_options
         ):
             return self._rgb_torch, self._depth_torch, None, None
 
@@ -161,7 +161,10 @@ class BatchRenderer(RBC):
         rigid = self._visualizer.scene.rigid_solver
         camera_pos = self._visualizer.camera_pos
         camera_quat = self._visualizer.camera_quat
-        rgb_torch, depth_torch = self._renderer.render(rigid, camera_pos, camera_quat, render_options)
+
+        render_options_array = np.array([rgb, depth, normal, segmentation, aliasing], dtype=np.uint32)
+
+        rgb_torch, depth_torch = self._renderer.render(rigid, camera_pos, camera_quat, render_options_array)
 
         if rgb_torch is not None:
             if rgb_torch.ndim == 4:

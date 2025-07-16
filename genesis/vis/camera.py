@@ -184,13 +184,24 @@ class Camera(RBC):
         self.set_pose(transform=transform)
 
     @gs.assert_built
-    def _batch_render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
+    def _batch_render(
+        self,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
+        force_render=False,
+        antialiasing=False,
+    ):
         """
         Render the camera view with batch renderer.
         """
         assert self._visualizer._use_batch_renderer, "Batch renderer is not enabled."
 
-        rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(rgb, depth)
+        rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(
+            rgb, depth, segmentation, normal, force_render, antialiasing
+        )
         # The first dimension of the array is camera.
         # If n_envs > 0, the second dimension of the output is env.
         # If n_envs == 0, the second dimension of the output is camera.
@@ -206,7 +217,16 @@ class Camera(RBC):
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
-    def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
+    def render(
+        self,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
+        force_render=False,
+        antialiasing=False,
+    ):
         """
         Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
         If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `len(rendered_envs_idx)`.
@@ -223,6 +243,10 @@ class Camera(RBC):
             If True, the segmentation mask will be colorized.
         normal : bool, optional
             Whether to render the surface normal.
+        force_render : bool, optional
+            Whether to force rendering even if the scene has not changed.
+        antialiasing : bool, optional
+            Whether to apply anti-aliasing.
 
         Returns
         -------
@@ -245,7 +269,7 @@ class Camera(RBC):
             self.update_following()
 
         if self._visualizer._use_batch_renderer:
-            return self._batch_render(rgb, depth, segmentation, colorize_seg, normal)
+            return self._batch_render(rgb, depth, segmentation, colorize_seg, normal, force_render, antialiasing)
 
         if self._raytracer is not None:
             if rgb:
@@ -440,7 +464,8 @@ class Camera(RBC):
     # quat for Madrona needs to be transformed to y-forward
     def _T_to_quat_for_madrona(self, T):
         if isinstance(T, torch.Tensor):
-            _, quat = gu.T_to_trans_quat(T)
+            R = T[..., :3, :3].contiguous()
+            quat = gu.R_to_quat(R)
 
             w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
             return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
@@ -458,13 +483,13 @@ class Camera(RBC):
         else:
             self._initial_transform = gu.pos_lookat_up_to_T(self._initial_pos, self._initial_lookat, self._initial_up)
 
-        self._multi_env_pos_tensor = torch.tile(self._initial_pos, (self.n_envs, 1))
-        self._multi_env_lookat_tensor = torch.tile(self._initial_lookat, (self.n_envs, 1))
-        self._multi_env_up_tensor = torch.tile(self._initial_up, (self.n_envs, 1))
-        self._multi_env_transform_tensor = torch.tile(self._initial_transform, (self.n_envs, 1, 1))
+        self._multi_env_pos_tensor = self._initial_pos.expand(self.n_envs, 3)
+        self._multi_env_lookat_tensor = self._initial_lookat.expand(self.n_envs, 3)
+        self._multi_env_up_tensor = self._initial_up.expand(self.n_envs, 3)
+        self._multi_env_transform_tensor = self._initial_transform.expand(self.n_envs, 4, 4)
 
         initial_quat = self._T_to_quat_for_madrona(self._initial_transform.unsqueeze(0))
-        self._multi_env_quat_tensor = initial_quat.repeat(self.n_envs, 1)
+        self._multi_env_quat_tensor = initial_quat.expand(self.n_envs, 4)
 
         if self._rasterizer is not None:
             self._rasterizer.update_camera(self)
@@ -493,31 +518,14 @@ class Camera(RBC):
             The environment indices. If not provided, the camera pose will be set for all environments.
         """
         # Check that all provided inputs are of the same type (either all torch.Tensor or all numpy.ndarray)
-        input_types = set()
         if transform is not None:
-            input_types.add(type(transform))
+            transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
         if pos is not None:
-            input_types.add(type(pos))
+            pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
         if lookat is not None:
-            input_types.add(type(lookat))
+            lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
         if up is not None:
-            input_types.add(type(up))
-
-        if not input_types:
-            gs.logger.warning("No inputs provided. Skipping pose update.")
-            return
-
-        if len(input_types) > 1:
-            gs.logger.warning(
-                "All inputs must be of the same type (either all torch.Tensor or all numpy.ndarray)."
-                "Skipping pose update."
-            )
-            return
-
-        input_type = next(iter(input_types))
-        if not issubclass(input_type, (torch.Tensor, np.ndarray)):
-            gs.logger.warning(f"Inputs must be torch.Tensor or numpy.ndarray, got {input_type}. Skipping pose update.")
-            return
+            up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
 
         # Expand to n_envs
         if env_idx is None:
@@ -558,15 +566,15 @@ class Camera(RBC):
         new_lookat = self._multi_env_lookat_tensor[env_idx]
         new_up = self._multi_env_up_tensor[env_idx]
         if transform is not None:
-            new_transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
+            new_transform = transform
             new_pos, new_lookat, new_up = gu.T_to_pos_lookat_up(new_transform)
         else:
             if pos is not None:
-                new_pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
+                new_pos = pos
             if lookat is not None:
-                new_lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
+                new_lookat = lookat
             if up is not None:
-                new_up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
+                new_up = up
             new_transform = gu.pos_lookat_up_to_T(new_pos, new_lookat, new_up)
 
         new_quat = self._T_to_quat_for_madrona(new_transform)
