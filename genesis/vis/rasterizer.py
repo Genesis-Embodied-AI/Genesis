@@ -64,11 +64,9 @@ class Rasterizer(RBC):
             # Set the context
             self._renderer.make_current()
 
-            # Update the buffers
-            if self._buffer_updates is None:
-                gs.raise_exception("Buffers were not set before rendering. Please call 'update_scene' method.")
-
-            self._context.jit.update_buffer(self._buffer_updates)
+            # Update the context if not already done before
+            self._context.jit.update_buffer(self._context.buffer)
+            self._context.buffer.clear()
 
             # Render
             if rgb or depth or normal:
@@ -100,12 +98,9 @@ class Rasterizer(RBC):
             # Unset the context
             self._renderer.make_uncurrent()
         else:
-            # Update the buffers
-            self._context.jit.update_buffer(self._buffer_updates)
-
             # Render
             if rgb or depth or normal:
-                retval = self._viewer._pyrender_viewer.render_offscreen(
+                retval = self._viewer.render_offscreen(
                     self._camera_nodes[camera.uid],
                     self._camera_targets[camera.uid],
                     depth=depth,
@@ -113,7 +108,7 @@ class Rasterizer(RBC):
                 )
 
             if segmentation:
-                seg_idxc_rgb_arr, _ = self._viewer._pyrender_viewer.render_offscreen(
+                seg_idxc_rgb_arr, _ = self._viewer.render_offscreen(
                     self._camera_nodes[camera.uid],
                     self._camera_targets[camera.uid],
                     depth=False,
@@ -121,18 +116,19 @@ class Rasterizer(RBC):
                     seg=True,
                 )
 
-        if rgb:
+        if segmentation:
+            seg_idxc_arr = self._context.seg_idxc_rgb_arr_to_idxc_arr(seg_idxc_rgb_arr)
+
+        if rgb or depth or normal:
             rgb_arr = retval[0]
         if depth:
             depth_arr = retval[1]
         if normal:
             normal_arr = retval[2]
-        if segmentation:
-            seg_idxc_arr = self._context.seg_idxc_rgb_arr_to_idxc_arr(seg_idxc_rgb_arr)
         return rgb_arr, depth_arr, seg_idxc_arr, normal_arr
 
     def update_scene(self):
-        self._buffer_updates = self._context.update()
+        self._context.update()
 
     def destroy(self):
         for node in self._camera_nodes.values():
@@ -144,13 +140,13 @@ class Rasterizer(RBC):
 
         if self._offscreen and self._renderer is not None:
             try:
-                self._renderer._platform.make_current()
+                self._renderer.make_current()
                 self._renderer.delete()
             except OpenGL.error.GLError:
                 pass
             del self._renderer
-            gc.collect()
             self._renderer = None
+            gc.collect()
 
     @property
     def viewer(self):
