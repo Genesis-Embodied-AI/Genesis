@@ -4327,14 +4327,28 @@ class RigidSolver(Solver):
     def get_state(self, f):
         if self.is_active():
             state = RigidSolverState(self._scene)
+
+            # qpos: ti.types.ndarray(),
+            # vel: ti.types.ndarray(),
+            # links_pos: ti.types.ndarray(),
+            # links_quat: ti.types.ndarray(),
+            # i_pos_shift: ti.types.ndarray(),
+            # mass_shift: ti.types.ndarray(),
+            # friction_ratio: ti.types.ndarray(),
+            # links_state: array_class.LinksState,
+            # dofs_state: array_class.DofsState,
+            # geoms_state: array_class.GeomsState,
+            # rigid_global_info: ti.template(),
+            # static_rigid_sim_config: ti.template(),
+
             self._kernel_get_state(
-                state.qpos,
-                state.dofs_vel,
-                state.links_pos,
-                state.links_quat,
-                state.i_pos_shift,
-                state.mass_shift,
-                state.friction_ratio,
+                qpos=state.qpos,
+                vel=state.dofs_vel,
+                links_pos=state.links_pos,
+                links_quat=state.links_quat,
+                i_pos_shift=state.i_pos_shift,
+                mass_shift=state.mass_shift,
+                friction_ratio=state.friction_ratio,
                 links_state=self.links_state,
                 dofs_state=self.dofs_state,
                 geoms_state=self.geoms_state,
@@ -4362,11 +4376,11 @@ class RigidSolver(Solver):
         static_rigid_sim_config: ti.template(),
     ):
         rgi = rigid_global_info
-        n_qs = rgi.qpos.shape[0]
-        n_dofs = dofs_state.shape[0]
-        n_links = links_state.shape[0]
-        n_geoms = geoms_state.shape[0]
-        _B = dofs_state.shape[1]
+        n_qs = qpos.shape[1]
+        n_dofs = vel.shape[1]
+        n_links = links_pos.shape[1]
+        n_geoms = friction_ratio.shape[1]
+        _B = qpos.shape[0]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q, i_b in ti.ndrange(n_qs, _B):
@@ -4393,14 +4407,14 @@ class RigidSolver(Solver):
         if self.is_active():
             envs_idx = self._sanitize_envs_idx(envs_idx)
             self._kernel_set_state(
-                state.qpos,
-                state.dofs_vel,
-                state.links_pos,
-                state.links_quat,
-                state.i_pos_shift,
-                state.mass_shift,
-                state.friction_ratio,
-                envs_idx,
+                qpos=state.qpos,
+                dofs_vel=state.dofs_vel,
+                links_pos=state.links_pos,
+                links_quat=state.links_quat,
+                i_pos_shift=state.i_pos_shift,
+                mass_shift=state.mass_shift,
+                friction_ratio=state.friction_ratio,
+                envs_idx=envs_idx,
                 links_state=self.links_state,
                 dofs_state=self.dofs_state,
                 geoms_state=self.geoms_state,
@@ -4446,10 +4460,11 @@ class RigidSolver(Solver):
         static_rigid_sim_config: ti.template(),
     ):
         rgi = rigid_global_info
-        n_qs = rgi.qpos.shape[0]
-        n_dofs = dofs_state.shape[0]
-        n_links = links_state.shape[0]
-        n_geoms = geoms_state.shape[0]
+        n_qs = qpos.shape[1]
+        n_dofs = dofs_vel.shape[1]
+        n_links = links_pos.shape[1]
+        n_geoms = friction_ratio.shape[1]
+
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q, i_b_ in ti.ndrange(n_qs, envs_idx.shape[0]):
             rgi.qpos[i_q, envs_idx[i_b_]] = qpos[envs_idx[i_b_], i_q]
