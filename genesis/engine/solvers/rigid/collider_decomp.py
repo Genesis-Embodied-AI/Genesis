@@ -367,6 +367,7 @@ class Collider:
             self._solver.geoms_info,
             self._solver.geoms_init_AABB,
             self._solver.verts_info,
+            self._solver.faces_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._collider_state,
@@ -374,6 +375,8 @@ class Collider:
             self._collider_static_config,
             self._mpr._mpr_state,
             self._mpr._mpr_static_config,
+            self._gjk._gjk_state if self._gjk is not None else None,
+            self._gjk._gjk_static_config if self._gjk is not None else None,
             self._support_field._support_field_info,
             self._support_field._support_field_static_config,
             self._mpr,
@@ -1171,6 +1174,7 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
+        faces_info: array_class.FacesInfo,
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
@@ -1178,6 +1182,8 @@ class Collider:
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
+        gjk_state: ti.template(),
+        gjk_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
         # FIXME: We need mpr, gjk, sdf, and support_field for now to call their class functions. After migration is
@@ -1224,6 +1230,7 @@ class Collider:
                             geoms_info,
                             geoms_init_AABB,
                             verts_info,
+                            faces_info,
                             rigid_global_info,
                             static_rigid_sim_config,
                             collider_state,
@@ -1231,6 +1238,8 @@ class Collider:
                             collider_static_config,
                             mpr_state,
                             mpr_static_config,
+                            gjk_state,
+                            gjk_static_config,
                             support_field_info,
                             support_field_static_config,
                             mpr,
@@ -1252,6 +1261,7 @@ class Collider:
                                 geoms_info,
                                 geoms_init_AABB,
                                 verts_info,
+                                faces_info,
                                 rigid_global_info,
                                 static_rigid_sim_config,
                                 collider_state,
@@ -1259,6 +1269,8 @@ class Collider:
                                 collider_static_config,
                                 mpr_state,
                                 mpr_static_config,
+                                gjk_state,
+                                gjk_static_config,
                                 support_field_info,
                                 support_field_static_config,
                                 mpr,
@@ -1768,6 +1780,7 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
+        faces_info: array_class.FacesInfo,
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
@@ -1775,6 +1788,8 @@ class Collider:
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
+        gjk_state: ti.template(),
+        gjk_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
         mpr: ti.template(),
@@ -1933,21 +1948,37 @@ class Collider:
                         elif ti.static(
                             collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                         ):
-                            gjk.func_gjk_contact(i_ga, i_gb, i_b)
+                            gjk.func_gjk_contact(
+                                geoms_state,
+                                geoms_info,
+                                verts_info,
+                                faces_info,
+                                static_rigid_sim_config,
+                                collider_state,
+                                collider_static_config,
+                                gjk_state,
+                                gjk_static_config,
+                                support_field_info,
+                                support_field_static_config,
+                                support_field,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                            )
 
-                            is_col = gjk.is_col[i_b] == 1
-                            penetration = gjk.penetration[i_b]
-                            n_contacts = gjk.n_contacts[i_b]
+                            is_col = gjk_state.is_col[i_b] == 1
+                            penetration = gjk_state.penetration[i_b]
+                            n_contacts = gjk_state.n_contacts[i_b]
 
                             if is_col:
-                                if gjk.multi_contact_flag[i_b]:
+                                if gjk_state.multi_contact_flag[i_b]:
                                     # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
                                         # Ignore contact points if the number of contacts exceeds the limit.
                                         if i_c < ti.static(collider_static_config.n_contacts_per_pair):
-                                            contact_pos = gjk.contact_pos[i_b, i_c]
-                                            normal = gjk.normal[i_b, i_c]
+                                            contact_pos = gjk_state.contact_pos[i_b, i_c]
+                                            normal = gjk_state.normal[i_b, i_c]
                                             self_unused._func_add_contact(
                                                 geoms_state,
                                                 geoms_info,
@@ -1963,8 +1994,8 @@ class Collider:
 
                                     break
                                 else:
-                                    contact_pos = gjk.contact_pos[i_b, 0]
-                                    normal = gjk.normal[i_b, 0]
+                                    contact_pos = gjk_state.contact_pos[i_b, 0]
+                                    normal = gjk_state.normal[i_b, 0]
 
                     if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         if try_sdf:
