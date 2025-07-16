@@ -182,9 +182,8 @@ class Visualizer(RBC):
                 self._viewer.update(auto_refresh=True)
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
-                self._rasterizer.update_scene()
-                # TODO: Is this still necessary with batch renderer?
                 if not self._use_batch_renderer:
+                    self._rasterizer.update_scene()
                     self._rasterizer.render_camera(self._cameras[0])
 
     def update(self, force=True, auto=None):
