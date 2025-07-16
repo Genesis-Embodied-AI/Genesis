@@ -89,6 +89,7 @@ class ColliderState:
         f_batch = solver._batch_shape
         n_geoms = solver.n_geoms_
         max_collision_pairs = min(solver._max_collision_pairs, n_possible_pairs)
+        max_collision_pairs_broad = max_collision_pairs * collider_static_config.max_collision_pairs_broad_k
         max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
         use_hibernation = solver._static_rigid_sim_config.use_hibernation
         box_box_detection = solver._static_rigid_sim_config.box_box_detection
@@ -107,14 +108,11 @@ class ColliderState:
         # Whether or not this is the first time to run the broad phase for each batch
         self.first_time = ti.field(gs.ti_int, shape=_B)
 
-        # Number of possible pairs of collision, store them in a field to avoid recompilation
-        self._max_possible_pairs = ti.field(dtype=gs.ti_int, shape=())
-        self._max_collision_pairs = ti.field(dtype=gs.ti_int, shape=())
-        self._max_contact_pairs = ti.field(dtype=gs.ti_int, shape=())
-
         # Final results of the broad phase
         self.n_broad_pairs = ti.field(dtype=gs.ti_int, shape=_B)
-        self.broad_collision_pairs = ti.Vector.field(2, dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs)))
+        self.broad_collision_pairs = ti.Vector.field(
+            2, dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))
+        )
 
         ############## narrow phase ##############
         struct_contact_data = ti.types.struct(
@@ -196,6 +194,7 @@ class ColliderInfo:
         self._max_possible_pairs = ti.field(dtype=gs.ti_int, shape=())
         self._max_collision_pairs = ti.field(dtype=gs.ti_int, shape=())
         self._max_contact_pairs = ti.field(dtype=gs.ti_int, shape=())
+        self._max_collision_pairs_broad = ti.field(dtype=gs.ti_int, shape=())
 
         ########## Terrain contact detection ##########
         if collider_static_config.has_terrain:
