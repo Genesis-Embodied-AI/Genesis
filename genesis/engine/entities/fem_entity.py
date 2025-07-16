@@ -214,7 +214,7 @@ class FEMEntity(Entity):
             if actu.shape == (n_groups,):
                 self._tgt["actu"] = actu.unsqueeze(0).tile((self._sim._B, 1))
                 is_valid = True
-            elif actu.shape == (n_elements,):
+            elif actu.shape == (self.n_elements,):
                 gs.raise_exception("Cannot set per-element actuation.")
         elif actu.ndim == 2:
             if actu.shape == (self._sim._B, n_groups):

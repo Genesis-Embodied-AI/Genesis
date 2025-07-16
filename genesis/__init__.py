@@ -28,7 +28,11 @@ from .constants import GS_ARCH, TI_ARCH
 from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
-from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device
+from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device, get_cache_dir
+
+
+os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(get_cache_dir(), "numba"))
+
 
 _initialized = False
 backend = None

@@ -60,6 +60,12 @@ class Visualizer(RBC):
             self._connected_to_display = False
 
         if show_viewer:
+            if gs.global_scene_list:
+                raise gs.raise_exception(
+                    "Interactive viewer not supported when managing multiple scenes. Please set `show_viewer=False` "
+                    "or call `scene.destroy`."
+                )
+
             if viewer_options.res is None:
                 viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
@@ -156,6 +162,7 @@ class Visualizer(RBC):
                 self._viewer.update(auto_refresh=True)
             else:
                 # viewer creation will compile rendering kernels if viewer is not created, render here once to compile
+                self._rasterizer.update_scene()
                 self._rasterizer.render_camera(self._cameras[0])
 
     def update(self, force=True, auto=None):
