@@ -392,7 +392,9 @@ class RigidLink(RBC):
             self._invweight /= ratio
         self._inertial_i *= ratio
 
-        self._solver._kernel_adjust_link_inertia(self.idx, ratio)
+        self._solver._kernel_adjust_link_inertia(
+            self.idx, ratio, self._solver.links_info, self._solver._static_rigid_sim_config
+        )
 
     @gs.assert_built
     def get_mass(self):
