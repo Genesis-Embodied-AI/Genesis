@@ -221,6 +221,7 @@ class SAPCoupler(RBC):
         self.fem_state_v = fem_state_v.field(
             shape=(self.sim._B, self.fem_solver.n_vertices), needs_grad=False, layout=ti.Layout.SOA
         )
+        print(self.fem_solver.n_vertices)
 
         pcg_fem_state_v = ti.types.struct(
             diag3x3=gs.ti_mat3,  # diagonal 3-by-3 block of the hessian
@@ -344,28 +345,6 @@ class SAPCoupler(RBC):
         self.has_contact, overflow = self.update_contact(f)
         if overflow:
             raise RuntimeError("Contact query overflowed")
-        # elements = self.sim.fem_solver.elements_i.el2v.to_numpy()
-        # faces = self.sim.rigid_solver.faces_info.verts_idx.to_numpy()
-        # V1 = self.sim.fem_solver.elements_v.pos.to_numpy()[0, ...].reshape(-1, 3)
-        # V2 = self.sim.rigid_solver.free_verts_state.pos.to_numpy().reshape(-1, 3)
-        # n_pairs = self.sim.coupler.rigid_fem_contact.n_contact_pairs.to_numpy()
-        # barycentric0 = self.sim.coupler.rigid_fem_contact.contact_pairs.barycentric0.to_numpy()[:n_pairs, ...]
-        # barycentric1 = self.sim.coupler.rigid_fem_contact.contact_pairs.barycentric1.to_numpy()[:n_pairs, ...]
-        # normal = self.sim.coupler.rigid_fem_contact.contact_pairs.normal.to_numpy()[:n_pairs, ...]
-        # i_g0 = self.sim.coupler.rigid_fem_contact.contact_pairs.geom_idx0.to_numpy()[:n_pairs]
-        # i_g1 = self.sim.coupler.rigid_fem_contact.contact_pairs.geom_idx1.to_numpy()[:n_pairs]
-        # np.savez(
-        #     "test_fem_rigid.npz",
-        #     elements=elements,
-        #     faces=faces,
-        #     barycentric0=barycentric0,
-        #     barycentric1=barycentric1,
-        #     normal=normal,
-        #     i_g0=i_g0,
-        #     i_g1=i_g1,
-        #     V1=V1,
-        #     V2=V2,
-        # )
 
     @ti.kernel
     def precompute(self, f: ti.i32):
@@ -2962,11 +2941,11 @@ class RigidFemTetContact(RigidFEMContact):
         dof_start = pairs[i_p].dof_start
         for j in ti.static(range(3)):
             for i in ti.static(range(3)):
-                y1[i_b, dof_start + i] -= pairs[i_p].barycentric1[i] * x[i]
+                y1[i_b, dof_start + i] -= pairs[i_p].barycentric1[j] * x[i]
             r = pairs[i_p].r[:, j]
             z = r.cross(x)
             for i in ti.static(range(3)):
-                y1[i_b, dof_start + 3 + i] -= pairs[i_p].barycentric1[i] * z[i]
+                y1[i_b, dof_start + 3 + i] -= pairs[i_p].barycentric1[j] * z[i]
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
@@ -2978,4 +2957,5 @@ class RigidFemTetContact(RigidFEMContact):
         B_ = world @ A @ world.transpose()
         for i in ti.static(range(4)):
             i_v = fem_solver.elements_i[i_g0].el2v[i]
-            y[i_b, i_v] += pairs[i_p].barycentric0[i] ** 2 * B_
+            if i_v < fem_solver.n_vertices:
+                y[i_b, i_v] += pairs[i_p].barycentric0[i] ** 2 * B_
