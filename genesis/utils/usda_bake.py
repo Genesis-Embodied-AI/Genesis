@@ -3,8 +3,6 @@ import argparse
 import logging
 import asyncio
 
-os.environ["OMNI_KIT_ACCEPT_EULA"] = "yes"
-
 
 def omni_bootstrap(device=0, log_level="warning"):
     import omni.kit_app
@@ -53,7 +51,6 @@ def omni_bootstrap(device=0, log_level="warning"):
 
 
 def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_level="error"):
-    # sys.stdout = open(os.devnull, "w")
     logs = []
 
     # bootstrap
@@ -91,13 +88,11 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
 
     # export usd
     start_time = time.time()
-    # baked_file = os.path.join(output_dir, f"{output_filename}.{BAKE_EXT}")
     collector = omni.kit.usd.collect.Collector(stage.GetRootLayer().identifier, output_dir)
     task = asyncio.ensure_future(collector.collect())
     while not task.done():
         app.update()  # Otherwise it will be blocked by omni.kit.app.get_app().next_update_async()
     success, baked_file = task.result()
-    # stage.GetRootLayer().Export(baked_file)
 
     logs.append(f"\tExport: {time.time() - start_time}s, {baked_file}.")
     print("Distill USD material:\n" + "\n".join(logs))

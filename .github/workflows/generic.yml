@@ -28,6 +28,7 @@ jobs:
       TI_ENABLE_METAL: "0"
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
+      OMNI_KIT_ACCEPT_EULA: "yes"
 
     runs-on: ${{ matrix.OS }}
 

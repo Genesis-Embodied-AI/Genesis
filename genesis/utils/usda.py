@@ -1,5 +1,6 @@
 import io
 import os
+import sys
 import shutil
 import subprocess
 import logging
@@ -13,11 +14,12 @@ try:
     from pxr import Usd, UsdGeom, UsdShade, Sdf
 except ImportError as e:
     gs.raise_exception_from(
-        "Failed to import USD related libs. Please make sure that installing Genesis with [usd] option.", e
+        "Failed to import USD related libs. Please make sure that installing Genesis with 'usd' optional dependencies.",
+        e,
     )
 
-
 import genesis as gs
+
 from . import mesh as mu
 
 cs_encode = {
@@ -40,14 +42,6 @@ def get_input_attribute_value(shader, input_name, input_type=None):
     if input_type != "attribute":
         return shader_input.Get(), None
     return None, None
-
-
-def get_texture_image(image_path):
-    # if zipfiles is not None:
-    #     image_data = zipfiles.GetFile(image_path.path)
-    #     if image_data is not None:
-    #         return np.asarray(Image.open(io.BytesIO(image_data)))
-    return np.asarray(Image.open(image_path.resolvedPath))
 
 
 def parse_preview_surface(shader, output_name):
@@ -129,7 +123,7 @@ def parse_preview_surface(shader, output_name):
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
         if texture is not None:
-            texture_image = get_texture_image(texture)
+            texture_image = np.asarray(Image.open(texture.resolvedPath))
             if output_name == "r":
                 texture_image = texture_image[:, :, 0]
             elif output_name == "g":
@@ -194,12 +188,10 @@ def parse_usd_material(material, surface):
 
     if require_bake:
         candidates_str = "\n".join(
-            [
-                f"\tShader at {shader_path} with implement {shader_impl} and ID {shader_id}."
-                for shader_path, shader_id, shader_impl in material_candidates
-            ]
+            f"\tShader at {shader_path} with implement {shader_impl} and ID {shader_id}."
+            for shader_path, shader_id, shader_impl in material_candidates
         )
-        gs.logger.warning(f"Material require baking:\n{candidates_str}")
+        gs.logger.info(f"Material require baking:\n{candidates_str}")
     return material_surface, uv_name, require_bake
 
 
@@ -448,7 +440,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 mesh_info.set_property(
                     surface=material,
                     metadata={
-                        "path": path,   # unbaked file or cache
+                        "path": path,  # unbaked file or cache
                         "name": material_id if group_by_material else mesh_id,
                         "require_bake": material_id in baked_materials,
                         "bake_success": material_id in baked_materials and material is not None,

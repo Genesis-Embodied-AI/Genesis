@@ -24,6 +24,7 @@ jobs:
       HF_HUB_DOWNLOAD_TIMEOUT: 60
       GENESIS_IMAGE_VER: "1_0"
       TIMEOUT_MINUTES: 180
+      OMNI_KIT_ACCEPT_EULA: "yes"
 
     steps:
       - name: Checkout code

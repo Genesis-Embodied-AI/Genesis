@@ -300,31 +300,23 @@ def test_usd_parse(usd_filename):
 
 @pytest.mark.skipif(
     sys.version_info[:2] != (3, 10) or sys.platform not in ("Linux", "Windows"),
-    reason="USD Baking only works in Python == 3.10 and OS == ('Linux', 'Windows') now."
+    reason="omniverse-kit used by USD Baking cannot be correctly installed other than specified python version and platform now.",
 )
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
-@pytest.mark.parametrize("backend", [gs.gpu])
 def test_usd_bake(usd_file):
     asset_path = get_hf_assets(
-        num_retry=1,
         pattern=os.path.join(os.path.dirname(usd_file), "*"),
     )
     usd_file = os.path.join(asset_path, usd_file)
     gs_usd_meshes = usda_utils.parse_mesh_usd(
-        usd_file,
-        group_by_material=True,
-        scale=1.0,
-        surface=gs.surfaces.Default(),
-        bake_cache=False
+        usd_file, group_by_material=True, scale=1.0, surface=gs.surfaces.Default(), bake_cache=False
     )
     for gs_usd_mesh in gs_usd_meshes:
         require_bake = gs_usd_mesh.metadata["require_bake"]
         bake_success = gs_usd_mesh.metadata["bake_success"]
         assert not require_bake or require_bake and bake_success
-    baked_folder = mu.get_usd_bake_path(gs_usd_meshes[0].metadata["path"])
-    shutil.rmtree(baked_folder)
 
 
 @pytest.mark.required
