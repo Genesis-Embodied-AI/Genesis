@@ -3,7 +3,7 @@ import taichi as ti
 import genesis as gs
 from genesis.engine.entities import RigidEntity
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import ti_inv_transform_by_quat, ti_transform_by_quat
+from genesis.utils.geom import ti_inv_transform_by_quat, inv_transform_by_quat
 from typing import Dict, List, Any, Optional
 from .base_sensor import Sensor
 import numpy as np
@@ -13,54 +13,70 @@ import numpy as np
 class RigidContactSensor(Sensor):
     """
     Sensor that returns bool based on whether associated RigidLink is in collision.
+
+    Parameters
+    ----------
+    entity : RigidEntity
+        The entity to monitor the contact state of.
+    link_idx : int
+        The index of the link to which this sensor is attached. If None, defaults to the base link of the entity.
     """
 
     _all_contacts: Dict[str, Any] | None = None
-    _last_updated_step = -1
+    _last_contacts_update_step = -1
 
-    @staticmethod
-    def get_valid_entity_types():
-        return RigidEntity
-
-    def __init__(self, entity, idx, name, link_idx=None):
-        super().__init__(entity, idx, name)
+    def __init__(self, entity: RigidEntity, link_idx=None):
         self._cls = self.__class__
+        self._cached = None
+        self._entity = entity
+        self._sim = entity._sim
         self.link_idx = link_idx if link_idx is not None else entity.base_link_idx
 
     def read(self, envs_idx: Optional[List[int]] = None):
-        self._check_envs_idx(envs_idx)
-        self._cls._update_contacts_buffer(self._sim)
+        if self._cls._last_contacts_update_step == self._sim.cur_step_global:
+            return self._cached
+
+        self._cls._last_contacts_update_step = self._sim.cur_step_global
+        self._cls._all_contacts = self._sim.rigid_solver.collider.get_contacts(
+            as_tensor=True, to_torch=True, keep_batch_dim=True
+        )
 
         contact_links = torch.cat([self._cls._all_contacts["link_a"], self._cls._all_contacts["link_b"]], dim=1)
         is_contact = (contact_links == self.link_idx).any(dim=1)
-        if envs_idx is not None:
-            is_contact = is_contact[envs_idx]
 
-        return is_contact
+        self._cached = is_contact
 
-    @classmethod
-    def _update_contacts_buffer(cls, sim):
-        if cls._last_updated_step != sim.cur_step_global:
-            cls._last_updated_step = sim.cur_step_global
-            cls._all_contacts = sim.rigid_solver.collider.get_contacts(
-                as_tensor=True, to_torch=True, keep_batch_dim=True
-            )
+        return is_contact[envs_idx] if envs_idx is not None else is_contact
 
 
 @ti.data_oriented
 class RigidContactForceSensor(RigidContactSensor):
     """
-    Sensor that returns local contact force and position based on its associated RigidLink's collision info.
+    Sensor that returns contact force and position based on its associated RigidLink's collision info.
+
+    Parameters
+    ----------
+    entity : RigidEntity
+        The entity to monitor the contact forces of.
+    link_idx : int, optional
+        The index of the link to which this sensor is attached. If None, defaults to the base link of the entity.
+    use_local_frame : bool
+        Whether to return forces and positions in the local frame of the link. Defaults to True.
     """
 
-    def build(self):
-        self._buffer = None
+    def __init__(self, entity: RigidEntity, link_idx=None, use_local_frame: bool = True):
+        super().__init__(entity, link_idx)
         self._last_updated_step = -1
+        self._use_local_frame = use_local_frame
 
-    def _update_buffer(self):
-        self._cls._update_contacts_buffer(self._sim)
+    def read(self, envs_idx=None):
+        if self._cls._last_contacts_update_step != self._sim.cur_step_global:
+            self._cls._last_contacts_update_step = self._sim.cur_step_global
+            self._cls._all_contacts = self._sim.rigid_solver.collider.get_contacts(
+                as_tensor=True, to_torch=True, keep_batch_dim=True
+            )
         if self._last_updated_step == self._sim.cur_step_global:
-            return
+            return self._cached
 
         mask = (self._cls._all_contacts["link_a"] == self.link_idx) | (
             self._cls._all_contacts["link_b"] == self.link_idx
@@ -68,32 +84,27 @@ class RigidContactForceSensor(RigidContactSensor):
 
         forces = self._cls._all_contacts["force"][mask]
         poss = self._cls._all_contacts["position"][mask]
+        if self._use_local_frame:
+            link_quat = self._sim.rigid_solver.get_links_quat(self.link_idx).squeeze(axis=1)
+            forces = inv_transform_by_quat(forces, link_quat)
+            poss = inv_transform_by_quat(poss, link_quat)
 
+        self._cached = (tensor_to_array(forces), tensor_to_array(poss))
         self._last_updated_step = self._sim.cur_step_global
-        self._buffer = (tensor_to_array(forces), tensor_to_array(poss))
 
-    def read(self, envs_idx=None):
-        self._check_envs_idx(envs_idx)
-        self._update_buffer()
-        forces, poss = self._buffer
-        return forces, poss if envs_idx is None else forces[envs_idx], poss[envs_idx]
+        return forces[envs_idx], poss[envs_idx] if envs_idx is not None else forces, poss
 
 
 @ti.data_oriented
-class RigidContactForceGridSensor(RigidContactSensor):
+class RigidContactForceGridSensor(RigidContactForceSensor):
     """
     Sensor that returns local contact forces as a grid based on its associated RigidLink's collision info.
     """
 
-    def __init__(self, entity, idx, name, link_idx=None, grid_size=(1, 1, 1)):
-        super().__init__(entity, idx, name, link_idx)
+    def __init__(self, entity: RigidEntity, link_idx=None, grid_size=(1, 1, 1)):
+        super().__init__(entity, link_idx)
+
         self.grid_size = np.array(grid_size, dtype=np.int32)
-
-    def build(self):
-        super().build()
-
-        self._buffer = None
-        self._last_updated_step = -1
 
         link = self._sim.rigid_solver.links[self.link_idx]
         verts = np.concatenate([geom._init_verts for geom in link._geoms])
@@ -101,13 +112,16 @@ class RigidContactForceGridSensor(RigidContactSensor):
         self.max_bounds = np.array(verts.max(axis=-2, keepdims=True)[0], dtype=np.float32)
         self.bounds_size = self.max_bounds - self.min_bounds
 
-    def _update_buffer(self):
-        self._cls._update_contacts_buffer(self._sim)
-
+    def read(self, envs_idx=None):
+        if self._cls._last_contacts_update_step != self._sim.cur_step_global:
+            self._cls._last_contacts_update_step = self._sim.cur_step_global
+            self._cls._all_contacts = self._sim.rigid_solver.collider.get_contacts(
+                as_tensor=True, to_torch=True, keep_batch_dim=True
+            )
         if self._last_updated_step == self._sim.cur_step_global:
-            return
+            return self._cached
 
-        grid = np.zeros((self._B, *self.grid_size, 3), dtype=np.float32)
+        grid = np.zeros((self._sim._B, *self.grid_size, 3), dtype=np.float32)
         link_mask = (self._cls._all_contacts["link_a"] == self.link_idx) | (
             self._cls._all_contacts["link_b"] == self.link_idx
         )
@@ -129,8 +143,10 @@ class RigidContactForceGridSensor(RigidContactSensor):
                 self.grid_size,
             )
 
+        self._cached = grid
         self._last_updated_step = self._sim.cur_step_global
-        self._buffer = grid
+
+        return grid[envs_idx] if envs_idx is not None else grid
 
     @ti.kernel
     def _kernel_update_grid(
@@ -161,7 +177,7 @@ class RigidContactForceGridSensor(RigidContactSensor):
                 for j in ti.static(range(3)):
                     contact_force[j] = contact_forces[i_b, i_c, j]
 
-                force = ti_transform_by_quat(contact_force, quat)
+                force = ti_inv_transform_by_quat(contact_force, quat)
 
                 normalized_pos = ti.Vector.zero(gs.ti_float, 3)
                 for j in ti.static(range(3)):
@@ -174,9 +190,3 @@ class RigidContactForceGridSensor(RigidContactSensor):
                 if 0 <= grid_x < grid_size[0] and 0 <= grid_y < grid_size[1] and 0 <= grid_z < grid_size[2]:
                     for j in ti.static(range(3)):
                         grid[i_b, grid_x, grid_y, grid_z, j] += force[j]
-
-    def read(self, envs_idx=None):
-        self._check_envs_idx(envs_idx)
-        self._update_buffer()
-        grid = self._buffer
-        return grid[envs_idx] if envs_idx is not None else grid

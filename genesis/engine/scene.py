@@ -33,7 +33,6 @@ from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, Renderer
 from genesis.repr_base import RBC
-from genesis.sensors import Sensor, Camera
 from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
@@ -260,7 +259,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_entity(
         self,
-        morph: Morph | None = None,
+        morph: Morph,
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -271,8 +270,8 @@ class Scene(RBC):
 
         Parameters
         ----------
-        morph : gs.morphs.Morph | None, optional
-            The morph of the entity. Required for all entity types except `StaticEntity`.
+        morph : gs.morphs.Morph
+            The morph of the entity.
         material : gs.materials.Material | None, optional
             The material of the entity. If None, use ``gs.materials.Rigid()``.
         surface : gs.surfaces.Surface | None, optional
@@ -317,7 +316,7 @@ class Scene(RBC):
         if vis_mode is not None:
             surface.vis_mode = vis_mode
         # validate and populate default surface.vis_mode considering morph type
-        if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Tool, gs.materials.Static)):
+        if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Tool)):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
@@ -438,34 +437,6 @@ class Scene(RBC):
         parent_link._child_idxs.append(child_link.idx)
 
     @gs.assert_unbuilt
-    def add_sensor(
-        self,
-        sensor_type: Sensor,
-        morph: Morph | None = None,
-        material: Material | None = None,
-        surface: Surface | None = None,
-        visualize_contact: bool = False,
-        vis_mode: str | None = None,
-        **sensor_kwargs,
-    ):
-        """
-        Add a new entity with a sensor to the scene.
-        If the material is not specified, a Static entity will be created.
-        Note that each sensor type is only compatible with specific entity types.
-        """
-        if material is None:
-            material = gs.materials.Static()
-
-        entity = self.add_entity(
-            morph=morph,
-            material=material,
-            surface=surface,
-            visualize_contact=visualize_contact,
-            vis_mode=vis_mode,
-        )
-        return entity.add_sensor(sensor_type, **sensor_kwargs)
-
-    @gs.assert_unbuilt
     def add_light(
         self,
         morph: Morph,
@@ -521,16 +492,12 @@ class Scene(RBC):
         denoise=True,
     ):
         """
-        Add a camera to the scene.
-        Note: This is an alias for scene.add_sensor(Camera, ...)
+        Add a camera to the scene. The camera model can be either 'pinhole' or 'thinlens'. The 'pinhole' model is a simple camera model that captures light rays from a single point in space. The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size, allowing for depth of field effects. When 'pinhole' is used, the `aperture` and `focal_len` parameters are ignored.
 
         Parameters
         ----------
         model : str
             Specifies the camera model. Options are 'pinhole' or 'thinlens'.
-            The 'pinhole' model is a simple camera model that captures light rays from a single point in space.
-            The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size,
-                allowing for depth of field effects.
         res : tuple of int, shape (2,)
             The resolution of the camera, specified as a tuple (width, height).
         pos : tuple of float, shape (3,)
@@ -542,7 +509,7 @@ class Scene(RBC):
         fov : float
             The vertical field of view of the camera in degrees.
         aperture : float
-            The aperture size of the camera, controlling depth of field. Used only if model='thinlens'.
+            The aperture size of the camera, controlling depth of field.
         focus_dist : float | None
             The focus distance of the camera. If None, it will be auto-computed using `pos` and `lookat`.
         GUI : bool
@@ -554,24 +521,11 @@ class Scene(RBC):
 
         Returns
         -------
-        camera : genesis.sensor.Camera
+        camera : genesis.Camera
             The created camera object.
         """
-        return self.add_sensor(
-            Camera,
-            visualizer=self._visualizer,
-            model=model,
-            res=res,
-            pos=pos,
-            lookat=lookat,
-            up=up,
-            fov=fov,
-            aperture=aperture,
-            focus_dist=focus_dist,
-            GUI=GUI,
-            spp=spp,
-            denoise=denoise,
-        )
+
+        return self._visualizer.add_camera(res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise)
 
     @gs.assert_unbuilt
     def add_emitter(
@@ -1173,15 +1127,6 @@ class Scene(RBC):
             solver.load_ckpt_from_numpy(arrays)
 
         self._t = state.get("step_index", self._t)
-
-    def stop_recording_all(self):
-        """
-        Stops all active sensor data recordings for the scene.
-        """
-        for entity in self._sim._entities:
-            for sensor in entity.sensors:
-                if sensor.is_recording:
-                    sensor.stop_recording()
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -33,25 +33,18 @@ class Entity(RBC):
             f"Adding ~<{self._repr_type()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
         )
 
-    def add_sensor(self, sensor_type, name=None, **sensor_kwargs):
+    def add_sensor(self, sensor_type, **sensor_kwargs):
         """
         Add a sensor to the entity.
 
-        Parameters
-        ----------
-        sensor_type: type
-            The type of the sensor to add, which should be a subclass of gs.sensors.Sensor.
-        name: str, optional
-            The name of the sensor. Defaults to "{sensor_type}_{entity.uid}_{sensor.idx}".
-        sensor_kwargs: dict
-            Keyword arguments to pass to the sensor's constructor.
+        Args:
+            sensor_type: The type of the sensor to add.
+            **sensor_kwargs: Additional keyword arguments for the sensor.
 
-        Returns
-        -------
-        sensor: gs.sensors.Sensor (type sensor_type)
+        Returns:
             The created sensor instance.
         """
-        sensor = sensor_type(self, idx=len(self._sensors), name=name, **sensor_kwargs)
+        sensor = sensor_type(self, **sensor_kwargs)
         self._sensors.append(sensor)
         return sensor
 
@@ -97,4 +90,4 @@ class Entity(RBC):
 
     @property
     def is_built(self):
-        return self._scene._is_built
+        return self._solver._scene._is_built

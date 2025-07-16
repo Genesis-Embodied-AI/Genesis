@@ -150,7 +150,7 @@ class VideoFileStreamer(DataHandler):
     def cleanup(self):
         for i, video_writer in enumerate(self.video_writers):
             video_writer.release()
-            gs.logger.info(f"Video saved to ~<{self.filenames[i]}>~.")
+            gs.logger.info(f'Video saved to "~<{self.filenames[i]}>~".')
         self.video_writers.clear()
 
 

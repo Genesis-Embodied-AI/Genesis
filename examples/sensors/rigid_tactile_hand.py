@@ -1,6 +1,6 @@
 import argparse
 import genesis as gs
-from genesis.sensors import DataRecordingOptions, RigidContactForceGridSensor
+from genesis.sensors import SensorDataRecorder, RecordingOptions, RigidContactForceGridSensor
 from genesis.sensors.data_handlers import VideoFileStreamer, NPZFileWriter
 from tqdm import tqdm
 
@@ -53,19 +53,6 @@ def main():
         material=gs.materials.Rigid(gravity_compensation=1.0),
     )
 
-    sensors = []
-    for link in hand.links:
-        if "tip" in link.name:
-            print("Adding sensor to link:", link.name)
-            sensor = hand.add_sensor(
-                RigidContactForceGridSensor,
-                name=f"tactile_{link.name}",
-                grid_size=(4, 4, 2),
-                link_idx=link.idx,
-            )
-            sensors.append(sensor)
-    print("Joints:", [joint.name for joint in hand.joints])
-
     box = scene.add_entity(
         gs.morphs.Box(pos=(-0.02, 0.0, 0.22), size=(0.09, 0.12, 0.03)),
         # gs.morphs.Box(pos=(0, 0, 0.15), size=(0.06, 0.09, 0.03)),
@@ -85,21 +72,35 @@ def main():
         dofs_position = [dofs_position] * args.n_envs
     hand.set_dofs_position(np.array(dofs_position))
 
-    cam.start_recording(DataRecordingOptions(handler=VideoFileStreamer(filename="hand_test.mp4", fps=1 / args.dt)))
-    # for sensor in sensors:
-    #     sensor.start_recording(DataRecordingOptions(handler=NPZFileWriter(filename=f"{sensor.name}.npz")))
+    data_recorder = SensorDataRecorder(step_dt=args.dt)
+    data_recorder.add_sensor(
+        cam, RecordingOptions(handler=VideoFileStreamer(filename="hand_test.mp4", fps=1 / args.dt))
+    )
+    sensors = []
+    for link in hand.links:
+        if "tip" in link.name:
+            print("Adding sensor for link:", link.name)
+            sensor = RigidContactForceGridSensor(entity=hand, link_idx=link.idx, grid_size=(4, 4, 2))
+            data_recorder.add_sensor(
+                sensor, RecordingOptions(handler=NPZFileWriter(filename=f"{link.name}_contact_forces.npz"))
+            )
+            sensors.append(sensor)
+    print("Joints:", [joint.name for joint in hand.joints])
+
+    data_recorder.start_recording()
 
     # ---- run simulation ----
     try:
         for _ in tqdm(range(steps), total=steps):
             scene.step()
+            data_recorder.step()
 
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
         gs.logger.info("Simulation finished.")
 
-        scene.stop_recording_all()
+        data_recorder.stop_recording()
 
 
 if __name__ == "__main__":

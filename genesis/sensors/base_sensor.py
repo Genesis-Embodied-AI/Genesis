@@ -3,8 +3,6 @@ import genesis as gs
 
 from typing import List, Optional
 from genesis.repr_base import RBC
-from genesis.engine.entities.base_entity import Entity
-from .data_collector import DataCollector, DataRecordingOptions
 
 
 @ti.data_oriented
@@ -12,119 +10,12 @@ class Sensor(RBC):
     """
     Base class for all types of sensors.
     A sensor must have a read() method that returns the sensor data.
-    Every sensor has an associated entity, which the sensor is "attached" to.
-
-    Parameters
-    ----------
-    entity: Entity
-        The entity that the sensor is attached to.
-    name: str, optional
-        The name of the sensor. If not provided, the class name and sensor idx will be used.
     """
-
-    @staticmethod
-    def get_valid_entity_types():
-        raise NotImplementedError()
-
-    def __init__(self, entity: Entity, idx: int, name=None):
-        assert isinstance(
-            entity, self.get_valid_entity_types()
-        ), f"{type(self)} can only be added to entities of type {self.get_valid_entity_types()}, got {type(entity)}."
-        self._entity = entity
-        self._sim = entity._sim
-        self._data_collector: Optional[DataCollector] = None
-        self._idx = idx
-        self._name = name or f"{self.__class__.__name__}_{self._entity._uid}_{self._idx}"
-
-    def build(self):
-        """
-        Initializes the sensor. Called during scene.build().
-        """
-        pass
 
     @gs.assert_built
     def read(self, envs_idx: Optional[List[int]] = None):
         """
-        Read the sensor's internal buffer and return the latest data.
+        Read the sensor data.
+        Sensor implementations should ideally cache the data to avoid unnecessary computations.
         """
-        self._check_envs_idx(envs_idx)
         raise NotImplementedError("The Sensor subclass must implement `read()`.")
-
-    @gs.assert_built
-    def step(self):
-        """
-        This is called by the Simulator during after physics steps.
-        Generally, sensor state should only be updated during `read()`.
-        """
-        if self._data_collector:
-            self._data_collector.step(self._sim.cur_step_global)
-
-    def _check_envs_idx(self, envs_idx: Optional[List[int]]):
-        if self.n_envs == 0 and envs_idx is not None:
-            gs.logger.warning("envs_idx is ignored when n_envs=0, as there is only one environment.")
-
-    # ------------------------------------------------------------------------------------
-    # ----------------------------------- properties -------------------------------------
-    # ------------------------------------------------------------------------------------
-
-    @property
-    def idx(self):
-        """Local index of the sensor within its entity."""
-        return self._idx
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def n_envs(self):
-        return self._sim.n_envs
-
-    @property
-    def _B(self):
-        return self._sim._B
-
-    @property
-    def entity(self):
-        return self._entity
-
-    @property
-    def is_built(self):
-        return self._entity.is_built
-
-    @property
-    def is_recording(self):
-        return self._data_collector is not None and self._data_collector.is_recording
-
-    # ------------------------------------------------------------------------------------
-    # --------------------------------- data collection ----------------------------------
-    # ------------------------------------------------------------------------------------
-
-    @gs.assert_built
-    def start_recording(self, options: DataRecordingOptions):
-        """
-        Start recording data from the sensor.
-        """
-        self._data_collector = DataCollector(self, options)
-        self._data_collector.start_recording()
-
-    @gs.assert_built
-    def pause_recording(self):
-        """
-        Pause data recording from the sensor.
-        """
-        if self._data_collector:
-            self._data_collector.pause_recording()
-        else:
-            gs.logger.warning("Sensor: start_recording() should have been called before pause_recording().")
-
-    @gs.assert_built
-    def stop_recording(self):
-        """
-        Stop data recording from the sensor.
-        """
-        if self._data_collector:
-            self._data_collector.stop_recording()
-            self._data_collector = None
-        else:
-            gs.logger.warning("Sensor: start_recording() should have been called before stop_recording().")

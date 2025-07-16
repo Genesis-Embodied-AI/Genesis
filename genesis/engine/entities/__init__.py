@@ -12,5 +12,4 @@ from .pbd_entity import (
 from .rigid_entity import RigidEntity
 from .sph_entity import SPHEntity
 from .sf_entity import SFParticleEntity
-from .static_entity import StaticEntity
 from .tool_entity import ToolEntity

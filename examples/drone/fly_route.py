@@ -2,7 +2,7 @@ import genesis as gs
 import math
 from quadcopter_controller import DronePIDController
 from genesis.engine.entities.drone_entity import DroneEntity
-from genesis.sensors.camera import Camera
+from genesis.vis.camera import Camera
 
 base_rpm = 14468.429183500699
 min_rpm = 0.9 * base_rpm
