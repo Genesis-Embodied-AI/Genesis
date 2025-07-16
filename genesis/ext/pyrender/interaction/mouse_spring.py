@@ -63,12 +63,12 @@ class MouseSpring:
             dir.v[i] = 1.0
             pos_err: float = dir.dot(pos_err_v)
             vel_err: float = dir.dot(vel_err_v)
-            err: float = tau * pos_err * inv_dt + damp * vel_err
-            vm: float = inv_mass
-            imp: float = err * vm
+            error: float = tau * pos_err * inv_dt + damp * vel_err
+            virtual_mass: float = 1.0 / (inv_mass + 1e-24)
+            impulse: float = error * virtual_mass
 
-            lin_vel += imp * dir * inv_mass
-            total_impulse.v[i] = imp
+            lin_vel += impulse * dir * inv_mass
+            total_impulse.v[i] = impulse
 
         # Apply the new force
         total_force = total_impulse * inv_dt
