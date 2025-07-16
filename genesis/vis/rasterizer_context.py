@@ -875,7 +875,7 @@ class RasterizerContext:
             self.seg_node_map[seg_node] = self.seg_idxc_to_idxc_rgb(seg_idxc)
 
     def remove_node_seg(self, seg_node):
-        self.seg_node_map.pop(seg_node)
+        self.seg_node_map.pop(seg_node, None)
 
     def generate_seg_vars(self):
         # seg_key: same as entity/link/geom's idx
