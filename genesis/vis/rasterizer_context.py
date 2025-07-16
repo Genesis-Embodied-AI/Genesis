@@ -35,6 +35,8 @@ class RasterizerContext:
         self.rendered_envs_idx = options.rendered_envs_idx
         self.env_separate_rigid = options.env_separate_rigid
 
+        self.buffer = dict()
+
         # nodes
         self.world_frame_node = None
         self.link_frame_nodes = dict()
@@ -831,12 +833,11 @@ class RasterizerContext:
         self.clear_external_nodes()
 
     def update(self):
-        buffer_updates = dict()
+        # Early return if already updated previously
+        if self._t >= self.scene._t:
+            return
 
-        if self._t >= self.scene._t:  # already updated
-            return buffer_updates
-        else:
-            self._t = self.scene._t
+        self._t = self.scene._t
 
         # clear up all dynamic nodes
         self.clear_dynamic_nodes()
@@ -844,18 +845,19 @@ class RasterizerContext:
         # update variables not used in simulation
         self.visualizer.update_visual_states()
 
+        # Reset scene bounds to trigger recomputation. They are involved in shadow map
         self._scene._bounds = None
-        self.update_link_frame(buffer_updates)
-        self.update_tool(buffer_updates)
-        self.update_rigid(buffer_updates)
-        self.update_contact(buffer_updates)
-        self.update_avatar(buffer_updates)
-        self.update_mpm(buffer_updates)
-        self.update_sph(buffer_updates)
-        self.update_pbd(buffer_updates)
-        self.update_fem(buffer_updates)
 
-        return buffer_updates
+        self.buffer.clear()
+        self.update_link_frame(self.buffer)
+        self.update_tool(self.buffer)
+        self.update_rigid(self.buffer)
+        self.update_contact(self.buffer)
+        self.update_avatar(self.buffer)
+        self.update_mpm(self.buffer)
+        self.update_sph(self.buffer)
+        self.update_pbd(self.buffer)
+        self.update_fem(self.buffer)
 
     def add_light(self, light):
         # light direction is light pose's -z frame
