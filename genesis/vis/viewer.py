@@ -65,9 +65,14 @@ class Viewer(RBC):
         if opengl_platform_orig is None:
             if gs.platform == "Windows":
                 all_opengl_platforms = ("wgl",)  # same as "native"
+            elif gs.platform == "Linux":
+                # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
-                all_opengl_platforms = ("native", "egl", "glx")  # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native",)
         else:
+            if gs.platform == "Windows" and opengl_platform_orig == "osmesa":
+                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is not supported on Windows OS.")
             all_opengl_platforms = (opengl_platform_orig,)
 
         for i, platform in enumerate(all_opengl_platforms):
@@ -108,11 +113,10 @@ class Viewer(RBC):
 
                 if i == len(all_opengl_platforms) - 1:
                     raise
-            finally:
-                if opengl_platform_orig is None:
-                    del os.environ["PYOPENGL_PLATFORM"]
-                else:
-                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
+
+            # Select PyOpenGL backend compatible with `pyrender.OffscreenRenderer`
+            if platform not in ("osmesa", "pyglet", "egl"):
+                os.environ["PYOPENGL_PLATFORM"] = "pyglet"
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
@@ -140,7 +144,8 @@ class Viewer(RBC):
             self.update_following()
 
         with self.lock:
-            self._pyrender_viewer.pending_buffer_updates |= self.context.update()
+            # Update context
+            self.context.update()
 
             # Refresh viewer by default if and if this is possible
             if auto_refresh is None:
@@ -153,6 +158,9 @@ class Viewer(RBC):
         # lock FPS
         if self._max_FPS is not None:
             self.rate.sleep()
+
+    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
+        return self._pyrender_viewer.render_offscreen(camera_node, render_target, depth, seg, normal)
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
         """

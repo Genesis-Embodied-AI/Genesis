@@ -68,6 +68,8 @@ class Collider:
         mc_perturbation: float = 0.0
         mc_tolerance: float = 0.0
         mpr_to_sdf_overlap_ratio: float = 0.0
+        # multiplier k for the maximum number of contact pairs for the broad phase
+        max_collision_pairs_broad_k: int = 20
         # maximum number of contact pairs per collision pair
         n_contacts_per_pair: int = 5
         # maximum number of contact points for box-box collision detection
@@ -112,6 +114,7 @@ class Collider:
             mc_perturbation=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mc_tolerance=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mpr_to_sdf_overlap_ratio=0.4,
+            max_collision_pairs_broad_k=20,
             n_contacts_per_pair=5,
             box_MAXCONPAIR=16,
             ccd_algorithm=ccd_algorithm,
@@ -140,7 +143,7 @@ class Collider:
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            f"({self._collider_state._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
+            f"({self._collider_info._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
             f"'max_collision_pairs'.{formats.RESET}"
         )
 
@@ -241,9 +244,12 @@ class Collider:
     def _init_max_contact_pairs(self, n_possible_pairs):
         max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
         max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
+        max_contact_pairs_broad = max_collision_pairs * self._collider_static_config.max_collision_pairs_broad_k
 
         self._collider_info._max_possible_pairs[None] = n_possible_pairs
         self._collider_info._max_collision_pairs[None] = max_collision_pairs
+        self._collider_info._max_collision_pairs_broad[None] = max_contact_pairs_broad
+
         self._collider_info._max_contact_pairs[None] = max_contact_pairs
 
     def _init_terrain_state(self):
@@ -367,6 +373,7 @@ class Collider:
             self._solver.geoms_info,
             self._solver.geoms_init_AABB,
             self._solver.verts_info,
+            self._solver.faces_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._collider_state,
@@ -374,6 +381,8 @@ class Collider:
             self._collider_static_config,
             self._mpr._mpr_state,
             self._mpr._mpr_static_config,
+            self._gjk._gjk_state if self._gjk is not None else None,
+            self._gjk._gjk_static_config if self._gjk is not None else None,
             self._support_field._support_field_info,
             self._support_field._support_field_static_config,
             self._mpr,
@@ -1033,8 +1042,8 @@ class Collider:
                                 continue
 
                             i_p = collider_state.n_broad_pairs[i_b]
-                            if i_p == collider_info._max_collision_pairs[None]:
-                                # print(self._warn_msg_max_collision_pairs)
+                            if i_p == collider_info._max_collision_pairs_broad[None]:
+                                # print(self._warn_msg_max_collision_pairs_broad)
                                 break
                             collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
                             collider_state.broad_collision_pairs[i_p, i_b][1] = i_gb
@@ -1171,6 +1180,7 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
+        faces_info: array_class.FacesInfo,
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
@@ -1178,6 +1188,8 @@ class Collider:
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
+        gjk_state: ti.template(),
+        gjk_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
         # FIXME: We need mpr, gjk, sdf, and support_field for now to call their class functions. After migration is
@@ -1224,6 +1236,7 @@ class Collider:
                             geoms_info,
                             geoms_init_AABB,
                             verts_info,
+                            faces_info,
                             rigid_global_info,
                             static_rigid_sim_config,
                             collider_state,
@@ -1231,6 +1244,8 @@ class Collider:
                             collider_static_config,
                             mpr_state,
                             mpr_static_config,
+                            gjk_state,
+                            gjk_static_config,
                             support_field_info,
                             support_field_static_config,
                             mpr,
@@ -1252,6 +1267,7 @@ class Collider:
                                 geoms_info,
                                 geoms_init_AABB,
                                 verts_info,
+                                faces_info,
                                 rigid_global_info,
                                 static_rigid_sim_config,
                                 collider_state,
@@ -1259,6 +1275,8 @@ class Collider:
                                 collider_static_config,
                                 mpr_state,
                                 mpr_static_config,
+                                gjk_state,
+                                gjk_static_config,
                                 support_field_info,
                                 support_field_static_config,
                                 mpr,
@@ -1768,6 +1786,7 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
+        faces_info: array_class.FacesInfo,
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
@@ -1775,6 +1794,8 @@ class Collider:
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
+        gjk_state: ti.template(),
+        gjk_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
         mpr: ti.template(),
@@ -1933,21 +1954,37 @@ class Collider:
                         elif ti.static(
                             collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                         ):
-                            gjk.func_gjk_contact(i_ga, i_gb, i_b)
+                            gjk.func_gjk_contact(
+                                geoms_state,
+                                geoms_info,
+                                verts_info,
+                                faces_info,
+                                static_rigid_sim_config,
+                                collider_state,
+                                collider_static_config,
+                                gjk_state,
+                                gjk_static_config,
+                                support_field_info,
+                                support_field_static_config,
+                                support_field,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                            )
 
-                            is_col = gjk.is_col[i_b] == 1
-                            penetration = gjk.penetration[i_b]
-                            n_contacts = gjk.n_contacts[i_b]
+                            is_col = gjk_state.is_col[i_b] == 1
+                            penetration = gjk_state.penetration[i_b]
+                            n_contacts = gjk_state.n_contacts[i_b]
 
                             if is_col:
-                                if gjk.multi_contact_flag[i_b]:
+                                if gjk_state.multi_contact_flag[i_b]:
                                     # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
                                     # add the discovered contact points and stop multi-contact search.
                                     for i_c in range(n_contacts):
                                         # Ignore contact points if the number of contacts exceeds the limit.
                                         if i_c < ti.static(collider_static_config.n_contacts_per_pair):
-                                            contact_pos = gjk.contact_pos[i_b, i_c]
-                                            normal = gjk.normal[i_b, i_c]
+                                            contact_pos = gjk_state.contact_pos[i_b, i_c]
+                                            normal = gjk_state.normal[i_b, i_c]
                                             self_unused._func_add_contact(
                                                 geoms_state,
                                                 geoms_info,
@@ -1963,8 +2000,8 @@ class Collider:
 
                                     break
                                 else:
-                                    contact_pos = gjk.contact_pos[i_b, 0]
-                                    normal = gjk.normal[i_b, 0]
+                                    contact_pos = gjk_state.contact_pos[i_b, 0]
+                                    normal = gjk_state.normal[i_b, 0]
 
                     if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         if try_sdf:
