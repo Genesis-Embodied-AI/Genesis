@@ -6007,64 +6007,57 @@ class RigidSolver(Solver):
 
     @gs.assert_built
     def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
-        n_envs = int(self.n_envs) or 1
-        n_eqs = self.constraint_solver.ti_n_equalities.to_numpy()
-        stride = int(n_eqs.max())
-        if stride == 0:
+        n_welds = tuple(self.constraint_solver.ti_n_equalities.to_numpy())
+        n_envs = len(n_welds)
+        max_welds = max(n_welds) if n_welds else 0
+        if max_welds == 0:
             empty = torch.empty if to_torch else np.empty
-            zeros = torch.zeros if to_torch else np.zeros
             obj_a = empty((0,), dtype=np.int32)
             obj_b = empty((0,), dtype=np.int32)
             if n_envs == 1:
                 return {"obj_a": obj_a, "obj_b": obj_b}
             return {
-                "env": obj_a,
-                "obj_a": obj_a,
-                "obj_b": obj_b,
-                "valid_mask": zeros((n_envs, 0), dtype=bool),
+                "obj_a": [obj_a] * n_envs,
+                "obj_b": [obj_b] * n_envs,
             }
-        shape3 = (n_envs, stride, 3)
-        if to_torch:
-            buf = torch.full(shape3, -1, dtype=gs.tc_int, device=gs.device)
-        else:
-            buf = np.full(shape3, -1, dtype=np.int32)
-        self._kernel_collect_welds(buf)
-        if n_envs == 1:
-            sub = buf[0]
-            sub = sub[sub[:, 1] != -1]
-            return {"obj_a": sub[:, 1], "obj_b": sub[:, 2]}
 
-        env_arr = buf[..., 0]
+        total = n_envs * max_welds
+        if to_torch:
+            buf = torch.full((total, 3), -1, dtype=gs.tc_int, device=gs.device)
+        else:
+            buf = np.full((total, 3), -1, dtype=np.int32)
+
+        self._kernel_collect_welds(buf)
+
+        if to_torch:
+            buf = buf.view(n_envs, max_welds, 3)
+        else:
+            buf = buf.reshape(n_envs, max_welds, 3)
+        env_idx = buf[..., 0]
         obj_a = buf[..., 1]
         obj_b = buf[..., 2]
-        valid = env_arr != -1
 
-        if not as_tensor:
-            lists = lambda mat: [mat[e, : int(valid[e].sum())] for e in range(n_envs)]
-            obj_a, obj_b = lists(obj_a), lists(obj_b)
-
-        return {
-            "env": env_arr,
-            "obj_a": obj_a,
-            "obj_b": obj_b,
-            "valid_mask": valid,
-        }
+        if as_tensor:
+            return {"env": env_idx, "obj_a": obj_a, "obj_b": obj_b}
+        else:
+            result_a, result_b = [], []
+            for e, count in enumerate(n_welds):
+                result_a.append(obj_a[e, :count].copy())
+                result_b.append(obj_b[e, :count].copy())
+            return {"obj_a": result_a, "obj_b": result_b}
 
     @ti.kernel
     def _kernel_collect_welds(self, buf: ti.types.ndarray()):
-        WELD = gs.EQUALITY_TYPE.WELD
-        n_envs = self.n_envs
-        stride = self.n_equalities_candidate
-
-        for env in range(n_envs):
+        for env in range(self.n_envs):
+            base = env * self.n_equalities_candidate
             out = 0
             n_eq = self.constraint_solver.ti_n_equalities[env]
             for j in range(n_eq):
                 rec = self.equalities_info[j, env]
-                if rec.eq_type == WELD and out < stride:
-                    buf[env, out, 0] = env
-                    buf[env, out, 1] = rec.eq_obj1id
-                    buf[env, out, 2] = rec.eq_obj2id
+                if rec.eq_type == gs.EQUALITY_TYPE.WELD and out < self.n_equalities_candidate:
+                    buf[base + out, 0] = env
+                    buf[base + out, 1] = rec.eq_obj1id
+                    buf[base + out, 2] = rec.eq_obj2id
                     out += 1
 
     # ------------------------------------------------------------------------------------

@@ -2349,20 +2349,17 @@ def test_get_weld_constraints_basic(show_viewer, tol):
         sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
         show_viewer=show_viewer,
     )
-
     cube1 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.0, 0.0, 0.05)))
     cube2 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.2, 0.0, 0.05)))
-
     scene.build(n_envs=1)
-    rigid = scene.sim.rigid_solver
 
     link_a = torch.tensor([cube1.base_link.idx], dtype=gs.tc_int, device=gs.device)
     link_b = torch.tensor([cube2.base_link.idx], dtype=gs.tc_int, device=gs.device)
 
-    rigid.add_weld_constraint(link_a, link_b)
+    scene.sim.rigid_solver.add_weld_constraint(link_a, link_b)
     scene.step()
 
-    welds = rigid.get_weld_constraints(as_tensor=True, to_torch=False)
+    welds = scene.sim.rigid_solver.get_weld_constraints(as_tensor=True, to_torch=False)
     env_id = 0 if "env" not in welds else int(welds["env"][0])
 
     row = np.array([env_id, int(welds["obj_a"][0]), int(welds["obj_b"][0])], dtype=np.int32)
@@ -2374,39 +2371,29 @@ def test_get_weld_constraints_basic(show_viewer, tol):
         dofs_idx_local=np.array([0, 1, 2], dtype=np.int32),
         envs_idx=None,
     )
-
     for _ in range(200):
         scene.step()
-
-    vel1 = np.asarray(cube1.get_vel())
-    vel2 = np.asarray(cube2.get_vel())
-
-    assert_allclose(vel1, vel2, tol=1e-7)
+    assert_allclose(cube1.get_vel(), cube2.get_vel(), tol=tol)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_get_weld_constraints_entity(show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
-
     cube1 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.0, 0.0, 0.05)))
     cube2 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.2, 0.0, 0.05)))
-
     scene.build(n_envs=1)
-
-    rigid = scene.sim.rigid_solver
 
     link_a = torch.tensor([cube1.base_link.idx], dtype=gs.tc_int, device=gs.device)
     link_b = torch.tensor([cube2.base_link.idx], dtype=gs.tc_int, device=gs.device)
 
-    rigid.add_weld_constraint(link_a, link_b)
+    scene.sim.rigid_solver.add_weld_constraint(link_a, link_b)
     scene.step()
 
     welds_single = cube1.get_weld_constraints(as_tensor=True, to_torch=False)
-
     assert_allclose(
-        np.array([int(welds_single["obj_a"][0]), int(welds_single["obj_b"][0])]),
-        np.array([link_a.item(), link_b.item()], dtype=np.int32),
+        [(welds_single["obj_a"][0]), (welds_single["obj_b"][0])],
+        [link_a.item(), link_b.item()],
         tol=tol,
     )
 
