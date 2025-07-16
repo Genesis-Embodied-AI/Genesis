@@ -279,8 +279,8 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     T = np.eye(4)
     T[:3, :3] = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
     T[:3, 3] = np.array([0.1, 0.0, 0.1])
-    for nenv, cam in enumerate(cams):
-        cam.attach(robot.get_link("hand"), T, nenv)
+    for cam in cams:
+        cam.attach(robot.get_link("hand"), T)
 
     target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
     center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
