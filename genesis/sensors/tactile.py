@@ -99,6 +99,18 @@ class RigidContactForceSensor(RigidContactSensor):
 class RigidContactForceGridSensor(RigidContactForceSensor):
     """
     Sensor that returns local contact forces as a grid based on its associated RigidLink's collision info.
+
+    Parameters
+    ----------
+    entity : RigidEntity
+        The entity to monitor the contact forces of.
+    link_idx : int, optional
+        The index of the link to which this sensor is attached. If None, defaults to the base link of the entity.
+    grid_size : tuple(int, int, int)
+        The size of the grid in which contact forces will be recorded.
+        The bounding box of the link is divided into this grid size, and forces are accumulated in each grid cell.
+        The bounds are determined by the minimum and maximum vertex positions of the link's initial geometries
+        from the mesh after scale but before any rigid transformations are applied.
     """
 
     def __init__(self, entity: RigidEntity, link_idx=None, grid_size=(1, 1, 1)):
