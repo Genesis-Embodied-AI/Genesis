@@ -13,8 +13,6 @@ class MPR:
     @dataclass(frozen=True)
     class MPRStaticConfig:
         # store static arguments here
-        B: int = 0
-        para_level: int = 0
         CCD_EPS: float = 1e-9
         CCD_TOLERANCE: float = 1e-6
         CCD_ITERATIONS: int = 50
@@ -22,8 +20,6 @@ class MPR:
     def __init__(self, rigid_solver):
         self._solver = rigid_solver
         self._mpr_static_config = MPR.MPRStaticConfig(
-            B=rigid_solver._B,
-            para_level=rigid_solver._para_level,
             # It has been observed in practice that increasing this threshold makes collision detection instable,
             # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
             CCD_EPS=1e-9 if gs.ti_float == ti.f32 else 1e-10,
