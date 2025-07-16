@@ -826,6 +826,10 @@ class JITRenderer:
             return self._update_normal_flat(vertices.reshape((-1, 3, 3)))
 
     def update_buffer(self, buffer_updates):
+        # Early return if nothing to do
+        if not buffer_updates:
+            return
+
         updates = np.zeros((len(buffer_updates), 3), dtype=np.int64)
         buffers = []
         for idx, (id, data) in enumerate(buffer_updates.items()):
