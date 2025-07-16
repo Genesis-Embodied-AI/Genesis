@@ -627,28 +627,28 @@ class Camera(RBC):
         # TODO: Optimize with batch computation
         for env_idx in range(self.n_envs):
             if self._follow_smoothing is not None:
-                    # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA)
-                    camera_pos_env = self._follow_smoothing * camera_pos[env_idx] + (1 - self._follow_smoothing) * (
-                        entity_pos[env_idx] + self._initial_pos
-                    )
-                    lookat_pos_env = (
-                        self._follow_smoothing * lookat_pos[env_idx] + (1 - self._follow_smoothing) * entity_pos[env_idx]
+                # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA)
+                camera_pos_env = self._follow_smoothing * camera_pos[env_idx] + (1 - self._follow_smoothing) * (
+                    entity_pos[env_idx] + self._initial_pos
+                )
+                lookat_pos_env = (
+                    self._follow_smoothing * lookat_pos[env_idx] + (1 - self._follow_smoothing) * entity_pos[env_idx]
                 )
             else:
-                    camera_pos_env = entity_pos[env_idx] + self._initial_pos
-                    lookat_pos_env = entity_pos[env_idx]
+                camera_pos_env = entity_pos[env_idx] + self._initial_pos
+                lookat_pos_env = entity_pos[env_idx]
 
             for i, fixed_axis in enumerate(self._follow_fixed_axis):
                 # Fix the camera's position along the specified axis
                 if fixed_axis is not None:
-                        camera_pos_env[i] = fixed_axis
+                    camera_pos_env[i] = fixed_axis
 
             if self._follow_fix_orientation:
                 # Keep the camera orientation fixed by overriding the lookat point
-                    camera_transform[env_idx, :3, 3] = camera_pos_env
-                    self.set_pose(transform=camera_transform[env_idx], env_idx=env_idx)
+                camera_transform[env_idx, :3, 3] = camera_pos_env
+                self.set_pose(transform=camera_transform[env_idx], env_idx=env_idx)
             else:
-                    self.set_pose(pos=camera_pos_env, lookat=lookat_pos_env, env_idx=env_idx)
+                self.set_pose(pos=camera_pos_env, lookat=lookat_pos_env, env_idx=env_idx)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):

@@ -860,7 +860,7 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
     elif is_numpy:
         if T is None:
             T = np.zeros((*B, 4, 4), dtype=trans.dtype)
-        else:
+    else:
         gs.raise_exception(f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(trans)=} and {type(R)=}")
     if B:
         assert T.shape == (*B, 4, 4)
@@ -871,20 +871,20 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
     if quat is not None:
         quat_to_R(quat, out=T[..., :3, :3])
 
-        return T
+    return T
 
 
 def T_to_trans_quat(T, *, out=None):
     trans = T[..., :3, 3]
     quat = R_to_quat(T[..., :3, :3])
-        return trans, quat
+    return trans, quat
 
 
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
     if out is None:
         out_ = np.empty(u.shape, dtype=u.dtype)
-        else:
+    else:
         assert out.shape == u.shape
         out_ = out
 
@@ -937,7 +937,7 @@ def transform_quat_by_quat(v, u):
         quat = _tc_quat_mul(u, v)
     elif all(isinstance(e, np.ndarray) for e in (u, v)):
         quat = _np_quat_mul(u, v, out=None)
-        else:
+    else:
         gs.raise_exception(f"The inputs must all be torch.Tensor or np.ndarray. got: {type(v)=} and {type(quat)=}")
 
     return normalize(quat)
@@ -947,7 +947,7 @@ def transform_quat_by_quat(v, u):
 def _np_transform_by_quat(v, quat, out=None):
     if out is None:
         out_ = np.empty(v.shape, dtype=v.dtype)
-        else:
+    else:
         assert out.shape == v.shape
         out_ = out
 
