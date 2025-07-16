@@ -32,7 +32,7 @@ def main():
         ),
         show_viewer=args.vis,
         renderer=gs.options.renderers.BatchRenderer(
-            use_rasterizer=False,
+            use_rasterizer=True,
         ),
     )
 
