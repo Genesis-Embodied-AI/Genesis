@@ -87,7 +87,7 @@ class FrameImageExporter:
             depth: Depth tensor of shape (n_envs, H, W).
         """
         if rgb is not None:
-            rgb = torch.as_tensor(rgb, dtype=gs.tc_float, device=gs.device)
+            rgb = torch.as_tensor(rgb, dtype=torch.uint8, device=gs.device)
 
             # Unsqueeze rgb to (n_envs, H, W, 3)
             if rgb.ndim == 3:
@@ -106,7 +106,7 @@ class FrameImageExporter:
                 executor.map(rgb_job, np.arange(len(rgb)))
 
         if depth is not None:
-            depth = torch.as_tensor(depth, dtype=gs.tc_float, device=gs.device)
+            depth = torch.as_tensor(depth, dtype=torch.float32, device=gs.device)
 
             # Unsqueeze depth to (n_envs, H, W, 1)
             if depth.ndim == 3:

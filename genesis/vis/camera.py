@@ -118,17 +118,17 @@ class Camera(RBC):
             self._rasterizer = None
             self._raytracer = None
         else:
-        self._rasterizer = self._visualizer.rasterizer
-        self._raytracer = self._visualizer.raytracer
+            self._rasterizer = self._visualizer.rasterizer
+            self._raytracer = self._visualizer.raytracer
 
-        self._rgb_stacked = self._visualizer._context.env_separate_rigid
-        self._other_stacked = self._visualizer._context.env_separate_rigid
+            self._rgb_stacked = self._visualizer._context.env_separate_rigid
+            self._other_stacked = self._visualizer._context.env_separate_rigid
 
-        if self._rasterizer is not None:
-            self._rasterizer.add_camera(self)
-        if self._raytracer is not None:
-            self._raytracer.add_camera(self)
-            self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
+            if self._rasterizer is not None:
+                self._rasterizer.add_camera(self)
+            if self._raytracer is not None:
+                self._raytracer.add_camera(self)
+                self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
 
         self._is_built = True
         self.setup_initial_env_poses()
@@ -483,13 +483,13 @@ class Camera(RBC):
         else:
             self._initial_transform = gu.pos_lookat_up_to_T(self._initial_pos, self._initial_lookat, self._initial_up)
 
-        self._multi_env_pos_tensor = self._initial_pos.expand(self.n_envs, 3)
-        self._multi_env_lookat_tensor = self._initial_lookat.expand(self.n_envs, 3)
-        self._multi_env_up_tensor = self._initial_up.expand(self.n_envs, 3)
-        self._multi_env_transform_tensor = self._initial_transform.expand(self.n_envs, 4, 4)
+        self._multi_env_pos_tensor = self._initial_pos.repeat(self.n_envs, 1)
+        self._multi_env_lookat_tensor = self._initial_lookat.repeat(self.n_envs, 1)
+        self._multi_env_up_tensor = self._initial_up.repeat(self.n_envs, 1)
+        self._multi_env_transform_tensor = self._initial_transform.repeat(self.n_envs, 1, 1)
 
         initial_quat = self._T_to_quat_for_madrona(self._initial_transform.unsqueeze(0))
-        self._multi_env_quat_tensor = initial_quat.expand(self.n_envs, 4)
+        self._multi_env_quat_tensor = initial_quat.repeat(self.n_envs, 1)
 
         if self._rasterizer is not None:
             self._rasterizer.update_camera(self)
@@ -626,29 +626,29 @@ class Camera(RBC):
 
         # TODO: Optimize with batch computation
         for env_idx in range(self.n_envs):
-        if self._follow_smoothing is not None:
-                # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA)
-                camera_pos_env = self._follow_smoothing * camera_pos[env_idx] + (1 - self._follow_smoothing) * (
-                    entity_pos[env_idx] + self._initial_pos
+            if self._follow_smoothing is not None:
+                    # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA)
+                    camera_pos_env = self._follow_smoothing * camera_pos[env_idx] + (1 - self._follow_smoothing) * (
+                        entity_pos[env_idx] + self._initial_pos
+                    )
+                    lookat_pos_env = (
+                        self._follow_smoothing * lookat_pos[env_idx] + (1 - self._follow_smoothing) * entity_pos[env_idx]
                 )
-                lookat_pos_env = (
-                    self._follow_smoothing * lookat_pos[env_idx] + (1 - self._follow_smoothing) * entity_pos[env_idx]
-            )
-        else:
-                camera_pos_env = entity_pos[env_idx] + self._initial_pos
-                lookat_pos_env = entity_pos[env_idx]
+            else:
+                    camera_pos_env = entity_pos[env_idx] + self._initial_pos
+                    lookat_pos_env = entity_pos[env_idx]
 
-        for i, fixed_axis in enumerate(self._follow_fixed_axis):
-            # Fix the camera's position along the specified axis
-            if fixed_axis is not None:
-                    camera_pos_env[i] = fixed_axis
+            for i, fixed_axis in enumerate(self._follow_fixed_axis):
+                # Fix the camera's position along the specified axis
+                if fixed_axis is not None:
+                        camera_pos_env[i] = fixed_axis
 
-        if self._follow_fix_orientation:
-            # Keep the camera orientation fixed by overriding the lookat point
-                camera_transform[env_idx, :3, 3] = camera_pos_env
-                self.set_pose(transform=camera_transform[env_idx], env_idx=env_idx)
-        else:
-                self.set_pose(pos=camera_pos_env, lookat=lookat_pos_env, env_idx=env_idx)
+            if self._follow_fix_orientation:
+                # Keep the camera orientation fixed by overriding the lookat point
+                    camera_transform[env_idx, :3, 3] = camera_pos_env
+                    self.set_pose(transform=camera_transform[env_idx], env_idx=env_idx)
+            else:
+                    self.set_pose(pos=camera_pos_env, lookat=lookat_pos_env, env_idx=env_idx)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):

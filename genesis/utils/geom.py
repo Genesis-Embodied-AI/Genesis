@@ -1136,8 +1136,61 @@ def scale_to_T(scale):
     return T
 
 
+def z_up_to_R(z, up=np.array([0, 0, 1]), out=None):
+    if isinstance(z, torch.Tensor):
+        return _tc_z_up_to_R(z, up, out)
+    else:
+        return _np_z_up_to_R(z, up, out)
+
+
+def _tc_z_up_to_R(z, up=None, out=None):
+    B = z.shape[:-1]
+    if out is None:
+        R = torch.empty((*B, 3, 3), dtype=z.dtype, device=z.device)
+    else:
+        assert out.shape == (*B, 3, 3)
+        R = out.reshape((-1, 3, 3))
+
+    z = normalize(z)
+    up = normalize(up)
+
+    # Handle batch dimension properly
+    if z.ndim == 2:
+        # For batch of vectors, process all vectors in parallel
+        # Compute cross products for all vectors at once
+        x = torch.cross(up, z, dim=1)
+
+        # Check norms for all vectors at once
+        x_norm = torch.norm(x, dim=-1, keepdim=True)
+        zero_mask = x_norm < 1e-6
+
+        # Create identity matrices for all vectors
+        R = torch.eye(3, device=z.device, dtype=z.dtype).expand(z.shape[0], 3, 3)
+
+        # For non-zero norm cases, compute proper rotation
+        non_zero_mask = ~zero_mask.squeeze(-1)
+        if non_zero_mask.any():
+            x_valid = normalize(x[non_zero_mask])
+            z_valid = z[non_zero_mask]
+            y_valid = normalize(torch.cross(z_valid, x_valid, dim=1))
+
+            # Stack vectors and transpose for all valid cases at once
+            R[non_zero_mask] = torch.stack([x_valid, y_valid, z_valid], dim=2)
+    else:
+        # Single vector case
+        x = torch.cross(up, z)
+        if torch.norm(x) == 0:
+            R = torch.eye(3, device=z.device, dtype=z.dtype)
+        else:
+            x = normalize(x)
+            y = normalize(torch.cross(z, x))
+            R = torch.vstack([x, y, z]).T
+
+    return R
+
+
 @nb.jit(nopython=True, cache=True)
-def z_up_to_R(z, up=None, out=None):
+def _np_z_up_to_R(z, up=None, out=None):
     B = z.shape[:-1]
     if out is None:
         out_ = np.empty((*B, 3, 3), dtype=z.dtype)
@@ -1175,21 +1228,33 @@ def z_up_to_R(z, up=None, out=None):
 
 
 def pos_lookat_up_to_T(pos, lookat, up, *, dtype=np.float32):
-    pos = np.asarray(pos, dtype=dtype)
-    lookat = np.asarray(lookat, dtype=dtype)
-    up = np.asarray(up, dtype=dtype)
+    if all(isinstance(e, torch.Tensor) for e in (pos, lookat, up) if e is not None):
+        if (torch.abs(pos - lookat).max() < gs.EPS).all():
+            z = torch.tensor([1.0, 0.0, 0.0], device=pos.device, dtype=pos.dtype)
+        else:
+            z = pos - lookat
+        R = z_up_to_R(z, up=up)
+        return trans_R_to_T(pos, R)
+    elif all(isinstance(e, np.ndarray) for e in (pos, lookat, up) if e is not None):
+        pos = np.asarray(pos, dtype=dtype)
+        lookat = np.asarray(lookat, dtype=dtype)
+        up = np.asarray(up, dtype=dtype)
 
-    T = np.zeros((4, 4), dtype=dtype)
-    T[3, 3] = 1.0
-    T[:3, 3] = pos
+        T = np.zeros((4, 4), dtype=dtype)
+        T[3, 3] = 1.0
+        T[:3, 3] = pos
 
         z = pos - lookat
-    z_norm = np.linalg.norm(z)
-    if z_norm < gs.EPS:
-        z = np.array([0.0, 1.0, 0.0], dtype=dtype)
-    z_up_to_R(z, up=up, out=T[:3, :3])
+        z_norm = np.linalg.norm(z)
+        if z_norm < gs.EPS:
+            z = np.array([0.0, 1.0, 0.0], dtype=dtype)
+        z_up_to_R(z, up=up, out=T[:3, :3])
 
-    return T
+        return T
+    else:
+        gs.raise_exception(
+            f"all of the inputs must be torch.Tensor or np.ndarray. got: {type(pos)=}, {type(lookat)=}, {type(up)=}"
+        )
 
 
 def T_to_pos_lookat_up(T):

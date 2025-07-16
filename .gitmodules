@@ -9,4 +9,4 @@
 	url = https://github.com/ACMLCZH/ParticleMesher
 [submodule "genesis/ext/gs-madrona"]
 	path = genesis/ext/gs-madrona
-	url = git@github.com:genesis-company/gs-madrona.git
+	url = https://github.com/Genesis-Embodied-AI/gs-madrona.git
