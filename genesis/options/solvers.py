@@ -146,6 +146,8 @@ class SAPCouplerOptions(CouplerOptions):
         Type of contact against the floor. Defaults to "tet". Can be "tet", "vert", or "none".
     fem_self_tet : bool, optional
         Whether to use tetrahedral based self-contact. Defaults to True.
+    rigid_fem : bool, optional
+        Whether to enable rigid-fem contact. Defaults to True.
     Note
     ----
     Paper reference: https://arxiv.org/abs/2110.10107
@@ -171,6 +173,7 @@ class SAPCouplerOptions(CouplerOptions):
     fem_floor_type: str = "tet"
     fem_self_tet: bool = True
     rigid_floor_vert: bool = True
+    rigid_fem: bool = True
 
 
 ############################ Solvers inside simulator ############################

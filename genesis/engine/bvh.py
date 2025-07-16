@@ -439,7 +439,7 @@ class LBVH(RBC):
             self.internal_node_active[i_b, i] = True
             self.internal_node_ready[i_b, i] = False
 
-    @ti.kernel
+    @ti.func
     def query(self, aabbs: ti.template()):
         """
         Query the BVH for intersections with the given AABBs.
@@ -447,6 +447,7 @@ class LBVH(RBC):
         The results are stored in the query_result field.
         """
         self.query_result_count[None] = 0
+        overflow = False
 
         n_querys = aabbs.shape[1]
         for i_b, i_q in ti.ndrange(self.n_batches, n_querys):
@@ -469,6 +470,8 @@ class LBVH(RBC):
                         idx = ti.atomic_add(self.query_result_count[None], 1)
                         if idx < self.max_n_query_results:
                             self.query_result[idx] = gs.ti_ivec3(i_b, i_a, i_q)  # Store the AABB index
+                        else:
+                            overflow = True
                     else:
                         # Push children onto the stack
                         if node.right != -1:
@@ -477,6 +480,8 @@ class LBVH(RBC):
                         if node.left != -1:
                             query_stack[stack_depth] = node.left
                             stack_depth += 1
+
+        return overflow
 
 
 @ti.data_oriented
