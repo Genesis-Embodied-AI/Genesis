@@ -1235,7 +1235,7 @@ def pos_lookat_up_to_T(pos, lookat, up, *, dtype=np.float32):
             z = pos - lookat
         R = z_up_to_R(z, up=up)
         return trans_R_to_T(pos, R)
-    elif all(isinstance(e, np.ndarray) for e in (pos, lookat, up) if e is not None):
+    elif all(isinstance(e, tuple) for e in (pos, lookat, up) if e is not None):
         pos = np.asarray(pos, dtype=dtype)
         lookat = np.asarray(lookat, dtype=dtype)
         up = np.asarray(up, dtype=dtype)
