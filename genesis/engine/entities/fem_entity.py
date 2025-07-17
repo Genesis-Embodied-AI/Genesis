@@ -750,31 +750,26 @@ class FEMEntity(Entity):
             muscle_direction=muscle_direction,
         )
 
-    def _sanitize_input_tensor(self, arr, dtype, unbatched_ndim=1, contiguous=False):
-        if not isinstance(arr, torch.Tensor):
-            arr = torch.as_tensor(arr, dtype=dtype, device=gs.device)
-        tensor = torch.atleast_1d(arr)
+    def _sanitize_input_tensor(self, tensor, dtype, unbatched_ndim=1):
+        _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device).contiguous()
+        if _tensor is not tensor:
+            gs.logger.warning(ALLOCATE_TENSOR_WARNING)
+
+        tensor = torch.atleast_1d(_tensor)
         if tensor.ndim == unbatched_ndim:
             tensor = tensor.expand((self._sim._B, *tensor.shape))
         assert tensor.ndim == unbatched_ndim + 1, f"Input tensor ndim is {tensor.ndim}, should be {unbatched_ndim + 1}."
         assert tensor.shape[0] == self._sim._B, "Input tensor batch size must match the number of environments."
-        if contiguous:
-            _tensor = tensor.contiguous()
-            if _tensor is not tensor:
-                gs.logger.warning(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor
+
         return tensor
 
-    def _sanitize_input_verts_idx(self, verts_idx):
-        _verts_idx = self._sanitize_input_tensor(verts_idx, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start
-        verts_idx = _verts_idx.contiguous()
-        if verts_idx is not _verts_idx:
-            gs.logger.warning(ALLOCATE_TENSOR_WARNING)
+    def _sanitize_input_verts_idx(self, verts_idx_local):
+        verts_idx = self._sanitize_input_tensor(verts_idx_local, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start
         assert ((verts_idx >= 0) & (verts_idx < self._solver.n_vertices)).all(), "Vertex indices out of bounds."
         return verts_idx
 
     def _sanitize_input_poss(self, poss):
-        poss = self._sanitize_input_tensor(poss, dtype=gs.tc_float, unbatched_ndim=2, contiguous=True)
+        poss = self._sanitize_input_tensor(poss, dtype=gs.tc_float, unbatched_ndim=2)
         assert poss.ndim == 3 and poss.shape[2] == 3, "Position tensor must have shape (B, num_verts, 3)."
         return poss
 
@@ -823,9 +818,8 @@ class FEMEntity(Entity):
         assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
 
         if link is None:
-            B = self._sim._B
-            link_init_pos = torch.zeros((B, 3), dtype=gs.tc_float, device=gs.device)
-            link_init_quat = torch.zeros((B, 4), dtype=gs.tc_float, device=gs.device)
+            link_init_pos = torch.zeros((self._sim._B, 3), dtype=gs.tc_float, device=gs.device)
+            link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
             link_idx = -1
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
@@ -837,7 +831,7 @@ class FEMEntity(Entity):
             self._sim.cur_substep_local,
             verts_idx,
             target_poss,
-            1 if is_soft_constraint else 0,
+            is_soft_constraint,
             stiffness,
             link_idx,
             link_init_pos,

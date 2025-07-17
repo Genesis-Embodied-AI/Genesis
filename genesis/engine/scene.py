@@ -1139,19 +1139,18 @@ class Scene(RBC):
         if self.n_envs == 0:
             gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
 
-        if isinstance(envs_idx, slice):
-            return self._envs_idx[envs_idx]
-        if isinstance(envs_idx, int):
-            return self._envs_idx[[envs_idx]]
+        if isinstance(envs_idx, (slice, int)):
+            return self._envs_idx[envs_idx : envs_idx + 1]
 
         # Early return if unsafe
         if unsafe:
             return envs_idx
 
         # Perform a bunch of sanity checks
-        _envs_idx = torch.atleast_1d(torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
+        _envs_idx = torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
         if _envs_idx is not envs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        _envs_idx = torch.atleast_1d(_envs_idx)
 
         if _envs_idx.ndim != 1:
             gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")

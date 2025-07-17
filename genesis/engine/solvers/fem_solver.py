@@ -354,7 +354,7 @@ class FEMSolver(Solver):
             layout=ti.Layout.AOS,
         )
 
-        self.vertex_constraints.is_constrained.fill(0)
+        self.vertex_constraints.is_constrained.fill(False)
         self.vertex_constraints.link_idx.fill(-1)
 
     def reset_grad(self):
@@ -374,8 +374,8 @@ class FEMSolver(Solver):
         self.init_batch_fields()
 
         # rendering
-        self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
-        self.envs_offset.from_numpy(self._scene.envs_offset.astype(gs.np_float))
+        self.envs_offset = ti.Vector.field(3, dtype=ti.f32, shape=self._B)
+        self.envs_offset.from_numpy(self._scene.envs_offset.astype(np.float32))
 
         # elements and bodies
         self._n_elements_max = self.n_elements
@@ -474,14 +474,13 @@ class FEMSolver(Solver):
             verts = self.elements_i[i_e].el2v
             mass_scaled = self.elements_i[i_e].mass_scaled
             H_scaled = -V_scaled * stress @ B.transpose()
-            dt = self.substep_dt
             for k in ti.static(range(3)):
                 force_scaled = ti.Vector([H_scaled[j, k] for j in range(3)])
 
                 # store so forces can be read out
                 self.elements_v_energy[i_b, verts[k]].force = force_scaled
 
-                dv = dt * force_scaled / mass_scaled
+                dv = self.substep_dt * force_scaled / mass_scaled
                 self.elements_v[f + 1, verts[k], i_b].vel += dv
                 self.elements_v[f + 1, verts[3], i_b].vel -= dv
 
@@ -1526,9 +1525,9 @@ class FEMSolver(Solver):
         link_init_quat: ti.types.ndarray(),  # shape [B, 4]
         envs_idx: ti.types.ndarray(),  # shape [B]
     ):
-        for i_vl, i_bl in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
-            i_b = envs_idx[i_bl]
-            i_v = verts_idx[i_b, i_vl]
+        for i_v_, i_b_ in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            i_v = verts_idx[i_b, i_v_]
             self.vertex_constraints[i_v, i_b].is_constrained = True
             self.vertex_constraints[i_v, i_b].is_soft_constraint = is_soft_constraint
             self.vertex_constraints[i_v, i_b].stiffness = stiffness
@@ -1536,10 +1535,10 @@ class FEMSolver(Solver):
 
             cur_pos = self.elements_v[f, i_v, i_b].pos
             for j in ti.static(range(3)):
-                self.vertex_constraints[i_v, i_b].target_pos[j] = target_poss[i_bl, i_vl, j]
-                self.vertex_constraints[i_v, i_b].link_offset_pos[j] = cur_pos[j] - link_init_pos[i_bl, j]
+                self.vertex_constraints[i_v, i_b].target_pos[j] = target_poss[i_b_, i_v_, j]
+                self.vertex_constraints[i_v, i_b].link_offset_pos[j] = cur_pos[j] - link_init_pos[i_b_, j]
             for j in ti.static(range(4)):
-                self.vertex_constraints[i_v, i_b].link_init_quat[j] = link_init_quat[i_bl, j]
+                self.vertex_constraints[i_v, i_b].link_init_quat[j] = link_init_quat[i_b_, j]
 
     @ti.kernel
     def _kernel_update_constraint_targets(
