@@ -14,7 +14,7 @@ cs_encode = {
     "": None,
 }
 
-yup_rotation = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+yup_rotation = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
 
 
 def get_input_attribute_value(shader, input_name, input_type=None):
@@ -325,9 +325,9 @@ def parse_mesh_usd(path, group_by_material, scale, surface):
                 UsdShade.MaterialBindingAPI.Apply(prim)
     for i, prim in enumerate(stage.Traverse()):
         if prim.IsA(UsdGeom.Mesh):
-            matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
+            matrix = np.asarray(xform_cache.GetLocalToWorldTransform(prim), dtype=np.float32)
             if yup:
-                matrix[:3, :3] @= yup_rotation
+                matrix[:3, :3] @= np.asarray(yup_rotation, dtype=np.float32)
             mesh_usd = UsdGeom.Mesh(prim)
             mesh_spec = prim.GetPrimStack()[-1]
             mesh_id = mesh_spec.layer.identifier + mesh_spec.path.pathString
