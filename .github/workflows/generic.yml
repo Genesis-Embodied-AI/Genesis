@@ -107,7 +107,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --forked -m required ./tests
+          pytest -v --logical --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: always()
