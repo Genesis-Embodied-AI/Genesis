@@ -17,7 +17,8 @@ from genesis.engine.states.solvers import SimState
 from genesis.engine.simulator import Simulator
 from genesis.options import (
     AvatarOptions,
-    CouplerOptions,
+    BaseCouplerOptions,
+    LegacyCouplerOptions,
     FEMOptions,
     MPMOptions,
     PBDOptions,
@@ -83,7 +84,7 @@ class Scene(RBC):
     def __init__(
         self,
         sim_options: SimOptions | None = None,
-        coupler_options: CouplerOptions | None = None,
+        coupler_options: BaseCouplerOptions | None = None,
         tool_options: ToolOptions | None = None,
         rigid_options: RigidOptions | None = None,
         avatar_options: AvatarOptions | None = None,
@@ -101,7 +102,7 @@ class Scene(RBC):
     ):
         # Handling of default arguments
         sim_options = sim_options or SimOptions()
-        coupler_options = coupler_options or CouplerOptions()
+        coupler_options = coupler_options or LegacyCouplerOptions()
         tool_options = tool_options or ToolOptions()
         rigid_options = rigid_options or RigidOptions()
         avatar_options = avatar_options or AvatarOptions()
@@ -201,7 +202,7 @@ class Scene(RBC):
     def _validate_options(
         self,
         sim_options: SimOptions,
-        coupler_options: CouplerOptions,
+        coupler_options: BaseCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
         avatar_options: AvatarOptions,
@@ -218,8 +219,8 @@ class Scene(RBC):
         if not isinstance(sim_options, SimOptions):
             gs.raise_exception("`sim_options` should be an instance of `SimOptions`.")
 
-        if not isinstance(coupler_options, CouplerOptions):
-            gs.raise_exception("`coupler_options` should be an instance of `CouplerOptions`.")
+        if not isinstance(coupler_options, BaseCouplerOptions):
+            gs.raise_exception("`coupler_options` should be an instance of `BaseCouplerOptions`.")
 
         if not isinstance(tool_options, ToolOptions):
             gs.raise_exception("`tool_options` should be an instance of `ToolOptions`.")
@@ -667,13 +668,10 @@ class Scene(RBC):
         # compute offset values for visualizing each env
         if not isinstance(env_spacing, (list, tuple)) or len(env_spacing) != 2:
             gs.raise_exception("`env_spacing` should be a tuple of length 2.")
-        idx_x = np.floor(np.arange(self._B) / self.n_envs_per_row)
-        idx_y = np.arange(self._B) % self.n_envs_per_row
-        idx_z = np.arange(self._B)
-        offset_x = idx_x * self.env_spacing[0]
-        offset_y = idx_y * self.env_spacing[1]
-        offset_z = idx_z * 0.0
-        self.envs_offset = np.vstack([offset_x, offset_y, offset_z]).T
+        offset_x = (np.arange(self._B) // self.n_envs_per_row) * self.env_spacing[0]
+        offset_y = (np.arange(self._B) % self.n_envs_per_row) * self.env_spacing[1]
+        offset_z = np.zeros((self._B,))
+        self.envs_offset = np.stack((offset_x, offset_y, offset_z), axis=-1, dtype=gs.np_float)
 
         # move to center
         if center_envs_at_origin:

@@ -104,7 +104,7 @@ class MPMSolver(Solver):
 
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # static particle info
@@ -112,7 +112,7 @@ class MPMSolver(Solver):
             mat_idx=gs.ti_int,
             mass=gs.ti_float,
             default_Jp=gs.ti_float,
-            free=gs.ti_int,
+            free=gs.ti_bool,
             # for muscle
             muscle_group=gs.ti_int,
             muscle_direction=gs.ti_vec3,
@@ -122,7 +122,7 @@ class MPMSolver(Solver):
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # construct fields
@@ -176,7 +176,7 @@ class MPMSolver(Solver):
 
         struct_vvert_state_render = ti.types.struct(
             pos=gs.ti_vec3,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
         self.vverts_render = struct_vvert_state_render.field(
             shape=self._batch_shape(max(1, self._n_vverts)), layout=ti.Layout.SOA
@@ -414,7 +414,7 @@ class MPMSolver(Solver):
                             weight * self.particles_info[i_p].mass
                         )
 
-                    if self.particles_info[i_p].free == 0:  # non-free particles behave as boundary conditions
+                    if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.kernel
@@ -627,7 +627,7 @@ class MPMSolver(Solver):
                 self._ckpt[ckpt_name]["C"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["F"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["Jp"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=torch.int32)
+                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=torch.bool)
 
             self._kernel_get_state(
                 0,
@@ -691,7 +691,7 @@ class MPMSolver(Solver):
             self.particles_info[i_global].mat_idx = mat_idx
             self.particles_info[i_global].default_Jp = mat_default_Jp
             self.particles_info[i_global].mass = self._p_vol * mat_rho
-            self.particles_info[i_global].free = 1
+            self.particles_info[i_global].free = True
             self.particles_info[i_global].muscle_group = 0
             self.particles_info[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
@@ -720,9 +720,9 @@ class MPMSolver(Solver):
                 self.particles[f, i_global, i_b].pos[k] = pos[i_b, i_p, k]
 
             # we restore these whenever directly setting positions
-            self.particles[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+            self.particles[f, i_global, i_b].vel.fill(0.0)
             self.particles[f, i_global, i_b].F = ti.Matrix.identity(gs.ti_float, 3)
-            self.particles[f, i_global, i_b].C = ti.Matrix.zero(gs.ti_float, 3, 3)
+            self.particles[f, i_global, i_b].C.fill(0.0)
             self.particles[f, i_global, i_b].Jp = self.particles_info[i_global].default_Jp
 
     @ti.kernel

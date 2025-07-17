@@ -6,7 +6,7 @@ import igl
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from .utils import assert_allclose
+from .utils import assert_allclose, get_hf_assets
 
 
 @pytest.fixture(scope="session")
@@ -207,7 +207,6 @@ def fem_material_linear():
 
 
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -247,15 +246,14 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = tensor_to_array(state.pos)
-        min_pos_z = np.min(pos[..., 2])
+        min_pos_z = state.pos[..., 2].min()
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
             min_pos_z, 0.0, atol=5e-2
         ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
 
 
 def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -286,11 +284,11 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
 
     for entity in scene.entities:
         state = entity.get_state()
-        pos = tensor_to_array(state.pos)
-        min_pos_z = np.min(pos[..., 2])
+        min_pos_z = state.pos[..., 2].min()
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, 0.0, atol=1e-3
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+            min_pos_z, -1e-3, atol=1e-4
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3."
 
 
 @pytest.fixture(scope="session")
@@ -300,12 +298,12 @@ def fem_material_linear_corotated():
 
 
 def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
             substeps=2,
         ),
+        # Not using default fem_options to make it faster, linear material only need one iteration without linesearch
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
@@ -333,9 +331,10 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         state = entity.get_state()
         pos = tensor_to_array(state.pos.reshape(-1, 3))
         min_pos_z = np.min(pos[..., 2])
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, 0.0, atol=1e-3
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+            min_pos_z, -1e-3, atol=1e-4
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3."
         BV, BF = igl.bounding_box(pos)
         x_scale = BV[0, 0] - BV[-1, 0]
         y_scale = BV[0, 1] - BV[-1, 1]
@@ -344,6 +343,63 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         assert_allclose(y_scale, 0.2, atol=1e-3), f"Entity {entity.uid} Y scale {y_scale} is not close to 0.2."
         # The Z scale is expected to be more squashed due to gravity
         assert_allclose(z_scale, 0.2, atol=2e-3), f"Entity {entity.uid} Z scale {z_scale} is not close to 0.2."
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear_corotated_soft():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
+
+
+def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+    )
+
+    # Add first FEM entity
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.1),
+            radius=0.1,
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    # Add second FEM entity
+    scale = 0.1
+    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            scale=scale,
+            pos=(0.0, 0.0, scale * 4.0),
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    # Build the scene
+    scene.build()
+    # Run simulation
+    for _ in range(200):
+        scene.step()
+
+    depths = [-1e-3, -2e-5]
+    atols = [2e-4, 4e-6]
+    for i, entity in enumerate(scene.entities):
+        state = entity.get_state()
+        min_pos_z = state.pos[..., 2].min()
+        # The contact requires some penetration to generate enough contact force to cancel out gravity
+        assert_allclose(
+            min_pos_z, depths[i], atol=atols[i]
+        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to {depths[i]}."
 
 
 def test_box_hard_vertex_constraint(show_viewer):

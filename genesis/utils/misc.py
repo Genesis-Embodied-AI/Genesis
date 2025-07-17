@@ -11,7 +11,7 @@ import sys
 import os
 from dataclasses import dataclass
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Type
 
 import numpy as np
 import cpuinfo
@@ -57,6 +57,9 @@ class redirect_libc_stderr:
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
+    # --------------------------------------------------
+    # Enter: duplicate stderr → tmp, dup2(target) → stderr
+    # --------------------------------------------------
     def __enter__(self):
         self.stderr_fileno = sys.stderr.fileno()
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
@@ -306,8 +309,8 @@ def tensor_to_cpu(x):
     return x
 
 
-def tensor_to_array(x):
-    return np.asarray(tensor_to_cpu(x))
+def tensor_to_array(x: torch.Tensor, dtype: Type[np.generic] | None = None) -> np.ndarray:
+    return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 
 def is_approx_multiple(a, b, tol=1e-7):
@@ -318,7 +321,7 @@ def is_approx_multiple(a, b, tol=1e-7):
 
 ALLOCATE_TENSOR_WARNING = (
     "Tensor had to be re-allocated because of incorrect dtype/device or non-contiguous memory. This may "
-    "dramatically impede performance if it occurs in the critical path of your application."
+    "impede performance if it occurs in the critical path of your application."
 )
 
 FIELD_CACHE: dict[int, "FieldMetadata"] = OrderedDict()
