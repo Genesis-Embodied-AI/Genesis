@@ -474,7 +474,7 @@ def test_box_soft_vertex_constraint(show_viewer):
     """Test if a box with strong soft vertex constraints has those vertices near."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=5e-4,
+            dt=1e-3,
             substeps=1,
         ),
         fem_options=gs.options.FEMOptions(
@@ -500,14 +500,20 @@ def test_box_soft_vertex_constraint(show_viewer):
     if show_viewer:
         scene.draw_debug_spheres(poss=target_poss, radius=0.02, color=(1, 0, 1, 0.8))
 
-    box.set_vertex_constraints(verts_idx=verts_idx, target_poss=target_poss, is_soft_constraint=True, stiffness=1.0e7)
-    box.set_velocity(gs.tensor([0.1, 0.1, 0.1]))
+    box.set_vertex_constraints(
+        verts_idx=verts_idx,
+        target_poss=target_poss,
+        is_soft_constraint=True,
+        stiffness=2.0e5,
+    )
+    box.set_velocity(gs.tensor([1.0, 1.0, 1.0]) * 1e-2)
 
-    for _ in range(1000):
-        scene.step()
+    with timer():
+        for _ in range(500):
+            scene.step()
 
     positions = box.get_state().pos[0][verts_idx]
 
     assert_allclose(
-        positions, target_poss, tol=1e-4
+        positions, target_poss, tol=5e-5
     ), "Vertices should be near target positions with strong soft constraints"
