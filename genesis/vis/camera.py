@@ -267,13 +267,12 @@ class Camera(Sensor):
             gs.raise_exception("No renderer was found.")
 
         if seg_idxc_arr is not None:
-            seg_idx_arr = self._rasterizer._context.seg_idxc_to_idx(seg_idxc_arr)
             if colorize_seg or (self._GUI and self._visualizer.connected_to_display):
                 seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
             if colorize_seg:
                 seg_arr = seg_color_arr
             else:
-                seg_arr = seg_idx_arr
+                seg_arr = seg_idxc_arr
 
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
@@ -319,6 +318,21 @@ class Camera(Sensor):
             self._recorded_imgs.append(rgb_arr)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
+
+    @gs.assert_built
+    def get_segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+        """
+        return self._rasterizer._context.seg_idxc_map
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
@@ -375,29 +389,30 @@ class Camera(Sensor):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
-                x = x.flatten()
-                y = y.flatten()
+                y, x = np.meshgrid(
+                    np.arange(height, dtype=np.float32), np.arange(width, dtype=np.float32), indexing="ij"
+                )
+                x = x.reshape((-1,))
+                y = y.reshape((-1,))
 
                 # Normalize pixel coordinates
-                normalized_x = x.astype(np.float32) - _cx
-                normalized_y = y.astype(np.float32) - _cy
+                normalized_x = x - _cx
+                normalized_y = y - _cy
 
                 # Convert to world coordinates
                 world_x = normalized_x * depth[y, x] / _fx
                 world_y = normalized_y * depth[y, x] / _fy
                 world_z = depth[y, x]
 
-                pc = np.vstack((world_x, world_y, world_z)).T
+                pc = np.stack((world_x, world_y, world_z), axis=1)
 
-                point_cloud_h = np.hstack((pc, np.ones((pc.shape[0], 1))))
+                point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
                 if world:
-                    point_cloud_world = (pose @ point_cloud_h.T).T
-                    point_cloud_world = point_cloud_world[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
-
+                    point_cloud_world = point_cloud_h @ pose.T
+                    point_cloud_world = point_cloud_world[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
                     return point_cloud_world, mask
                 else:
-                    point_cloud = point_cloud_h[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
+                    point_cloud = point_cloud_h[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
                     return point_cloud, mask
 
             intrinsic_K = opengl_projection_matrix_to_intrinsics(
@@ -406,7 +421,7 @@ class Camera(Sensor):
                 height=self.res[1],
             )
 
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
             cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
             pc, mask = backproject_depth_to_pointcloud(

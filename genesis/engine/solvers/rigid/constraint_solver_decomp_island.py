@@ -24,7 +24,7 @@ class ConstraintSolverIsland:
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
         self.len_constraints = (
-            5 * self._collider._max_contact_pairs
+            5 * self._collider._collider_info._max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)
@@ -133,13 +133,13 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            contact_data = self._collider.contact_data[i_col, i_b]
+            contact_data = self._collider._collider_state.contact_data[i_col, i_b]
             link_a = contact_data.link_a
             link_b = contact_data.link_b
             link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
 
-            d1, d2 = gu.orthogonals(contact_data.normal)
+            d1, d2 = gu.ti_orthogonals(contact_data.normal)
 
             invweight = self._solver.links_info[link_a_maybe_batch].invweight[0] + self._solver.links_info[
                 link_b_maybe_batch
@@ -178,7 +178,7 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
+                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].COM
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
@@ -523,15 +523,15 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            contact_data = self._collider.contact_data[i_col, i_b]
+            contact_data = self._collider._collider_state.contact_data[i_col, i_b]
 
             force = ti.Vector.zero(gs.ti_float, 3)
-            d1, d2 = gu.orthogonals(contact_data.normal)
+            d1, d2 = gu.ti_orthogonals(contact_data.normal)
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
                 n = d * contact_data.friction - contact_data.normal
                 force += n * self.efc_force[i_island_col * 4 + i, i_b]
-            self._collider.contact_data[i_col, i_b].force = force
+            self._collider._collider_state.contact_data[i_col, i_b].force = force
 
             self._solver.links_state[contact_data.link_a, i_b].contact_force = (
                 self._solver.links_state[contact_data.link_a, i_b].contact_force - force

@@ -55,31 +55,35 @@ class RigidLink(RBC):
         self._entity_idx_in_solver = entity.idx
 
         self._uid = gs.UID()
-        self._idx = idx
-        self._parent_idx = parent_idx
-        self._root_idx = root_idx
-        self._child_idxs = list()
-        self._invweight = invweight
+        self._idx: int = idx
+        self._parent_idx: int = parent_idx  # -1 if no parent
+        self._root_idx: int | None = root_idx  # None if no root
+        self._child_idxs: list[int] = list()
+        self._invweight: float | None = invweight
 
-        self._joint_start = joint_start
-        self._n_joints = n_joints
+        self._joint_start: int = joint_start
+        self._n_joints: int = n_joints
 
-        self._geom_start = geom_start
-        self._cell_start = cell_start
-        self._vert_start = vert_start
-        self._face_start = face_start
-        self._edge_start = edge_start
-        self._verts_state_start = verts_state_start
-        self._vgeom_start = vgeom_start
-        self._vvert_start = vvert_start
-        self._vface_start = vface_start
+        self._geom_start: int = geom_start
+        self._cell_start: int = cell_start
+        self._vert_start: int = vert_start
+        self._face_start: int = face_start
+        self._edge_start: int = edge_start
+        self._verts_state_start: int = verts_state_start
+        self._vgeom_start: int = vgeom_start
+        self._vvert_start: int = vvert_start
+        self._vface_start: int = vface_start
 
         # Link position & rotation at creation time:
         self._pos: ArrayLike = pos
         self._quat: ArrayLike = quat
         # Link's center-of-mass position & principal axes frame rotation at creation time:
-        self._inertial_pos: ArrayLike = inertial_pos
-        self._inertial_quat: ArrayLike = inertial_quat
+        if inertial_pos is not None:
+            inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
+        self._inertial_pos: ArrayLike | None = inertial_pos
+        if inertial_quat is not None:
+            inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
+        self._inertial_quat: ArrayLike | None = inertial_quat
         self._inertial_mass = inertial_mass
         self._inertial_i = inertial_i
 
@@ -387,7 +391,9 @@ class RigidLink(RBC):
             self._invweight /= ratio
         self._inertial_i *= ratio
 
-        self._solver._kernel_adjust_link_inertia(self.idx, ratio)
+        self._solver._kernel_adjust_link_inertia(
+            self.idx, ratio, self._solver.links_info, self._solver._static_rigid_sim_config
+        )
 
     @gs.assert_built
     def get_mass(self):

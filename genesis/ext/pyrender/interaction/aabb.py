@@ -54,7 +54,7 @@ class AABB:
         hit_pos = ray.origin + ray.direction * enter
         return RayHit(enter, hit_pos, normal)
 
-    def raycast_oobb(self, pose: Pose, ray: Ray) -> RayHit:
+    def raycast_obb(self, pose: Pose, ray: Ray) -> RayHit:
         inv_pose = pose.get_inverse()
         origin2 = inv_pose.transform_point(ray.origin)
         direction2 = inv_pose.transform_direction(ray.direction)

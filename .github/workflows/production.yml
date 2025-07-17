@@ -1,4 +1,4 @@
-name: Linux x86 - Nvidia GPU
+name: Production
 
 on:
   # Trigger the workflow on push on the master branch, or for any pull request

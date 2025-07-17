@@ -56,7 +56,7 @@ from .constants import (
     TextAlign,
 )
 from .interaction.viewer_interaction import ViewerInteraction
-from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE
+from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
@@ -400,8 +400,6 @@ class Viewer(pyglet.window.Window):
         self.pending_offscreen_camera = None
         self.offscreen_result = None
 
-        self.pending_buffer_updates = {}
-
         # Starting the viewer would raise an exception if the OpenGL context is invalid for some reason. This exception
         # must be caught in order to implement some fallback mechanism. One may want to start the viewer from the main
         # thread while the running loop would be running on a background thread. However, this approach is not possible
@@ -655,10 +653,6 @@ class Viewer(pyglet.window.Window):
             self.render_flags["depth"] = False
         return self.offscreen_result
 
-    def update_buffers(self):
-        self._renderer.jit.update_buffer(self.pending_buffer_updates)
-        self.pending_buffer_updates.clear()
-
     def wait_until_initialized(self):
         self._initialized_event.wait()
 
@@ -671,7 +665,10 @@ class Viewer(pyglet.window.Window):
 
         # Make OpenGL context current
         self.switch_to()
-        self.update_buffers()
+
+        # Update the context if not already done before
+        self._renderer.jit.update_buffer(self.gs_context.buffer)
+        self.gs_context.buffer.clear()
 
         self.offscreen_results = []
         self.render_flags["offscreen"] = True
@@ -696,7 +693,10 @@ class Viewer(pyglet.window.Window):
 
         # Make OpenGL context current
         self.switch_to()
-        self.update_buffers()
+
+        # Update the context if not already done before
+        self._renderer.jit.update_buffer(self.gs_context.buffer)
+        self.gs_context.buffer.clear()
 
         # Render the scene
         self.clear()
@@ -793,8 +793,10 @@ class Viewer(pyglet.window.Window):
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with one or more buttons held down."""
-        self._trackball.drag(np.array([x, y]))
-        return self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
+        result = self.viewer_interaction.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
+        if result is not EVENT_HANDLED:
+            result = self._trackball.drag(np.array([x, y]))
+        return result
 
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a mouse release."""
