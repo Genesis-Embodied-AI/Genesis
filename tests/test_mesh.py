@@ -300,7 +300,7 @@ def test_usd_parse(usd_filename):
 
 @pytest.mark.skipif(
     sys.version_info[:2] != (3, 10) or sys.platform not in ("Linux", "Windows"),
-    reason="omniverse-kit used by USD Baking cannot be correctly installed other than specified python version and platform now.",
+    reason="omniverse-kit used by USD Baking cannot be correctly installed on this platform now.",
 )
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
