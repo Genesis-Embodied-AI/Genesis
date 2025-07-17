@@ -221,7 +221,6 @@ class SAPCoupler(RBC):
         self.fem_state_v = fem_state_v.field(
             shape=(self.sim._B, self.fem_solver.n_vertices), needs_grad=False, layout=ti.Layout.SOA
         )
-        print(self.fem_solver.n_vertices)
 
         pcg_fem_state_v = ti.types.struct(
             diag3x3=gs.ti_mat3,  # diagonal 3-by-3 block of the hessian
@@ -2898,7 +2897,7 @@ class RigidFemTetContact(RigidFEMContact):
     def compute_delassus(self, i_p):
         pairs = ti.static(self.contact_pairs)
         world = ti.Matrix.cols([pairs[i_p].tangent0, pairs[i_p].tangent1, pairs[i_p].normal])
-        return world.transpose() @ self.W[i_p] @ world * self.W[i_p]
+        return world.transpose() @ self.W[i_p] @ world
 
     @ti.func
     def compute_Jx(self, i_p, x0, x1):
@@ -2941,9 +2940,9 @@ class RigidFemTetContact(RigidFEMContact):
         dof_start = pairs[i_p].dof_start
         for j in ti.static(range(3)):
             for i in ti.static(range(3)):
-                y1[i_b, dof_start + i] -= pairs[i_p].barycentric1[j] * x[i]
+                y1[i_b, dof_start + i] -= pairs[i_p].barycentric1[j] * x_[i]
             r = pairs[i_p].r[:, j]
-            z = r.cross(x)
+            z = r.cross(x_)
             for i in ti.static(range(3)):
                 y1[i_b, dof_start + 3 + i] -= pairs[i_p].barycentric1[j] * z[i]
 
