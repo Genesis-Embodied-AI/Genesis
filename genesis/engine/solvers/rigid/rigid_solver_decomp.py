@@ -2403,19 +2403,19 @@ class RigidSolver(Solver):
         static_rigid_sim_config: ti.template(),
     ):
         for i_b in envs_idx:
-            self._func_update_cartesian_space(
+            self_unused._func_update_cartesian_space(
                 i_b=i_b,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_info=self.geoms_info,
-                geoms_state=self.geoms_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                geoms_info=geoms_info,
+                geoms_state=geoms_state,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
 
     def _func_constraint_force(self):
