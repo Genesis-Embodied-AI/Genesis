@@ -31,6 +31,10 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
+    # Force disabling forked for non-linux systems
+    if not sys.platform.startswith("linux"):
+        config.option.forked = False
+
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
@@ -48,10 +52,6 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
                 raise ValueError(
                     f"The number of workers for running benchmarks cannot exceed '{max_workers}' on this machine."
                 )
-
-    # Force disabling forked for non-linux systems
-    if not sys.platform.startswith("linux"):
-        config.option.forked = False
 
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
@@ -91,15 +91,18 @@ def pytest_xdist_auto_num_workers(config):
     import psutil
     import genesis as gs
 
-    # Get available memory (RAM & VRAM) and number of physical cores.
-    physical_core_count = psutil.cpu_count(logical=False)
+    # Get available memory (RAM & VRAM) and number of cores
+    physical_core_count = psutil.cpu_count(logical=config.option.logical)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
-    _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
+    _, _, vram_memory, backend = gs.utils.get_device(gs.gpu)
+    if backend == gs.cpu:
+        # Ignore VRAM if no GPU is available
+        vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
     # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
     # does not completely release memory between each test.
-    if sys.platform == "darwin":
+    if sys.platform in ("darwin", "win32"):
         ram_memory_per_worker = 3.0
         vram_memory_per_worker = 1.0  # Does not really makes sense on Apple Silicon
     elif config.option.forked:
@@ -141,6 +144,9 @@ def pytest_runtest_setup(item):
 
 def pytest_addoption(parser):
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
+    parser.addoption(
+        "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
+    )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
 
 
