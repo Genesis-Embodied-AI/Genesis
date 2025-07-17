@@ -3,7 +3,7 @@ import taichi as ti
 import genesis as gs
 from genesis.engine.entities import RigidEntity
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import ti_inv_transform_by_quat, inv_transform_by_quat
+from genesis.utils.geom import ti_inv_transform_by_quat, inv_transform_by_quat, transform_by_trans_quat
 from typing import Dict, List, Any, Optional
 from .base_sensor import Sensor
 import numpy as np
@@ -119,10 +119,12 @@ class RigidContactForceGridSensor(RigidContactForceSensor):
         self.grid_size = np.array(grid_size, dtype=np.int32)
 
         link = self._sim.rigid_solver.links[self.link_idx]
-        verts = np.concatenate([geom._init_verts for geom in link._geoms])
-        self.min_bounds = np.array(verts.min(axis=-2, keepdims=True)[0], dtype=np.float32)
-        self.max_bounds = np.array(verts.max(axis=-2, keepdims=True)[0], dtype=np.float32)
-        self.bounds_size = self.max_bounds - self.min_bounds
+        verts = np.concatenate(
+            [transform_by_trans_quat(geom._init_verts, geom.init_pos, geom.init_quat) for geom in link._geoms]
+        )
+        self._min_bounds = np.array(verts.min(axis=-2, keepdims=True)[0], dtype=np.float32)
+        self._max_bounds = np.array(verts.max(axis=-2, keepdims=True)[0], dtype=np.float32)
+        self._bounds_size = self._max_bounds - self._min_bounds
 
     def read(self, envs_idx=None):
         if self._cls._last_contacts_update_step != self._sim.cur_step_global:
@@ -150,8 +152,8 @@ class RigidContactForceGridSensor(RigidContactForceSensor):
                 link_mask,
                 link_pos,
                 link_quat,
-                self.min_bounds,
-                self.bounds_size,
+                self._min_bounds,
+                self._bounds_size,
                 self.grid_size,
             )
 
@@ -202,3 +204,11 @@ class RigidContactForceGridSensor(RigidContactForceSensor):
                 if 0 <= grid_x < grid_size[0] and 0 <= grid_y < grid_size[1] and 0 <= grid_z < grid_size[2]:
                     for j in ti.static(range(3)):
                         grid[i_b, grid_x, grid_y, grid_z, j] += force[j]
+
+    @property
+    def min_bounds(self):
+        return self._min_bounds
+
+    @property
+    def max_bounds(self):
+        return self._max_bounds
