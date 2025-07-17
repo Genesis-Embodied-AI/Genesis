@@ -15,6 +15,12 @@ We define all types of morphologies here: shape primitives, meshes, URDF, MJCF, 
 These are independent of backend solver type and are shared by different solvers. E.g. a mesh can be either loaded as a rigid object / MPM object / FEM object.
 """
 
+URDF_FORMAT = ".urdf"
+MJCF_FORMAT = ".xml"
+MESH_FORMAT = (".obj", ".ply", ".stl")
+GLTF_FORMAT = (".glb", ".gltf")
+USD_FORMAT = (".usd", ".usda", ".usdc", ".usdz")
+
 
 class TetGenMixin(Options):
     """
@@ -462,6 +468,9 @@ class FileMorph(Morph):
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
 
+    def is_format(self, format):
+        return self.file.lower().endswith(format)
+
 
 class Mesh(FileMorph, TetGenMixin):
     """
@@ -628,8 +637,8 @@ class MJCF(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
-        if not self.file.endswith(".xml"):
-            gs.raise_exception(f"Expected `.xml` extension for MJCF file: {self.file}")
+        if not self.is_format(MJCF_FORMAT):
+            gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
         # What you want to do with scaling is kinda "zoom" the world from the perspective of the entity, i.e. scale the
         # geometric properties of an entity wrt its root pose. In the general case, ie for a 3D vector scale, (x, y, z)
@@ -727,8 +736,8 @@ class URDF(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
-        if isinstance(self.file, str) and not self.file.endswith(".urdf"):
-            gs.raise_exception(f"Expected `.urdf` extension for URDF file: {self.file}")
+        if isinstance(self.file, str) and not self.is_format(URDF_FORMAT):
+            gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
 
         # Anisotropic scaling is ill-defined for poly-articulated robots. See related MJCF about this for details.
         if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
@@ -846,8 +855,8 @@ class Drone(FileMorph):
         # Make sure that Propellers links are preserved
         self.links_to_keep = tuple(set([*self.links_to_keep, *self.propellers_link_name]))
 
-        if isinstance(self.file, str) and not self.file.endswith(".urdf"):
-            gs.raise_exception(f"Drone only supports `.urdf` extension: {self.file}")
+        if isinstance(self.file, str) and not self.is_format(URDF_FORMAT):
+            gs.raise_exception(f"Drone only supports `{URDF_FORMAT}` extension: {self.file}")
 
         if self.model not in ["CF2X", "CF2P", "RACE"]:
             gs.raise_exception(f"Unsupported `model`: {self.model}.")
