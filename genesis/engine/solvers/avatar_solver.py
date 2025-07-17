@@ -91,7 +91,17 @@ class AvatarSolver(RigidSolver):
     def get_state(self, f):
         if self.is_active():
             state = AvatarSolverState(self.scene)
-            self._kernel_get_state(state.qpos, state.dofs_vel, state.links_pos, state.links_quat)
+            self._kernel_get_state(
+                state.qpos,
+                state.dofs_vel,
+                state.links_pos,
+                state.links_quat,
+                links_state=self.links_state,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
         else:
             state = None
         return state

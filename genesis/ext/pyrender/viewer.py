@@ -400,8 +400,6 @@ class Viewer(pyglet.window.Window):
         self.pending_offscreen_camera = None
         self.offscreen_result = None
 
-        self.pending_buffer_updates = {}
-
         # Starting the viewer would raise an exception if the OpenGL context is invalid for some reason. This exception
         # must be caught in order to implement some fallback mechanism. One may want to start the viewer from the main
         # thread while the running loop would be running on a background thread. However, this approach is not possible
@@ -655,10 +653,6 @@ class Viewer(pyglet.window.Window):
             self.render_flags["depth"] = False
         return self.offscreen_result
 
-    def update_buffers(self):
-        self._renderer.jit.update_buffer(self.pending_buffer_updates)
-        self.pending_buffer_updates.clear()
-
     def wait_until_initialized(self):
         self._initialized_event.wait()
 
@@ -671,7 +665,10 @@ class Viewer(pyglet.window.Window):
 
         # Make OpenGL context current
         self.switch_to()
-        self.update_buffers()
+
+        # Update the context if not already done before
+        self._renderer.jit.update_buffer(self.gs_context.buffer)
+        self.gs_context.buffer.clear()
 
         self.offscreen_results = []
         self.render_flags["offscreen"] = True
@@ -696,7 +693,10 @@ class Viewer(pyglet.window.Window):
 
         # Make OpenGL context current
         self.switch_to()
-        self.update_buffers()
+
+        # Update the context if not already done before
+        self._renderer.jit.update_buffer(self.gs_context.buffer)
+        self.gs_context.buffer.clear()
 
         # Render the scene
         self.clear()

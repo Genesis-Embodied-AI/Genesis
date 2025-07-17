@@ -144,7 +144,8 @@ class Viewer(RBC):
             self.update_following()
 
         with self.lock:
-            self._pyrender_viewer.pending_buffer_updates |= self.context.update()
+            # Update context
+            self.context.update()
 
             # Refresh viewer by default if and if this is possible
             if auto_refresh is None:
@@ -157,6 +158,9 @@ class Viewer(RBC):
         # lock FPS
         if self._max_FPS is not None:
             self.rate.sleep()
+
+    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
+        return self._pyrender_viewer.render_offscreen(camera_node, render_target, depth, seg, normal)
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
         """

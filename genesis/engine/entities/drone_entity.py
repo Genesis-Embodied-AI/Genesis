@@ -83,6 +83,7 @@ class DroneEntity(RigidEntity):
             self.KF,
             self.KM,
             self._model == "RACE",
+            self.solver.links_state,
         )
 
     def update_propeller_vgeoms(self):
