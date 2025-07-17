@@ -1,10 +1,54 @@
-from dataclasses import dataclass
 from typing import Callable
+import dataclasses
+import os
+import inspect
+from typing import Any, Type, cast
 
 import taichi as ti
 
 import genesis as gs
 import numpy as np
+
+# as a temporary solution, we get is_ndarray from os's environment variable
+use_ndarray = os.environ.get("GS_USE_NDARRAY", "0") == "1"
+V = ti.ndarray if use_ndarray else ti.field
+
+
+def bake(dough):
+    # this bit is field/ndarray dependent, but invariant/re-usable
+    struct_name = dough.__class__.__name__ + "Baked"
+    type_by_name: dict[str, tuple[bool, Any, Any]] = {}
+    arrays = {}
+    for child_name, member in dough.__dict__.items():
+        if child_name.startswith("_"):
+            continue
+        if inspect.ismethod(member):
+            continue
+        if isinstance(member, ti.Ndarray):
+            ndarray = cast(ti.Ndarray, member)
+            type_by_name[child_name] = (False, ndarray.dtype, ndarray.shape)
+        if isinstance(member, ti.Field):
+            field = cast(ti.Field, member)
+            type_by_name[child_name] = (True, field.dtype, field.shape)
+        arrays[child_name] = member
+
+    def create_type(is_field, element_type, shape):
+        if is_field:
+            return ti.template()
+        return ti.types.ndarray(element_type, ndim=len(shape))
+
+    declaration_type_by_name = [
+        (name, create_type(is_field, element_type, shape))
+        for name, (is_field, element_type, shape) in type_by_name.items()
+    ]
+    DataclassClass = dataclasses.make_dataclass(struct_name, declaration_type_by_name)
+
+    dataclass_object = DataclassClass(**arrays)
+    return DataclassClass, dataclass_object
+
+    # def register(self, name, dough):
+    #     self.doughs[name] = dough
+
 
 # we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
 DofsState = ti.template()
@@ -28,16 +72,63 @@ EntitiesInfo = ti.template()
 EqualitiesInfo = ti.template()
 
 
+# @ti.data_oriented
+# class RigidGlobalInfo:
+#     def __init__(self, solver, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
+#         self.n_awake_dofs = V(dtype=gs.ti_int, shape=f_batch())
+#         self.awake_dofs = V(dtype=gs.ti_int, shape=f_batch(n_dofs))
+
+#         self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+#         self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+
+#         # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+
+
 @ti.data_oriented
 class RigidGlobalInfo:
-    def __init__(self, solver, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
-        self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
-        self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
+    def __init__(self, solver):
+        f_batch = solver._batch_shape
+        self.n_awake_dofs = V(dtype=gs.ti_int, shape=f_batch())
+        self.awake_dofs = V(dtype=gs.ti_int, shape=f_batch(solver.n_dofs_))
 
-        self.qpos0 = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
-        self.qpos = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+        self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+        self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
 
         # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+        self.init_mass_mat(solver)
+
+    def init_mass_mat(self, solver):
+
+        # self.entity_max_dofs = max([entity.n_dofs for entity in solver._entities])
+
+        self.mass_mat = V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_L = V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_D_inv = V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,)))
+
+        self._mass_mat_mask = V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_))
+
+        self.meaninertia = V(dtype=gs.ti_float, shape=solver._batch_shape())
+
+        # tree structure information
+        mass_parent_mask = np.zeros((solver.n_dofs_, solver.n_dofs_), dtype=gs.np_float)
+
+        for i in range(solver.n_links):
+            j = i
+            while j != -1:
+                for i_d, j_d in ti.ndrange(
+                    (solver.links[i].dof_start, solver.links[i].dof_end),
+                    (solver.links[j].dof_start, solver.links[j].dof_end),
+                ):
+                    mass_parent_mask[i_d, j_d] = 1.0
+                j = solver.links[j].parent_idx
+
+        self.mass_parent_mask = V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_))
+        self.mass_parent_mask.from_numpy(mass_parent_mask)
+
+        self._mass_mat_mask.fill(1)
+        self.mass_mat_L.fill(0)
+        self.mass_mat_D_inv.fill(0)
+        self.meaninertia.fill(0)
 
 
 # =========================================== Constraint ===========================================
@@ -382,3 +473,70 @@ class SupportFieldInfo:
         self.support_cell_start = ti.field(dtype=gs.ti_int, shape=n_geoms)
         self.support_v = ti.Vector.field(3, dtype=gs.ti_float, shape=max(1, n_support_cells))
         self.support_vid = ti.field(dtype=gs.ti_int, shape=max(1, n_support_cells))
+
+
+@ti.data_oriented
+class StructDofsInfo:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_dofs_) if solver._options.batch_dofs_info else solver.n_dofs_
+        self.stiffness = V(dtype=gs.ti_float, shape=shape)
+        self.invweight = V(dtype=gs.ti_float, shape=shape)
+        self.armature = V(dtype=gs.ti_float, shape=shape)
+        self.damping = V(dtype=gs.ti_float, shape=shape)
+        self.motion_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.motion_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.limit = V(dtype=gs.ti_vec2, shape=shape)
+        self.dof_start = V(dtype=gs.ti_int, shape=shape)
+        self.kp = V(dtype=gs.ti_float, shape=shape)
+        self.kv = V(dtype=gs.ti_float, shape=shape)
+        self.force_range = V(dtype=gs.ti_vec2, shape=shape)
+
+
+@ti.data_oriented
+class StructDofsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_dofs_)
+        self.force = V(dtype=gs.ti_float, shape=shape)
+        self.qf_bias = V(dtype=gs.ti_float, shape=shape)
+        self.qf_passive = V(dtype=gs.ti_float, shape=shape)
+        self.qf_actuator = V(dtype=gs.ti_float, shape=shape)
+        self.qf_applied = V(dtype=gs.ti_float, shape=shape)
+        self.act_length = V(dtype=gs.ti_float, shape=shape)
+        self.pos = V(dtype=gs.ti_float, shape=shape)
+        self.vel = V(dtype=gs.ti_float, shape=shape)
+        self.acc = V(dtype=gs.ti_float, shape=shape)
+        self.acc_smooth = V(dtype=gs.ti_float, shape=shape)
+        self.qf_smooth = V(dtype=gs.ti_float, shape=shape)
+        self.qf_constraint = V(dtype=gs.ti_float, shape=shape)
+        self.cdof_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdof_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofvel_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofvel_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofd_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofd_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.f_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.f_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.ctrl_force = V(dtype=gs.ti_float, shape=shape)
+        self.ctrl_pos = V(dtype=gs.ti_float, shape=shape)
+        self.ctrl_vel = V(dtype=gs.ti_float, shape=shape)
+        self.ctrl_mode = V(dtype=gs.ti_int, shape=shape)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class DataManager:
+    def __init__(self, solver):
+        self.solver = solver
+        # self.doughs = {}
+        self.rigid_global_info = RigidGlobalInfo(self.solver)
+        self.dofs_info = StructDofsInfo(self.solver)
+        self.dofs_state = StructDofsState(self.solver)
+
+    def init_mass_mat(self):
+        self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
+        self.mass_mat_L = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
+        self.mass_mat_D_inv = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_,)))
+        self._mass_mat_mask = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_entities_))
+        self.meaninertia = ti.field(dtype=gs.ti_float, shape=self._batch_shape())
+        self.mass_parent_mask = ti.field(dtype=gs.ti_float, shape=(self.n_dofs_, self.n_dofs_))
+        self._gravity = self.solver._gravity

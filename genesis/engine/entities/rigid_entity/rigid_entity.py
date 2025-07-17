@@ -1488,7 +1488,7 @@ class RigidEntity(Entity):
                                     if ti.static(self.solver._options.batch_dofs_info)
                                     else j_info.dof_start
                                 )
-                                dof_info = self._solver.dofs_info[I_dof_start]
+                                dof_info = self._solver.dofs_info[I_dof_start]  # FIXME: change to pure function
                                 q_start = j_info.q_start
 
                                 if j_info.type == gs.JOINT_TYPE.FREE:

@@ -176,8 +176,8 @@ class ConstraintSolver:
         collider_state: ti.template(),
         static_rigid_sim_config: ti.template(),
     ):
-        _B = dofs_state.shape[1]
-        n_dofs = dofs_state.shape[0]
+        _B = dofs_state.ctrl_mode.shape[1]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -225,8 +225,8 @@ class ConstraintSolver:
                             for i_d_ in range(links_info[link_maybe_batch].n_dofs):
                                 i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
 
-                                cdof_ang = dofs_state[i_d, i_b].cdof_ang
-                                cdot_vel = dofs_state[i_d, i_b].cdof_vel
+                                cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                                cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                                 t_quat = gu.ti_identity_quat()
                                 t_pos = contact_data.pos - links_state[link, i_b].COM
@@ -234,7 +234,7 @@ class ConstraintSolver:
 
                                 diff = sign * vel
                                 jac = diff @ n
-                                jac_qvel = jac_qvel + jac * dofs_state[i_d, i_b].vel
+                                jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                                 constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                                 if ti.static(static_rigid_sim_config.sparse_solve):
@@ -270,7 +270,7 @@ class ConstraintSolver:
         collider_state,
         static_rigid_sim_config: ti.template(),
     ):
-        n_dofs = dofs_state.shape[0]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
 
         eq_info = equalities_info[i_e, i_b]
         link1_idx = eq_info.eq_obj1id
@@ -323,8 +323,8 @@ class ConstraintSolver:
                     for i_d_ in range(links_info[link_maybe_batch].n_dofs):
                         i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
 
-                        cdof_ang = dofs_state[i_d, i_b].cdof_ang
-                        cdot_vel = dofs_state[i_d, i_b].cdof_vel
+                        cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                        cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                         t_quat = gu.ti_identity_quat()
                         t_pos = pos - links_state[link, i_b].COM
@@ -332,7 +332,7 @@ class ConstraintSolver:
 
                         diff = sign * vel
                         jac = diff[i_3]
-                        jac_qvel = jac_qvel + jac * dofs_state[i_d, i_b].vel
+                        jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                         constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                         if ti.static(static_rigid_sim_config.sparse_solve):
@@ -421,10 +421,10 @@ class ConstraintSolver:
         constraint_state.jac[n_con, i_dof1, i_b] = gs.ti_float(1.0)
         constraint_state.jac[n_con, i_dof2, i_b] = -deriv
         jac_qvel = (
-            constraint_state.jac[n_con, i_dof1, i_b] * dofs_state[i_dof1, i_b].vel
-            + constraint_state.jac[n_con, i_dof2, i_b] * dofs_state[i_dof2, i_b].vel
+            constraint_state.jac[n_con, i_dof1, i_b] * dofs_state.vel[i_dof1, i_b]
+            + constraint_state.jac[n_con, i_dof2, i_b] * dofs_state.vel[i_dof2, i_b]
         )
-        invweight = dofs_info[I_dof1].invweight + dofs_info[I_dof2].invweight
+        invweight = dofs_info.invweight[I_dof1] + dofs_info.invweight[I_dof2]
 
         imp, aref = gu.imp_aref(sol_params, -ti.abs(pos), jac_qvel, pos)
 
@@ -448,7 +448,7 @@ class ConstraintSolver:
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
     ):
-        _B = dofs_state.shape[1]
+        _B = dofs_state.ctrl_mode.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(_B):
             for i_e in range(constraint_state.ti_n_equalities[i_b]):
@@ -501,7 +501,7 @@ class ConstraintSolver:
         constraint_state,
         static_rigid_sim_config: ti.template(),
     ):
-        n_dofs = dofs_state.shape[0]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
 
         # TODO: sparse mode
         # Get equality info for this constraint
@@ -579,15 +579,15 @@ class ConstraintSolver:
 
                     for i_d_ in range(links_info[link_maybe_batch].n_dofs):
                         i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
-                        cdof_ang = dofs_state[i_d, i_b].cdof_ang
-                        cdot_vel = dofs_state[i_d, i_b].cdof_vel
+                        cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                        cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                         t_quat = gu.ti_identity_quat()
                         t_pos = pos_anchor - links_state[link, i_b].COM
                         ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                         diff = sign * vel
                         jac = diff[i]
-                        jac_qvel += jac * dofs_state[i_d, i_b].vel
+                        jac_qvel += jac * dofs_state.vel[i_d, i_b]
                         constraint_state.jac[n_con, i_d, i_b] += jac
 
                         if ti.static(static_rigid_sim_config.sparse_solve):
@@ -623,7 +623,7 @@ class ConstraintSolver:
 
                 for i_d_ in range(links_info[link_maybe_batch].n_dofs):
                     i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
-                    jac = sign * dofs_state[i_d, i_b].cdof_ang
+                    jac = sign * dofs_state.cdof_ang[i_d, i_b]
 
                     for i_con in range(n_con, n_con + 3):
                         constraint_state.jac[i_con, i_d, i_b] = (
@@ -648,7 +648,7 @@ class ConstraintSolver:
             for i_con in range(n_con, n_con + 3):
                 constraint_state.jac[i_con, i_d, i_b] = 0.5 * quat3[i_con - n_con + 1] * torquescale
                 jac_qvel[i_con - n_con] = (
-                    jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state[i_d, i_b].vel
+                    jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state.vel[i_d, i_b]
                 )
 
         for i_con in range(n_con, n_con + 3):
@@ -675,7 +675,7 @@ class ConstraintSolver:
     ):
         _B = constraint_state.jac.shape[2]
         n_links = links_info.shape[0]
-        n_dofs = dofs_state.shape[0]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
         rgi = rigid_global_info
         # TODO: sparse mode
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -692,15 +692,15 @@ class ConstraintSolver:
                         i_q = j_info.q_start
                         i_d = j_info.dof_start
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                        pos_delta_min = rgi.qpos[i_q, i_b] - dofs_info[I_d].limit[0]
-                        pos_delta_max = dofs_info[I_d].limit[1] - rgi.qpos[i_q, i_b]
+                        pos_delta_min = rgi.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
+                        pos_delta_max = dofs_info.limit[I_d][1] - rgi.qpos[i_q, i_b]
                         pos_delta = min(pos_delta_min, pos_delta_max)
 
                         if pos_delta < 0:
                             jac = (pos_delta_min < pos_delta_max) * 2 - 1
-                            jac_qvel = jac * dofs_state[i_d, i_b].vel
+                            jac_qvel = jac * dofs_state.vel[i_d, i_b]
                             imp, aref = gu.imp_aref(j_info.sol_params, pos_delta, jac_qvel, pos_delta)
-                            diag = ti.max(dofs_info[I_d].invweight * (1 - imp) / imp, gs.EPS)
+                            diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
 
                             n_con = constraint_state.n_constraints[i_b]
                             constraint_state.n_constraints[i_b] = n_con + 1
@@ -1083,9 +1083,9 @@ class ConstraintSolver:
         _B = dofs_state.acc.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(n_dofs, _B):
-            dofs_state[i_d, i_b].acc = constraint_state.qacc[i_d, i_b]
-            dofs_state[i_d, i_b].qf_constraint = constraint_state.qfrc_constraint[i_d, i_b]
-            dofs_state[i_d, i_b].force += constraint_state.qfrc_constraint[i_d, i_b]
+            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            dofs_state.force[i_d, i_b] += constraint_state.qfrc_constraint[i_d, i_b]
 
         for i_d, i_b in ti.ndrange(n_dofs, _B):
             self_unused.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
@@ -1168,7 +1168,7 @@ class ConstraintSolver:
         for i_d in range(n_dofs):
             quad_gauss_1 += (
                 constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
-                - constraint_state.search[i_d, i_b] * dofs_state[i_d, i_b].force
+                - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
             )
             quad_gauss_2 += 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
         for _i0 in range(1):
@@ -1617,7 +1617,7 @@ class ConstraintSolver:
                 constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
         # (Mx - Mx') * (x - x')
         for i_d in range(n_dofs):
-            v = 0.5 * (Ma[i_d, i_b] - dofs_state[i_d, i_b].force) * (qacc[i_d, i_b] - dofs_state[i_d, i_b].acc_smooth)
+            v = 0.5 * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b]) * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
             constraint_state.gauss[i_b] = constraint_state.gauss[i_b] + v
             cost[i_b] = cost[i_b] + v
 
@@ -1644,7 +1644,7 @@ class ConstraintSolver:
 
         for i_d in range(n_dofs):
             constraint_state.grad[i_d, i_b] = (
-                constraint_state.Ma[i_d, i_b] - dofs_state[i_d, i_b].force - constraint_state.qfrc_constraint[i_d, i_b]
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
             )
 
         if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
