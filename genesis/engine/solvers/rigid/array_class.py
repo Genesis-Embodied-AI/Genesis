@@ -95,7 +95,7 @@ class RigidGlobalInfo:
         self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
         self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
 
-        # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+        self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
         self.init_mass_mat(solver)
 
     def init_mass_mat(self, solver):
@@ -524,6 +524,90 @@ class StructDofsState:
 
 
 @ti.data_oriented
+class StructLinkState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_links_)
+        self.cinr_inertial = V(dtype=gs.ti_mat3, shape=shape)
+        self.cinr_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.cinr_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.cinr_mass = V(dtype=gs.ti_float, shape=shape)
+        self.crb_inertial = V(dtype=gs.ti_mat3, shape=shape)
+        self.crb_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.crb_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.crb_mass = V(dtype=gs.ti_float, shape=shape)
+        self.cdd_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdd_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.i_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.i_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.j_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.j_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.j_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.j_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cd_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cd_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.mass_sum = V(dtype=gs.ti_float, shape=shape)
+        self.COM = V(dtype=gs.ti_vec3, shape=shape)
+        self.mass_shift = V(dtype=gs.ti_float, shape=shape)
+        self.i_pos_shift = V(dtype=gs.ti_vec3, shape=shape)
+        self.cacc_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cacc_lin = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_applied_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_applied_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.contact_force = V(dtype=gs.ti_vec3, shape=shape)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructLinkInfo:
+    def __init__(self, solver):
+        links_info_shape = solver._batch_shape(solver.n_links_) if solver._options.batch_links_info else solver.n_links_
+        self.parent_idx = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.root_idx = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.q_start = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.dof_start = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.joint_start = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.q_end = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.dof_end = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.joint_end = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.n_dofs = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.pos = V(dtype=gs.ti_vec3, shape=links_info_shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=links_info_shape)
+        self.invweight = V(dtype=gs.ti_vec2, shape=links_info_shape)
+        self.is_fixed = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.inertial_pos = V(dtype=gs.ti_vec3, shape=links_info_shape)
+        self.inertial_quat = V(dtype=gs.ti_vec4, shape=links_info_shape)
+        self.inertial_i = V(dtype=gs.ti_mat3, shape=links_info_shape)
+        self.inertial_mass = V(dtype=gs.ti_float, shape=links_info_shape)
+        self.entity_idx = V(dtype=gs.ti_int, shape=links_info_shape)
+
+
+@ti.data_oriented
+class StructJointInfo:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_joints_) if solver._options.batch_joints_info else solver.n_joints_
+        self.type = V(dtype=gs.ti_int, shape=shape)
+        self.sol_params = V(dtype=gs.ti_vec7, shape=shape)
+        self.q_start = V(dtype=gs.ti_int, shape=shape)
+        self.dof_start = V(dtype=gs.ti_int, shape=shape)
+        self.q_end = V(dtype=gs.ti_int, shape=shape)
+        self.dof_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_dofs = V(dtype=gs.ti_int, shape=shape)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructJointState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_joints_)
+        self.xanchor = V(dtype=gs.ti_vec3, shape=shape)
+        self.xaxis = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
 class DataManager:
     def __init__(self, solver):
         self.solver = solver
@@ -531,6 +615,10 @@ class DataManager:
         self.rigid_global_info = RigidGlobalInfo(self.solver)
         self.dofs_info = StructDofsInfo(self.solver)
         self.dofs_state = StructDofsState(self.solver)
+        self.links_info = StructLinkInfo(self.solver)
+        self.links_state = StructLinkState(self.solver)
+        self.joints_info = StructJointInfo(self.solver)
+        self.joints_state = StructJointState(self.solver)
 
     def init_mass_mat(self):
         self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))

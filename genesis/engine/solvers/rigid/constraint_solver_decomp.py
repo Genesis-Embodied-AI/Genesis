@@ -682,15 +682,16 @@ class ConstraintSolver:
         for i_b in range(_B):
             for i_l in range(n_links):
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
-                l_info = links_info[I_l]
 
-                for i_j in range(l_info.joint_start, l_info.joint_end):
+                for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
-                    j_info = joints_info[I_j]
 
-                    if j_info.type == gs.JOINT_TYPE.REVOLUTE or j_info.type == gs.JOINT_TYPE.PRISMATIC:
-                        i_q = j_info.q_start
-                        i_d = j_info.dof_start
+                    if (
+                        joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE
+                        or joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC
+                    ):
+                        i_q = joints_info.q_start[I_j]
+                        i_d = joints_info.dof_start[I_j]
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                         pos_delta_min = rgi.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
                         pos_delta_max = dofs_info.limit[I_d][1] - rgi.qpos[i_q, i_b]
@@ -699,7 +700,7 @@ class ConstraintSolver:
                         if pos_delta < 0:
                             jac = (pos_delta_min < pos_delta_max) * 2 - 1
                             jac_qvel = jac * dofs_state.vel[i_d, i_b]
-                            imp, aref = gu.imp_aref(j_info.sol_params, pos_delta, jac_qvel, pos_delta)
+                            imp, aref = gu.imp_aref(joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta)
                             diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
 
                             n_con = constraint_state.n_constraints[i_b]
