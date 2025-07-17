@@ -329,9 +329,6 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_simple_kinematic_chain(gs_sim, mj_sim, tol):
-    # after PR #1423, I need to relax the tolerance. It should not affect the test result.
-    # I don't know the reason
-    tol = 1e-7
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=200, tol=tol)
 
 
