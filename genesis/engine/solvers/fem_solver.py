@@ -278,13 +278,13 @@ class FEMSolver(Solver):
         self._constraints_initialized = True
 
         vertex_constraint_info = ti.types.struct(
-            is_constrained=ti.u1,       # boolean flag indicating if vertex is constrained
-            target_pos=gs.ti_vec3,      # target position for the constraint
-            is_soft_constraint=ti.u1,   # use spring for soft constraints
-            stiffness=gs.ti_float,        # spring stiffness
-            damping=gs.ti_float,          # spring damping
-            link_idx=gs.ti_int,         # index of the rigid link (-1 if not linked)
-            link_offset_pos=gs.ti_vec3, # offset position of link
+            is_constrained=ti.u1,  # boolean flag indicating if vertex is constrained
+            target_pos=gs.ti_vec3,  # target position for the constraint
+            is_soft_constraint=ti.u1,  # use spring for soft constraints
+            stiffness=gs.ti_float,  # spring stiffness
+            damping=gs.ti_float,  # spring damping
+            link_idx=gs.ti_int,  # index of the rigid link (-1 if not linked)
+            link_offset_pos=gs.ti_vec3,  # offset position of link
             link_init_quat=gs.ti_vec4,  # offset rotation of link
         )
 
@@ -1379,7 +1379,7 @@ class FEMSolver(Solver):
     def _kernel_update_linked_vertex_constraints(
         self,
         links_pos: ti.template(),  # matrix field
-        links_quat: ti.template(), # matrix field
+        links_quat: ti.template(),  # matrix field
     ):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             vc = self.vertex_constraints[i_v, i_b]
@@ -1420,14 +1420,14 @@ class FEMSolver(Solver):
     def _kernel_set_vertex_constraints(
         self,
         f: ti.i32,
-        verts_idx: ti.types.ndarray(),      # shape [B, V]
-        target_poss: ti.types.ndarray(),    # shape [B, V, 3]
+        verts_idx: ti.types.ndarray(),  # shape [B, V]
+        target_poss: ti.types.ndarray(),  # shape [B, V, 3]
         is_soft_constraint: ti.u1,
         stiffness: ti.f32,
         link_idx: ti.i32,
         link_init_pos: ti.types.ndarray(),  # shape [B, 3]
-        link_init_quat: ti.types.ndarray(), # shape [B, 4]
-        envs_idx: ti.types.ndarray()        # shape [B]
+        link_init_quat: ti.types.ndarray(),  # shape [B, 4]
+        envs_idx: ti.types.ndarray(),  # shape [B]
     ):
         for i_vl, i_bl in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
             i_b = envs_idx[i_bl]
@@ -1446,10 +1446,7 @@ class FEMSolver(Solver):
 
     @ti.kernel
     def _kernel_update_constraint_targets(
-        self,
-        verts_idx: ti.types.ndarray(),
-        new_target_poss: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray()
+        self, verts_idx: ti.types.ndarray(), new_target_poss: ti.types.ndarray(), envs_idx: ti.types.ndarray()
     ):
         for i_vl, i_bl in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
             i_b = envs_idx[i_bl]
@@ -1458,11 +1455,7 @@ class FEMSolver(Solver):
                 self.vertex_constraints[i_v, i_b].target_pos[j] = new_target_poss[i_bl, i_vl, j]
 
     @ti.kernel
-    def _kernel_remove_specific_constraints(
-        self,
-        verts_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray()
-    ):
+    def _kernel_remove_specific_constraints(self, verts_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
         for i_vl, i_bl in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
             i_b = envs_idx[i_bl]
             i_v = verts_idx[i_b, i_vl]

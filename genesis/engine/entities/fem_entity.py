@@ -1,20 +1,19 @@
+import igl
 import numpy as np
 import taichi as ti
 import torch
-
-import igl
 
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
+from genesis.engine.coupler import SAPCoupler
+from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
-from genesis.utils.misc import to_gs_tensor, tensor_to_array
-from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, to_gs_tensor
 
 from .base_entity import Entity
-from genesis.engine.coupler import SAPCoupler
 
 
 @ti.data_oriented
@@ -751,6 +750,34 @@ class FEMEntity(Entity):
             muscle_direction=muscle_direction,
         )
 
+    def _sanitize_input_tensor(self, arr, dtype, unbatched_ndim=1, contiguous=False):
+        if not isinstance(arr, torch.Tensor):
+            arr = torch.as_tensor(arr, dtype=dtype, device=gs.device)
+        tensor = torch.atleast_1d(arr)
+        if tensor.ndim == unbatched_ndim:
+            tensor = tensor.expand((self._sim._B, *tensor.shape))
+        assert tensor.ndim == unbatched_ndim + 1, f"Input tensor ndim is {tensor.ndim}, should be {unbatched_ndim + 1}."
+        assert tensor.shape[0] == self._sim._B, "Input tensor batch size must match the number of environments."
+        if contiguous:
+            _tensor = tensor.contiguous()
+            if _tensor is not tensor:
+                gs.logger.warning(ALLOCATE_TENSOR_WARNING)
+            tensor = _tensor
+        return tensor
+
+    def _sanitize_input_verts_idx(self, verts_idx):
+        _verts_idx = self._sanitize_input_tensor(verts_idx, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start
+        verts_idx = _verts_idx.contiguous()
+        if verts_idx is not _verts_idx:
+            gs.logger.warning(ALLOCATE_TENSOR_WARNING)
+        assert ((verts_idx >= 0) & (verts_idx < self._solver.n_vertices)).all(), "Vertex indices out of bounds."
+        return verts_idx
+
+    def _sanitize_input_poss(self, poss):
+        poss = self._sanitize_input_tensor(poss, dtype=gs.tc_float, unbatched_ndim=2, contiguous=True)
+        assert poss.ndim == 3 and poss.shape[2] == 3, "Position tensor must have shape (B, num_verts, 3)."
+        return poss
+
     def set_vertex_constraints(
         self, verts_idx, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
     ):
@@ -781,28 +808,30 @@ class FEMEntity(Entity):
             self._solver.init_constraints()
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        verts_idx = self._sanitize_input_to_batch_tensor(verts_idx, dtype=gs.tc_int) + self._v_start
-        self._assert_verts_idx_in_bounds(verts_idx)
+        verts_idx = self._sanitize_input_verts_idx(verts_idx)
 
         if target_poss is None:
-            target_poss = gs.zeros((verts_idx.shape[0], verts_idx.shape[1], 3), dtype=float, requires_grad=False)
+            target_poss = torch.zeros(
+                (verts_idx.shape[0], verts_idx.shape[1], 3), dtype=gs.tc_float, device=gs.device, requires_grad=False
+            )
             self._kernel_get_verts_pos(self._sim.cur_substep_local, target_poss, verts_idx)
-        target_poss = self._sanitize_input_to_batch_tensor(target_poss, gs.tc_float, dims=2)
+        target_poss = self._sanitize_input_poss(target_poss)
 
-        assert len(envs_idx) == target_poss.shape[0] == verts_idx.shape[0], \
-            "First dimension should match number of environments."
+        assert (
+            len(envs_idx) == len(target_poss) == len(verts_idx)
+        ), "First dimension should match number of environments."
         assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
 
         if link is None:
             B = self._sim._B
-            link_init_pos = gs.zeros((B, 3))
-            link_init_quat = gs.zeros((B, 4))
+            link_init_pos = torch.zeros((B, 3), dtype=gs.tc_float, device=gs.device)
+            link_init_quat = torch.zeros((B, 4), dtype=gs.tc_float, device=gs.device)
             link_idx = -1
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
-            link_init_pos = self._sanitize_input_to_batch_tensor(link.get_pos(), dtype=gs.tc_float)
-            link_init_quat = self._sanitize_input_to_batch_tensor(link.get_quat(), dtype=gs.tc_float)
-            link_idx = link._idx
+            link_init_pos = self._sanitize_input_tensor(link.get_pos(), dtype=gs.tc_float, contiguous=True)
+            link_init_quat = self._sanitize_input_tensor(link.get_quat(), dtype=gs.tc_float, contiguous=True)
+            link_idx = link.idx
 
         self._solver._kernel_set_vertex_constraints(
             self._sim.cur_substep_local,
@@ -813,7 +842,7 @@ class FEMEntity(Entity):
             link_idx,
             link_init_pos,
             link_init_quat,
-            envs_idx
+            envs_idx,
         )
 
     def update_constraint_targets(self, verts_idx, target_poss, envs_idx=None):
@@ -823,11 +852,9 @@ class FEMEntity(Entity):
             return
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        verts_idx = self._sanitize_input_to_batch_tensor(verts_idx, dtype=gs.tc_int) + self._v_start
-        target_poss = self._sanitize_input_to_batch_tensor(target_poss, gs.tc_float, dims=2)
-
+        verts_idx = self._sanitize_input_verts_idx(verts_idx)
+        target_poss = self._sanitize_input_poss(target_poss)
         assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
-        self._assert_verts_idx_in_bounds(verts_idx)
 
         self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
 
@@ -840,38 +867,17 @@ class FEMEntity(Entity):
         if verts_idx is None:
             self._solver.vertex_constraints.is_constrained.fill(0)
         else:
-            verts_idx = self._sanitize_input_to_batch_tensor(verts_idx, dtype=gs.tc_int) + self._v_start
-            self._assert_verts_idx_in_bounds(verts_idx)
+            verts_idx = self._sanitize_input_verts_idx(verts_idx)
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
     @ti.kernel
     def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
         # get current position of vertices
-        n = verts_idx.shape[0]
-        B = verts_idx.shape[1]
-        for i_v, i_b in ti.ndrange(n, B):
+        for i_v, i_b in ti.ndrange(verts_idx.shape):
             i_global = verts_idx[i_v, i_b] + self.v_start
             for j in ti.static(range(3)):
                 pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
-
-    def _sanitize_input_to_batch_tensor(self, arr, dtype, dims=1):
-        if not isinstance(arr, torch.Tensor):
-            arr = torch.as_tensor(arr, dtype=dtype, device=gs.device)
-        tensor = torch.atleast_1d(arr)
-        if tensor.ndim < dims+1:
-            # add batch dimension if missing
-            tensor = tensor.unsqueeze(0).repeat((self._sim._B, *([1] * dims)))
-            # tensor = tensor.unsqueeze(0).repeat(self._sim._B, 1)
-        assert tensor.shape[0] == self._sim._B, "Input tensor batch size must match the number of environments."
-        return tensor
-
-    def _assert_verts_idx_in_bounds(self, verts_idx):
-        """
-        Assert that all vertex indices are within the valid range.
-        """
-        out_of_bounds = torch.any(torch.logical_or(verts_idx >= self._solver.n_vertices, verts_idx < 0))
-        assert not out_of_bounds, "Vertex indices out of bounds in set_vertex_constraints."
 
     def get_el2v(self):
         """
