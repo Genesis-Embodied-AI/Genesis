@@ -94,12 +94,15 @@ def pytest_xdist_auto_num_workers(config):
     # Get available memory (RAM & VRAM) and number of physical cores.
     physical_core_count = psutil.cpu_count(logical=False)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
-    _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
+    _, _, vram_memory, backend = gs.utils.get_device(gs.gpu)
+    if backend == gs.cpu:
+        # Ignore VRAM if no GPU is available
+        vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
     # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
     # does not completely release memory between each test.
-    if sys.platform == "darwin":
+    if sys.platform in ("darwin", "win32"):
         ram_memory_per_worker = 3.0
         vram_memory_per_worker = 1.0  # Does not really makes sense on Apple Silicon
     elif config.option.forked:
