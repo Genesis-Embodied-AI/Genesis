@@ -85,7 +85,6 @@ def test_segmentation(segmentation_level, particle_mode):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -240,7 +239,6 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
