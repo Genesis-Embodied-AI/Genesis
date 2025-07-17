@@ -68,6 +68,8 @@ class Collider:
         mc_perturbation: float = 0.0
         mc_tolerance: float = 0.0
         mpr_to_sdf_overlap_ratio: float = 0.0
+        # multiplier k for the maximum number of contact pairs for the broad phase
+        max_collision_pairs_broad_k: int = 20
         # maximum number of contact pairs per collision pair
         n_contacts_per_pair: int = 5
         # maximum number of contact points for box-box collision detection
@@ -112,6 +114,7 @@ class Collider:
             mc_perturbation=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mc_tolerance=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
             mpr_to_sdf_overlap_ratio=0.4,
+            max_collision_pairs_broad_k=20,
             n_contacts_per_pair=5,
             box_MAXCONPAIR=16,
             ccd_algorithm=ccd_algorithm,
@@ -140,7 +143,7 @@ class Collider:
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            f"({self._collider_state._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
+            f"({self._collider_info._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
             f"'max_collision_pairs'.{formats.RESET}"
         )
 
@@ -241,9 +244,12 @@ class Collider:
     def _init_max_contact_pairs(self, n_possible_pairs):
         max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
         max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
+        max_contact_pairs_broad = max_collision_pairs * self._collider_static_config.max_collision_pairs_broad_k
 
         self._collider_info._max_possible_pairs[None] = n_possible_pairs
         self._collider_info._max_collision_pairs[None] = max_collision_pairs
+        self._collider_info._max_collision_pairs_broad[None] = max_contact_pairs_broad
+
         self._collider_info._max_contact_pairs[None] = max_contact_pairs
 
     def _init_terrain_state(self):
@@ -1036,8 +1042,8 @@ class Collider:
                                 continue
 
                             i_p = collider_state.n_broad_pairs[i_b]
-                            if i_p == collider_info._max_collision_pairs[None]:
-                                # print(self._warn_msg_max_collision_pairs)
+                            if i_p == collider_info._max_collision_pairs_broad[None]:
+                                # print(self._warn_msg_max_collision_pairs_broad)
                                 break
                             collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
                             collider_state.broad_collision_pairs[i_p, i_b][1] = i_gb
