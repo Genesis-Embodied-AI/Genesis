@@ -561,7 +561,9 @@ class RigidEntity(Entity):
             else:
                 q_limit_lower.append(joint.dofs_limit[:, 0])
                 q_limit_upper.append(joint.dofs_limit[:, 1])
-        self.q_limit = np.array([np.concatenate(q_limit_lower), np.concatenate(q_limit_upper)])
+        self.q_limit = np.stack(
+            (np.concatenate(q_limit_lower), np.concatenate(q_limit_upper)), axis=0, dtype=gs.np_float
+        )
 
         # for storing intermediate results
         self._IK_n_tgts = self._solver._options.IK_max_targets
@@ -1288,7 +1290,6 @@ class RigidEntity(Entity):
         rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
         n_error_dims = 6 * n_links
 
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             # save original qpos
             for i_q in range(self.n_qs):
@@ -1580,7 +1581,6 @@ class RigidEntity(Entity):
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             # save original qpos
@@ -2196,7 +2196,7 @@ class RigidEntity(Entity):
                 (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
                 idx_local.step or 1,
             )
-        elif isinstance(idx_local, int):
+        elif isinstance(idx_local, (int, np.integer)):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
             try:

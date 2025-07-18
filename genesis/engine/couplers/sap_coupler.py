@@ -170,7 +170,7 @@ class SAPCoupler(RBC):
             )
 
     def _init_sap_fields(self):
-        self.batch_active = ti.field(dtype=ti.u1, shape=self.sim._B, needs_grad=False)
+        self.batch_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
         self.v = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_vertices))
         self.v_diff = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_vertices))
         self.gradient = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_vertices))
@@ -194,7 +194,7 @@ class SAPCoupler(RBC):
         )
 
     def _init_pcg_fields(self):
-        self.batch_pcg_active = ti.field(dtype=ti.u1, shape=self.sim._B, needs_grad=False)
+        self.batch_pcg_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
 
         pcg_state = ti.types.struct(
             rTr=gs.ti_float,
@@ -224,7 +224,7 @@ class SAPCoupler(RBC):
 
     def _init_linesearch_fields(self):
         self.batch_linesearch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self.sim._B,
             needs_grad=False,
         )

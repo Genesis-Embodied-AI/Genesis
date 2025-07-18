@@ -72,7 +72,7 @@ def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene
         dtype = gs.tc_float
     elif dtype in (int, torch.int32, torch.int64):
         dtype = gs.tc_int
-    elif dtype is bool:
+    elif dtype in (bool, torch.bool):
         dtype = torch.bool
     else:
         gs.raise_exception(f"Unsupported dtype: {dtype}")

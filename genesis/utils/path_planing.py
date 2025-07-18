@@ -117,11 +117,13 @@ class PathPlanner(ABC):
                 geom_a = geom_a[valid_mask]
                 geom_b = geom_b[valid_mask]
             collision_pairs.append(torch.stack((geom_a, geom_b), dim=1))
+        collision_pairs = torch.cat(collision_pairs, dim=0)  # N, 2
 
-        unique_pairs = torch.unique(
-            torch.cat(collision_pairs, dim=0),
-            dim=0,
-        )  # N', 2
+        if gs.backend != gs.metal:
+            unique_pairs = torch.unique(collision_pairs, dim=0)
+        else:
+            # Apple Metal GPU backend does not support `torch.unique([...], dim=[...])`
+            unique_pairs = torch.unique(collision_pairs.cpu(), dim=0).to(device=gs.device)
         return unique_pairs
 
     @ti.kernel
@@ -192,7 +194,6 @@ class PathPlanner(ABC):
         obj_geom_start: ti.int32,
         obj_geom_end: ti.int32,
     ):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             collision_detected = self._func_check_collision(
                 ignore_geom_pairs,
@@ -259,9 +260,9 @@ class PathPlanner(ABC):
             the number of refine iterations
         """
         for i in range(iterations):
-            ind = torch.multinomial(path_mask.T, 2).sort()[0]  # B, 2
+            ind = torch.multinomial(path_mask.T, 2).sort().values.to(gs.tc_int)  # B, 2
             ind_mask = (ind[:, 1] - ind[:, 0]) > 1
-            result_path = torch.empty_like(path, dtype=gs.tc_float, device=gs.device)
+            result_path = torch.empty_like(path)
             self.interpolate_path(path.contiguous(), ind, ind_mask, result_path)
             collision_mask = self.check_collision(
                 result_path,
@@ -300,7 +301,7 @@ class RRT(PathPlanner):
             )
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=self._solver._batch_shape(self._rrt_max_nodes))
             self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
-            self._rrt_is_active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=self._solver._batch_shape())
             self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
             self._is_rrt_init = True
 
@@ -310,7 +311,7 @@ class RRT(PathPlanner):
         self._rrt_node_info.parent_idx.fill(-1)
         self._rrt_node_info.configuration.fill(0.0)
         self._rrt_tree_size.fill(0)
-        self._rrt_is_active.fill(0)
+        self._rrt_is_active.fill(False)
         self._rrt_goal_reached_node_idx.fill(-1)
 
     @ti.kernel
@@ -327,7 +328,7 @@ class RRT(PathPlanner):
                 self._rrt_node_info[0, i_b].configuration[i_q] = qpos_start[i_b_, i_q]
             self._rrt_node_info[0, i_b].parent_idx = 0
             self._rrt_tree_size[i_b] = 1
-            self._rrt_is_active[i_b] = 1
+            self._rrt_is_active[i_b] = True
 
     @ti.kernel
     def _kernel_rrt_step1(
@@ -344,7 +345,6 @@ class RRT(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
@@ -361,7 +361,6 @@ class RRT(PathPlanner):
                 # find nearest neighbor
                 nearest_neighbor_idx = -1
                 nearest_neighbor_dist = gs.ti_float(1e30)
-                ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
                 for i_n in range(self._rrt_tree_size[i_b]):
                     dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm_sqr()
                     if dist < nearest_neighbor_dist:
@@ -426,7 +425,6 @@ class RRT(PathPlanner):
         - if collision is detected, remove the new node
         - if collision is not detected, check if the new node is within goal configuration
         """
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
                 is_collision_detected = False
@@ -457,7 +455,7 @@ class RRT(PathPlanner):
                             break
                     if is_goal:
                         self._rrt_goal_reached_node_idx[i_b] = self._rrt_tree_size[i_b] - 1
-                        self._rrt_is_active[i_b] = 0
+                        self._rrt_is_active[i_b] = False
 
     def plan(
         self,
@@ -548,10 +546,11 @@ class RRT(PathPlanner):
                 self._entity.set_qpos(qpos_cur, envs_idx=envs_idx)
             else:
                 self._entity.set_qpos(qpos_cur)
-            return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), is_active
+            sol = torch.zeros((num_waypoints, len(envs_idx), sol.shape[-1]), dtype=gs.tc_float, device=gs.device)
+            return sol, is_active
 
         mask = rrt_valid_mask(res_idx)
-        sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
+        sol = align_waypoints_length(sol, mask, mask.sum(dim=0).max())
         if smooth_path:
             if is_plan_with_obj:
                 sol = self.shortcut_path(
@@ -572,7 +571,7 @@ class RRT(PathPlanner):
                 sol = self.shortcut_path(
                     torch.ones_like(sol[..., 0]), sol, iterations=10, ignore_geom_pairs=unique_pairs, envs_idx=envs_idx
                 )
-        sol = align_weypoints_length(sol, torch.ones_like(sol[..., 0]).bool(), num_waypoints)
+        sol = align_waypoints_length(sol, torch.ones_like(sol[..., 0], dtype=gs.tc_bool), num_waypoints)
 
         if ignore_collision:
             is_invalid = is_active
@@ -688,7 +687,6 @@ class RRTConnect(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
@@ -710,7 +708,6 @@ class RRTConnect(PathPlanner):
                 # find nearest neighbor
                 nearest_neighbor_idx = -1
                 nearest_neighbor_dist = gs.ti_float(1e30)
-                ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
                 for i_n in range(self._rrt_tree_size[i_b]):
                     if forward_pass:
                         # NOTE: in forward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
@@ -787,7 +784,6 @@ class RRTConnect(PathPlanner):
         - if collision is detected, remove the new node
         - if collision is not detected, check if the new node is within goal configuration
         """
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
                 is_collision_detected = False
@@ -808,7 +804,6 @@ class RRTConnect(PathPlanner):
                         self._rrt_node_info[self._rrt_tree_size[i_b], i_b].child_idx = -1
                 else:
                     # check the obtained steer result is within goal configuration only if no collision
-                    ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
                     for i_n in range(self._rrt_tree_size[i_b]):
                         if forward_pass:
                             if self._rrt_node_info[i_n, i_b].child_idx == -1:
@@ -941,7 +936,7 @@ class RRTConnect(PathPlanner):
             return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), is_active
 
         mask = rrt_connect_valid_mask(res_idx)
-        sol = align_weypoints_length(sol, mask, mask.sum(dim=0).max())
+        sol = align_waypoints_length(sol, mask, mask.sum(dim=0).max())
         if smooth_path:
             if is_plan_with_obj:
                 sol = self.shortcut_path(
@@ -963,7 +958,7 @@ class RRTConnect(PathPlanner):
                     torch.ones_like(sol[..., 0]), sol, iterations=10, ignore_geom_pairs=unique_pairs, envs_idx=envs_idx
                 )
 
-        sol = align_weypoints_length(sol, torch.ones_like(sol[..., 0]).bool(), num_waypoints)
+        sol = align_waypoints_length(sol, torch.ones_like(sol[..., 0], dtype=gs.tc_bool), num_waypoints)
 
         if ignore_collision:
             is_invalid = is_active
@@ -1013,7 +1008,7 @@ class RRTConnect(PathPlanner):
 # ------------------------------------------------------------------------------------
 
 
-def align_weypoints_length(path: torch.Tensor, mask: torch.Tensor, num_points: int) -> torch.Tensor:
+def align_waypoints_length(path: torch.Tensor, mask: torch.Tensor, num_points: int) -> torch.Tensor:
     """
     Aligns each waypoints length to the given num_points.
 
@@ -1031,7 +1026,9 @@ def align_weypoints_length(path: torch.Tensor, mask: torch.Tensor, num_points: i
         A new 2D PyTorch tensor [num_points, B, Dof]
     """
     t_path = path.permute(1, 2, 0)  # [B, Dof, N]
-    res = torch.zeros((num_points, t_path.shape[0], t_path.shape[1]), device=gs.device)  # [num_points, B, Dof]
+    res = torch.zeros(
+        (num_points, t_path.shape[0], t_path.shape[1]), dtype=gs.tc_float, device=gs.device
+    )  # [num_points, B, Dof]
     for i_b in range(t_path.shape[0]):
         if not mask[:, i_b].any():
             continue
