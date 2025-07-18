@@ -873,7 +873,7 @@ class ConstraintSolver:
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.nt_H.shape[0]
-        n_entities = entities_info.shape[0]
+        n_entities = entities_info.n_links.shape[0]
         # H = M + J'*D*J
         for i_d1 in range(n_dofs):
             for i_d2 in range(n_dofs):
@@ -912,9 +912,8 @@ class ConstraintSolver:
                 constraint_state.nt_H[i_d1, i_d2, i_b] = constraint_state.nt_H[i_d2, i_d1, i_b]
 
         for i_e in range(n_entities):
-            e_info = entities_info[i_e]
-            for i_d1 in range(e_info.dof_start, e_info.dof_end):
-                for i_d2 in range(e_info.dof_start, e_info.dof_end):
+            for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     constraint_state.nt_H[i_d1, i_d2, i_b] = (
                         constraint_state.nt_H[i_d1, i_d2, i_b] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                     )
@@ -1175,10 +1174,9 @@ class ConstraintSolver:
         n_entities = entities_info.dof_start.shape[0]
         # mv and jv
         for i_e in range(n_entities):
-            e_info = entities_info[i_e]
-            for i_d1 in range(e_info.dof_start, e_info.dof_end):
+            for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                 mv = gs.ti_float(0.0)
-                for i_d2 in range(e_info.dof_start, e_info.dof_end):
+                for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     mv += rgi.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
                 constraint_state.mv[i_d1, i_b] = mv
 
@@ -1727,14 +1725,13 @@ class ConstraintSolver:
     ):
         rgi = rigid_global_info
         _B = rgi.mass_mat.shape[2]
-        n_entities = entities_info.shape[0]
+        n_entities = entities_info.n_links.shape[0]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
-            e_info = entities_info[i_e]
-            for i_d1_ in range(e_info.n_dofs):
-                i_d1 = e_info.dof_start + i_d1_
+            for i_d1_ in range(entities_info.n_dofs[i_e]):
+                i_d1 = entities_info.dof_start[i_e] + i_d1_
                 Ma_ = gs.ti_float(0.0)
-                for i_d2 in range(e_info.dof_start, e_info.dof_end):
+                for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     Ma_ += rgi.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
                 Ma[i_d1, i_b] = Ma_
 

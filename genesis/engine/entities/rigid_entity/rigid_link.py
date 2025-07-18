@@ -313,7 +313,7 @@ class RigidLink(RBC):
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -323,7 +323,7 @@ class RigidLink(RBC):
 
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_vverts(self):

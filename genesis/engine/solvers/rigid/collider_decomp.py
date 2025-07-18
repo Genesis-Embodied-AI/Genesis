@@ -560,8 +560,8 @@ class Collider:
             cur_length = edges_info.length[i_e]
             if cur_length > ga_sdf_cell_size:
 
-                i_v0 = edges_info[i_e].v0
-                i_v1 = edges_info[i_e].v1
+                i_v0 = edges_info.v0[i_e]
+                i_v1 = edges_info.v1[i_e]
 
                 p_0 = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v0], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]

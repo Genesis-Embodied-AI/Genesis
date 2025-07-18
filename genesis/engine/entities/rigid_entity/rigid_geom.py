@@ -407,7 +407,7 @@ class RigidGeom(RBC):
 
         for i_v, j, i_b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i_v + self._verts_state_start
-            tensor[i_b, i_v, j] = self._solver.free_verts_state[idx_vert, i_b].pos[j]
+            tensor[i_b, i_v, j] = self._solver.free_verts_state.pos[idx_vert, i_b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -415,7 +415,7 @@ class RigidGeom(RBC):
 
         for i_v, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i_v + self._verts_state_start
-            tensor[i_v, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i_v, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_AABB(self):

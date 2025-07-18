@@ -692,9 +692,16 @@ class StructEdgesInfo:
 
 
 @ti.data_oriented
-class StructVertsState:
-    def __init__(self, solver, n_verts):
-        shape = solver._batch_shape(n_verts)
+class StructFreeVertsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_free_verts_)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructFixedVertsState:
+    def __init__(self, solver):
+        shape = solver.n_fixed_verts_
         self.pos = V(dtype=gs.ti_vec3, shape=shape)
 
 
@@ -750,6 +757,29 @@ class StructEqualitiesInfo:
 
 
 @ti.data_oriented
+class StructEntitiesInfo:
+    def __init__(self, solver):
+        shape = solver.n_entities_
+        self.dof_start = V(dtype=gs.ti_int, shape=shape)
+        self.dof_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_dofs = V(dtype=gs.ti_int, shape=shape)
+        self.link_start = V(dtype=gs.ti_int, shape=shape)
+        self.link_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_links = V(dtype=gs.ti_int, shape=shape)
+        self.geom_start = V(dtype=gs.ti_int, shape=shape)
+        self.geom_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_geoms = V(dtype=gs.ti_int, shape=shape)
+        self.gravity_compensation = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructEntitiesState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_entities_)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
 class DataManager:
     def __init__(self, solver):
         self.solver = solver
@@ -771,8 +801,8 @@ class DataManager:
         self.faces_info = StructFacesInfo(self.solver)
         self.edges_info = StructEdgesInfo(self.solver)
 
-        self.free_verts_state = StructVertsState(self.solver, self.solver.n_free_verts_)
-        self.fixed_verts_state = StructVertsState(self.solver, self.solver.n_fixed_verts_)
+        self.free_verts_state = StructFreeVertsState(self.solver)
+        self.fixed_verts_state = StructFixedVertsState(self.solver)
 
         self.vverts_info = StructVvertsInfo(self.solver)
         self.vfaces_info = StructVfacesInfo(self.solver)
@@ -781,6 +811,9 @@ class DataManager:
         self.vgeoms_state = StructVgeomsState(self.solver)
 
         self.equalities_info = StructEqualitiesInfo(self.solver)
+
+        self.entities_info = StructEntitiesInfo(self.solver)
+        self.entities_state = StructEntitiesState(self.solver)
 
     def init_mass_mat(self):
         self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
