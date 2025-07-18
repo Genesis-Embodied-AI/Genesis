@@ -272,14 +272,25 @@ class ConstraintSolver:
     ):
         n_dofs = dofs_state.ctrl_mode.shape[0]
 
-        eq_info = equalities_info[i_e, i_b]
-        link1_idx = eq_info.eq_obj1id
-        link2_idx = eq_info.eq_obj2id
+        link1_idx = equalities_info.eq_obj1id[i_e, i_b]
+        link2_idx = equalities_info.eq_obj2id[i_e, i_b]
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link1_idx
         link_b_maybe_batch = [link2_idx, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link2_idx
-        anchor1_pos = gs.ti_vec3([eq_info.eq_data[0], eq_info.eq_data[1], eq_info.eq_data[2]])
-        anchor2_pos = gs.ti_vec3([eq_info.eq_data[3], eq_info.eq_data[4], eq_info.eq_data[5]])
-        sol_params = eq_info.sol_params
+        anchor1_pos = gs.ti_vec3(
+            [
+                equalities_info.eq_data[i_e, i_b][0],
+                equalities_info.eq_data[i_e, i_b][1],
+                equalities_info.eq_data[i_e, i_b][2],
+            ]
+        )
+        anchor2_pos = gs.ti_vec3(
+            [
+                equalities_info.eq_data[i_e, i_b][3],
+                equalities_info.eq_data[i_e, i_b][4],
+                equalities_info.eq_data[i_e, i_b][5],
+            ]
+        )
+        sol_params = equalities_info.sol_params[i_e, i_b]
 
         # Transform anchor positions to global coordinates
         global_anchor1 = gu.ti_transform_by_trans_quat(
@@ -371,15 +382,18 @@ class ConstraintSolver:
         n_dofs = constraint_state.jac.shape[1]
 
         rgi = rigid_global_info
-        eq_info = equalities_info[i_e, i_b]
 
-        sol_params = eq_info.sol_params
+        sol_params = equalities_info.sol_params[i_e, i_b]
 
         I_joint1 = (
-            [eq_info.eq_obj1id, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else eq_info.eq_obj1id
+            [equalities_info.eq_obj1id[i_e, i_b], i_b]
+            if ti.static(static_rigid_sim_config.batch_joints_info)
+            else equalities_info.eq_obj1id[i_e, i_b]
         )
         I_joint2 = (
-            [eq_info.eq_obj2id, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else eq_info.eq_obj2id
+            [equalities_info.eq_obj2id[i_e, i_b], i_b]
+            if ti.static(static_rigid_sim_config.batch_joints_info)
+            else equalities_info.eq_obj2id[i_e, i_b]
         )
         i_qpos1 = joints_info.q_start[I_joint1]
         i_qpos2 = joints_info.q_start[I_joint2]
@@ -412,9 +426,9 @@ class ConstraintSolver:
         # y - y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-fx0)^3 + a4 * (x-x0)^4
         for i_5 in range(5):
             diff_power = diff**i_5
-            pos = pos - diff_power * eq_info.eq_data[i_5]
+            pos = pos - diff_power * equalities_info.eq_data[i_e, i_b][i_5]
             if i_5 < 4:
-                deriv = deriv + eq_info.eq_data[i_5 + 1] * diff_power * (i_5 + 1)
+                deriv = deriv + equalities_info.eq_data[i_e, i_b][i_5 + 1] * diff_power * (i_5 + 1)
 
         constraint_state.jac[n_con, i_dof1, i_b] = gs.ti_float(1.0)
         constraint_state.jac[n_con, i_dof2, i_b] = -deriv
@@ -450,7 +464,7 @@ class ConstraintSolver:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(_B):
             for i_e in range(constraint_state.ti_n_equalities[i_b]):
-                if equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.CONNECT:
+                if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
                     self_unused._func_equality_connect(
                         i_b,
                         i_e,
@@ -463,7 +477,7 @@ class ConstraintSolver:
                         static_rigid_sim_config=static_rigid_sim_config,
                     )
 
-                elif equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.WELD:
+                elif equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD:
                     self_unused._func_equality_weld(
                         i_b,
                         i_e,
@@ -474,7 +488,7 @@ class ConstraintSolver:
                         constraint_state=constraint_state,
                         static_rigid_sim_config=static_rigid_sim_config,
                     )
-                elif equalities_info[i_e, i_b].eq_type == gs.EQUALITY_TYPE.JOINT:
+                elif equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
                     self_unused._func_equality_joint(
                         i_b,
                         i_e,
@@ -503,9 +517,8 @@ class ConstraintSolver:
 
         # TODO: sparse mode
         # Get equality info for this constraint
-        eq_info = equalities_info[i_e, i_b]
-        link1_idx = eq_info.eq_obj1id
-        link2_idx = eq_info.eq_obj2id
+        link1_idx = equalities_info.eq_obj1id[i_e, i_b]
+        link2_idx = equalities_info.eq_obj2id[i_e, i_b]
         link_a_maybe_batch = [link1_idx, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link1_idx
         link_b_maybe_batch = [link2_idx, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link2_idx
 
@@ -514,11 +527,30 @@ class ConstraintSolver:
         # [3:6]  : anchor1 (local pos in body1)
         # [6:10] : relative pose (quat) of body 2 related to body 1 to match orientations
         # [10]   : torquescale
-        anchor1_pos = gs.ti_vec3([eq_info.eq_data[3], eq_info.eq_data[4], eq_info.eq_data[5]])
-        anchor2_pos = gs.ti_vec3([eq_info.eq_data[0], eq_info.eq_data[1], eq_info.eq_data[2]])
-        relpose = gs.ti_vec4([eq_info.eq_data[6], eq_info.eq_data[7], eq_info.eq_data[8], eq_info.eq_data[9]])
-        torquescale = eq_info.eq_data[10]
-        sol_params = eq_info.sol_params
+        anchor1_pos = gs.ti_vec3(
+            [
+                equalities_info.eq_data[i_e, i_b][3],
+                equalities_info.eq_data[i_e, i_b][4],
+                equalities_info.eq_data[i_e, i_b][5],
+            ]
+        )
+        anchor2_pos = gs.ti_vec3(
+            [
+                equalities_info.eq_data[i_e, i_b][0],
+                equalities_info.eq_data[i_e, i_b][1],
+                equalities_info.eq_data[i_e, i_b][2],
+            ]
+        )
+        relpose = gs.ti_vec4(
+            [
+                equalities_info.eq_data[i_e, i_b][6],
+                equalities_info.eq_data[i_e, i_b][7],
+                equalities_info.eq_data[i_e, i_b][8],
+                equalities_info.eq_data[i_e, i_b][9],
+            ]
+        )
+        torquescale = equalities_info.eq_data[i_e, i_b][10]
+        sol_params = equalities_info.sol_params[i_e, i_b]
 
         # Transform anchor positions to global coordinates
         global_anchor1 = gu.ti_transform_by_trans_quat(

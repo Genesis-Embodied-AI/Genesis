@@ -12,6 +12,7 @@ import numpy as np
 # as a temporary solution, we get is_ndarray from os's environment variable
 use_ndarray = os.environ.get("GS_USE_NDARRAY", "0") == "1"
 V = ti.ndarray if use_ndarray else ti.field
+V_ANNOTATION = ti.types.ndarray() if use_ndarray else ti.template()
 
 
 def bake(dough):
@@ -35,7 +36,8 @@ def bake(dough):
     def create_type(is_field, element_type, shape):
         if is_field:
             return ti.template()
-        return ti.types.ndarray(element_type, ndim=len(shape))
+        # return ti.types.ndarray(element_type, ndim=len(shape))
+        return ti.types.ndarray()
 
     declaration_type_by_name = [
         (name, create_type(is_field, element_type, shape))
@@ -99,6 +101,7 @@ class RigidGlobalInfo:
         self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
 
         self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+        self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=f_batch())
         self.init_mass_mat(solver)
 
     def init_mass_mat(self, solver):
@@ -736,6 +739,17 @@ class StructVgeomsState:
 
 
 @ti.data_oriented
+class StructEqualitiesInfo:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_equalities_candidate)
+        self.eq_obj1id = V(dtype=gs.ti_int, shape=shape)
+        self.eq_obj2id = V(dtype=gs.ti_int, shape=shape)
+        self.eq_data = V(dtype=gs.ti_vec11, shape=shape)
+        self.eq_type = V(dtype=gs.ti_int, shape=shape)
+        self.sol_params = V(dtype=gs.ti_vec7, shape=shape)
+
+
+@ti.data_oriented
 class DataManager:
     def __init__(self, solver):
         self.solver = solver
@@ -765,6 +779,8 @@ class DataManager:
 
         self.vgeoms_info = StructVgeomsInfo(self.solver)
         self.vgeoms_state = StructVgeomsState(self.solver)
+
+        self.equalities_info = StructEqualitiesInfo(self.solver)
 
     def init_mass_mat(self):
         self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))

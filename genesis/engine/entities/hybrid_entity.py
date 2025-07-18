@@ -384,12 +384,11 @@ class HybridEntity(Entity):
                 # get corresponding link
                 group_idx = self._solver_soft.particles_info[i_global].muscle_group
 
-                link_idx = self._part_soft_info[group_idx].link_idx
-                geom_idx = self._part_soft_info[group_idx].geom_idx
-                trans_local_to_global = self._part_soft_info[group_idx].trans_local_to_global
-                quat_local_to_global = self._part_soft_info[group_idx].quat_local_to_global
+                link_idx = self._part_soft_info.link_idx[group_idx]
+                geom_idx = self._part_soft_info.geom_idx[group_idx]
+                trans_local_to_global = self._part_soft_info.trans_local_to_global[group_idx]
+                quat_local_to_global = self._part_soft_info.quat_local_to_global[group_idx]
 
-                link = self._solver_rigid.links_state[link_idx, i_b]
                 g_pos = self._solver_rigid.geoms_state.pos[geom_idx, i_b]
                 g_quat = self._solver_rigid.geoms_state.quat[geom_idx, i_b]
 
@@ -405,8 +404,8 @@ class HybridEntity(Entity):
                 tx_pos, tx_quat = gu.ti_transform_pos_quat_by_trans_quat(
                     scaled_pos,
                     g_quat,
-                    link.pos,
-                    link.quat,
+                    self._solver_rigid.links_state.pos[link_idx, i_b],
+                    self._solver_rigid.links_state.quat[link_idx, i_b],
                 )
                 new_x_pos = gu.ti_transform_by_trans_quat(
                     x_init_local,
@@ -419,11 +418,11 @@ class HybridEntity(Entity):
                 dt_scale = (
                     self._solver_soft.substep_dt / self._solver_rigid.dt
                 )  # NOTE: move soft part incrementally at soft solver's substeps
-                x_pos = self._solver_soft.particles[f_, i_global, i_b].pos
+                x_pos = self._solver_soft.particles.pos[f_, i_global, i_b]
                 xd_vel = (new_x_pos - x_pos) / dt
                 xd_vel *= dt_scale  # assume linear scaling between the timestep difference of soft/rigid solver
 
-                vel_d = xd_vel - self._solver_soft.particles[f_, i_global, i_b].vel
+                vel_d = xd_vel - self._solver_soft.particles.vel[f_, i_global, i_b]
                 vel_d *= ti.exp(-self._solver_soft.dt * self.material.damping)
 
                 # soft-to-rigid coupling
@@ -433,12 +432,12 @@ class HybridEntity(Entity):
                 mass_real = self._solver_soft.particles_info[i_global].mass / self._solver_soft._p_vol_scale
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
-                frc_ang = (x_pos - link.COM).cross(frc_vel)
-                self._solver_rigid.links_state[link_idx, i_b].cfrc_applied_vel += frc_vel
-                self._solver_rigid.links_state[link_idx, i_b].cfrc_applied_ang += frc_ang
+                frc_ang = (x_pos - self._solver_rigid.links_state.COM[link_idx, i_b]).cross(frc_vel)
+                self._solver_rigid.links_state.cfrc_applied_vel[link_idx, i_b] += frc_vel
+                self._solver_rigid.links_state.cfrc_applied_ang[link_idx, i_b] += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
-                self._solver_soft.particles[f_, i_global, i_b].vel += vel_d * self.material.soft_dv_coef
+                self._solver_soft.particles.vel[f_, i_global, i_b] += vel_d * self.material.soft_dv_coef
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

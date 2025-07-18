@@ -174,8 +174,8 @@ class ConstraintSolverIsland:
                         for i_d_ in range(self._solver.links_info.n_dofs[link]):
                             i_d = self._solver.links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
-                            cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang
-                            cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
+                            cdof_ang = self._solver.dofs_state.cdof_ang[i_d, i_b]
+                            cdot_vel = self._solver.dofs_state.cdof_vel[i_d, i_b]
 
                             t_quat = gu.ti_identity_quat()
                             t_pos = contact_data.pos - self._solver.links_state.COM[link, i_b]
@@ -183,7 +183,7 @@ class ConstraintSolverIsland:
 
                             diff = sign * vel
                             jac = diff @ n
-                            jac_qvel = jac_qvel + jac * self._solver.dofs_state[i_d, i_b].vel
+                            jac_qvel = jac_qvel + jac * self._solver.dofs_state.vel[i_d, i_b]
                             self.jac[n_con, i_d, i_b] = self.jac[n_con, i_d, i_b] + jac
                             if ti.static(self.sparse_solve):
                                 self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
@@ -225,21 +225,25 @@ class ConstraintSolverIsland:
 
                 for i_j in range(l_info.joint_start, l_info.joint_end):
                     I_j = [i_j, i_b] if ti.static(self._solver._options.batch_joints_info) else i_j
-                    j_info = self._solver.joints_info[I_j]
 
-                    if j_info.type == gs.JOINT_TYPE.REVOLUTE or j_info.type == gs.JOINT_TYPE.PRISMATIC:
-                        i_q = j_info.q_start
-                        i_d = j_info.dof_start
+                    if (
+                        self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE
+                        or self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC
+                    ):
+                        i_q = self._solver.joints_info.q_start[I_j]
+                        i_d = self._solver.joints_info.dof_start[I_j]
                         I_d = [i_d, i_b] if ti.static(self._solver._options.batch_dofs_info) else i_d
-                        pos_delta_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info[I_d].limit[0]
-                        pos_delta_max = self._solver.dofs_info[I_d].limit[1] - self._solver.qpos[i_q, i_b]
+                        pos_delta_min = self._solver.qpos[i_q, i_b] - self._solver.dofs_info.limit[I_d][0]
+                        pos_delta_max = self._solver.dofs_info.limit[I_d][1] - self._solver.qpos[i_q, i_b]
                         pos_delta = min(pos_delta_min, pos_delta_max)
 
                         if pos_delta < 0:
                             jac = (pos_delta_min < pos_delta_max) * 2 - 1
-                            jac_qvel = jac * self._solver.dofs_state[i_d, i_b].vel
-                            imp, aref = gu.imp_aref(j_info.sol_params, pos_delta, jac_qvel, pos_delta)
-                            diag = ti.max(self._solver.dofs_info[I_d].invweight * (1 - imp) / imp, gs.EPS)
+                            jac_qvel = jac * self._solver.dofs_state.vel[i_d, i_b]
+                            imp, aref = gu.imp_aref(
+                                self._solver.joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta
+                            )
+                            diag = ti.max(self._solver.dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
 
                             n_con = self.n_constraints[i_b]
                             self.n_constraints[i_b] = n_con + 1
@@ -547,7 +551,7 @@ class ConstraintSolverIsland:
             i_e = self.contact_island.entity_id[i_e_, i_b]
             e_info = self.entities_info[i_e]
             for i_d in range(e_info.dof_start, e_info.dof_end):
-                self._solver.dofs_state[i_d, i_b].acc = self.qacc[i_d, i_b]
+                self._solver.dofs_state.acc[i_d, i_b] = self.qacc[i_d, i_b]
                 self.qacc_ws[i_d, i_b] = self.qacc[i_d, i_b]
 
     @ti.func
@@ -617,7 +621,7 @@ class ConstraintSolverIsland:
             for i_d in range(e_info.dof_start, e_info.dof_end):
                 quad_gauss_1 += (
                     self.search[i_d, i_b] * self.Ma[i_d, i_b]
-                    - self.search[i_d, i_b] * self._solver.dofs_state[i_d, i_b].force
+                    - self.search[i_d, i_b] * self._solver.dofs_state.force[i_d, i_b]
                 )
                 quad_gauss_2 += 0.5 * self.search[i_d, i_b] * self.mv[i_d, i_b]
 
@@ -971,8 +975,8 @@ class ConstraintSolverIsland:
 
                 v = (
                     0.5
-                    * (Ma[i_d, i_b] - self._solver.dofs_state[i_d, i_b].force)
-                    * (qacc[i_d, i_b] - self._solver.dofs_state[i_d, i_b].acc)
+                    * (Ma[i_d, i_b] - self._solver.dofs_state.force[i_d, i_b])
+                    * (qacc[i_d, i_b] - self._solver.dofs_state.acc[i_d, i_b])
                 )
                 self.gauss[i_b] = self.gauss[i_b] + v
                 cost[i_b] = cost[i_b] + v
@@ -991,7 +995,7 @@ class ConstraintSolverIsland:
             e_info = self.entities_info[i_e]
             for i_d in range(e_info.dof_start, e_info.dof_end):
                 self.grad[i_d, i_b] = (
-                    self.Ma[i_d, i_b] - self._solver.dofs_state[i_d, i_b].force - self.qfrc_constraint[i_d, i_b]
+                    self.Ma[i_d, i_b] - self._solver.dofs_state.force[i_d, i_b] - self.qfrc_constraint[i_d, i_b]
                 )
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
