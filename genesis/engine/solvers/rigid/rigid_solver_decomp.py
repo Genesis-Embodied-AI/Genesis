@@ -4558,7 +4558,7 @@ class RigidSolver(Solver):
                 inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
-        elif isinstance(inputs_idx, int):
+        elif isinstance(inputs_idx, (int, np.integer)):
             inputs_idx = [inputs_idx]
 
         is_preallocated = tensor is not None
@@ -4643,7 +4643,7 @@ class RigidSolver(Solver):
                 inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
-        elif isinstance(inputs_idx, int):
+        elif isinstance(inputs_idx, (int, np.integer)):
             inputs_idx = [inputs_idx]
 
         is_preallocated = tensor is not None
@@ -5821,7 +5821,7 @@ class RigidSolver(Solver):
         )
 
         if dofs_idx is not None:
-            if isinstance(dofs_idx, (slice, int)) or (dofs_idx.ndim == 0):
+            if isinstance(dofs_idx, (slice, int, np.integer)) or (dofs_idx.ndim == 0):
                 tensor = tensor[:, dofs_idx, dofs_idx]
                 if tensor.ndim == 1:
                     tensor = tensor.reshape((-1, 1, 1))
