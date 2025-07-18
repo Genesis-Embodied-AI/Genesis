@@ -7,8 +7,8 @@ from .vec3 import Pose, Quat, Vec3, Color
 
 from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 
-MOUSE_SPRING_POSITION_CORRECTION_FACTOR = 1.0 / 2
-MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR = 1.0 * 2
+MOUSE_SPRING_POSITION_CORRECTION_FACTOR = 1.0
+MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR = 1.0
 
 def _ensure_torch_imported() -> None:
     global torch
