@@ -33,125 +33,172 @@ class ConstraintSolver:
             + self._solver.n_equalities_candidate * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
-        self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
-        self.ti_n_equalities.from_numpy(np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int))
 
-        jac_shape = self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
-        if (jac_shape[0] * jac_shape[1] * jac_shape[2]) > np.iinfo(np.int32).max:
-            raise ValueError(
-                f"Jacobian shape {jac_shape} is too large for int32. "
-                "Consider reducing the number of constraints or the number of degrees of freedom."
-            )
+        self.constraint_state = array_class.ConstraintState(self, self._solver)
 
-        self.jac = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
-        )
-        self.diag = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
-        self.aref = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+        # self.ti_n_equalities.from_numpy(np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int))
 
-        self.jac_relevant_dofs = ti.field(
-            gs.ti_int, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
-        )
-        self.jac_n_relevant_dofs = ti.field(gs.ti_int, shape=self._solver._batch_shape(self.len_constraints_))
+        # jac_shape = self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
+        # if (jac_shape[0] * jac_shape[1] * jac_shape[2]) > np.iinfo(np.int32).max:
+        #     raise ValueError(
+        #         f"Jacobian shape {jac_shape} is too large for int32. "
+        #         "Consider reducing the number of constraints or the number of degrees of freedom."
+        #     )
 
-        self.n_constraints = ti.field(gs.ti_int, shape=self._solver._batch_shape())
-        self.n_constraints_equality = ti.field(gs.ti_int, shape=self._solver._batch_shape())
-        self.improved = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+        # self.jac = ti.field(
+        #     dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
+        # )
+        # self.diag = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.aref = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
 
-        self.Jaref = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
-        self.Ma = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.Ma_ws = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.grad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.Mgrad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.search = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.jac_relevant_dofs = ti.field(
+        #     gs.ti_int, shape=self._solver._batch_shape((self.len_constraints_, self._solver.n_dofs_))
+        # )
+        # self.jac_n_relevant_dofs = ti.field(gs.ti_int, shape=self._solver._batch_shape(self.len_constraints_))
 
-        self.efc_D = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
-        self.efc_force = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
-        self.active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape(self.len_constraints_))
-        self.prev_active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape(self.len_constraints_))
-        self.qfrc_constraint = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.qacc = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.qacc_ws = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.qacc_prev = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.n_constraints = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+        # self.n_constraints_equality = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+        # self.improved = ti.field(gs.ti_int, shape=self._solver._batch_shape())
 
-        self.cost_ws = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.Jaref = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.Ma = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.Ma_ws = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.grad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.Mgrad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.search = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
 
-        self.gauss = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-        self.cost = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-        self.prev_cost = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.efc_D = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.efc_force = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.prev_active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.qfrc_constraint = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.qacc = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.qacc_ws = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.qacc_prev = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
 
-        ## line search
-        self.gtol = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.cost_ws = ti.field(gs.ti_float, shape=self._solver._batch_shape())
 
-        self.mv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-        self.jv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
-        self.quad_gauss = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(3))
-        self.quad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, 3)))
+        # self.gauss = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.cost = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.prev_cost = ti.field(gs.ti_float, shape=self._solver._batch_shape())
 
-        self.candidates = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(12))
-        self.ls_its = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-        self.ls_result = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+        # ## line search
+        # self.gtol = ti.field(gs.ti_float, shape=self._solver._batch_shape())
 
+        # self.mv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        # self.jv = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.len_constraints_))
+        # self.quad_gauss = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(3))
+        # self.quad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, 3)))
+
+        # self.candidates = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(12))
+        # self.ls_its = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.ls_result = ti.field(gs.ti_int, shape=self._solver._batch_shape())
+
+        # if self._solver_type == gs.constraint_solver.CG:
+        #     self.cg_prev_grad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        #     self.cg_prev_Mgrad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+        #     self.cg_beta = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        #     self.cg_pg_dot_pMg = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+
+        # if self._solver_type == gs.constraint_solver.Newton:
+        #     self.nt_H = ti.field(
+        #         dtype=gs.ti_float, shape=self._solver._batch_shape((self._solver.n_dofs_, self._solver.n_dofs_))
+        #     )
+        #     self.nt_vec = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+
+        cs = self.constraint_state
+        self.ti_n_equalities = cs.ti_n_equalities
+        self.jac = cs.jac
+        self.diag = cs.diag
+        self.aref = cs.aref
+        self.jac_n_relevant_dofs = cs.jac_n_relevant_dofs
+        self.jac_relevant_dofs = cs.jac_relevant_dofs
+        self.n_constraints = cs.n_constraints
+        self.n_constraints_equality = cs.n_constraints_equality
+        self.improved = cs.improved
+        self.Jaref = cs.Jaref
+        self.Ma = cs.Ma
+        self.Ma_ws = cs.Ma_ws
+        self.grad = cs.grad
+        self.Mgrad = cs.Mgrad
+        self.search = cs.search
+        self.efc_D = cs.efc_D
+        self.efc_force = cs.efc_force
+        self.active = cs.active
+        self.prev_active = cs.prev_active
+        self.qfrc_constraint = cs.qfrc_constraint
+        self.qacc = cs.qacc
+        self.qacc_ws = cs.qacc_ws
+        self.qacc_prev = cs.qacc_prev
+        self.cost_ws = cs.cost_ws
+        self.gauss = cs.gauss
+        self.cost = cs.cost
+        self.prev_cost = cs.prev_cost
+        self.gtol = cs.gtol
+        self.mv = cs.mv
+        self.jv = cs.jv
+        self.quad_gauss = cs.quad_gauss
+        self.quad = cs.quad
+        self.candidates = cs.candidates
+        self.ls_its = cs.ls_its
+        self.ls_result = cs.ls_result
         if self._solver_type == gs.constraint_solver.CG:
-            self.cg_prev_grad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-            self.cg_prev_Mgrad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
-            self.cg_beta = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-            self.cg_pg_dot_pMg = ti.field(gs.ti_float, shape=self._solver._batch_shape())
-
+            self.cg_prev_grad = cs.cg_prev_grad
+            self.cg_prev_Mgrad = cs.cg_prev_Mgrad
+            self.cg_beta = cs.cg_beta
+            self.cg_pg_dot_pMg = cs.cg_pg_dot_pMg
         if self._solver_type == gs.constraint_solver.Newton:
-            self.nt_H = ti.field(
-                dtype=gs.ti_float, shape=self._solver._batch_shape((self._solver.n_dofs_, self._solver.n_dofs_))
-            )
-            self.nt_vec = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._solver.n_dofs_))
+            self.nt_H = cs.nt_H
+            self.nt_vec = cs.nt_vec
 
         self.reset()
 
         #
-        self.constraint_state = array_class.ConstraintState(self._solver)
 
-        self.constraint_state.ti_n_equalities = self.ti_n_equalities
-        self.constraint_state.jac = self.jac
-        self.constraint_state.diag = self.diag
-        self.constraint_state.aref = self.aref
-        self.constraint_state.jac_n_relevant_dofs = self.jac_n_relevant_dofs
-        self.constraint_state.jac_relevant_dofs = self.jac_relevant_dofs
-        self.constraint_state.n_constraints = self.n_constraints
-        self.constraint_state.n_constraints_equality = self.n_constraints_equality
-        self.constraint_state.improved = self.improved
-        self.constraint_state.Jaref = self.Jaref
-        self.constraint_state.Ma = self.Ma
-        self.constraint_state.Ma_ws = self.Ma_ws
-        self.constraint_state.grad = self.grad
-        self.constraint_state.Mgrad = self.Mgrad
-        self.constraint_state.search = self.search
-        self.constraint_state.efc_D = self.efc_D
-        self.constraint_state.efc_force = self.efc_force
-        self.constraint_state.active = self.active
-        self.constraint_state.prev_active = self.prev_active
-        self.constraint_state.qfrc_constraint = self.qfrc_constraint
-        self.constraint_state.qacc = self.qacc
-        self.constraint_state.qacc_ws = self.qacc_ws
-        self.constraint_state.qacc_prev = self.qacc_prev
-        self.constraint_state.cost_ws = self.cost_ws
-        self.constraint_state.gauss = self.gauss
-        self.constraint_state.cost = self.cost
-        self.constraint_state.prev_cost = self.prev_cost
-        self.constraint_state.gtol = self.gtol
-        self.constraint_state.mv = self.mv
-        self.constraint_state.jv = self.jv
-        self.constraint_state.quad_gauss = self.quad_gauss
-        self.constraint_state.quad = self.quad
-        self.constraint_state.candidates = self.candidates
-        self.constraint_state.ls_its = self.ls_its
-        self.constraint_state.ls_result = self.ls_result
-        if self._solver_type == gs.constraint_solver.CG:
-            self.constraint_state.cg_prev_grad = self.cg_prev_grad
-            self.constraint_state.cg_prev_Mgrad = self.cg_prev_Mgrad
-            self.constraint_state.cg_beta = self.cg_beta
-            self.constraint_state.cg_pg_dot_pMg = self.cg_pg_dot_pMg
-        if self._solver_type == gs.constraint_solver.Newton:
-            self.constraint_state.nt_H = self.nt_H
-            self.constraint_state.nt_vec = self.nt_vec
+        # self.constraint_state.ti_n_equalities = self.ti_n_equalities
+        # self.constraint_state.jac = self.jac
+        # self.constraint_state.diag = self.diag
+        # self.constraint_state.aref = self.aref
+        # self.constraint_state.jac_n_relevant_dofs = self.jac_n_relevant_dofs
+        # self.constraint_state.jac_relevant_dofs = self.jac_relevant_dofs
+        # self.constraint_state.n_constraints = self.n_constraints
+        # self.constraint_state.n_constraints_equality = self.n_constraints_equality
+        # self.constraint_state.improved = self.improved
+        # self.constraint_state.Jaref = self.Jaref
+        # self.constraint_state.Ma = self.Ma
+        # self.constraint_state.Ma_ws = self.Ma_ws
+        # self.constraint_state.grad = self.grad
+        # self.constraint_state.Mgrad = self.Mgrad
+        # self.constraint_state.search = self.search
+        # self.constraint_state.efc_D = self.efc_D
+        # self.constraint_state.efc_force = self.efc_force
+        # self.constraint_state.active = self.active
+        # self.constraint_state.prev_active = self.prev_active
+        # self.constraint_state.qfrc_constraint = self.qfrc_constraint
+        # self.constraint_state.qacc = self.qacc
+        # self.constraint_state.qacc_ws = self.qacc_ws
+        # self.constraint_state.qacc_prev = self.qacc_prev
+        # self.constraint_state.cost_ws = self.cost_ws
+        # self.constraint_state.gauss = self.gauss
+        # self.constraint_state.cost = self.cost
+        # self.constraint_state.prev_cost = self.prev_cost
+        # self.constraint_state.gtol = self.gtol
+        # self.constraint_state.mv = self.mv
+        # self.constraint_state.jv = self.jv
+        # self.constraint_state.quad_gauss = self.quad_gauss
+        # self.constraint_state.quad = self.quad
+        # self.constraint_state.candidates = self.candidates
+        # self.constraint_state.ls_its = self.ls_its
+        # self.constraint_state.ls_result = self.ls_result
+        # if self._solver_type == gs.constraint_solver.CG:
+        #     self.constraint_state.cg_prev_grad = self.cg_prev_grad
+        #     self.constraint_state.cg_prev_Mgrad = self.cg_prev_Mgrad
+        #     self.constraint_state.cg_beta = self.cg_beta
+        #     self.constraint_state.cg_pg_dot_pMg = self.cg_pg_dot_pMg
+        # if self._solver_type == gs.constraint_solver.Newton:
+        #     self.constraint_state.nt_H = self.nt_H
+        #     self.constraint_state.nt_vec = self.nt_vec
 
     def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
         if envs_idx is None:

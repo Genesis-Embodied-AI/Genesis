@@ -392,7 +392,7 @@ class MPMSolver(Solver):
 
                         sep_geom_idx = -1
                         for i_g in range(self.sim.rigid_solver.n_geoms):
-                            if self.sim.rigid_solver.geoms_info[i_g].needs_coup:
+                            if self.sim.rigid_solver.geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
                                 sdf_normal_cell = self.sim.rigid_solver.sdf.sdf_normal_world(cell_pos, i_g, i_b)
                                 if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g
