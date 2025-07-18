@@ -2185,7 +2185,7 @@ class RigidSolver(Solver):
             )
 
         if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-            _B = links_state.shape[1]
+            _B = links_state.pos.shape[1]
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(_B):
                 self_unused._func_update_cartesian_space(
