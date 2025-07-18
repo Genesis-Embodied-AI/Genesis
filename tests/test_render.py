@@ -1,11 +1,15 @@
 import queue
 import sys
+import shutil
+import os
 
 import numpy as np
 import pytest
 import torch
 
 import genesis as gs
+from genesis.utils.geom import trans_to_T
+from genesis.utils.image_exporter import FrameImageExporter
 
 from .utils import assert_allclose, assert_array_equal
 
@@ -326,3 +330,87 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
             for i in range(n_envs):
                 diff = frames_t[i] - frames_t_minus_1[i]
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
+
+@pytest.mark.parametrize("use_rasterizer", [True, False])
+@pytest.mark.parametrize("render_all_cameras", [True, False])
+@pytest.mark.parametrize("n_envs", [1, 3])
+@pytest.mark.parametrize("n_steps", [1, 1000])
+@pytest.mark.required
+def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_steps):
+    scene = gs.Scene(
+        renderer=gs.options.renderers.BatchRenderer(
+            use_rasterizer=use_rasterizer,
+        ),
+    )
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        visualize_contact=True,
+    )
+    cam_0 = scene.add_camera(
+        res=(512, 512),
+        pos=(1.5, 0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        GUI=True,
+    )
+    cam_0.attach(franka.links[6], trans_to_T(np.array([0.0, 0.5, 0.0])))
+    cam_1 = scene.add_camera(
+        res=(512, 512),
+        pos=(1.5, -0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        GUI=True,
+    )
+    scene.add_light(
+        pos=[0.0, 0.0, 1.5],
+        dir=[1.0, 1.0, -2.0],
+        directional=1,
+        castshadow=1,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.add_light(
+        pos=[4, -4, 4],
+        dir=[-1, 1, -1],
+        directional=0,
+        castshadow=1,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.build(n_envs=n_envs)
+
+    # Create an image exporter
+    export_dir = "img_output"
+    exporter = FrameImageExporter(export_dir)
+
+    for i in range(n_steps):
+        scene.step()
+        if render_all_cameras:
+            rgb, depth, _, _ = scene.render_all_cameras()
+            # 2 cameras
+            assert len(rgb) == 2
+            assert len(depth) == 2
+            assert rgb[0].shape == (n_envs, 512, 512, 3)
+            assert rgb[1].shape == (n_envs, 512, 512, 3)
+            assert depth[0].shape == (n_envs, 512, 512)
+            assert depth[1].shape == (n_envs, 512, 512)
+            exporter.export_frame_all_cameras(i, rgb=rgb, depth=depth)
+        else:
+            rgb, depth, _, _ = cam_0.render()
+            assert rgb.shape == (512, 512, 3)
+            assert depth.shape == (512, 512)
+            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgb, depth=depth)
+
+    # Clean up export_dir
+    if os.path.exists(export_dir):
+        shutil.rmtree(export_dir)
+    

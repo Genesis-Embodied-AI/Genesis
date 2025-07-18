@@ -2,22 +2,19 @@ import argparse
 import numpy as np
 
 import genesis as gs
-from genesis.options.renderers import BatchRenderer
 from genesis.utils.geom import trans_to_T
 from genesis.utils.image_exporter import FrameImageExporter
 
-N_ENVS = 3
-N_STEPS = 2
-IS_RENDER_ALL_CAMERAS = True
-OUTPUT_DIR = "img_output/test"
-
 
 def main():
-    global N_ENVS, N_STEPS, IS_RENDER_ALL_CAMERAS, OUTPUT_DIR
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-b", "--n_envs", type=int, default=3)
+    parser.add_argument("-s", "--n_steps", type=int, default=2)
+    parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
+    parser.add_argument("-o", "--output_dir", type=str, default="img_output/test")
+    parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -25,14 +22,8 @@ def main():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3.5, 0.0, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=40,
-        ),
-        show_viewer=args.vis,
         renderer=gs.options.renderers.BatchRenderer(
-            use_rasterizer=True,
+            use_rasterizer=args.use_rasterizer,
         ),
     )
 
@@ -79,18 +70,24 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build(n_envs=N_ENVS)
+    scene.build(n_envs=args.n_envs)
 
     # Create an image exporter
-    exporter = FrameImageExporter(OUTPUT_DIR)
+    exporter = FrameImageExporter(args.output_dir)
 
-    for i in range(N_STEPS):
+    for i in range(args.n_steps):
         scene.step()
-        if IS_RENDER_ALL_CAMERAS:
+        if args.render_all_cameras:
             rgb, depth, _, _ = scene.render_all_cameras()
+            print("rgb[0].mean()", rgb[0].mean())
+            print("rgb[1].mean()", rgb[1].mean())
+            print("depth[0].mean()", depth[0].mean())
+            print("depth[1].mean()", depth[1].mean())
             exporter.export_frame_all_cameras(i, rgb=rgb, depth=depth)
         else:
             rgb, depth, _, _ = cam_0.render()
+            print("rgb.mean()", rgb.mean())
+            print("depth.mean()", depth.mean())
             exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgb, depth=depth)
 
 
