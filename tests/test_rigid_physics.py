@@ -1230,13 +1230,7 @@ def move_cube(use_suction, mode, show_viewer):
     )
     # gripper open pos
     qpos[-2:] = 0.04
-    path = franka.plan_path(
-        qpos_goal=qpos,
-        num_waypoints=120,  # 1s duration
-        resolution=0.05,
-        timeout=30.0,
-    )
-    assert path
+    path = franka.plan_path(qpos_goal=qpos, num_waypoints=300, resolution=0.05, max_retry=10)
     # execute the planned path
     franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
     for waypoint in path:
@@ -1286,11 +1280,12 @@ def move_cube(use_suction, mode, show_viewer):
     )
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=80,
+        num_waypoints=100,
         resolution=0.05,
-        timeout=30.0,
+        max_retry=10,
+        ee_link_name="hand",
+        with_entity=cube,
     )
-    assert path
     for waypoint in path:
         franka.control_dofs_position(waypoint[:-2], motors_dof)
         scene.step()
@@ -1315,7 +1310,6 @@ def move_cube(use_suction, mode, show_viewer):
     assert_allclose(qpos[2], 0.075, atol=2e-3)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize(
     "mode, backend",
     [
@@ -1331,7 +1325,6 @@ def test_inverse_kinematics(mode, show_viewer):
     move_cube(use_suction=False, mode=mode, show_viewer=show_viewer)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_suction_cup(mode, show_viewer):
@@ -1339,9 +1332,9 @@ def test_suction_cup(mode, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(show_viewer):
+def test_path_planning_avoidance(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -1383,34 +1376,39 @@ def test_path_planning_avoidance(show_viewer):
         ),
         vis_mode="collision",
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     hand = franka.get_link("hand")
-    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
-    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
+    if n_envs > 0:
+        hand_pos_ref = torch.tensor([[0.3, 0.25, 0.25]] * n_envs, device=gs.device)
+        hand_quat_ref = torch.tensor([[0.3073, 0.5303, 0.7245, -0.2819]] * n_envs, device=gs.device)
+    else:
+        hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
+        hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos[-2:] = 0.04
+    qpos[..., -2:] = 0.04
 
-    avoidance_path = franka.plan_path(
-        qpos_goal=qpos,
-        num_waypoints=200,
-        ignore_collision=False,
-        resolution=0.002,
-        timeout=180.0,
-        max_retry=5,
-    )
-    assert avoidance_path
-    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
-    assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
     free_path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=200,
+        num_waypoints=300,
+        resolution=0.05,
         ignore_collision=True,
-        resolution=0.002,
     )
-    assert free_path
-    assert_allclose(free_path[0], 0.0, tol=gs.EPS)
+    assert_allclose(free_path[0], 0, tol=gs.EPS)
     assert_allclose(free_path[-1], qpos, tol=gs.EPS)
+
+    qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
+    qpos[..., -2:] = 0.04
+    avoidance_path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=300,
+        ignore_collision=False,
+        resolution=0.05,
+        max_nodes=4000,
+        max_retry=40,
+    )
+    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
 
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
         max_penetration = float("-inf")
@@ -1431,7 +1429,7 @@ def test_path_planning_avoidance(show_viewer):
 
         assert_allclose(hand_pos_ref, hand.get_pos(), tol=5e-4)
         hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
-        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[1:]), torch.abs(hand_quat_diff[0]))
+        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[..., 1:]), torch.abs(hand_quat_diff[..., 0]))
         assert_allclose(theta, 0.0, tol=5e-3)
 
 
@@ -2629,3 +2627,45 @@ def test_mesh_to_heightfield(tmp_path, show_viewer):
     # speed is around 0
     qvel = ball.get_dofs_velocity()
     assert_allclose(qvel, 0, atol=1e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_cartesian_space_variables(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # by default, enable_mujoco_compatibility=False
+            # the test will fail if enable_mujoco_compatibility=True
+            enable_mujoco_compatibility=False,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    scene.build()
+
+    for _ in range(2):
+        for link in box.links:
+            force = torch.tensor(np.array([0, 0, 0])).unsqueeze(0)
+            acc = 50.0
+            force[0, 0] = acc * link.inertial_mass
+            pos = link.get_pos()
+            vel = link.get_vel()
+
+            dof_vel = link.solver.get_dofs_velocity()
+            dof_pos = link.solver.get_qpos()
+
+            assert_allclose(dof_vel[:3], vel, atol=tol)
+            assert_allclose(dof_pos[:3], pos, atol=tol)
+
+            link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
+
+        scene.step()

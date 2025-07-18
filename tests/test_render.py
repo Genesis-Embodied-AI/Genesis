@@ -13,7 +13,6 @@ from .utils import assert_allclose, assert_array_equal
 @pytest.mark.required
 @pytest.mark.parametrize("segmentation_level", ["entity", "link"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
 def test_segmentation(segmentation_level, particle_mode):
     """Test segmentation rendering."""
     scene = gs.Scene(
@@ -86,8 +85,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
+@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -231,7 +229,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
                 pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
                 lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
                 cam.set_pose(pos=pos_i, lookat=lookat_i)
-                rgb_array, *_ = cam.render()
+                rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
                 assert np.std(rgb_array) > 10.0
                 robots_rgb_arrays.append(rgb_array)
 
@@ -242,10 +240,12 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.2,
+            substeps=10,
+        ),
         vis_options=gs.options.VisOptions(
             env_separate_rigid=False,
         ),
@@ -307,17 +307,12 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
             quat=target_quat,
             rot_mask=[False, False, True],  # for demo purpose: only restrict direction of z-axis
         )
-
         robot.set_qpos(q)
         scene.step()
-        if i < 10:
-            # skip the first few frames because the robots start off with the same state
-            for cam in cams:
-                cam.render()
-            continue
+
         robots_rgb_arrays = []
         for cam in cams:
-            rgb_array, *_ = cam.render()
+            rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
             assert np.std(rgb_array) > 10.0
             robots_rgb_arrays.append(rgb_array)
         steps_rgb_queue.put(robots_rgb_arrays)

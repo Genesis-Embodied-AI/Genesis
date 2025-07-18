@@ -1198,12 +1198,15 @@ class Renderer(object):
             glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self._main_db)
 
             # Generate multisample buffer
+            num_samples = min(glGetIntegerv(GL_MAX_SAMPLES), 4)
             self._main_cb_ms, self._main_db_ms = glGenRenderbuffers(2)
             glBindRenderbuffer(GL_RENDERBUFFER, self._main_cb_ms)
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_RGBA, self.viewport_width, self.viewport_height)
+            glRenderbufferStorageMultisample(
+                GL_RENDERBUFFER, num_samples, GL_RGBA, self.viewport_width, self.viewport_height
+            )
             glBindRenderbuffer(GL_RENDERBUFFER, self._main_db_ms)
             glRenderbufferStorageMultisample(
-                GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT24, self.viewport_width, self.viewport_height
+                GL_RENDERBUFFER, num_samples, GL_DEPTH_COMPONENT24, self.viewport_width, self.viewport_height
             )
             self._main_fb_ms = glGenFramebuffers(1)
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb_ms)
