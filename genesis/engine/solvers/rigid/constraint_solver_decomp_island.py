@@ -141,9 +141,9 @@ class ConstraintSolverIsland:
 
             d1, d2 = gu.ti_orthogonals(contact_data.normal)
 
-            invweight = self._solver.links_info[link_a_maybe_batch].invweight[0] + self._solver.links_info[
+            invweight = self._solver.links_info.invweight[link_a_maybe_batch][0] + self._solver.links_info.invweight[
                 link_b_maybe_batch
-            ].invweight[0] * (link_b > -1)
+            ][0] * (link_b > -1)
 
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
@@ -171,14 +171,14 @@ class ConstraintSolverIsland:
                         link_maybe_batch = [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
 
                         # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
-                        for i_d_ in range(self._solver.links_info[link].n_dofs):
-                            i_d = self._solver.links_info[link_maybe_batch].dof_end - 1 - i_d_
+                        for i_d_ in range(self._solver.links_info.n_dofs[link]):
+                            i_d = self._solver.links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
                             cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].COM
+                            t_pos = contact_data.pos - self._solver.links_state.COM[link, i_b]
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
@@ -189,7 +189,7 @@ class ConstraintSolverIsland:
                                 self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
                                 con_n_relevant_dofs += 1
 
-                        link = self._solver.links_info[link_maybe_batch].parent_idx
+                        link = self._solver.links_info.parent_idx[link_maybe_batch]
 
                 if ti.static(self.sparse_solve):
                     self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
@@ -517,7 +517,7 @@ class ConstraintSolverIsland:
             i_e = self.contact_island.entity_id[i_e_, i_b]
             e_info = self.entities_info[i_e]
             for i_l in range(e_info.link_start, e_info.link_end):
-                self._solver.links_state[i_l, i_b].contact_force = ti.Vector.zero(gs.ti_float, 3)
+                self._solver.links_state.contact_force[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
         for i_island_col in range(self.contact_island.island_col[island, i_b].n):
             i_col_ = self.contact_island.island_col[island, i_b].start + i_island_col
@@ -533,11 +533,11 @@ class ConstraintSolverIsland:
                 force += n * self.efc_force[i_island_col * 4 + i, i_b]
             self._collider._collider_state.contact_data[i_col, i_b].force = force
 
-            self._solver.links_state[contact_data.link_a, i_b].contact_force = (
-                self._solver.links_state[contact_data.link_a, i_b].contact_force - force
+            self._solver.links_state.contact_force[contact_data.link_a, i_b] = (
+                self._solver.links_state.contact_force[contact_data.link_a, i_b] - force
             )
-            self._solver.links_state[contact_data.link_b, i_b].contact_force = (
-                self._solver.links_state[contact_data.link_b, i_b].contact_force + force
+            self._solver.links_state.contact_force[contact_data.link_b, i_b] = (
+                self._solver.links_state.contact_force[contact_data.link_b, i_b] + force
             )
 
     @ti.func

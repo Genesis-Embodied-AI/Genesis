@@ -390,7 +390,8 @@ class HybridEntity(Entity):
                 quat_local_to_global = self._part_soft_info[group_idx].quat_local_to_global
 
                 link = self._solver_rigid.links_state[link_idx, i_b]
-                geom_info = self._solver_rigid.geoms_info[geom_idx]
+                g_pos = self._solver_rigid.geoms_state.pos[geom_idx, i_b]
+                g_quat = self._solver_rigid.geoms_state.quat[geom_idx, i_b]
 
                 # compute new pos in minimal coordinate using rigid-bodied dynamics
                 x_init_pos = self._part_soft_init_positions[i_p_]
@@ -398,12 +399,12 @@ class HybridEntity(Entity):
                     x_init_pos, trans_local_to_global, quat_local_to_global
                 )
                 scaled_pos = gu.ti_transform_by_quat(
-                    gu.ti_inv_transform_by_quat(geom_info.pos, geom_info.quat),
-                    geom_info.quat,
+                    gu.ti_inv_transform_by_quat(g_pos, g_quat),
+                    g_quat,
                 )
                 tx_pos, tx_quat = gu.ti_transform_pos_quat_by_trans_quat(
                     scaled_pos,
-                    geom_info.quat,
+                    g_quat,
                     link.pos,
                     link.quat,
                 )

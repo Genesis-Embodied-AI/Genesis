@@ -190,9 +190,9 @@ class ConstraintSolver:
 
                 d1, d2 = gu.ti_orthogonals(contact_data.normal)
 
-                invweight = links_info[link_a_maybe_batch].invweight[0]
+                invweight = links_info.invweight[link_a_maybe_batch][0]
                 if link_b > -1:
-                    invweight = invweight + links_info[link_b_maybe_batch].invweight[0]
+                    invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
                 for i in range(4):
                     d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
@@ -222,14 +222,14 @@ class ConstraintSolver:
                             )
 
                             # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
-                            for i_d_ in range(links_info[link_maybe_batch].n_dofs):
-                                i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
+                            for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
+                                i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
                                 cdof_ang = dofs_state.cdof_ang[i_d, i_b]
                                 cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                                 t_quat = gu.ti_identity_quat()
-                                t_pos = contact_data.pos - links_state[link, i_b].COM
+                                t_pos = contact_data.pos - links_state.COM[link, i_b]
                                 _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                                 diff = sign * vel
@@ -241,7 +241,7 @@ class ConstraintSolver:
                                     constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
                                     con_n_relevant_dofs += 1
 
-                            link = links_info[link_maybe_batch].parent_idx
+                            link = links_info.parent_idx[link_maybe_batch]
 
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
@@ -284,16 +284,16 @@ class ConstraintSolver:
         # Transform anchor positions to global coordinates
         global_anchor1 = gu.ti_transform_by_trans_quat(
             pos=anchor1_pos,
-            trans=links_state[link1_idx, i_b].pos,
-            quat=links_state[link1_idx, i_b].quat,
+            trans=links_state.pos[link1_idx, i_b],
+            quat=links_state.quat[link1_idx, i_b],
         )
         global_anchor2 = gu.ti_transform_by_trans_quat(
             pos=anchor2_pos,
-            trans=links_state[link2_idx, i_b].pos,
-            quat=links_state[link2_idx, i_b].quat,
+            trans=links_state.pos[link2_idx, i_b],
+            quat=links_state.quat[link2_idx, i_b],
         )
 
-        invweight = links_info[link_a_maybe_batch].invweight[0] + links_info[link_b_maybe_batch].invweight[0]
+        invweight = links_info.invweight[link_a_maybe_batch][0] + links_info.invweight[link_b_maybe_batch][0]
 
         for i_3 in range(3):
             n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
@@ -320,14 +320,14 @@ class ConstraintSolver:
                 while link > -1:
                     link_maybe_batch = [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
 
-                    for i_d_ in range(links_info[link_maybe_batch].n_dofs):
-                        i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
+                    for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
+                        i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
                         cdof_ang = dofs_state.cdof_ang[i_d, i_b]
                         cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                         t_quat = gu.ti_identity_quat()
-                        t_pos = pos - links_state[link, i_b].COM
+                        t_pos = pos - links_state.COM[link, i_b]
                         ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                         diff = sign * vel
@@ -339,7 +339,7 @@ class ConstraintSolver:
                             constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
                             con_n_relevant_dofs += 1
 
-                    link = links_info[link_maybe_batch].parent_idx
+                    link = links_info.parent_idx[link_maybe_batch]
 
             if ti.static(static_rigid_sim_config.sparse_solve):
                 constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
@@ -381,12 +381,10 @@ class ConstraintSolver:
         I_joint2 = (
             [eq_info.eq_obj2id, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else eq_info.eq_obj2id
         )
-        joint_info1 = joints_info[I_joint1]
-        joint_info2 = joints_info[I_joint2]
-        i_qpos1 = joint_info1.q_start
-        i_qpos2 = joint_info2.q_start
-        i_dof1 = joint_info1.dof_start
-        i_dof2 = joint_info2.dof_start
+        i_qpos1 = joints_info.q_start[I_joint1]
+        i_qpos2 = joints_info.q_start[I_joint2]
+        i_dof1 = joints_info.dof_start[I_joint1]
+        i_dof2 = joints_info.dof_start[I_joint2]
         I_dof1 = [i_dof1, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_dof1
         I_dof2 = [i_dof2, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_dof2
 
@@ -525,21 +523,21 @@ class ConstraintSolver:
         # Transform anchor positions to global coordinates
         global_anchor1 = gu.ti_transform_by_trans_quat(
             pos=anchor1_pos,
-            trans=links_state[link1_idx, i_b].pos,
-            quat=links_state[link1_idx, i_b].quat,
+            trans=links_state.pos[link1_idx, i_b],
+            quat=links_state.quat[link1_idx, i_b],
         )
         global_anchor2 = gu.ti_transform_by_trans_quat(
             pos=anchor2_pos,
-            trans=links_state[link2_idx, i_b].pos,
-            quat=links_state[link2_idx, i_b].quat,
+            trans=links_state.pos[link2_idx, i_b],
+            quat=links_state.quat[link2_idx, i_b],
         )
 
         pos_error = global_anchor1 - global_anchor2
 
         # Compute orientation error.
         # For weld: compute q = body1_quat * relpose, then error = (inv(body2_quat) * q)
-        quat_body1 = links_state[link1_idx, i_b].quat
-        quat_body2 = links_state[link2_idx, i_b].quat
+        quat_body1 = links_state.quat[link1_idx, i_b]
+        quat_body2 = links_state.quat[link2_idx, i_b]
         q = gu.ti_quat_mul(quat_body1, relpose)
         inv_quat_body2 = gu.ti_inv_quat(quat_body2)
         error_quat = gu.ti_quat_mul(inv_quat_body2, q)
@@ -550,7 +548,7 @@ class ConstraintSolver:
         pos_imp = all_error.norm()
 
         # Compute inverse weight from both bodies.
-        invweight = links_info[link_a_maybe_batch].invweight + links_info[link_b_maybe_batch].invweight
+        invweight = links_info.invweight[link_a_maybe_batch] + links_info.invweight[link_b_maybe_batch]
 
         # --- Position part (first 3 constraints) ---
         for i in range(3):
@@ -577,13 +575,13 @@ class ConstraintSolver:
                 while link > -1:
                     link_maybe_batch = [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
 
-                    for i_d_ in range(links_info[link_maybe_batch].n_dofs):
-                        i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
+                    for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
+                        i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
                         cdof_ang = dofs_state.cdof_ang[i_d, i_b]
                         cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                         t_quat = gu.ti_identity_quat()
-                        t_pos = pos_anchor - links_state[link, i_b].COM
+                        t_pos = pos_anchor - links_state.COM[link, i_b]
                         ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                         diff = sign * vel
                         jac = diff[i]
@@ -593,7 +591,7 @@ class ConstraintSolver:
                         if ti.static(static_rigid_sim_config.sparse_solve):
                             constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
                             con_n_relevant_dofs += 1
-                    link = links_info[link_maybe_batch].parent_idx
+                    link = links_info.parent_idx[link_maybe_batch]
 
             if ti.static(static_rigid_sim_config.sparse_solve):
                 constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
@@ -621,15 +619,15 @@ class ConstraintSolver:
             while link > -1:
                 link_maybe_batch = [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
 
-                for i_d_ in range(links_info[link_maybe_batch].n_dofs):
-                    i_d = links_info[link_maybe_batch].dof_end - 1 - i_d_
+                for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
+                    i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
                     jac = sign * dofs_state.cdof_ang[i_d, i_b]
 
                     for i_con in range(n_con, n_con + 3):
                         constraint_state.jac[i_con, i_d, i_b] = (
                             constraint_state.jac[i_con, i_d, i_b] + jac[i_con - n_con]
                         )
-                link = links_info[link_maybe_batch].parent_idx
+                link = links_info.parent_idx[link_maybe_batch]
 
         jac_qvel = ti.Vector([0.0, 0.0, 0.0])
         for i_d in range(n_dofs):
@@ -674,7 +672,7 @@ class ConstraintSolver:
         static_rigid_sim_config: ti.template(),
     ):
         _B = constraint_state.jac.shape[2]
-        n_links = links_info.shape[0]
+        n_links = links_info.root_idx.shape[0]
         n_dofs = dofs_state.ctrl_mode.shape[0]
         rgi = rigid_global_info
         # TODO: sparse mode
@@ -1049,7 +1047,7 @@ class ConstraintSolver:
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l, i_b in ti.ndrange(n_links, _B):
-            links_state[i_l, i_b].contact_force = ti.Vector.zero(gs.ti_float, 3)
+            links_state.contact_force[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -1066,11 +1064,11 @@ class ConstraintSolver:
 
                 collider_state.contact_data[i_c, i_b].force = force
 
-                links_state[contact_data.link_a, i_b].contact_force = (
-                    links_state[contact_data.link_a, i_b].contact_force - force
+                links_state.contact_force[contact_data.link_a, i_b] = (
+                    links_state.contact_force[contact_data.link_a, i_b] - force
                 )
-                links_state[contact_data.link_b, i_b].contact_force = (
-                    links_state[contact_data.link_b, i_b].contact_force + force
+                links_state.contact_force[contact_data.link_b, i_b] = (
+                    links_state.contact_force[contact_data.link_b, i_b] + force
                 )
 
     @ti.kernel

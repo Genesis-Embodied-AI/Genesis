@@ -92,6 +92,9 @@ class RigidGlobalInfo:
         self.n_awake_dofs = V(dtype=gs.ti_int, shape=f_batch())
         self.awake_dofs = V(dtype=gs.ti_int, shape=f_batch(solver.n_dofs_))
 
+        self.n_awake_entities = ti.field(dtype=gs.ti_int, shape=f_batch())
+        self.awake_entities = ti.field(dtype=gs.ti_int, shape=f_batch(solver.n_entities_))
+
         self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
         self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
 
@@ -524,7 +527,7 @@ class StructDofsState:
 
 
 @ti.data_oriented
-class StructLinkState:
+class StructLinksState:
     def __init__(self, solver):
         shape = solver._batch_shape(solver.n_links_)
         self.cinr_inertial = V(dtype=gs.ti_mat3, shape=shape)
@@ -562,7 +565,7 @@ class StructLinkState:
 
 
 @ti.data_oriented
-class StructLinkInfo:
+class StructLinksInfo:
     def __init__(self, solver):
         links_info_shape = solver._batch_shape(solver.n_links_) if solver._options.batch_links_info else solver.n_links_
         self.parent_idx = V(dtype=gs.ti_int, shape=links_info_shape)
@@ -586,7 +589,7 @@ class StructLinkInfo:
 
 
 @ti.data_oriented
-class StructJointInfo:
+class StructJointsInfo:
     def __init__(self, solver):
         shape = solver._batch_shape(solver.n_joints_) if solver._options.batch_joints_info else solver.n_joints_
         self.type = V(dtype=gs.ti_int, shape=shape)
@@ -600,11 +603,136 @@ class StructJointInfo:
 
 
 @ti.data_oriented
-class StructJointState:
+class StructJointsState:
     def __init__(self, solver):
         shape = solver._batch_shape(solver.n_joints_)
         self.xanchor = V(dtype=gs.ti_vec3, shape=shape)
         self.xaxis = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructGeomsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_geoms_,)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.center = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.data = V(dtype=gs.ti_vec7, shape=shape)
+        self.link_idx = V(dtype=gs.ti_int, shape=shape)
+        self.type = V(dtype=gs.ti_int, shape=shape)
+        self.friction = V(dtype=gs.ti_float, shape=shape)
+        self.sol_params = V(dtype=gs.ti_vec7, shape=shape)
+        self.vert_num = V(dtype=gs.ti_int, shape=shape)
+        self.vert_start = V(dtype=gs.ti_int, shape=shape)
+        self.vert_end = V(dtype=gs.ti_int, shape=shape)
+        self.verts_state_start = V(dtype=gs.ti_int, shape=shape)
+        self.verts_state_end = V(dtype=gs.ti_int, shape=shape)
+        self.face_num = V(dtype=gs.ti_int, shape=shape)
+        self.face_start = V(dtype=gs.ti_int, shape=shape)
+        self.face_end = V(dtype=gs.ti_int, shape=shape)
+        self.edge_num = V(dtype=gs.ti_int, shape=shape)
+        self.edge_start = V(dtype=gs.ti_int, shape=shape)
+        self.edge_end = V(dtype=gs.ti_int, shape=shape)
+        self.is_convex = V(dtype=gs.ti_int, shape=shape)
+        self.contype = V(dtype=gs.ti_int, shape=shape)
+        self.conaffinity = V(dtype=gs.ti_int, shape=shape)
+        self.is_free = V(dtype=gs.ti_int, shape=shape)
+        self.is_decomposed = V(dtype=gs.ti_int, shape=shape)
+        self.needs_coup = V(dtype=gs.ti_int, shape=shape)
+        self.coup_friction = V(dtype=gs.ti_float, shape=shape)
+        self.coup_softness = V(dtype=gs.ti_float, shape=shape)
+        self.coup_restitution = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructGeomsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_geoms_)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.aabb_min = V(dtype=gs.ti_vec3, shape=shape)
+        self.aabb_max = V(dtype=gs.ti_vec3, shape=shape)
+        self.verts_updated = V(dtype=gs.ti_int, shape=shape)
+        self.min_buffer_idx = V(dtype=gs.ti_int, shape=shape)
+        self.max_buffer_idx = V(dtype=gs.ti_int, shape=shape)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+        self.friction_ratio = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructVertsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_verts_,)
+        self.init_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.init_normal = V(dtype=gs.ti_vec3, shape=shape)
+        self.geom_idx = V(dtype=gs.ti_int, shape=shape)
+        self.init_center_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.verts_state_idx = V(dtype=gs.ti_int, shape=shape)
+        self.is_free = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructFacesInfo:
+    def __init__(self, solver):
+        shape = (solver.n_faces_,)
+        self.verts_idx = V(dtype=gs.ti_ivec3, shape=shape)
+        self.geom_idx = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructEdgesInfo:
+    def __init__(self, solver):
+        shape = (solver.n_edges_,)
+        self.v0 = V(dtype=gs.ti_int, shape=shape)
+        self.v1 = V(dtype=gs.ti_int, shape=shape)
+        self.length = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructVertsState:
+    def __init__(self, solver, n_verts):
+        shape = solver._batch_shape(n_verts)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructVvertsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_vverts_,)
+        self.init_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.init_vnormal = V(dtype=gs.ti_vec3, shape=shape)
+        self.vgeom_idx = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructVfacesInfo:
+    def __init__(self, solver):
+        shape = (solver.n_vfaces_,)
+        self.vverts_idx = V(dtype=gs.ti_ivec3, shape=shape)
+        self.vgeom_idx = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructVgeomsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_vgeoms_,)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.link_idx = V(dtype=gs.ti_int, shape=shape)
+        self.vvert_num = V(dtype=gs.ti_int, shape=shape)
+        self.vvert_start = V(dtype=gs.ti_int, shape=shape)
+        self.vvert_end = V(dtype=gs.ti_int, shape=shape)
+        self.vface_num = V(dtype=gs.ti_int, shape=shape)
+        self.vface_start = V(dtype=gs.ti_int, shape=shape)
+        self.vface_end = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructVgeomsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_vgeoms_)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
 
 
 @ti.data_oriented
@@ -615,10 +743,28 @@ class DataManager:
         self.rigid_global_info = RigidGlobalInfo(self.solver)
         self.dofs_info = StructDofsInfo(self.solver)
         self.dofs_state = StructDofsState(self.solver)
-        self.links_info = StructLinkInfo(self.solver)
-        self.links_state = StructLinkState(self.solver)
-        self.joints_info = StructJointInfo(self.solver)
-        self.joints_state = StructJointState(self.solver)
+        self.links_info = StructLinksInfo(self.solver)
+        self.links_state = StructLinksState(self.solver)
+        self.joints_info = StructJointsInfo(self.solver)
+        self.joints_state = StructJointsState(self.solver)
+        self.geoms_info = StructGeomsInfo(self.solver)
+        self.geoms_state = StructGeomsState(self.solver)
+        self.geoms_init_AABB = ti.Vector.field(
+            3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)
+        )  # stores 8 corners of AABB
+
+        self.verts_info = StructVertsInfo(self.solver)
+        self.faces_info = StructFacesInfo(self.solver)
+        self.edges_info = StructEdgesInfo(self.solver)
+
+        self.free_verts_state = StructVertsState(self.solver, self.solver.n_free_verts_)
+        self.fixed_verts_state = StructVertsState(self.solver, self.solver.n_fixed_verts_)
+
+        self.vverts_info = StructVvertsInfo(self.solver)
+        self.vfaces_info = StructVfacesInfo(self.solver)
+
+        self.vgeoms_info = StructVgeomsInfo(self.solver)
+        self.vgeoms_state = StructVgeomsState(self.solver)
 
     def init_mass_mat(self):
         self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))

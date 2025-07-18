@@ -867,8 +867,9 @@ class RigidEntity(Entity):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
-        tgt_link_state = self._solver.links_state[tgt_link_idx, i_b]
-        tgt_link_pos = tgt_link_state.pos + gu.ti_transform_by_quat(p_local, tgt_link_state.quat)
+        tgt_link_pos = self._solver.links_state.pos[tgt_link_idx, i_b] + gu.ti_transform_by_quat(
+            p_local, self._solver.links_state.quat[tgt_link_idx, i_b]
+        )
         i_l = tgt_link_idx
         while i_l > -1:
             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
@@ -1323,7 +1324,7 @@ class RigidEntity(Entity):
                         i_l_ee = links_idx[i_ee]
 
                         tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
-                        err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
+                        err_pos_i = tgt_pos_i - self._solver.links_state.pos[i_l_ee, i_b]
                         for k in range(3):
                             err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                         if err_pos_i.norm() > pos_tol:
@@ -1334,7 +1335,7 @@ class RigidEntity(Entity):
                         )
                         err_rot_i = gu.ti_quat_to_rotvec(
                             gu.ti_transform_quat_by_quat(
-                                gu.ti_inv_quat(self._solver.links_state[i_l_ee, i_b].quat), tgt_quat_i
+                                gu.ti_inv_quat(self._solver.links_state.quat[i_l_ee, i_b]), tgt_quat_i
                             )
                         )
                         for k in range(3):

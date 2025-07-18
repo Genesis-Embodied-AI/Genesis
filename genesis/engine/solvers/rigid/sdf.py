@@ -152,14 +152,15 @@ class SDF:
         sdf value from world coordinate
         """
 
-        g_state = self.solver.geoms_state[geom_idx, batch_idx]
+        g_pos = self.solver.geoms_state.pos[geom_idx, batch_idx]
+        g_quat = self.solver.geoms_state.quat[geom_idx, batch_idx]
 
         sd = gs.ti_float(0.0)
         if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.SPHERE:
-            sd = (pos_world - g_state.pos).norm() - self.solver.geoms_info[geom_idx].data[0]
+            sd = (pos_world - g_pos).norm() - self.solver.geoms_info[geom_idx].data[0]
 
         elif self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.PLANE:
-            pos_to_plane_center = pos_world - g_state.pos
+            pos_to_plane_center = pos_world - g_pos
             plane_normal = gs.ti_vec3(
                 [
                     self.solver.geoms_info[geom_idx].data[0],
@@ -170,7 +171,7 @@ class SDF:
             sd = pos_to_plane_center.dot(plane_normal)
 
         else:
-            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
+            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
             pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info[geom_idx].T_mesh_to_sdf)
             sd = self.sdf_sdf(pos_sdf, geom_idx)
 
@@ -208,19 +209,20 @@ class SDF:
 
     @ti.func
     def sdf_grad_world(self, pos_world, geom_idx, batch_idx):
-        g_state = self.solver.geoms_state[geom_idx, batch_idx]
+        g_pos = self.solver.geoms_state.pos[geom_idx, batch_idx]
+        g_quat = self.solver.geoms_state.quat[geom_idx, batch_idx]
 
         grad_world = ti.Vector.zero(gs.ti_float, 3)
         if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.SPHERE:
-            grad_world = gu.ti_normalize(pos_world - g_state.pos)
+            grad_world = gu.ti_normalize(pos_world - g_pos)
 
         else:
-            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
+            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
             pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info[geom_idx].T_mesh_to_sdf)
             grad_sdf = self.sdf_grad_sdf(pos_sdf, geom_idx)
 
             grad_mesh = grad_sdf  # no rotation between mesh and sdf frame
-            grad_world = gu.ti_transform_by_quat(grad_mesh, g_state.quat)
+            grad_world = gu.ti_transform_by_quat(grad_mesh, g_quat)
         return grad_world
 
     @ti.func
@@ -233,12 +235,13 @@ class SDF:
         """
         Returns vert of geom that's cloest to pos_world
         """
-        g_state = self.solver.geoms_state[geom_idx, i_b]
+        g_pos = self.solver.geoms_state.pos[geom_idx, i_b]
+        g_quat = self.solver.geoms_state.quat[geom_idx, i_b]
         geom_sdf_res = self.geoms_info[geom_idx].sdf_res
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
         pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info[geom_idx].T_mesh_to_sdf)
         nearest_cell = ti.cast(ti.min(ti.max(pos_sdf, 0), geom_sdf_res - 1), gs.ti_int)
         return (
             self.geoms_sdf_closest_vert[self.ravel_cell_idx(nearest_cell, geom_sdf_res, geom_idx)]
-            + self.solver.geoms_info[geom_idx].vert_start
+            + self.solver.geoms_info.vert_start[geom_idx]
         )

@@ -340,11 +340,11 @@ class RigidLink(RBC):
     def _kernel_get_vverts(self, tensor: ti.types.ndarray()):
         for i_vg_, i_b in ti.ndrange(self.n_vgeoms, self._solver._B):
             i_vg = i_vg_ + self._vgeom_start
-            g_info = self._solver.vgeoms_info[i_vg]
-            g_state = self._solver.vgeoms_state[i_vg, i_b]
-            for i_v in range(g_info.vvert_start, g_info.vvert_end):
+            for i_v in range(self._solver.vgeoms_info.vvert_start[i_vg], self._solver.vgeoms_info.vvert_end[i_vg]):
                 vvert_pos = gu.ti_transform_by_trans_quat(
-                    self._solver.vverts_info[i_v].init_pos, g_state.pos, g_state.quat
+                    self._solver.vverts_info.init_pos[i_v],
+                    self._solver.vgeoms_state.pos[i_vg, i_b],
+                    self._solver.vgeoms_state.quat[i_vg, i_b],
                 )
                 for j in range(3):
                     tensor[i_b, i_v - self._vvert_start, j] = vvert_pos[j]
