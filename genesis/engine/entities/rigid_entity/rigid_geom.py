@@ -30,7 +30,7 @@ class RigidGeom(RBC):
 
     def __init__(
         self,
-        link,
+        link: "RigidLink",
         idx,
         cell_start,
         vert_start,
@@ -494,14 +494,14 @@ class RigidGeom(RBC):
         return self._metadata
 
     @property
-    def link(self):
+    def link(self) -> "RigidLink":
         """
         Get the link that the geom belongs to.
         """
         return self._link
 
     @property
-    def entity(self):
+    def entity(self) -> "RigidEntity":
         """
         Get the entity that the geom belongs to.
         """

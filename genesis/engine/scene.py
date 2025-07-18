@@ -1236,7 +1236,7 @@ class Scene(RBC):
         return self._sim.active_solvers
 
     @property
-    def entities(self):
+    def entities(self) -> list[Entity]:
         """All the entities in the scene."""
         return self._sim.entities
 
