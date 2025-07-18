@@ -223,11 +223,7 @@ class SAPCoupler(RBC):
         )
 
     def _init_linesearch_fields(self):
-        self.batch_linesearch_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self.sim._B,
-            needs_grad=False,
-        )
+        self.batch_linesearch_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
 
         linesearch_state = ti.types.struct(
             prev_energy=gs.ti_float,

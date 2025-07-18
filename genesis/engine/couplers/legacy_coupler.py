@@ -345,6 +345,12 @@ class LegacyCoupler(RBC):
                         if sdf_normal.dot(self.mpm_rigid_normal[i_p, i_g, i_b]) >= 0:
                             self.mpm_rigid_normal[i_p, i_g, i_b] = sdf_normal
 
+    def fem_rigid_link_constraints(self):
+        if self.fem_solver._constraints_initialized and self.rigid_solver.is_active():
+            links_pos = self.rigid_solver.links_state.pos
+            links_quat = self.rigid_solver.links_state.quat
+            self.fem_solver._kernel_update_linked_vertex_constraints(links_pos, links_quat)
+
     @ti.kernel
     def fem_surface_force(self, f: ti.i32):
         # TODO: all collisions are on vertices instead of surface and edge
@@ -592,6 +598,7 @@ class LegacyCoupler(RBC):
 
         if self.fem_solver.is_active():
             self.fem_surface_force(f)
+            self.fem_rigid_link_constraints()
 
     def couple_grad(self, f):
         if self.mpm_solver.is_active():

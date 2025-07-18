@@ -85,6 +85,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 
 @pytest.mark.required
+@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(

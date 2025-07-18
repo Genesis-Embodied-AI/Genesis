@@ -1003,7 +1003,7 @@ class RigidEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
             if pos is not None:
                 if pos.shape[0] != len(envs_idx):
@@ -1105,7 +1105,7 @@ class RigidEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
             gs.raise_exception(
@@ -1551,7 +1551,7 @@ class RigidEntity(Entity):
             qpos = qpos.unsqueeze(0)
             envs_idx = torch.zeros(1, dtype=gs.tc_int)
         else:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=False)
         links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
@@ -1699,7 +1699,7 @@ class RigidEntity(Entity):
             A tensor of boolean mask indicating the batch indices with failed plan.
         """
         if self._solver.n_envs > 0:
-            n_envs = len(self._solver._sanitize_envs_idx(envs_idx))
+            n_envs = len(self._scene._sanitize_envs_idx(envs_idx))
         else:
             n_envs = 1
 
