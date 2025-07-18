@@ -6,8 +6,7 @@ from huggingface_hub import snapshot_download
 from tqdm import tqdm
 
 import genesis as gs
-from genesis.sensors import RigidContactForceGridSensor, SensorDataRecorder
-from genesis.sensors.data_handlers import NPZFileWriter, VideoFileWriter
+from genesis.sensors import NPZFileWriter, RigidContactForceGridSensor, SensorDataRecorder, VideoFileWriter
 from genesis.utils.misc import tensor_to_array
 
 
@@ -57,7 +56,7 @@ def visualize_grid_sensor(scene: gs.Scene, sensor: RigidContactForceGridSensor, 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seconds", "-t", type=float, default=1, help="Number of seconds to simulate")
+    parser.add_argument("--seconds", "-t", type=float, default=0.5, help="Number of seconds to simulate")
     parser.add_argument("--dt", type=float, default=1e-3, help="Simulation time step")
     parser.add_argument(
         "--substeps",
@@ -76,16 +75,15 @@ def main():
 
     gs.init(backend=gs.gpu, logging_level=None)
 
+    ########################## scene setup ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=args.dt,
-            gravity=(0, 0, -4.0),  # Reduced just to visualize better without changing dt
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
         vis_options=gs.options.VisOptions(
-            background_color=(0.6, 0.6, 0.6),
             show_world_frame=False,
         ),
         show_viewer=args.vis,
@@ -93,6 +91,7 @@ def main():
 
     scene.add_entity(gs.morphs.Plane())
 
+    # define which fingertips we want to add sensors to
     sensorized_link_names = [
         "index_3_tip",
         "middle_3_tip",
@@ -100,6 +99,7 @@ def main():
         "thumb_3_tip",
     ]
 
+    # load the hand .urdf
     asset_path = snapshot_download(
         repo_id="Genesis-Intelligence/assets", allow_patterns="allegro_hand/*", repo_type="dataset"
     )
@@ -108,13 +108,13 @@ def main():
             file=f"{asset_path}/allegro_hand/allegro_hand_right_glb.urdf",
             pos=(0.0, 0.0, 0.1),
             euler=(0.0, -90.0, 180.0),
-            fixed=True,
-            links_to_keep=sensorized_link_names,
-            visualization=not args.debug,
+            fixed=True,  # Fix the base so the whole hand doesn't flop on the ground
+            links_to_keep=sensorized_link_names,  # Make sure the links we want to sensorize aren't merged
         ),
         material=gs.materials.Rigid(),
     )
 
+    # Some arbitrary objects to interact with the hand: spheres arranged in a circle
     pos_radius = 0.06
     for i in range(10):
         scene.add_entity(
@@ -127,51 +127,8 @@ def main():
             ),
         )
 
-    steps = int(args.seconds / args.dt)
-    cam = scene.add_camera(
-        res=(1080, 720),
-        pos=(0.5, 0.7, 0.7),
-        lookat=(0.0, 0.0, 0.1),
-        fov=20,
-        GUI=args.vis,
-    )
-
-    # ---- post-build setup ----
-    scene.build(n_envs=args.n_envs)
-
-    dofs_position = [
-        0.1,
-        0,
-        -0.1,
-        0.7,
-        0.6,
-        0.6,
-        0.6,
-        1.0,
-        0.65,
-        0.65,
-        0.65,
-        1.0,
-        0.6,
-        0.6,
-        0.6,
-        0.7,
-    ]
-
-    print("joints:", [joint.name for joint in hand.joints])
-    print("dofs position:", len(dofs_position), dofs_position)
-    dofs_idx = np.array([joint.dofs_idx_local[0] for joint in hand.joints])
-    print("dofs idx:", len(dofs_idx), dofs_idx)
-
-    if args.n_envs > 0:
-        dofs_position = [dofs_position] * args.n_envs
-    hand.set_dofs_position(np.array(dofs_position), dofs_idx)
-
+    ########################## add sensors ##########################
     data_recorder = SensorDataRecorder(step_dt=args.dt)
-    data_recorder.add_sensor(
-        cam,
-        VideoFileWriter(filename="hand_test.mp4", fps=30),
-    )
     sensors = []
     for link in hand.links:
         if link.name in sensorized_link_names:
@@ -182,11 +139,29 @@ def main():
             )
             sensors.append(sensor)
 
-    data_recorder.start_recording()
-    max_force = 0.0
+    # Add camera for visualization
+    cam = scene.add_camera(
+        res=(1280, 960),
+        pos=(0.5, 0.7, 0.7),
+        lookat=(0.0, 0.0, 0.1),
+        fov=20,
+        GUI=args.vis,
+    )
+    # we can also record the camera video using data_recorder
+    data_recorder.add_sensor(cam, VideoFileWriter(filename="hand_test.mp4"))
 
-    # ---- run simulation ----
+    ########################## build ##########################
+    scene.build(n_envs=args.n_envs)
+
+    dofs_position = [0.1, 0, -0.1, 0.7, 0.6, 0.6, 0.6, 1.0, 0.65, 0.65, 0.65, 1.0, 0.6, 0.6, 0.6, 0.7]
+    if args.n_envs > 0:
+        dofs_position = [dofs_position] * args.n_envs
+    hand.set_dofs_position(np.array(dofs_position))
+
+    data_recorder.start_recording()
+    max_observed_force_magnitude = 0.0
     try:
+        steps = int(args.seconds / args.dt)
         for _ in tqdm(range(steps), total=steps):
             scene.step()
 
@@ -194,7 +169,7 @@ def main():
             for sensor in sensors:
                 grid_forces = sensor.read()
                 grid_force_magnitudes = np.linalg.norm(grid_forces, axis=-1)
-                max_force = max(max_force, np.max(grid_force_magnitudes))
+                max_observed_force_magnitude = max(max_observed_force_magnitude, np.max(grid_force_magnitudes))
                 visualize_grid_sensor(scene, sensor, max_force=0.3)
 
             data_recorder.step()
@@ -206,7 +181,7 @@ def main():
 
         data_recorder.stop_recording()
 
-        print("Max force recorded:", max_force)
+        print("Max force recorded:", max_observed_force_magnitude)
 
 
 if __name__ == "__main__":

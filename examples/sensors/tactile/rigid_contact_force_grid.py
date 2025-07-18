@@ -5,8 +5,7 @@ import trimesh
 from tqdm import tqdm
 
 import genesis as gs
-from genesis.sensors import RigidContactForceGridSensor, SensorDataRecorder
-from genesis.sensors.data_handlers import NPZFileWriter, VideoFileWriter
+from genesis.sensors import NPZFileWriter, RigidContactForceGridSensor, SensorDataRecorder, VideoFileWriter
 from genesis.utils.misc import tensor_to_array
 
 
@@ -122,13 +121,10 @@ def main():
 
     steps = int(args.seconds / args.dt)
     cam = scene.add_camera(res=(640, 480), pos=(-2, 3, 1.5), lookat=(0.0, 0.0, 0.1), fov=30, GUI=args.vis)
+    grid_sensor = RigidContactForceGridSensor(block, grid_size=(4, 4, 2))
 
     scene.build(n_envs=args.n_envs)
 
-    grid_sensor = RigidContactForceGridSensor(block, grid_size=(4, 4, 2))
-
-    # Data recording -- use this if you want to save sensor data to files.
-    # Normally you can just call sensor.read() to get the sensor data.
     data_recorder = SensorDataRecorder()
     data_recorder.add_sensor(cam, VideoFileWriter(filename="grid_test.mp4"))
     data_recorder.add_sensor(grid_sensor, NPZFileWriter(filename="grid_test.npz"))
