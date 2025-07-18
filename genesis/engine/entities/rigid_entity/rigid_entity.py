@@ -1699,7 +1699,7 @@ class RigidEntity(Entity):
             A tensor of boolean mask indicating the batch indices with failed plan.
         """
         if self._solver.n_envs > 0:
-            n_envs = len(self._solver._sanitize_envs_idx(envs_idx))
+            n_envs = len(self._scene._sanitize_envs_idx(envs_idx))
         else:
             n_envs = 1
 

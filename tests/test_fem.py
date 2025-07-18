@@ -508,9 +508,8 @@ def test_box_soft_vertex_constraint(show_viewer):
     )
     box.set_velocity(gs.tensor([1.0, 1.0, 1.0]) * 1e-2)
 
-    with timer():
-        for _ in range(500):
-            scene.step()
+    for _ in range(500):
+        scene.step()
 
     positions = box.get_state().pos[0][verts_idx]
 

@@ -751,17 +751,24 @@ class FEMEntity(Entity):
         )
 
     def _sanitize_input_tensor(self, tensor, dtype, unbatched_ndim=1):
-        _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device).contiguous()
-        if _tensor is not tensor:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
 
-        tensor = torch.atleast_1d(_tensor)
-        if tensor.ndim == unbatched_ndim:
-            tensor = tensor.expand((self._sim._B, *tensor.shape))
-        assert tensor.ndim == unbatched_ndim + 1, f"Input tensor ndim is {tensor.ndim}, should be {unbatched_ndim + 1}."
-        assert tensor.shape[0] == self._sim._B, "Input tensor batch size must match the number of environments."
+        if _tensor.ndim < unbatched_ndim + 1:
+            _tensor = _tensor.repeat((self._sim._B, *((1,) * max(1, _tensor.ndim))))
+            if self._sim._B > 1:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        else:
+            _tensor = _tensor.contiguous()
+            if _tensor is not tensor:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
-        return tensor
+            if len(_tensor) != self._sim._B:
+                gs.raise_exception("Input tensor batch size must match the number of environments.")
+
+        if _tensor.ndim != unbatched_ndim + 1:
+            gs.raise_exception(f"Input tensor ndim is {_tensor.ndim}, should be {unbatched_ndim + 1}.")
+
+        return _tensor
 
     def _sanitize_input_verts_idx(self, verts_idx_local):
         verts_idx = self._sanitize_input_tensor(verts_idx_local, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start

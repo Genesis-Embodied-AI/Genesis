@@ -5921,7 +5921,7 @@ class RigidSolver(Solver):
             self.geoms_info[geoms_idx[i_g_]].friction = friction[i_g_]
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self._kernel_add_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel
@@ -5975,7 +5975,7 @@ class RigidSolver(Solver):
                 self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self._kernel_delete_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel
