@@ -143,6 +143,8 @@ class Viewer(RBC):
         if self._followed_entity is not None:
             self.update_following()
 
+        self._pyrender_viewer.update_on_sim_step()
+
         with self.lock:
             # Update context
             self.context.update()

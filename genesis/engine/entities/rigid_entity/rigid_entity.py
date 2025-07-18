@@ -22,6 +22,7 @@ from genesis.utils.path_planing import RRT, RRTConnect
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
+from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 
@@ -560,7 +561,9 @@ class RigidEntity(Entity):
             else:
                 q_limit_lower.append(joint.dofs_limit[:, 0])
                 q_limit_upper.append(joint.dofs_limit[:, 1])
-        self.q_limit = np.array([np.concatenate(q_limit_lower), np.concatenate(q_limit_upper)])
+        self.q_limit = np.stack(
+            (np.concatenate(q_limit_lower), np.concatenate(q_limit_upper)), axis=0, dtype=gs.np_float
+        )
 
         # for storing intermediate results
         self._IK_n_tgts = self._solver._options.IK_max_targets
@@ -1002,7 +1005,7 @@ class RigidEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
             if pos is not None:
                 if pos.shape[0] != len(envs_idx):
@@ -1104,7 +1107,7 @@ class RigidEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
             gs.raise_exception(
@@ -1289,7 +1292,6 @@ class RigidEntity(Entity):
         rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
         n_error_dims = 6 * n_links
 
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             # save original qpos
             for i_q in range(self.n_qs):
@@ -1554,7 +1556,7 @@ class RigidEntity(Entity):
             qpos = qpos.unsqueeze(0)
             envs_idx = torch.zeros(1, dtype=gs.tc_int)
         else:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=False)
         links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
@@ -1584,7 +1586,6 @@ class RigidEntity(Entity):
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             # save original qpos
@@ -1703,7 +1704,7 @@ class RigidEntity(Entity):
             A tensor of boolean mask indicating the batch indices with failed plan.
         """
         if self._solver.n_envs > 0:
-            n_envs = len(self._solver._sanitize_envs_idx(envs_idx))
+            n_envs = len(self._scene._sanitize_envs_idx(envs_idx))
         else:
             n_envs = 1
 
@@ -2200,7 +2201,7 @@ class RigidEntity(Entity):
                 (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
                 idx_local.step or 1,
             )
-        elif isinstance(idx_local, int):
+        elif isinstance(idx_local, (int, np.integer)):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
             try:
@@ -3055,7 +3056,7 @@ class RigidEntity(Entity):
         return self._q_start + self.n_qs
 
     @property
-    def geoms(self):
+    def geoms(self) -> list[RigidGeom]:
         """The list of collision geoms (`RigidGeom`) in the entity."""
         if self.is_built:
             return self._geoms
@@ -3077,7 +3078,7 @@ class RigidEntity(Entity):
             return vgeoms
 
     @property
-    def links(self):
+    def links(self) -> list[RigidLink]:
         """The list of links (`RigidLink`) in the entity."""
         return self._links
 

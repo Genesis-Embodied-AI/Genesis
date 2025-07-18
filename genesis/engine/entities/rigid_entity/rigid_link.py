@@ -14,6 +14,7 @@ from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
@@ -51,7 +52,7 @@ class RigidLink(RBC):
     ):
         self._name: str = name
         self._entity: "RigidEntity" = entity
-        self._solver = entity.solver
+        self._solver: "RigidSolver" = entity.solver
         self._entity_idx_in_solver = entity.idx
 
         self._uid = gs.UID()
@@ -265,7 +266,7 @@ class RigidLink(RBC):
         return self._solver.get_links_quat([self._idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None):
+    def get_vel(self, envs_idx=None) -> torch.Tensor:
         """
         Get the linear velocity of the link in the world frame.
 
@@ -277,7 +278,7 @@ class RigidLink(RBC):
         return self._solver.get_links_vel([self._idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_ang(self, envs_idx=None):
+    def get_ang(self, envs_idx=None) -> torch.Tensor:
         """
         Get the angular velocity of the link in the world frame.
 

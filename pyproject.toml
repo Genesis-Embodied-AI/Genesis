@@ -118,6 +118,7 @@ dev = [
     "pytest-forked",
     "pytest-random-order",
     "pytest-print",
+    "pytest-rerunfailures",
     "huggingface_hub",
     "wandb",
 ]
