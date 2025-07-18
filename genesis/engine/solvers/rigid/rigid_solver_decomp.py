@@ -1020,7 +1020,7 @@ class RigidSolver(Solver):
     def _init_geom_fields(self):
         self.geoms_info = self.data_manager.geoms_info
         self.geoms_state = self.data_manager.geoms_state
-        self.geoms_init_AABB = self.data_manager.geoms_init_AABB
+        self.geoms_init_AABB = self._rigid_global_info.geoms_init_AABB
         self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_geoms > 0:
@@ -2056,8 +2056,8 @@ class RigidSolver(Solver):
                         rgi._mass_mat_mask[i_e, i_b] = 1
                     if ti.static(static_rigid_sim_config.integrator != gs.integrator.Euler):
                         if (
-                            (dofs_state.ctrl_mode[I_d] == gs.CTRL_MODE.POSITION)
-                            or (dofs_state.ctrl_mode[I_d] == gs.CTRL_MODE.VELOCITY)
+                            (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION)
+                            or (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY)
                         ) and dofs_info.kv[I_d] > gs.EPS:
                             rgi._mass_mat_mask[i_e, i_b] = 1
 

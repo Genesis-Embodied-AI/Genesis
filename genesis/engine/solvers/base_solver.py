@@ -70,6 +70,15 @@ class Solver(RBC):
             else:
                 arrays[key_base] = data if isinstance(data, np.ndarray) else np.asarray(data)
 
+        # if it has data_manager, add it to the arrays
+        if hasattr(self, "data_manager"):
+            for attr_name, struct in self.data_manager.__dict__.items():
+                for sub_name, sub_arr in struct.__dict__.items():
+                    # if it's a ti.Field or ti.Ndarray, convert to numpy
+                    if isinstance(sub_arr, ti.Field) or isinstance(sub_arr, ti.Ndarray):
+                        store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
+                        arrays[store_name] = sub_arr.to_numpy()
+
         return arrays
 
     def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
@@ -97,6 +106,18 @@ class Solver(RBC):
 
             arr = arr_dict[key_base]
             field.from_numpy(arr)
+
+        # if it has data_manager, add it to the arrays
+        if hasattr(self, "data_manager"):
+            for attr_name, struct in self.data_manager.__dict__.items():
+                for sub_name, sub_arr in struct.__dict__.items():
+                    # if it's a ti.Field or ti.Ndarray, convert to numpy
+                    if isinstance(sub_arr, ti.Field) or isinstance(sub_arr, ti.Ndarray):
+                        store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
+                        if store_name in arr_dict:
+                            sub_arr.from_numpy(arr_dict[store_name])
+                        else:
+                            gs.logger.warning(f"Failed to load {store_name}. Not found in stored arrays.")
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

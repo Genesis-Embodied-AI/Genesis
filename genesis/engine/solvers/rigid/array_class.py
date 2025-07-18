@@ -102,6 +102,10 @@ class RigidGlobalInfo:
 
         self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
         self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=f_batch())
+        self.geoms_init_AABB = ti.Vector.field(
+            3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)
+        )  # stores 8 corners of AABB
+
         self.init_mass_mat(solver)
 
     def init_mass_mat(self, solver):
@@ -782,44 +786,40 @@ class StructEntitiesState:
 @ti.data_oriented
 class DataManager:
     def __init__(self, solver):
-        self.solver = solver
         # self.doughs = {}
-        self.rigid_global_info = RigidGlobalInfo(self.solver)
-        self.dofs_info = StructDofsInfo(self.solver)
-        self.dofs_state = StructDofsState(self.solver)
-        self.links_info = StructLinksInfo(self.solver)
-        self.links_state = StructLinksState(self.solver)
-        self.joints_info = StructJointsInfo(self.solver)
-        self.joints_state = StructJointsState(self.solver)
-        self.geoms_info = StructGeomsInfo(self.solver)
-        self.geoms_state = StructGeomsState(self.solver)
-        self.geoms_init_AABB = ti.Vector.field(
-            3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)
-        )  # stores 8 corners of AABB
+        self.rigid_global_info = RigidGlobalInfo(solver)
+        self.dofs_info = StructDofsInfo(solver)
+        self.dofs_state = StructDofsState(solver)
+        self.links_info = StructLinksInfo(solver)
+        self.links_state = StructLinksState(solver)
+        self.joints_info = StructJointsInfo(solver)
+        self.joints_state = StructJointsState(solver)
+        self.geoms_info = StructGeomsInfo(solver)
+        self.geoms_state = StructGeomsState(solver)
 
-        self.verts_info = StructVertsInfo(self.solver)
-        self.faces_info = StructFacesInfo(self.solver)
-        self.edges_info = StructEdgesInfo(self.solver)
+        self.verts_info = StructVertsInfo(solver)
+        self.faces_info = StructFacesInfo(solver)
+        self.edges_info = StructEdgesInfo(solver)
 
-        self.free_verts_state = StructFreeVertsState(self.solver)
-        self.fixed_verts_state = StructFixedVertsState(self.solver)
+        self.free_verts_state = StructFreeVertsState(solver)
+        self.fixed_verts_state = StructFixedVertsState(solver)
 
-        self.vverts_info = StructVvertsInfo(self.solver)
-        self.vfaces_info = StructVfacesInfo(self.solver)
+        self.vverts_info = StructVvertsInfo(solver)
+        self.vfaces_info = StructVfacesInfo(solver)
 
-        self.vgeoms_info = StructVgeomsInfo(self.solver)
-        self.vgeoms_state = StructVgeomsState(self.solver)
+        self.vgeoms_info = StructVgeomsInfo(solver)
+        self.vgeoms_state = StructVgeomsState(solver)
 
-        self.equalities_info = StructEqualitiesInfo(self.solver)
+        self.equalities_info = StructEqualitiesInfo(solver)
 
-        self.entities_info = StructEntitiesInfo(self.solver)
-        self.entities_state = StructEntitiesState(self.solver)
+        self.entities_info = StructEntitiesInfo(solver)
+        self.entities_state = StructEntitiesState(solver)
 
-    def init_mass_mat(self):
-        self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
-        self.mass_mat_L = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
-        self.mass_mat_D_inv = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_,)))
-        self._mass_mat_mask = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_entities_))
-        self.meaninertia = ti.field(dtype=gs.ti_float, shape=self._batch_shape())
-        self.mass_parent_mask = ti.field(dtype=gs.ti_float, shape=(self.n_dofs_, self.n_dofs_))
-        self._gravity = self.solver._gravity
+    def init_mass_mat(self, solver):
+        self.mass_mat = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_L = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_D_inv = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,)))
+        self._mass_mat_mask = ti.field(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_))
+        self.meaninertia = ti.field(dtype=gs.ti_float, shape=solver._batch_shape())
+        self.mass_parent_mask = ti.field(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_))
+        self._gravity = solver._gravity
