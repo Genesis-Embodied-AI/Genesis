@@ -721,7 +721,9 @@ class RasterizerContext:
             self.add_light(light)
 
     def draw_debug_line(self, start, end, radius=0.002, color=(1.0, 0.0, 0.0, 1.0)):
-        mesh = mu.create_line(start, end, radius, color)
+        mesh = mu.create_line(
+            tensor_to_array(start, dtype=np.float32), tensor_to_array(end, dtype=np.float32), radius, color
+        )
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_line_{gs.UID()}")
         self.add_external_node(node)
         return node
