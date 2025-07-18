@@ -753,7 +753,7 @@ class FEMEntity(Entity):
     def _sanitize_input_tensor(self, tensor, dtype, unbatched_ndim=1):
         _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device).contiguous()
         if _tensor is not tensor:
-            gs.logger.warning(ALLOCATE_TENSOR_WARNING)
+            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
         tensor = torch.atleast_1d(_tensor)
         if tensor.ndim == unbatched_ndim:
@@ -823,8 +823,8 @@ class FEMEntity(Entity):
             link_idx = -1
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
-            link_init_pos = self._sanitize_input_tensor(link.get_pos(), dtype=gs.tc_float, contiguous=True)
-            link_init_quat = self._sanitize_input_tensor(link.get_quat(), dtype=gs.tc_float, contiguous=True)
+            link_init_pos = self._sanitize_input_tensor(link.get_pos(), dtype=gs.tc_float)
+            link_init_quat = self._sanitize_input_tensor(link.get_quat(), dtype=gs.tc_float)
             link_idx = link.idx
 
         self._solver._kernel_set_vertex_constraints(
@@ -868,7 +868,7 @@ class FEMEntity(Entity):
     @ti.kernel
     def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
         # get current position of vertices
-        for i_v, i_b in ti.ndrange(verts_idx.shape):
+        for i_v, i_b in ti.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
             i_global = verts_idx[i_v, i_b] + self.v_start
             for j in ti.static(range(3)):
                 pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]

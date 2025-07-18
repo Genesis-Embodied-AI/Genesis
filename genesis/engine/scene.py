@@ -1139,7 +1139,9 @@ class Scene(RBC):
         if self.n_envs == 0:
             gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
 
-        if isinstance(envs_idx, (slice, int)):
+        if isinstance(envs_idx, slice):
+            return self._envs_idx[envs_idx]
+        if isinstance(envs_idx, (int, np.integer)):
             return self._envs_idx[envs_idx : envs_idx + 1]
 
         # Early return if unsafe
