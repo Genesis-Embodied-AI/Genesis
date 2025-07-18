@@ -269,20 +269,20 @@ class FEMSolver(Solver):
         )
 
     def _init_surface_info(self):
-        self.vertices_on_surface = ti.field(dtype=ti.u1, shape=(self.n_vertices))
-        self.elements_on_surface = ti.field(dtype=ti.u1, shape=(self.n_elements))
+        self.vertices_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_vertices,))
+        self.elements_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_elements,))
         self.compute_surface_vertices()
         self.compute_surface_elements()
         vertices_on_surface_np = self.vertices_on_surface.to_numpy()
         elements_on_surface_np = self.elements_on_surface.to_numpy()
-        surface_vertices_np = np.where(vertices_on_surface_np)[0].flatten()
+        (surface_vertices_np,) = vertices_on_surface_np.nonzero()
         self.surface_vertices = ti.field(
             dtype=ti.i32,
             shape=(len(surface_vertices_np),),
             needs_grad=False,
         )
         self.surface_vertices.from_numpy(surface_vertices_np)
-        surface_elements_np = elements_on_surface_np.nonzero()[0].reshape((-1,))
+        (surface_elements_np,) = elements_on_surface_np.nonzero()
         self.surface_elements = ti.field(
             dtype=ti.i32,
             shape=(len(surface_elements_np),),
@@ -290,12 +290,12 @@ class FEMSolver(Solver):
         )
         self.surface_elements.from_numpy(surface_elements_np)
 
-        surface_triangles_np = self.surface.tri2v.to_numpy().reshape(-1, 3)
-        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :].reshape(-1, 3)[surface_vertices_np]
+        surface_triangles_np = self.surface.tri2v.to_numpy()
+        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :][surface_vertices_np]
         surface_vertices_mapping = np.full(self.n_vertices, -1, dtype=np.int32)
         surface_vertices_mapping[surface_vertices_np] = np.arange(len(surface_vertices_np))
         mass = igl.massmatrix(pos_np, surface_vertices_mapping[surface_triangles_np])
-        surface_vert_mass_np = mass.diagonal()
+        surface_vert_mass_np = mass.diagonal().astype(gs.np_float, copy=False)
         self.surface_vert_mass = ti.field(
             dtype=gs.ti_float,
             shape=(len(surface_vertices_np),),
@@ -338,7 +338,7 @@ class FEMSolver(Solver):
         super().build()
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
-        self.tet_wrong_order = ti.field(dtype=ti.u1, shape=(), needs_grad=False)
+        self.tet_wrong_order = ti.field(dtype=gs.ti_bool, shape=(), needs_grad=False)
 
         # batch fields
         self.init_batch_fields()

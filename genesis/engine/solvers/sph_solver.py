@@ -742,7 +742,7 @@ class SPHSolver(Solver):
     ):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
-            self.particles_ng[i_global, i_b].active = active
+            self.particles_ng[i_global, i_b].active = ti.cast(active, gs.ti_bool)
             for j in ti.static(range(3)):
                 self.particles[i_global, i_b].pos[j] = pos[i_p, j]
             self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
