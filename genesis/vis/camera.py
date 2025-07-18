@@ -413,9 +413,7 @@ class Camera(RBC):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(
-                    np.arange(height, dtype=np.float32), np.arange(width, dtype=np.float32), indexing="ij"
-                )
+                y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
                 x = x.reshape((-1,))
                 y = y.reshape((-1,))
 
@@ -424,9 +422,10 @@ class Camera(RBC):
                 normalized_y = y - _cy
 
                 # Convert to world coordinates
-                world_x = normalized_x * depth[y, x] / _fx
-                world_y = normalized_y * depth[y, x] / _fy
-                world_z = depth[y, x]
+                depth_grid = depth[y, x]
+                world_x = normalized_x * depth_grid / _fx
+                world_y = normalized_y * depth_grid / _fy
+                world_z = depth_grid
 
                 pc = np.stack((world_x, world_y, world_z), axis=1)
 

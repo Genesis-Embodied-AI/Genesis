@@ -627,7 +627,7 @@ class MPMSolver(Solver):
                 self._ckpt[ckpt_name]["C"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["F"] = torch.zeros((self._B, self._n_particles, 3, 3), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["Jp"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_float)
-                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=torch.bool)
+                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self._n_particles), dtype=gs.tc_bool)
 
             self._kernel_get_state(
                 0,
@@ -697,7 +697,7 @@ class MPMSolver(Solver):
 
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
-            self.particles_ng[f, i_global, i_b].active = active
+            self.particles_ng[f, i_global, i_b].active = ti.cast(active, gs.ti_bool)
             for j in ti.static(range(3)):
                 self.particles[f, i_global, i_b].pos[j] = pos[i_p, j]
             self.particles[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
@@ -910,7 +910,7 @@ class MPMSolver(Solver):
                     F[i_b, i_p, j, k] = self.particles[f, i_p, i_b].F[j, k]
             # Read Jp, active
             Jp[i_b, i_p] = self.particles[f, i_p, i_b].Jp
-            active[i_b, i_p] = self.particles_ng[f, i_p, i_b].active
+            active[i_b, i_p] = ti.cast(self.particles_ng[f, i_p, i_b].active, gs.ti_bool)
 
     @ti.kernel
     def _kernel_set_state(

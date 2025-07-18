@@ -1,6 +1,5 @@
 import os
 import pickle as pkl
-from contextlib import redirect_stdout
 
 import numpy as np
 import numpy.typing as npt

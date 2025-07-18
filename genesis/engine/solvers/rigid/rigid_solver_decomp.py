@@ -2115,14 +2115,77 @@ class RigidSolver(Solver):
             links_info=self.links_info,
             links_state=self.links_state,
             joints_info=self.joints_info,
+            joints_state=self.joints_state,
             entities_state=self.entities_state,
             entities_info=self.entities_info,
+            geoms_info=self.geoms_info,
             geoms_state=self.geoms_state,
             collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         # timer.stamp("kernel_step_2")
+
+    @ti.func
+    def _func_update_cartesian_space(
+        self_unused,
+        i_b,
+        links_state,
+        links_info,
+        joints_state,
+        joints_info,
+        dofs_state,
+        dofs_info,
+        geoms_info,
+        geoms_state,
+        entities_info,
+        rigid_global_info,
+        static_rigid_sim_config: ti.template(),
+    ):
+        self_unused._func_forward_kinematics(
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        self_unused._func_COM_links(
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        self_unused._func_forward_velocity(
+            i_b,
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+        self_unused._func_update_geoms(
+            i_b=i_b,
+            entities_info=entities_info,
+            geoms_info=geoms_info,
+            geoms_state=geoms_state,
+            links_state=links_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
     @ti.kernel
     def _kernel_step_1(
@@ -2139,54 +2202,24 @@ class RigidSolver(Solver):
         rigid_global_info: ti.template(),
         static_rigid_sim_config: ti.template(),
     ):
-
-        _B = links_state.shape[1]
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            self_unused._func_forward_kinematics(
-                i_b,
-                links_state=links_state,
-                links_info=links_info,
-                joints_state=joints_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                dofs_info=dofs_info,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_COM_links(
-                i_b,
-                links_state=links_state,
-                links_info=links_info,
-                joints_state=joints_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                dofs_info=dofs_info,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_forward_velocity(
-                i_b,
-                entities_info=entities_info,
-                links_info=links_info,
-                links_state=links_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-
-            self_unused._func_update_geoms(
-                i_b=i_b,
-                entities_info=entities_info,
-                geoms_info=geoms_info,
-                geoms_state=geoms_state,
-                links_state=links_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
+            _B = links_state.shape[1]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                self_unused._func_update_cartesian_space(
+                    i_b=i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_state=joints_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    dofs_info=dofs_info,
+                    geoms_info=geoms_info,
+                    geoms_state=geoms_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
 
         self_unused._func_forward_dynamics(
             links_state=links_state,
@@ -2265,8 +2298,10 @@ class RigidSolver(Solver):
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
         joints_info: array_class.JointsInfo,
+        joints_state: array_class.JointsState,
         entities_state: array_class.EntitiesState,
         entities_info: array_class.EntitiesInfo,
+        geoms_info: array_class.GeomsInfo,
         geoms_state: array_class.GeomsState,
         collider_state: ti.template(),
         rigid_global_info: ti.template(),
@@ -2322,6 +2357,25 @@ class RigidSolver(Solver):
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
+        if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+            _B = links_state.shape[1]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                self_unused._func_update_cartesian_space(
+                    i_b=i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_state=joints_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    dofs_info=dofs_info,
+                    geoms_info=geoms_info,
+                    geoms_state=geoms_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+
     def _kernel_detect_collision(self):
         self.collider.clear()
         self.collider.detection()
@@ -2354,46 +2408,17 @@ class RigidSolver(Solver):
         static_rigid_sim_config: ti.template(),
     ):
         for i_b in envs_idx:
-            self_unused._func_forward_kinematics(
-                i_b,
+            self_unused._func_update_cartesian_space(
+                i_b=i_b,
                 links_state=links_state,
                 links_info=links_info,
                 joints_state=joints_state,
                 joints_info=joints_info,
                 dofs_state=dofs_state,
                 dofs_info=dofs_info,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_COM_links(
-                i_b,
-                links_state=links_state,
-                links_info=links_info,
-                joints_state=joints_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                dofs_info=dofs_info,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_forward_velocity(
-                i_b,
-                entities_info=entities_info,
-                links_info=links_info,
-                links_state=links_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            self_unused._func_update_geoms(
-                i_b,
-                entities_info=entities_info,
                 geoms_info=geoms_info,
                 geoms_state=geoms_state,
-                links_state=links_state,
+                entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
@@ -4412,7 +4437,7 @@ class RigidSolver(Solver):
 
     def set_state(self, f, state, envs_idx=None):
         if self.is_active():
-            envs_idx = self._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             self._kernel_set_state(
                 qpos=state.qpos,
                 dofs_vel=state.dofs_vel,
@@ -4512,36 +4537,6 @@ class RigidSolver(Solver):
     # ------------------------------------ control ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_envs_idx(self, envs_idx, *, unsafe=False):
-        # Handling default argument and special cases
-        if envs_idx is None:
-            return self._scene._envs_idx
-
-        if self.n_envs == 0:
-            gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
-
-        if isinstance(envs_idx, slice):
-            return self._scene._envs_idx[envs_idx]
-        if isinstance(envs_idx, int):
-            return self._scene._envs_idx[[envs_idx]]
-
-        # Early return if unsafe
-        if unsafe:
-            return envs_idx
-
-        # Perform a bunch of sanity checks
-        _envs_idx = torch.atleast_1d(torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device)).contiguous()
-        if _envs_idx is not envs_idx:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-
-        if _envs_idx.ndim != 1:
-            gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")
-
-        if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
-            gs.raise_exception("`envs_idx` exceeds valid range.")
-
-        return _envs_idx
-
     def _sanitize_1D_io_variables(
         self,
         tensor,
@@ -4556,7 +4551,7 @@ class RigidSolver(Solver):
     ):
         # Handling default arguments
         if batched:
-            envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
             envs_idx = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
 
@@ -4568,7 +4563,7 @@ class RigidSolver(Solver):
                 inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
-        elif isinstance(inputs_idx, int):
+        elif isinstance(inputs_idx, (int, np.integer)):
             inputs_idx = [inputs_idx]
 
         is_preallocated = tensor is not None
@@ -4641,7 +4636,7 @@ class RigidSolver(Solver):
     ):
         # Handling default arguments
         if batched:
-            envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
             envs_idx = torch.empty((), dtype=gs.tc_int, device=gs.device)
 
@@ -4653,7 +4648,7 @@ class RigidSolver(Solver):
                 inputs_idx.stop if inputs_idx.stop is not None else input_size,
                 inputs_idx.step or 1,
             )
-        elif isinstance(inputs_idx, int):
+        elif isinstance(inputs_idx, (int, np.integer)):
             inputs_idx = [inputs_idx]
 
         is_preallocated = tensor is not None
@@ -5831,7 +5826,7 @@ class RigidSolver(Solver):
         )
 
         if dofs_idx is not None:
-            if isinstance(dofs_idx, (slice, int)) or (dofs_idx.ndim == 0):
+            if isinstance(dofs_idx, (slice, int, np.integer)) or (dofs_idx.ndim == 0):
                 tensor = tensor[:, dofs_idx, dofs_idx]
                 if tensor.ndim == 1:
                     tensor = tensor.reshape((-1, 1, 1))
@@ -5931,7 +5926,7 @@ class RigidSolver(Solver):
             self.geoms_info[geoms_idx[i_g_]].friction = friction[i_g_]
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self._kernel_add_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel
@@ -5985,7 +5980,7 @@ class RigidSolver(Solver):
                 self.constraint_solver.ti_n_equalities[i_b] = self.constraint_solver.ti_n_equalities[i_b] + 1
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self._kernel_delete_weld_constraint(int(link1_idx), int(link2_idx), envs_idx)
 
     @ti.kernel

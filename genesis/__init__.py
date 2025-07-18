@@ -127,9 +127,14 @@ def init(
     global ti_bool
     global np_bool
     global tc_bool
-    ti_bool = ti.u1 if backend != gs_backend.metal else ti.i32
-    np_bool = np.bool_
-    tc_bool = torch.bool
+    if backend == gs_backend.metal:
+        ti_bool = ti.i32
+        np_bool = np.int32
+        tc_bool = torch.int32
+    else:
+        ti_bool = ti.u1
+        np_bool = np.bool_
+        tc_bool = torch.bool
 
     # let's use GLSL convention: https://learnwebgl.brown37.net/12_shader_language/glsl_data_types.html
     global ti_vec2

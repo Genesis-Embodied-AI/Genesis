@@ -1,17 +1,17 @@
+import igl
 import numpy as np
 import taichi as ti
 import torch
-
-import igl
 
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.engine.coupler import SAPCoupler
+from genesis.engine.entities.rigid_entity import RigidLink
+from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
-from genesis.utils.misc import to_gs_tensor, tensor_to_array
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, to_gs_tensor, tensor_to_array
 
 from .base_entity import Entity
 
@@ -356,7 +356,7 @@ class FEMEntity(Entity):
         else:
             gs.raise_exception(f"Unsupported morph: {self.morph}.")
 
-        self.instantiate(verts, elems)
+        self.instantiate(*eu.split_all_surface_tets(verts, elems))
 
     def _add_to_solver(self, in_backward=False):
         if not in_backward:
@@ -590,7 +590,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_envs, n_vertices, 3) containing new positions.
         """
 
-        self.solver._kernel_set_elements_pos(
+        self._solver._kernel_set_elements_pos(
             f=f,
             element_v_start=self._v_start,
             n_vertices=self.n_vertices,
@@ -610,7 +610,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_envs, n_vertices, 3) containing gradients of positions.
         """
 
-        self.solver._kernel_set_elements_pos_grad(
+        self._solver._kernel_set_elements_pos_grad(
             f=f,
             element_v_start=self._v_start,
             n_vertices=self.n_vertices,
@@ -630,7 +630,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_envs, n_vertices, 3) containing velocities.
         """
 
-        self.solver._kernel_set_elements_vel(
+        self._solver._kernel_set_elements_vel(
             f=f,
             element_v_start=self._v_start,
             n_vertices=self.n_vertices,
@@ -650,7 +650,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_envs, n_vertices, 3) containing gradients of velocities.
         """
 
-        self.solver._kernel_set_elements_vel_grad(
+        self._solver._kernel_set_elements_vel_grad(
             f=f,
             element_v_start=self._v_start,
             n_vertices=self.n_vertices,
@@ -670,7 +670,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_envs, n_groups) specifying actuation values.
         """
 
-        self.solver._kernel_set_elements_actu(
+        self._solver._kernel_set_elements_actu(
             f=f,
             element_el_start=self._el_start,
             n_elements=self.n_elements,
@@ -691,7 +691,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_envs, n_groups) specifying gradients of actuation.
         """
 
-        self.solver._kernel_set_elements_actu(
+        self._solver._kernel_set_elements_actu(
             f=f,
             element_el_start=self._el_start,
             n_elements=self.n_elements,
@@ -711,7 +711,7 @@ class FEMEntity(Entity):
             Activity flag (gs.ACTIVE or gs.INACTIVE).
         """
 
-        self.solver._kernel_set_active(
+        self._solver._kernel_set_active(
             f=f,
             element_el_start=self._el_start,
             n_elements=self.n_elements,
@@ -728,7 +728,7 @@ class FEMEntity(Entity):
             Tensor of shape (n_elements,) specifying muscle group IDs.
         """
 
-        self.solver._kernel_set_muscle_group(
+        self._solver._kernel_set_muscle_group(
             element_el_start=self._el_start,
             n_elements=self.n_elements,
             muscle_group=muscle_group,
@@ -744,11 +744,141 @@ class FEMEntity(Entity):
             Tensor of shape (n_elements, 3) with unit direction vectors.
         """
 
-        self.solver._kernel_set_muscle_direction(
+        self._solver._kernel_set_muscle_direction(
             element_el_start=self._el_start,
             n_elements=self.n_elements,
             muscle_direction=muscle_direction,
         )
+
+    def _sanitize_input_tensor(self, tensor, dtype, unbatched_ndim=1):
+        _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
+
+        if _tensor.ndim < unbatched_ndim + 1:
+            _tensor = _tensor.repeat((self._sim._B, *((1,) * max(1, _tensor.ndim))))
+            if self._sim._B > 1:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        else:
+            _tensor = _tensor.contiguous()
+            if _tensor is not tensor:
+                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+
+            if len(_tensor) != self._sim._B:
+                gs.raise_exception("Input tensor batch size must match the number of environments.")
+
+        if _tensor.ndim != unbatched_ndim + 1:
+            gs.raise_exception(f"Input tensor ndim is {_tensor.ndim}, should be {unbatched_ndim + 1}.")
+
+        return _tensor
+
+    def _sanitize_input_verts_idx(self, verts_idx_local):
+        verts_idx = self._sanitize_input_tensor(verts_idx_local, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start
+        assert ((verts_idx >= 0) & (verts_idx < self._solver.n_vertices)).all(), "Vertex indices out of bounds."
+        return verts_idx
+
+    def _sanitize_input_poss(self, poss):
+        poss = self._sanitize_input_tensor(poss, dtype=gs.tc_float, unbatched_ndim=2)
+        assert poss.ndim == 3 and poss.shape[2] == 3, "Position tensor must have shape (B, num_verts, 3)."
+        return poss
+
+    def set_vertex_constraints(
+        self, verts_idx, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
+    ):
+        """
+        Set vertex constraints for specified vertices.
+
+        Parameters
+        ----------
+            verts_idx : array_like
+                List of vertex indices to constrain.
+            target_poss : array_like, shape (len(verts_idx), 3), optional
+                List of target positions [x, y, z] for each vertex. If not provided, the initial positions are used.
+            link : RigidLink
+                Optional rigid link for the vertices to follow, maintaining relative position.
+            is_soft_constraint: bool
+                By default, use a hard constraint directly sets position and zero velocity.
+                A soft constraint uses a spring force to pull the vertex towards the target position.
+            stiffness : float
+                Specify a spring stiffness for a soft constraint. Critical damping is applied.
+            envs_idx : array_like, optional
+                List of environment indices to apply the constraints to. If None, applies to all environments.
+        """
+        if self._solver._use_implicit_solver:
+            gs.logger.warning("Ignoring vertex constraint; unsupported with FEM implicit solver.")
+            return
+
+        if not self._solver._constraints_initialized:
+            self._solver.init_constraints()
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        verts_idx = self._sanitize_input_verts_idx(verts_idx)
+
+        if target_poss is None:
+            target_poss = torch.zeros(
+                (verts_idx.shape[0], verts_idx.shape[1], 3), dtype=gs.tc_float, device=gs.device, requires_grad=False
+            )
+            self._kernel_get_verts_pos(self._sim.cur_substep_local, target_poss, verts_idx)
+        target_poss = self._sanitize_input_poss(target_poss)
+
+        assert (
+            len(envs_idx) == len(target_poss) == len(verts_idx)
+        ), "First dimension should match number of environments."
+        assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
+
+        if link is None:
+            link_init_pos = torch.zeros((self._sim._B, 3), dtype=gs.tc_float, device=gs.device)
+            link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
+            link_idx = -1
+        else:
+            assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
+            link_init_pos = self._sanitize_input_tensor(link.get_pos(), dtype=gs.tc_float)
+            link_init_quat = self._sanitize_input_tensor(link.get_quat(), dtype=gs.tc_float)
+            link_idx = link.idx
+
+        self._solver._kernel_set_vertex_constraints(
+            self._sim.cur_substep_local,
+            verts_idx,
+            target_poss,
+            is_soft_constraint,
+            stiffness,
+            link_idx,
+            link_init_pos,
+            link_init_quat,
+            envs_idx,
+        )
+
+    def update_constraint_targets(self, verts_idx, target_poss, envs_idx=None):
+        """Update target positions for existing constraints."""
+        if not self._solver._constraints_initialized:
+            gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
+            return
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        verts_idx = self._sanitize_input_verts_idx(verts_idx)
+        target_poss = self._sanitize_input_poss(target_poss)
+        assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
+
+        self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
+
+    def remove_vertex_constraints(self, verts_idx=None, envs_idx=None):
+        """Remove constraints from specified vertices, or all if None."""
+        if not self._solver._constraints_initialized:
+            gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
+            return
+
+        if verts_idx is None:
+            self._solver.vertex_constraints.is_constrained.fill(0)
+        else:
+            verts_idx = self._sanitize_input_verts_idx(verts_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
+
+    @ti.kernel
+    def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
+        # get current position of vertices
+        for i_v, i_b in ti.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
+            i_global = verts_idx[i_v, i_b] + self.v_start
+            for j in ti.static(range(3)):
+                pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
 
     def get_el2v(self):
         """
@@ -761,7 +891,7 @@ class FEMEntity(Entity):
         """
 
         el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)
-        self.solver._kernel_get_el2v(
+        self._solver._kernel_get_el2v(
             element_el_start=self._el_start,
             n_elements=self.n_elements,
             el2v=el2v,

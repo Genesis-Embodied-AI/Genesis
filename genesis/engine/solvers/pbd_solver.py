@@ -880,7 +880,7 @@ class PBDSolver(Solver):
             for j in ti.static(range(3)):
                 pos[i_b, i_p, j] = self.particles[i_p, i_b].pos[j]
                 vel[i_b, i_p, j] = self.particles[i_p, i_b].vel[j]
-            free[i_b, i_p] = self.particles[i_p, i_b].free
+            free[i_b, i_p] = ti.cast(self.particles[i_p, i_b].free, gs.ti_bool)
 
     @ti.kernel
     def _kernel_set_frame(
