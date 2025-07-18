@@ -78,17 +78,11 @@ def main():
     for i in range(args.n_steps):
         scene.step()
         if args.render_all_cameras:
-            rgb, depth, _, _ = scene.render_all_cameras()
-            print("rgb[0].mean()", rgb[0].mean())
-            print("rgb[1].mean()", rgb[1].mean())
-            print("depth[0].mean()", depth[0].mean())
-            print("depth[1].mean()", depth[1].mean())
-            exporter.export_frame_all_cameras(i, rgb=rgb, depth=depth)
+            rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
+            exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
-            rgb, depth, _, _ = cam_0.render()
-            print("rgb.mean()", rgb.mean())
-            print("depth.mean()", depth.mean())
-            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgb, depth=depth)
+            rgba, depth, _, _ = cam_0.render(rgb=True, depth=True)
+            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgba, depth=depth)
 
 
 if __name__ == "__main__":

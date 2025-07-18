@@ -331,11 +331,13 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
                 diff = frames_t[i] - frames_t_minus_1[i]
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
 
+
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
 @pytest.mark.parametrize("n_envs", [1, 3])
 @pytest.mark.parametrize("n_steps", [1, 1000])
 @pytest.mark.required
+@pytest.mark.xfail(reason="gs-madrona must be built and installed manually for now.")
 def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_steps):
     scene = gs.Scene(
         renderer=gs.options.renderers.BatchRenderer(
@@ -389,28 +391,31 @@ def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_s
     scene.build(n_envs=n_envs)
 
     # Create an image exporter
+    # FrameImageExporter exports images from all cameras and all environments in batch and parallelly,
+    # while Camera.start|stop_recording only exports images from a single camera and environment.
     export_dir = "img_output"
     exporter = FrameImageExporter(export_dir)
 
+    # Only verify functionality works without crashes and output dimension matches for now
+    # To verify whether the output is correct pixel-wise, we need to use a more sophisticated test
     for i in range(n_steps):
         scene.step()
         if render_all_cameras:
-            rgb, depth, _, _ = scene.render_all_cameras()
+            rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
             # 2 cameras
-            assert len(rgb) == 2
+            assert len(rgba) == 2
             assert len(depth) == 2
-            assert rgb[0].shape == (n_envs, 512, 512, 3)
-            assert rgb[1].shape == (n_envs, 512, 512, 3)
-            assert depth[0].shape == (n_envs, 512, 512)
-            assert depth[1].shape == (n_envs, 512, 512)
-            exporter.export_frame_all_cameras(i, rgb=rgb, depth=depth)
+            assert rgba[0].shape == torch.Size([n_envs, 512, 512, 4])
+            assert rgba[1].shape == torch.Size([n_envs, 512, 512, 4])
+            assert depth[0].shape == torch.Size([n_envs, 512, 512, 1])
+            assert depth[1].shape == torch.Size([n_envs, 512, 512, 1])
+            exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
-            rgb, depth, _, _ = cam_0.render()
-            assert rgb.shape == (512, 512, 3)
-            assert depth.shape == (512, 512)
-            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgb, depth=depth)
+            rgba, depth, _, _ = cam_0.render(rgb=True, depth=True)
+            assert rgba.shape == torch.Size([512, 512, 4])
+            assert depth.shape == torch.Size([512, 512, 1])
+            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgba, depth=depth)
 
     # Clean up export_dir
     if os.path.exists(export_dir):
         shutil.rmtree(export_dir)
-    

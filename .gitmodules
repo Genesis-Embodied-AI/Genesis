@@ -7,6 +7,3 @@
 [submodule "genesis/ext/ParticleMesher"]
 	path = genesis/ext/ParticleMesher
 	url = https://github.com/ACMLCZH/ParticleMesher
-[submodule "genesis/ext/gs-madrona"]
-	path = genesis/ext/gs-madrona
-	url = https://github.com/Genesis-Embodied-AI/gs-madrona.git
