@@ -1,38 +1,11 @@
-import genesis as gs
-import threading
 import queue
-from dataclasses import dataclass
-from .data_handlers import DataHandler
+import threading
+
+import genesis as gs
+from genesis.options.recording import RecordingOptions
+
 from .base_sensor import Sensor
-
-
-@dataclass
-class RecordingOptions:
-    """
-    Options for recording data from a sensor.
-
-    Parameters
-    ----------
-    handler: DataHandler
-        The handler that will process the recorded data.
-    sensor_idx: int, optional
-        The index of the sensor in the SensorDataCollector.sensors list.
-    hz: float, optional
-        The frequency at which to sample data, in Hz (samples per second).
-        If None, the sensor will be sampled every step.
-    buffer_size: int
-        The size of the data queue buffer. Defaults to 0, which means infinite size.
-    buffer_full_wait_time: float
-        The time to wait for buffer space to become available when the buffer is full. Defaults to 0.1 seconds.
-    """
-
-    handler: DataHandler
-    sensor_idx: int = -1
-    hz: float | None = None
-    buffer_size: int = 0
-    buffer_full_wait_time: float = 0.1
-
-    _steps_per_sample: int = 1  # how often to sample data, calculated based on hz if given
+from .data_handlers import DataHandler
 
 
 class SensorDataRecorder:
@@ -41,24 +14,22 @@ class SensorDataRecorder:
 
     Parameters
     ----------
-    sensor: gs.sensors.Sensor
-
+    sensors: gs.sensors.Sensor
+        The sensors to record data from.
+    rec_options: list[RecordingOptions], optional
+        The recording options for each sensor, specifying how to handle the recorded data.
+    step_dt: float | None, optional
+        The time step for the simulation.
+        If provided, it is used to calculate the steps per sample for each sensor based on the hz in RecordingOptions.
+        If None, hz will be ignored and the sensor will be sampled every step.
     """
 
     def __init__(
         self,
-        sensors: list[Sensor] = [],
-        rec_options: list[RecordingOptions] = [],
         step_dt: float | None = None,
     ):
-        self._sensors = sensors
-        self._rec_options = rec_options
-        for opt in self._rec_options:
-            if opt.sensor_idx < 0 or opt.sensor_idx >= len(self._sensors):
-                gs.raise_exception(
-                    f"Invalid sensor_idx {opt.sensor_idx} for RecordingOptions. "
-                    f"Must be in range [0, {len(self._sensors) - 1}]."
-                )
+        self._sensors: list[Sensor] = []
+        self._rec_options: list[RecordingOptions] = []
         self.step_dt = step_dt
 
         self._data_queues: list[queue.Queue] = []
@@ -67,17 +38,47 @@ class SensorDataRecorder:
         self._is_paused = False
         self._step = 0
 
-    def add_sensor(self, sensor: Sensor, options: RecordingOptions | list[RecordingOptions]):
+    def add_sensor(
+        self, sensor: Sensor, options: DataHandler | list[DataHandler] | RecordingOptions | list[RecordingOptions]
+    ):
         """
         Add a sensor to the data collector with specified recording options.
+
+        Parameters
+        ----------
+        sensor: Sensor
+            The sensor to record.
+        options: DataHandler | list[DataHandler] | RecordingOptions | list[RecordingOptions]
+            How the sensor data should be recorded.
+            Use RecordingOptions to specify
+
+            The handler(s) that will process the recorded data. Can be a single handler or a list of handlers.
+            If RecordingOptions is provided, it should contain the handler and optionally other parameters like hz.
         """
-        if not isinstance(options, list):
-            options = [options]
-        for opt in options:
-            opt.sensor_idx = len(self._sensors)
+        try:
+            if isinstance(options, DataHandler):
+                opt = RecordingOptions(handler=options)
+                opt._sensor_idx = len(self._sensors)
+                _options = [opt]
+            elif isinstance(options, RecordingOptions):
+                _options = [options]
+            else:
+                _options = []
+                for opt in options:  # may raise TypeError if not iterable
+                    if isinstance(opt, DataHandler):
+                        opt = RecordingOptions(handler=opt)
+                    elif not isinstance(opt, RecordingOptions):
+                        raise TypeError()
+
+                    opt._sensor_idx = len(self._sensors)
+                    _options.append(opt)
+        except TypeError as e:
+            gs.raise_exception_from(
+                "SensorDataRecorder.add_sensor(...) options must be a DataHandler or RecordingOptions.", e
+            )
 
         self._sensors.append(sensor)
-        self._rec_options.extend(options)
+        self._rec_options.extend(_options)
 
     def start_recording(self):
         """Start data recording."""
@@ -143,7 +144,7 @@ class SensorDataRecorder:
             return
         for opt in self._rec_options:
             if self._step % opt._steps_per_sample == 0:
-                self.read_sensor(opt.sensor_idx)
+                self.read_sensor(opt._sensor_idx)
 
     def read_sensor(self, rec_idx=0):
         """
@@ -151,7 +152,7 @@ class SensorDataRecorder:
         Usually called by step(), but can also be called manually to process data immediately.
         """
         options = self._rec_options[rec_idx]
-        data = self._sensors[options.sensor_idx].read()
+        data = self._sensors[options._sensor_idx].read()
         data_queue = self._data_queues[rec_idx]
         try:
             data_queue.put(data, block=True, timeout=options.buffer_full_wait_time)

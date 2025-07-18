@@ -1,10 +1,13 @@
-import genesis as gs
-import cv2
 import csv
 import os
-import numpy as np
-from typing import Optional
 from collections.abc import Iterable
+from typing import Callable, Optional
+
+import cv2
+import numpy as np
+from pydantic_core import core_schema
+
+import genesis as gs
 from genesis.utils.tools import animate
 
 
@@ -19,6 +22,10 @@ class DataHandler:
 
     def cleanup(self):
         raise NotImplementedError()
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        return core_schema.is_instance_schema(cls)
 
 
 class VideoFileWriter(DataHandler):
@@ -39,7 +46,7 @@ class VideoFileWriter(DataHandler):
         assert filename.endswith(".mp4"), "Video output must be an .mp4 file"
         self.filename = filename
         self.fps = fps
-        self.frames = []
+        self.frames: list[np.ndarray] = []
         self.streams_idx = streams_idx
 
     def initialize(self):
@@ -61,6 +68,8 @@ class VideoFileWriter(DataHandler):
                 for i in range(len(self.streams_idx)):
                     animate(self.frames, filename=f"{filename_no_ext}_{i}{ext}", fps=self.fps)
             self.frames.clear()
+        else:
+            gs.logger.warning("VideoFileWriter: No frames to write to video file.")
 
 
 class VideoFileStreamer(DataHandler):
@@ -96,7 +105,7 @@ class VideoFileStreamer(DataHandler):
             assert fourcc in ["XVID", "MJPG"], "Unsupported video codec for .avi, use 'XVID' or 'MJPG'"
         else:
             raise ValueError("Video filename must end with .mp4 or .avi")
-        self.video_writers = []
+        self.video_writers: list[cv2.VideoWriter] = []
         self.fps = fps
         self.fourcc = fourcc
 
@@ -239,7 +248,7 @@ class CallbackHandler(DataHandler):
         A function that takes the data as input and processes it.
     """
 
-    def __init__(self, callback: callable):
+    def __init__(self, callback: Callable):
         self.callback = callback
 
     def initialize(self):

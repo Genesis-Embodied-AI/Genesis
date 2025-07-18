@@ -6,7 +6,7 @@ from huggingface_hub import snapshot_download
 from tqdm import tqdm
 
 import genesis as gs
-from genesis.sensors import RecordingOptions, RigidContactForceGridSensor, SensorDataRecorder
+from genesis.sensors import RigidContactForceGridSensor, SensorDataRecorder
 from genesis.sensors.data_handlers import NPZFileWriter, VideoFileWriter
 from genesis.utils.misc import tensor_to_array
 
@@ -79,7 +79,7 @@ def main():
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=args.dt,
-            gravity=(0, 0, -4.0), # Reduced just to visualize better without changing dt
+            gravity=(0, 0, -4.0),  # Reduced just to visualize better without changing dt
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -170,7 +170,7 @@ def main():
     data_recorder = SensorDataRecorder(step_dt=args.dt)
     data_recorder.add_sensor(
         cam,
-        RecordingOptions(handler=VideoFileWriter(filename="hand_test.mp4", fps=30)),
+        VideoFileWriter(filename="hand_test.mp4", fps=30),
     )
     sensors = []
     for link in hand.links:
@@ -178,7 +178,7 @@ def main():
             sensor = RigidContactForceGridSensor(entity=hand, link_idx=link.idx, grid_size=(2, 2, 2))
             data_recorder.add_sensor(
                 sensor,
-                RecordingOptions(handler=NPZFileWriter(filename=f"{link.name}_contact_forces.npz")),
+                NPZFileWriter(filename=f"{link.name}_contact_forces.npz"),
             )
             sensors.append(sensor)
 

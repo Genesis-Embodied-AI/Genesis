@@ -1,12 +1,15 @@
-import torch
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 import taichi as ti
+import torch
+
 import genesis as gs
 from genesis.engine.entities import RigidEntity
+from genesis.utils.geom import inv_transform_by_quat, ti_inv_transform_by_quat, transform_by_trans_quat
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import ti_inv_transform_by_quat, inv_transform_by_quat, transform_by_trans_quat
-from typing import Dict, List, Any, Optional
+
 from .base_sensor import Sensor
-import numpy as np
 
 
 @ti.data_oriented
