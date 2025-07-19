@@ -1355,6 +1355,7 @@ class RigidSolver(Solver):
             vface_num=gs.ti_int,
             vface_start=gs.ti_int,
             vface_end=gs.ti_int,
+            color=gs.ti_vec4,
         )
         struct_vgeom_state = ti.types.struct(
             pos=gs.ti_vec3,
@@ -1376,6 +1377,7 @@ class RigidSolver(Solver):
                 vgeoms_vface_start=np.array([vgeom.vface_start for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vvert_end=np.array([vgeom.vvert_end for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vface_end=np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
+                vgeoms_color=np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
                 # taichi variables
                 vgeoms_info=self.vgeoms_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -1391,6 +1393,7 @@ class RigidSolver(Solver):
         vgeoms_vface_start: ti.types.ndarray(),
         vgeoms_vvert_end: ti.types.ndarray(),
         vgeoms_vface_end: ti.types.ndarray(),
+        vgeoms_color: ti.types.ndarray(),
         # taichi variables
         vgeoms_info: array_class.VGeomsInfo,
         static_rigid_sim_config: ti.template(),
@@ -1413,6 +1416,8 @@ class RigidSolver(Solver):
             vgeoms_info[i].vface_num = vgeoms_vface_end[i] - vgeoms_vface_start[i]
 
             vgeoms_info[i].link_idx = vgeoms_link_idx[i]
+            for j in ti.static(range(4)):
+                vgeoms_info[i].color[j] = vgeoms_color[i, j]
 
     def _init_entity_fields(self):
         if self._use_hibernation:
