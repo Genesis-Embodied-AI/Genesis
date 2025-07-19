@@ -332,10 +332,10 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
 
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
-@pytest.mark.parametrize("n_envs", [1, 3])
+@pytest.mark.parametrize("n_envs", [0, 3])
 @pytest.mark.required
 @pytest.mark.xfail(reason="gs-madrona must be built and installed manually for now.")
-def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, n_steps):
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, n_steps, tol):
     scene = gs.Scene(
         renderer=gs.options.renderers.BatchRenderer(
             use_rasterizer=use_rasterizer,
@@ -391,22 +391,46 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     # while Camera.start|stop_recording only exports images from a single camera and environment.
     exporter = FrameImageExporter(tmp_path)
 
+    expected_rgba_shape = torch.Size([n_envs, 512, 512, 4])
+    expected_rgba_0_mean = 83.9395
+    expected_rgba_1_mean = 112.4114
+    expected_rgba_0_std = 102.3653
+    expected_rgba_1_std = 88.9406
+
+    expected_depth_shape = torch.Size([n_envs, 512, 512, 1])
+    expected_depth_0_mean = 58.2162
+    expected_depth_1_mean = 3.4597
+    expected_depth_0_std = 44.5696
+    expected_depth_1_std = 1.7867
+
     # Only verify functionality works without crashes and output dimension matches for now
     # To verify whether the output is correct pixel-wise, we need to use a more sophisticated test
-    for i in range(2):
+    for i in range(1):
         scene.step()
         if render_all_cameras:
             rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
             # 2 cameras
             assert len(rgba) == 2
             assert len(depth) == 2
-            assert rgba[0].shape == torch.Size([n_envs, 512, 512, 4])
-            assert rgba[1].shape == torch.Size([n_envs, 512, 512, 4])
-            assert depth[0].shape == torch.Size([n_envs, 512, 512, 1])
-            assert depth[1].shape == torch.Size([n_envs, 512, 512, 1])
+            assert rgba[0].shape == expected_rgba_shape
+            assert rgba[1].shape == expected_rgba_shape
+            assert depth[0].shape == expected_depth_shape
+            assert depth[1].shape == expected_depth_shape
+            assert_allclose(rgba[0].mean(), expected_rgba_0_mean, tol=tol)
+            assert_allclose(rgba[1].mean(), expected_rgba_1_mean, tol=tol)
+            assert_allclose(rgba[0].std(), expected_rgba_0_std, tol=tol)
+            assert_allclose(rgba[1].std(), expected_rgba_1_std, tol=tol)
+            assert_allclose(depth[0].mean(), expected_depth_0_mean, tol=tol)
+            assert_allclose(depth[1].mean(), expected_depth_1_mean, tol=tol)
+            assert_allclose(depth[0].std(), expected_depth_0_std, tol=tol)
+            assert_allclose(depth[1].std(), expected_depth_1_std, tol=tol)
             exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
             rgba, depth, _, _ = cam_0.render(rgb=True, depth=True)
-            assert rgba.shape == torch.Size([512, 512, 4])
-            assert depth.shape == torch.Size([512, 512, 1])
+            assert rgba.shape == expected_rgba_shape[1:]
+            assert depth.shape == expected_depth_shape[1:]
+            assert_allclose(rgba.mean(), expected_rgba_0_mean, tol=tol)
+            assert_allclose(depth.mean(), expected_depth_0_mean, tol=tol)
+            assert_allclose(rgba.std(), expected_rgba_0_std, tol=tol)
+            assert_allclose(depth.std(), expected_depth_0_std, tol=tol)
             exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgba, depth=depth)
