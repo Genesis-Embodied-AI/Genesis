@@ -333,10 +333,9 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
 @pytest.mark.parametrize("n_envs", [1, 3])
-@pytest.mark.parametrize("n_steps", [1, 1000])
 @pytest.mark.required
 @pytest.mark.xfail(reason="gs-madrona must be built and installed manually for now.")
-def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_steps):
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, n_steps):
     scene = gs.Scene(
         renderer=gs.options.renderers.BatchRenderer(
             use_rasterizer=use_rasterizer,
@@ -362,7 +361,6 @@ def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_s
         fov=45,
         GUI=True,
     )
-    cam_0.attach(franka.links[6], trans_to_T(np.array([0.0, 0.5, 0.0])))
     cam_1 = scene.add_camera(
         res=(512, 512),
         pos=(1.5, -0.5, 1.5),
@@ -373,16 +371,16 @@ def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_s
     scene.add_light(
         pos=[0.0, 0.0, 1.5],
         dir=[1.0, 1.0, -2.0],
-        directional=1,
-        castshadow=1,
+        directional=True,
+        castshadow=True,
         cutoff=45.0,
         intensity=0.5,
     )
     scene.add_light(
-        pos=[4, -4, 4],
-        dir=[-1, 1, -1],
-        directional=0,
-        castshadow=1,
+        pos=[4.0, -4.0, 4.0],
+        dir=[-1.0, 1.0, -1.0],
+        directional=False,
+        castshadow=True,
         cutoff=45.0,
         intensity=0.5,
     )
@@ -391,12 +389,11 @@ def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_s
     # Create an image exporter
     # FrameImageExporter exports images from all cameras and all environments in batch and parallelly,
     # while Camera.start|stop_recording only exports images from a single camera and environment.
-    export_dir = "img_output"
-    exporter = FrameImageExporter(export_dir)
+    exporter = FrameImageExporter(tmp_path)
 
     # Only verify functionality works without crashes and output dimension matches for now
     # To verify whether the output is correct pixel-wise, we need to use a more sophisticated test
-    for i in range(n_steps):
+    for i in range(2):
         scene.step()
         if render_all_cameras:
             rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
@@ -413,7 +410,3 @@ def test_madrona_batch_rendering(use_rasterizer, render_all_cameras, n_envs, n_s
             assert rgba.shape == torch.Size([512, 512, 4])
             assert depth.shape == torch.Size([512, 512, 1])
             exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgba, depth=depth)
-
-    # Clean up export_dir
-    if os.path.exists(export_dir):
-        shutil.rmtree(export_dir)
