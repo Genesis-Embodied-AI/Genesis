@@ -105,7 +105,7 @@ class PBDSolver(Solver):
 
         struct_vvert_state_render = ti.types.struct(
             pos=gs.ti_vec3,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
         self.vverts_render = struct_vvert_state_render.field(
             shape=self._batch_shape(shape=max(1, self._n_vverts)), layout=ti.Layout.SOA
@@ -126,7 +126,7 @@ class PBDSolver(Solver):
         )
         # particles state (dynamic)
         struct_particle_state = ti.types.struct(
-            free=ti.u1,  # if not free, the particle is not affected by internal forces and solely controlled by external user until released
+            free=gs.ti_bool,  # if not free, the particle is not affected by internal forces and solely controlled by external user until released
             pos=gs.ti_vec3,  # position
             ipos=gs.ti_vec3,  # initial position
             dpos=gs.ti_vec3,  # delta position
@@ -138,14 +138,14 @@ class PBDSolver(Solver):
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
             reordered_idx=gs.ti_int,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         # single frame particle state for rendering
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=ti.u1,
+            active=gs.ti_bool,
         )
 
         self.particles_info = struct_particle_info.field(shape=self._n_particles, layout=ti.Layout.SOA)
@@ -862,7 +862,7 @@ class PBDSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        active: ti.u1,
+        active: ti.i32,
     ):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
@@ -880,7 +880,7 @@ class PBDSolver(Solver):
             for j in ti.static(range(3)):
                 pos[i_b, i_p, j] = self.particles[i_p, i_b].pos[j]
                 vel[i_b, i_p, j] = self.particles[i_p, i_b].vel[j]
-            free[i_b, i_p] = self.particles[i_p, i_b].free
+            free[i_b, i_p] = ti.cast(self.particles[i_p, i_b].free, gs.ti_bool)
 
     @ti.kernel
     def _kernel_set_frame(

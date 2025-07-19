@@ -34,6 +34,7 @@ class OffscreenRenderer(object):
         self.point_size = point_size
         self._platform = None
         self._is_software = False
+        self._has_valid_context = False
         self._create(pyopengl_platform)
         self._seg_node_map = seg_node_map
 
@@ -66,6 +67,39 @@ class OffscreenRenderer(object):
     def point_size(self, value):
         self._point_size = float(value)
 
+    def make_current(self):
+        """This function sets the current context and must be called before all rendering and GPU upload operations."""
+        if self._has_valid_context:
+            gs.raise_exception(
+                "The method was called while having an other context current. Please call 'make_uncurrent' first."
+            )
+
+        self._platform.make_current()
+
+        # If platform does not support dynamically-resizing framebuffers,
+        # destroy it and restart it
+        if (
+            self._platform.viewport_height != self.viewport_height
+            or self._platform.viewport_width != self.viewport_width
+        ):
+            if not self._platform.supports_framebuffers():
+                self.delete()
+                self._create()
+
+                # Only needs to happen if the context was deleted and created
+                self._platform.make_current()
+
+        self._has_valid_context = True
+
+    def make_uncurrent(self):
+        """This function unsets the current context and must be called after all rendering and GPU upload operations
+        are done.
+        """
+        if not self._has_valid_context:
+            gs.raise_exception("The method was called before making a context current.")
+        self._platform.make_uncurrent()
+        self._has_valid_context = False
+
     def render(
         self,
         scene,
@@ -97,23 +131,14 @@ class OffscreenRenderer(object):
         depth_im : (h, w) float32
             The depth buffer in linear units.
         """
+        if not self._has_valid_context:
+            gs.raise_exception(
+                "Ensure that the right context is set before rendering. Please call the method 'make_current'."
+            )
 
         if camera_node is not None:
             saved_camera_node = scene.main_camera_node
             scene.main_camera_node = camera_node
-
-        self._platform.make_current()
-        # If platform does not support dynamically-resizing framebuffers,
-        # destroy it and restart it
-        if (
-            self._platform.viewport_height != self.viewport_height
-            or self._platform.viewport_width != self.viewport_width
-        ):
-            if not self._platform.supports_framebuffers():
-                self.delete()
-                self._create()
-
-        self._platform.make_current()
 
         # Forcibly disable shadow for software rendering as it may hang indefinitely
         if shadow and not self._is_software:
@@ -147,6 +172,7 @@ class OffscreenRenderer(object):
                 retval = color, depth
 
         if normal:
+
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None
@@ -171,9 +197,6 @@ class OffscreenRenderer(object):
             retval = retval + (normal_arr,)
 
             renderer._program_cache = old_cache
-
-        # Make the platform not current
-        self._platform.make_uncurrent()
 
         if camera_node is not None:
             scene.main_camera_node = saved_camera_node
@@ -208,12 +231,13 @@ class OffscreenRenderer(object):
 
             self._platform = OSMesaPlatform(self.viewport_width, self.viewport_height)
         else:
-            raise ValueError("Unsupported PyOpenGL platform: {}".format(os.environ["PYOPENGL_PLATFORM"]))
+            raise ValueError("Unsupported PyOpenGL platform: {}".format(platform))
         self._platform.init_context()
         self._platform.make_current()
 
         try:
             from OpenGL.GL import glGetString, GL_RENDERER
+
             renderer = glGetString(GL_RENDERER).decode()
             self._is_software = "llvmpipe" in renderer
         except:

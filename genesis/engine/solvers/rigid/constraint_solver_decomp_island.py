@@ -24,7 +24,7 @@ class ConstraintSolverIsland:
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
         self.len_constraints = (
-            5 * self._collider._collider_state._max_contact_pairs[None]
+            5 * self._collider._collider_info._max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)
@@ -178,7 +178,7 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state[i_d, i_b].cdof_vel
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].root_COM
+                            t_pos = contact_data.pos - self._solver.links_state[link, i_b].COM
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel

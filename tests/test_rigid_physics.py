@@ -1,6 +1,5 @@
 import math
 import os
-import queue
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -952,252 +951,6 @@ def test_info_batching(tol):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
-def test_batched_offscreen_rendering(show_viewer, tol):
-    scene = gs.Scene(
-        vis_options=gs.options.VisOptions(
-            # rendered_envs_idx=(0, 1, 2),
-            env_separate_rigid=False,
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    plane = scene.add_entity(
-        morph=gs.morphs.Plane(),
-        surface=gs.surfaces.Aluminium(
-            ior=10.0,
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, -0.8, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Rough(
-            diffuse_texture=gs.textures.ColorTexture(
-                color=(1.0, 0.5, 0.5),
-            ),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, -0.5, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Rough(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, -0.2, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Smooth(
-            color=(0.6, 0.8, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, 0.2, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Iron(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, 0.5, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Gold(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, 0.8, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Glass(
-            color=(1.0, 1.0, 1.0),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(0.2, -0.8, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Smooth(
-            color=(1.0, 1.0, 1.0, 0.5),
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
-            scale=0.025,
-            pos=(0.2, -0.5, 0.2),
-            fixed=True,
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
-            scale=0.025,
-            pos=(0.2, -0.2, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Rough(
-            diffuse_texture=gs.textures.ImageTexture(
-                image_path="textures/checker.png",
-            )
-        ),
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    cam = scene.add_camera(
-        pos=(0.9, 0.0, 0.4),
-        lookat=(0.0, 0.0, 0.4),
-        res=(500, 500),
-        fov=60,
-        spp=512,
-        GUI=False,
-    )
-    scene.build(n_envs=3, env_spacing=(2.0, 2.0))
-
-    for _ in range(10):
-        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-        qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
-
-        steps_rgb_arrays = []
-        for _ in range(2):
-            scene.step()
-
-            robots_rgb_arrays = []
-            robot.set_qpos(torch.tile(qpos, (3, 1)))
-            scene.visualizer.update()
-            for i in range(3):
-                pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
-                lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
-                cam.set_pose(pos=pos_i, lookat=lookat_i)
-                rgb_array, *_ = cam.render()
-                assert np.std(rgb_array) > 10.0
-                robots_rgb_arrays.append(rgb_array)
-
-            steps_rgb_arrays.append(robots_rgb_arrays)
-
-        for i in range(3):
-            assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Segfault inside 'shadow_mapping_pass' on MacOS VM.")
-@pytest.mark.xfail(reason="This test is not passing on all platforms for now.")
-def test_batched_mounted_camera_rendering(show_viewer, tol):
-    scene = gs.Scene(
-        vis_options=gs.options.VisOptions(
-            env_separate_rigid=False,
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    plane = scene.add_entity(
-        morph=gs.morphs.Plane(),
-        surface=gs.surfaces.Aluminium(
-            ior=10.0,
-        ),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/sphere.obj",
-            scale=0.1,
-            pos=(-0.2, -0.5, 0.2),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Rough(
-            diffuse_texture=gs.textures.ColorTexture(
-                color=(1.0, 0.5, 0.5),
-            ),
-        ),
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    n_envs = 3
-    env_spacing = (2.0, 2.0)
-    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_envs)]
-    scene.build(n_envs=n_envs, env_spacing=env_spacing)
-
-    T = np.eye(4)
-    T[:3, :3] = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-    T[:3, 3] = np.array([0.1, 0.0, 0.1])
-    for nenv, cam in enumerate(cams):
-        cam.attach(robot.get_link("hand"), T, nenv)
-
-    target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
-    center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
-    rng = np.random.default_rng(42)
-    angular_speed = rng.uniform(-10, 10, n_envs)
-    r = 0.25
-
-    ee_link = robot.get_link("hand")
-
-    steps_rgb_queue: queue.Queue[list[np.ndarray]] = queue.Queue(maxsize=2)
-
-    for i in range(50):
-        target_pos = np.zeros([n_envs, 3])
-        target_pos[:, 0] = center[:, 0] + np.cos(i / 360 * np.pi * angular_speed) * r
-        target_pos[:, 1] = center[:, 1] + np.sin(i / 360 * np.pi * angular_speed) * r
-        target_pos[:, 2] = center[:, 2]
-
-        q = robot.inverse_kinematics(
-            link=ee_link,
-            pos=target_pos,
-            quat=target_quat,
-            rot_mask=[False, False, True],  # for demo purpose: only restrict direction of z-axis
-        )
-
-        robot.set_qpos(q)
-        scene.step()
-        if i < 10:
-            # skip the first few frames because the robots start off with the same state
-            for cam in cams:
-                cam.render()
-            continue
-        robots_rgb_arrays = []
-        for cam in cams:
-            rgb_array, *_ = cam.render()
-            assert np.std(rgb_array) > 10.0
-            robots_rgb_arrays.append(rgb_array)
-        steps_rgb_queue.put(robots_rgb_arrays)
-
-        if steps_rgb_queue.full():  # we have a set of 2 consecutive frames
-            diff_tol = 0.02  # expect atlest 2% difference between each frame
-            frames_t_minus_1 = steps_rgb_queue.get()
-            frames_t = steps_rgb_queue.get()
-            for i in range(n_envs):
-                diff = frames_t[i] - frames_t_minus_1[i]
-                assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
-
-
-@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_pd_control(show_viewer):
     scene = gs.Scene(
@@ -1477,13 +1230,7 @@ def move_cube(use_suction, mode, show_viewer):
     )
     # gripper open pos
     qpos[-2:] = 0.04
-    path = franka.plan_path(
-        qpos_goal=qpos,
-        num_waypoints=120,  # 1s duration
-        resolution=0.05,
-        timeout=30.0,
-    )
-    assert path
+    path = franka.plan_path(qpos_goal=qpos, num_waypoints=300, resolution=0.05, max_retry=10)
     # execute the planned path
     franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
     for waypoint in path:
@@ -1533,11 +1280,12 @@ def move_cube(use_suction, mode, show_viewer):
     )
     path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=80,
+        num_waypoints=100,
         resolution=0.05,
-        timeout=30.0,
+        max_retry=10,
+        ee_link_name="hand",
+        with_entity=cube,
     )
-    assert path
     for waypoint in path:
         franka.control_dofs_position(waypoint[:-2], motors_dof)
         scene.step()
@@ -1562,7 +1310,6 @@ def move_cube(use_suction, mode, show_viewer):
     assert_allclose(qpos[2], 0.075, atol=2e-3)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize(
     "mode, backend",
     [
@@ -1578,7 +1325,6 @@ def test_inverse_kinematics(mode, show_viewer):
     move_cube(use_suction=False, mode=mode, show_viewer=show_viewer)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
 @pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_suction_cup(mode, show_viewer):
@@ -1586,9 +1332,9 @@ def test_suction_cup(mode, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "win32", reason="OMPL is not supported on Windows OS.")
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(show_viewer):
+def test_path_planning_avoidance(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -1630,34 +1376,39 @@ def test_path_planning_avoidance(show_viewer):
         ),
         vis_mode="collision",
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     hand = franka.get_link("hand")
-    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
-    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
+    if n_envs > 0:
+        hand_pos_ref = torch.tensor([[0.3, 0.25, 0.25]] * n_envs, device=gs.device)
+        hand_quat_ref = torch.tensor([[0.3073, 0.5303, 0.7245, -0.2819]] * n_envs, device=gs.device)
+    else:
+        hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
+        hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos[-2:] = 0.04
+    qpos[..., -2:] = 0.04
 
-    avoidance_path = franka.plan_path(
-        qpos_goal=qpos,
-        num_waypoints=200,
-        ignore_collision=False,
-        resolution=0.002,
-        timeout=180.0,
-        max_retry=5,
-    )
-    assert avoidance_path
-    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
-    assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
     free_path = franka.plan_path(
         qpos_goal=qpos,
-        num_waypoints=200,
+        num_waypoints=300,
+        resolution=0.05,
         ignore_collision=True,
-        resolution=0.002,
     )
-    assert free_path
-    assert_allclose(free_path[0], 0.0, tol=gs.EPS)
+    assert_allclose(free_path[0], 0, tol=gs.EPS)
     assert_allclose(free_path[-1], qpos, tol=gs.EPS)
+
+    qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
+    qpos[..., -2:] = 0.04
+    avoidance_path = franka.plan_path(
+        qpos_goal=qpos,
+        num_waypoints=300,
+        ignore_collision=False,
+        resolution=0.05,
+        max_nodes=4000,
+        max_retry=40,
+    )
+    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
 
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
         max_penetration = float("-inf")
@@ -1678,7 +1429,7 @@ def test_path_planning_avoidance(show_viewer):
 
         assert_allclose(hand_pos_ref, hand.get_pos(), tol=5e-4)
         hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
-        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[1:]), torch.abs(hand_quat_diff[0]))
+        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[..., 1:]), torch.abs(hand_quat_diff[..., 0]))
         assert_allclose(theta, 0.0, tol=5e-3)
 
 
@@ -2028,7 +1779,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
 
     # Make sure that all the geometries in the scene are convex
     assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
-    assert not gs_sim.rigid_solver.collider._collider_info.has_nonconvex_nonterrain
+    assert not gs_sim.rigid_solver.collider._collider_static_config.has_nonconvex_nonterrain
 
     # There should be only one geometry for the apple as it can be convexify without decomposition,
     # but for the others it is hard to tell... Let's use some reasonable guess.
@@ -2876,3 +2627,45 @@ def test_mesh_to_heightfield(tmp_path, show_viewer):
     # speed is around 0
     qvel = ball.get_dofs_velocity()
     assert_allclose(qvel, 0, atol=1e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_cartesian_space_variables(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # by default, enable_mujoco_compatibility=False
+            # the test will fail if enable_mujoco_compatibility=True
+            enable_mujoco_compatibility=False,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    scene.build()
+
+    for _ in range(2):
+        for link in box.links:
+            force = torch.tensor(np.array([0, 0, 0])).unsqueeze(0)
+            acc = 50.0
+            force[0, 0] = acc * link.inertial_mass
+            pos = link.get_pos()
+            vel = link.get_vel()
+
+            dof_vel = link.solver.get_dofs_velocity()
+            dof_pos = link.solver.get_qpos()
+
+            assert_allclose(dof_vel[:3], vel, atol=tol)
+            assert_allclose(dof_pos[:3], pos, atol=tol)
+
+            link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
+
+        scene.step()

@@ -1,12 +1,11 @@
-import math
 from copy import copy
 from itertools import chain
 from typing import Literal
 
 import numpy as np
-import trimesh
 import taichi as ti
 import torch
+import trimesh
 
 import genesis as gs
 from genesis.engine.materials.base import Material
@@ -19,11 +18,13 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
+from genesis.utils.path_planing import RRT, RRTConnect
 
 from ..base_entity import Entity
+from .rigid_equality import RigidEquality
+from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
-from .rigid_equality import RigidEquality
 
 
 @ti.data_oriented
@@ -127,24 +128,27 @@ class RigidEntity(Entity):
         if isinstance(morph, gs.options.morphs.Box):
             extents = np.array(morph.size)
             tmesh = mu.create_box(extents=extents)
+            cmesh = tmesh
             geom_data = extents
             geom_type = gs.GEOM_TYPE.BOX
             link_name_prefix = "box"
 
         elif isinstance(morph, gs.options.morphs.Sphere):
             tmesh = mu.create_sphere(radius=morph.radius)
+            cmesh = tmesh
             geom_data = np.array([morph.radius])
             geom_type = gs.GEOM_TYPE.SPHERE
             link_name_prefix = "sphere"
 
         elif isinstance(morph, gs.options.morphs.Cylinder):
             tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
+            cmesh = tmesh
             geom_data = None
             geom_type = gs.GEOM_TYPE.MESH
             link_name_prefix = "cylinder"
 
         elif isinstance(morph, gs.options.morphs.Plane):
-            tmesh = mu.create_plane(normal=morph.normal)
+            tmesh, cmesh = mu.create_plane(normal=morph.normal)
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
@@ -167,7 +171,7 @@ class RigidEntity(Entity):
                 dict(
                     contype=1,
                     conaffinity=1,
-                    mesh=gs.Mesh.from_trimesh(tmesh, surface=gs.surfaces.Collision()),
+                    mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
                     sol_params=gu.default_solver_params(),
@@ -407,6 +411,9 @@ class RigidEntity(Entity):
             j_info["dofs_stiffness"] = np.zeros(6)
             j_info["dofs_invweight"] = np.zeros(6)
             j_info["dofs_damping"] = np.zeros(6)
+            if isinstance(morph, gs.morphs.Drone):
+                mass_tot = sum(l_info["inertial_mass"] for l_info in l_infos)
+                j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
             j_info["dofs_armature"] = np.zeros(6)
             j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
@@ -428,7 +435,7 @@ class RigidEntity(Entity):
             for i_l in range(root_idx, len(l_infos)):
                 l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in links_j_infos[i_l]:
-                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
+                    j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
         # Remove the world link if "useless", i.e. free or fixed joint without any geometry attached
         if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
@@ -461,7 +468,7 @@ class RigidEntity(Entity):
             for l_info, link_j_infos in zip(l_infos, links_j_infos):
                 l_info["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in link_j_infos:
-                    j_info["dofs_invweight"] = np.full((2,), fill_value=-1.0)
+                    j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
@@ -554,7 +561,9 @@ class RigidEntity(Entity):
             else:
                 q_limit_lower.append(joint.dofs_limit[:, 0])
                 q_limit_upper.append(joint.dofs_limit[:, 1])
-        self.q_limit = np.array([np.concatenate(q_limit_lower), np.concatenate(q_limit_upper)])
+        self.q_limit = np.stack(
+            (np.concatenate(q_limit_lower), np.concatenate(q_limit_upper)), axis=0, dtype=gs.np_float
+        )
 
         # for storing intermediate results
         self._IK_n_tgts = self._solver._options.IK_max_targets
@@ -750,8 +759,6 @@ class RigidEntity(Entity):
             friction = g_info.get("friction", self.material.friction)
             if friction is None:
                 friction = gu.default_friction()
-            pos = g_info.get("pos", gu.zero_pos())
-            quat = g_info.get("quat", gu.identity_quat())
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
@@ -996,7 +1003,7 @@ class RigidEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
             if pos is not None:
                 if pos.shape[0] != len(envs_idx):
@@ -1098,7 +1105,7 @@ class RigidEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
         if self._solver.n_envs > 0:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
             gs.raise_exception(
@@ -1113,13 +1120,13 @@ class RigidEntity(Entity):
             gs.raise_exception("Target link not provided.")
 
         if len(poss) == 0:
-            poss = [None] * n_links
+            poss = [None for _ in range(n_links)]
             pos_mask = [False, False, False]
         elif len(poss) != n_links:
             gs.raise_exception("Accepting only `poss` with length equal to `links` or empty list.")
 
         if len(quats) == 0:
-            quats = [None] * n_links
+            quats = [None for _ in range(n_links)]
             rot_mask = [False, False, False]
         elif len(quats) != n_links:
             gs.raise_exception("Accepting only `quats` with length equal to `links` or empty list.")
@@ -1283,7 +1290,6 @@ class RigidEntity(Entity):
         rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
         n_error_dims = 6 * n_links
 
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in envs_idx:
             # save original qpos
             for i_q in range(self.n_qs):
@@ -1300,8 +1306,19 @@ class RigidEntity(Entity):
             for i_sample in range(max_samples):
                 for _ in range(max_solver_iters):
                     # run FK to update link states using current q
-                    self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
-
+                    self._solver._func_forward_kinematics_entity(
+                        self._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
                     # compute error
                     solved = True
                     for i_ee in range(n_links):
@@ -1386,7 +1403,19 @@ class RigidEntity(Entity):
 
                 if not solved:
                     # re-compute final error if exited not due to solved
-                    self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+                    self._solver._func_forward_kinematics_entity(
+                        self._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
                     solved = True
                     for i_ee in range(n_links):
                         i_l_ee = links_idx[i_ee]
@@ -1480,7 +1509,19 @@ class RigidEntity(Entity):
             # restore original qpos and link state
             for i_q in range(self.n_qs):
                 self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
-            self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
+            self._solver._func_forward_kinematics_entity(
+                self._idx_in_solver,
+                i_b,
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.joints_state,
+                self._solver.joints_info,
+                self._solver.dofs_state,
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
     @gs.assert_built
     def forward_kinematics(self, qpos, qs_idx_local=None, links_idx_local=None, envs_idx=None):
@@ -1510,7 +1551,7 @@ class RigidEntity(Entity):
             qpos = qpos.unsqueeze(0)
             envs_idx = torch.zeros(1, dtype=gs.tc_int)
         else:
-            envs_idx = self._solver._sanitize_envs_idx(envs_idx)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=False)
         links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
@@ -1540,7 +1581,6 @@ class RigidEntity(Entity):
         links_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
     ):
-
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             # save original qpos
@@ -1549,7 +1589,19 @@ class RigidEntity(Entity):
             # set new qpos
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
             # run FK
-            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+            self._solver._func_forward_kinematics_entity(
+                self._idx_in_solver,
+                envs_idx[i_b_],
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.joints_state,
+                self._solver.joints_info,
+                self._solver.dofs_state,
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
@@ -1563,25 +1615,42 @@ class RigidEntity(Entity):
             # restore original qpos
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
             # run FK
-            self._solver._func_forward_kinematics_entity(self._idx_in_solver, envs_idx[i_b_])
+            self._solver._func_forward_kinematics_entity(
+                self._idx_in_solver,
+                envs_idx[i_b_],
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.joints_state,
+                self._solver.joints_info,
+                self._solver.dofs_state,
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
     # ------------------------------------------------------------------------------------
-
     @gs.assert_built
     def plan_path(
         self,
         qpos_goal,
         qpos_start=None,
-        resolution=0.01,
-        timeout=5.0,
+        max_nodes=2000,
+        resolution=0.05,
+        timeout=None,
         max_retry=1,
         smooth_path=True,
-        num_waypoints=100,
+        num_waypoints=300,
         ignore_collision=False,
-        ignore_joint_limit=False,
         planner="RRTConnect",
+        envs_idx=None,
+        return_valid_mask=False,
+        *,
+        ee_link_name=None,
+        with_entity=None,
+        **kwargs,
     ):
         """
         Plan a path from `qpos_start` to `qpos_goal`.
@@ -1589,203 +1658,101 @@ class RigidEntity(Entity):
         Parameters
         ----------
         qpos_goal : array_like
-            The goal state.
+            The goal state. [B, Nq] or [1, Nq]
         qpos_start : None | array_like, optional
-            The start state. If None, the current state of the rigid entity will be used. Defaults to None.
+            The start state. If None, the current state of the rigid entity will be used.
+            Defaults to None. [B, Nq] or [1, Nq]
         resolution : float, optiona
-            Joint-space resolution in pourcentage. It corresponds to the maximum distance between states to be checked
-            for validity along a path segment. Default to 1%.
+            Joint-space resolution. It corresponds to the maximum distance between states to be checked
+            for validity along a path segment.
         timeout : float, optional
-            The maximum time (in seconds) allowed for the motion planning algorithm to find a solution. Defaults to 5.0.
+            The max time to spend for each planning in seconds. Note that the timeout is not exact.
         max_retry : float, optional
             Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
         num_waypoints : int, optional
-            The number of waypoints to interpolate the path. If None, no interpolation will be performed. Defaults to 100.
+            The number of waypoints to interpolate the path. If None, no interpolation will be performed.
+            Defaults to 100.
         ignore_collision : bool, optional
             Whether to ignore collision checking during motion planning. Defaults to False.
         ignore_joint_limit : bool, optional
             This option has been deprecated and is not longer doing anything.
         planner : str, optional
-            The name of the motion planning algorithm to use. Supported planners: 'PRM', 'RRT', 'RRTConnect', 'RRTstar', 'EST', 'FMT', 'BITstar', 'ABITstar'. Defaults to 'RRTConnect'.
+            The name of the motion planning algorithm to use.
+            Supported planners: 'RRT', 'RRTConnect'. Defaults to 'RRTConnect'.
+        envs_idx : None | array_like, optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+        return_valid_mask: bool
+            Obtain valid mask of the succesful planed path over batch.
+        ee_link_name: str
+            The name of the link, which we "attach" the object during the planning
+        with_entity: RigidEntity
+            The (non-articulated) object to "attach" during the planning
 
         Returns
         -------
-        waypoints : list
-            A list of waypoints representing the planned path. Each waypoint is an array storing the entity's qpos of a single time step.
+        path : torch.Tensor
+            A tensor of waypoints representing the planned path.
+            Each waypoint is an array storing the entity's qpos of a single time step.
+        is_invalid: torch.Tensor
+            A tensor of boolean mask indicating the batch indices with failed plan.
         """
-
-        ########## validate ##########
-        try:
-            from ompl import base as ob
-            from ompl import geometric as og
-            from ompl import util as ou
-        except ImportError as e:
-            if gs.platform == "Windows":
-                gs.raise_exception_from("No pre-compiled binaries of OMPL are not distributed on Windows OS.", e)
-            else:
-                raise
-
-        assert timeout > 0.0 and math.isfinite(timeout)
-        assert max_retry > 0
-
         if self._solver.n_envs > 0:
-            gs.raise_exception("Motion planning is not supported for batched envs (yet).")
+            n_envs = len(self._scene._sanitize_envs_idx(envs_idx))
+        else:
+            n_envs = 1
 
-        if self.n_qs != self.n_dofs:
-            gs.raise_exception("Motion planning is not yet supported for rigid entities with free joints.")
+        if "ignore_joint_limit" in kwargs:
+            gs.logger.warning("`ignore_joint_limit` is deprecated")
 
-        if qpos_start is None:
-            qpos_start = self.get_qpos()
-        qpos_start = tensor_to_array(qpos_start)
-        qpos_goal = tensor_to_array(qpos_goal)
+        ee_link_idx = None
+        if ee_link_name is not None:
+            assert with_entity is not None, "`with_entity` must be specified."
+            ee_link_idx = self.get_link(ee_link_name).idx
+        if with_entity is not None:
+            assert ee_link_name is not None, "reference link of the robot must be specified."
+            assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
-        if qpos_start.shape != (self.n_qs,) or qpos_goal.shape != (self.n_qs,):
-            gs.raise_exception("Invalid shape for `qpos_start` or `qpos_goal`.")
+        match planner:
+            case "RRT":
+                planner_obj = RRT(self)
+            case "RRTConnect":
+                planner_obj = RRTConnect(self)
+            case _:
+                gs.raise_exception(f"invalid planner {planner} specified.")
 
-        ######### process joint limit ##########
-        if ignore_joint_limit:
-            gs.logger.warning("This option is deprecated and is no longer doing anything.")
-        q_limit_lower, q_limit_upper = self.q_limit[0], self.q_limit[1]
+        path = torch.empty((num_waypoints, n_envs, self.n_qs), dtype=gs.tc_float, device=gs.device)
+        is_invalid = torch.ones((n_envs), dtype=bool)
+        for i in range(1 + max_retry):
+            if is_invalid.any():
+                if i > 0:
+                    gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
+                retry_path, retry_is_invalid = planner_obj.plan(
+                    qpos_goal,
+                    qpos_start=qpos_start,
+                    resolution=resolution,
+                    timeout=timeout,
+                    max_nodes=max_nodes,
+                    smooth_path=smooth_path,
+                    num_waypoints=num_waypoints,
+                    ignore_collision=ignore_collision,
+                    envs_idx=envs_idx,
+                    ee_link_idx=ee_link_idx,
+                    obj_entity=with_entity,
+                )
+                # NOTE: update the previously failed path with the new results
+                path[:, is_invalid] = retry_path[:, is_invalid]
+                is_invalid &= retry_is_invalid
 
-        if (qpos_start < q_limit_lower).any() or (qpos_start > q_limit_upper).any():
-            gs.logger.warning(
-                "`qpos_start` exceeds joint limit. Relaxing joint limit to contain `qpos_start` for planning."
-            )
-            q_limit_lower = np.minimum(q_limit_lower, qpos_start)
-            q_limit_upper = np.maximum(q_limit_upper, qpos_start)
+        if self._solver.n_envs == 0:
+            if return_valid_mask:
+                return path.squeeze(1), is_invalid[0]
+            return path.squeeze(1)
 
-        if (qpos_goal < q_limit_lower).any() or (qpos_goal > q_limit_upper).any():
-            gs.logger.warning(
-                "`qpos_goal` exceeds joint limit. Relaxing joint limit to contain `qpos_goal` for planning."
-            )
-            q_limit_lower = np.minimum(q_limit_lower, qpos_goal)
-            q_limit_upper = np.maximum(q_limit_upper, qpos_goal)
-
-        ######### setup OMPL ##########
-        ou.setLogLevel(ou.LOG_ERROR)
-        space = ob.RealVectorStateSpace(self.n_qs)
-        bounds = ob.RealVectorBounds(self.n_qs)
-
-        for i_q in range(self.n_qs):
-            bounds.setLow(i_q, q_limit_lower[i_q])
-            bounds.setHigh(i_q, q_limit_upper[i_q])
-        space.setBounds(bounds)
-        ss = og.SimpleSetup(space)
-
-        geoms_idx = tuple(range(self._geom_start, self._geom_start + len(self._geoms)))
-        mask_collision_pairs = set(
-            (i_ga, i_gb) for i_ga, i_gb in self.detect_collision() if i_ga in geoms_idx or i_gb in geoms_idx
-        )
-        if not ignore_collision and mask_collision_pairs:
-            gs.logger.info("Ignoring collision pairs already active for starting pos.")
-
-        def is_ompl_state_valid(state):
-            if ignore_collision:
-                return True
-            qpos = torch.tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-            self.set_qpos(qpos, zero_velocity=False)
-            collision_pairs = set(map(tuple, self.detect_collision()))
-            return not (collision_pairs - mask_collision_pairs)
-
-        ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_ompl_state_valid))
-
-        si = ss.getSpaceInformation()
-        si.setStateValidityCheckingResolution(resolution)
-
-        def allocOBValidStateSampler(si):
-            vss = ob.UniformValidStateSampler(si)
-            vss.setNrAttempts(100)
-            return vss
-
-        si.setValidStateSamplerAllocator(ob.ValidStateSamplerAllocator(allocOBValidStateSampler))
-
-        try:
-            planner_cls = getattr(og, planner)
-            if not issubclass(planner_cls, ob.Planner):
-                raise ValueError
-            planner = planner_cls(si)
-        except (AttributeError, ValueError) as e:
-            gs.raise_exception_from(f"'{planner}' is not a valid planner. See OMPL documentation for details.", e)
-        ss.setPlanner(planner)
-
-        state_start = ob.State(space)
-        state_goal = ob.State(space)
-        for i_q in range(self.n_qs):
-            state_start[i_q] = float(qpos_start[i_q])
-            state_goal[i_q] = float(qpos_goal[i_q])
-        ss.setStartAndGoalStates(state_start, state_goal)
-
-        ######### solve ##########
-        waypoints = []
-        for i in range(max_retry):
-            # Try solve the motion planning problem
-            if ss.getPlanner():
-                ss.getPlanner().clear()
-            status = ss.solve(timeout)
-            status_type = status.getStatus()
-
-            # Check if there was some unrecoverable failure
-            if status_type in (
-                ob.PlannerStatus.StatusType.UNKNOWN,
-                ob.PlannerStatus.StatusType.CRASH,
-                ob.PlannerStatus.StatusType.ABORT,
-            ):
-                gs.raise_exception("Unknown error.")
-            if status_type in (
-                ob.PlannerStatus.StatusType.INVALID_START,
-                ob.PlannerStatus.StatusType.INVALID_GOAL,
-                ob.PlannerStatus.StatusType.UNRECOGNIZED_GOAL_TYPE,
-                ob.PlannerStatus.StatusType.INFEASIBLE,
-            ):
-                gs.logger.warning("Path planning infeasible. Returning empty path.")
-                break
-
-            # Extract solution if any
-            if status:
-                # ss.simplifySolution()
-                path = ss.getSolutionPath()
-
-                # Simplify path
-                if smooth_path:
-                    ps = og.PathSimplifier(si)
-                    try:
-                        # ps.simplifyMax(path)
-                        ps.partialShortcutPath(path)
-                        ps.ropeShortcutPath(path)
-                    except:
-                        ps.shortcutPath(path)
-                    ps.smoothBSpline(path)
-
-                # Interpolate path
-                if num_waypoints is not None:
-                    path.interpolate(num_waypoints)
-
-                # Extract waypoints
-                waypoints = [
-                    torch.as_tensor([state[i] for i in range(self.n_qs)], dtype=gs.tc_float, device=gs.device)
-                    for state in path.getStates()
-                ]
-
-            # Return once an exact solution was found or maximum number of iterations was reached
-            if status_type in (ob.PlannerStatus.StatusType.TIMEOUT, ob.PlannerStatus.StatusType.APPROXIMATE_SOLUTION):
-                if i + 1 < max_retry:
-                    gs.logger.warning("Path planning did not converge. Trying again...")
-                    continue
-                else:
-                    if waypoints:
-                        gs.logger.warning("Path planning did not converge. Returning approximation path.")
-                    else:
-                        gs.logger.warning("Path planning did not converge. Returning empty path.")
-                    break
-            gs.logger.info("Path solution found successfully.")
-            break
-
-        ########## restore original state #########
-        self.set_qpos(qpos_start, zero_velocity=False)
-
-        return waypoints
+        if return_valid_mask:
+            return path, is_invalid
+        return path
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
@@ -2229,7 +2196,7 @@ class RigidEntity(Entity):
                 (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
                 idx_local.step or 1,
             )
-        elif isinstance(idx_local, int):
+        elif isinstance(idx_local, (int, np.integer)):
             idx_global = idx_local + idx_global_start
         elif isinstance(idx_local, (list, tuple)):
             try:
@@ -3084,7 +3051,7 @@ class RigidEntity(Entity):
         return self._q_start + self.n_qs
 
     @property
-    def geoms(self):
+    def geoms(self) -> list[RigidGeom]:
         """The list of collision geoms (`RigidGeom`) in the entity."""
         if self.is_built:
             return self._geoms
@@ -3106,7 +3073,7 @@ class RigidEntity(Entity):
             return vgeoms
 
     @property
-    def links(self):
+    def links(self) -> list[RigidLink]:
         """The list of links (`RigidLink`) in the entity."""
         return self._links
 

@@ -402,9 +402,9 @@ def inv_quat(quat):
 
 def inv_T(T):
     if isinstance(T, torch.Tensor):
-        T_inv = torch.zeros(T)
+        T_inv = torch.zeros_like(T)
     elif isinstance(T, np.ndarray):
-        T_inv = np.zeros(T)
+        T_inv = np.zeros_like(T)
     else:
         gs.raise_exception(f"the input must be torch.Tensor or np.ndarray. got: {type(T)=}")
 
@@ -874,6 +874,12 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
     return T
 
 
+def T_to_trans_quat(T, *, out=None):
+    trans = T[..., :3, 3]
+    quat = R_to_quat(T[..., :3, :3])
+    return trans, quat
+
+
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
     if out is None:
@@ -924,7 +930,7 @@ def transform_quat_by_quat(v, u):
 
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
-    assert u.shape == v.shape
+    assert u.shape == v.shape, f"{u.shape=} and {v.shape=}"
     assert u.ndim >= 1
 
     if all(isinstance(e, torch.Tensor) for e in (u, v)):
@@ -1293,7 +1299,7 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
 
 @nb.jit(nopython=True, cache=True)
 def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
-    if isinstance(cos_theta, float):
+    if isinstance(cos_theta, (float, np.float32, np.float64)):
         assert axis.ndim == 1
     else:
         assert axis.ndim - 1 == cos_theta.ndim
@@ -1305,7 +1311,7 @@ def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.nda
 
     axis_norm = np.sqrt(np.sum(np.square(axis.reshape((-1, 3))), -1).reshape((*axis.shape[:-1], 1)))
     axis = axis / axis_norm
-    if not isinstance(cos_theta, float):
+    if not isinstance(cos_theta, (float, np.float32, np.float64)):
         cos_theta = cos_theta[..., None]
     sin_theta = np.sqrt(1.0 - cos_theta**2)
     cos1_axis = (1.0 - cos_theta) * axis

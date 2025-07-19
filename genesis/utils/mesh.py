@@ -863,18 +863,33 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
     mesh = trimesh.creation.box(extents=[size, size, thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
+
+    half = size * 0.5
+    verts = np.array(
+        [
+            [-half, -half, 0.0],
+            [half, -half, 0.0],
+            [half, half, 0.0],
+            [-half, -half, 0.0],
+            [half, half, 0.0],
+            [-half, half, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+    vmesh = trimesh.Trimesh(verts, faces, process=False)
+    vmesh.vertices[:, 2] -= thickness / 2
+    vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
-        mesh.visual = trimesh.visual.TextureVisuals(
+        vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
                     [0, 0],
+                    [size, 0],
+                    [size, size],
                     [0, 0],
-                    [0, size],
-                    [0, size],
-                    [size, 0],
-                    [size, 0],
                     [size, size],
-                    [size, size],
+                    [0, size],
                 ],
                 dtype=np.float32,
             ),
@@ -883,10 +898,11 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(
-            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(mesh.vertices), 1))
+        vmesh.visual = trimesh.visual.ColorVisuals(
+            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
         )
-    return mesh
+
+    return vmesh, mesh
 
 
 def generate_tetgen_config_from_morph(morph):

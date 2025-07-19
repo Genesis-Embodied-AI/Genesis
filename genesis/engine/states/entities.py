@@ -12,7 +12,7 @@ class ToolEntityState:
         self.s_global = s_global
 
         args = {
-            "dtype": float,
+            "dtype": gs.tc_float,
             "requires_grad": self.entity.scene.requires_grad,
             "scene": self.entity.scene,
         }
@@ -48,7 +48,7 @@ class MPMEntityState(RBC):
         self._s_global = s_global
         base_shape = (self.entity.sim._B, self._entity.n_particles)
         args = {
-            "dtype": float,
+            "dtype": gs.tc_float,
             "requires_grad": self._entity.scene.requires_grad,
             "scene": self._entity.scene,
         }
@@ -115,7 +115,7 @@ class SPHEntityState(RBC):
         self._s_global = s_global
         base_shape = (self.entity.sim._B, self._entity.n_particles)
         args = {
-            "dtype": float,
+            "dtype": gs.tc_float,
             "requires_grad": False,
             "scene": self._entity.scene,
         }
@@ -151,7 +151,7 @@ class FEMEntityState:
         base_shape = (self.entity.sim._B, self._entity.n_vertices, 3)
 
         args = {
-            "dtype": float,
+            "dtype": gs.tc_float,
             "requires_grad": False,
             "scene": self.entity.scene,
         }

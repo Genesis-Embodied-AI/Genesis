@@ -256,13 +256,12 @@ class Camera(RBC):
             gs.raise_exception("No renderer was found.")
 
         if seg_idxc_arr is not None:
-            seg_idx_arr = self._rasterizer._context.seg_idxc_to_idx(seg_idxc_arr)
             if colorize_seg or (self._GUI and self._visualizer.connected_to_display):
                 seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
             if colorize_seg:
                 seg_arr = seg_color_arr
             else:
-                seg_arr = seg_idx_arr
+                seg_arr = seg_idxc_arr
 
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
@@ -308,6 +307,21 @@ class Camera(RBC):
             self._recorded_imgs.append(rgb_arr)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
+
+    @gs.assert_built
+    def get_segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+        """
+        return self._rasterizer._context.seg_idxc_map
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
@@ -364,9 +378,7 @@ class Camera(RBC):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(
-                    np.arange(height, dtype=np.float32), np.arange(width, dtype=np.float32), indexing="ij"
-                )
+                y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
                 x = x.reshape((-1,))
                 y = y.reshape((-1,))
 
@@ -375,9 +387,10 @@ class Camera(RBC):
                 normalized_y = y - _cy
 
                 # Convert to world coordinates
-                world_x = normalized_x * depth[y, x] / _fx
-                world_y = normalized_y * depth[y, x] / _fy
-                world_z = depth[y, x]
+                depth_grid = depth[y, x]
+                world_x = normalized_x * depth_grid / _fx
+                world_y = normalized_y * depth_grid / _fy
+                world_z = depth_grid
 
                 pc = np.stack((world_x, world_y, world_z), axis=1)
 
