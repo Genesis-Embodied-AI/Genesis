@@ -1728,27 +1728,28 @@ class RigidEntity(Entity):
                 gs.raise_exception(f"invalid planner {planner} specified.")
 
         path = torch.empty((num_waypoints, n_envs, self.n_qs), dtype=gs.tc_float, device=gs.device)
-        is_invalid = torch.ones((n_envs), dtype=bool)
+        is_invalid = torch.ones((n_envs,), dtype=torch.bool, device=gs.device)
         for i in range(1 + max_retry):
-            if is_invalid.any():
-                if i > 0:
-                    gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
-                retry_path, retry_is_invalid = planner_obj.plan(
-                    qpos_goal,
-                    qpos_start=qpos_start,
-                    resolution=resolution,
-                    timeout=timeout,
-                    max_nodes=max_nodes,
-                    smooth_path=smooth_path,
-                    num_waypoints=num_waypoints,
-                    ignore_collision=ignore_collision,
-                    envs_idx=envs_idx,
-                    ee_link_idx=ee_link_idx,
-                    obj_entity=with_entity,
-                )
-                # NOTE: update the previously failed path with the new results
-                path[:, is_invalid] = retry_path[:, is_invalid]
-                is_invalid &= retry_is_invalid
+            retry_path, retry_is_invalid = planner_obj.plan(
+                qpos_goal,
+                qpos_start=qpos_start,
+                resolution=resolution,
+                timeout=timeout,
+                max_nodes=max_nodes,
+                smooth_path=smooth_path,
+                num_waypoints=num_waypoints,
+                ignore_collision=ignore_collision,
+                envs_idx=envs_idx,
+                ee_link_idx=ee_link_idx,
+                obj_entity=with_entity,
+            )
+            # NOTE: update the previously failed path with the new results
+            path[:, is_invalid] = retry_path[:, is_invalid]
+
+            is_invalid &= retry_is_invalid
+            if not is_invalid.any():
+                break
+            gs.logger.info(f"Planning failed. Retrying for {is_invalid.sum()} environments...")
 
         if self._solver.n_envs == 0:
             if return_valid_mask:

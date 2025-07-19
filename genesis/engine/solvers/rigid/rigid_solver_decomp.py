@@ -37,15 +37,16 @@ TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
 
 def _sanitize_sol_params(
-    sol_params: npt.NDArray[np.float64], min_timeconst: float, global_timeconst: float | None = None
+    sol_params: npt.NDArray[np.float64], min_timeconst: float, default_timeconst: float | None = None
 ):
     assert sol_params.shape[-1] == 7
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
-    if global_timeconst is not None:
-        timeconst[:] = global_timeconst
+    if default_timeconst is None:
+        default_timeconst = min_timeconst
     if (timeconst < gs.EPS).any():
-        # We deliberately set timeconst to be zero for urdf and meshes so that it can fall back to 2*dt
-        gs.logger.debug(f"Constraint solver time constant not specified. Using minimum value (`{min_timeconst:0.6g}`).")
+        gs.logger.debug(
+            f"Constraint solver time constant not specified. Using minimum value (`{default_timeconst:0.6g}`)."
+        )
     invalid_mask = (timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)
     if invalid_mask.any():
         gs.logger.warning(
@@ -53,6 +54,7 @@ def _sanitize_sol_params(
             f"`{min(timeconst[invalid_mask]):0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
             "increase timeconst to avoid altering the original value."
         )
+    timeconst[timeconst < gs.EPS] = default_timeconst
     timeconst[:] = timeconst.clip(min_timeconst)
     dampratio[:] = dampratio.clip(0.0)
     dmin[:] = dmin.clip(IMP_MIN, IMP_MAX)
@@ -100,12 +102,6 @@ class RigidSolver(Solver):
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
 
-        if self._substep_dt < 0.002:
-            gs.logger.warning(
-                "Using a simulation timestep smaller than 2ms is not recommended as it could lead to numerically "
-                "unstable collision detection."
-            )
-
         # options
         self._enable_collision = options.enable_collision
         self._enable_multi_contact = options.enable_multi_contact
@@ -129,14 +125,18 @@ class RigidSolver(Solver):
         self._hibernation_thresh_vel = options.hibernation_thresh_vel
         self._hibernation_thresh_acc = options.hibernation_thresh_acc
 
-        self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
-        self._sol_global_timeconst = options.constraint_timeconst
-
         if options.contact_resolve_time is not None:
-            self._sol_global_timeconst = options.contact_resolve_time
             gs.logger.warning(
-                "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please use "
-                "'constraint_timeconst' instead."
+                "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please "
+                "use 'constraint_timeconst' instead."
+            )
+        self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
+        self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
+
+        if not options.use_gjk_collision and self._substep_dt < 0.002:
+            gs.logger.warning(
+                "Using a simulation timestep smaller than 2ms is not recommended for 'use_gjk_collision=False' as it "
+                "could lead to numerically unstable collision detection."
             )
 
         self._options = options
@@ -147,7 +147,7 @@ class RigidSolver(Solver):
         if isinstance(material, gs.materials.Avatar):
             EntityClass = AvatarEntity
             if visualize_contact:
-                gs.raise_exception("AvatarEntity does not support visualize_contact")
+                gs.raise_exception("AvatarEntity does not support 'visualize_contact=True'.")
         else:
             if isinstance(morph, gs.morphs.Drone):
                 EntityClass = DroneEntity
@@ -743,7 +743,7 @@ class RigidSolver(Solver):
         if joints:
             # Make sure that the constraints parameters are valid
             joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
-            _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
+            _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
             self._kernel_init_joint_fields(
                 joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
@@ -1027,7 +1027,7 @@ class RigidSolver(Solver):
             # Make sure that the constraints parameters are valid
             geoms = self.geoms
             geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
-            _sanitize_sol_params(geoms_sol_params, self._sol_min_timeconst, self._sol_global_timeconst)
+            _sanitize_sol_params(geoms_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
             # Accurately compute the center of mass of each geometry if possible.
             # Note that the mean vertex position is a bad approximation, which is impeding the ability of MPR to
@@ -1366,7 +1366,7 @@ class RigidSolver(Solver):
             _sanitize_sol_params(
                 equalities_sol_params,
                 self._sol_min_timeconst,
-                self._sol_global_timeconst,
+                self._sol_default_timeconst,
             )
 
             self._kernel_init_equality_fields(

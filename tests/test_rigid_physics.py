@@ -1379,12 +1379,11 @@ def test_path_planning_avoidance(n_envs, show_viewer):
     scene.build(n_envs=n_envs)
 
     hand = franka.get_link("hand")
+    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], dtype=gs.tc_float, device=gs.device)
+    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], dtype=gs.tc_float, device=gs.device)
     if n_envs > 0:
-        hand_pos_ref = torch.tensor([[0.3, 0.25, 0.25]] * n_envs, device=gs.device)
-        hand_quat_ref = torch.tensor([[0.3073, 0.5303, 0.7245, -0.2819]] * n_envs, device=gs.device)
-    else:
-        hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
-        hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
+        hand_pos_ref = hand_pos_ref.repeat((n_envs, 1))
+        hand_quat_ref = hand_quat_ref.repeat((n_envs, 1))
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos[..., -2:] = 0.04
 
@@ -1407,7 +1406,7 @@ def test_path_planning_avoidance(n_envs, show_viewer):
         max_nodes=4000,
         max_retry=40,
     )
-    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[0], 0.0, tol=gs.EPS)
     assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
 
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
