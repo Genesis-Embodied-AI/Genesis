@@ -1670,6 +1670,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         ),
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=gjk_collision,
+            constraint_timeconst=0.008,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
