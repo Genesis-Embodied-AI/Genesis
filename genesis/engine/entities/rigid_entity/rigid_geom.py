@@ -889,6 +889,42 @@ class RigidVisGeom(RBC):
         return self._vmesh.trimesh
 
     # ------------------------------------------------------------------------------------
+    # -------------------------------- real-time state -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @gs.assert_built
+    def get_pos(self):
+        """
+        Get the position of the geom in world frame.
+        """
+        tensor = torch.empty(self._solver._batch_shape(3, True), dtype=gs.tc_float, device=gs.device)
+        self._kernel_get_pos(tensor)
+        if self._solver.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
+
+    @ti.kernel
+    def _kernel_get_pos(self, tensor: ti.types.ndarray()):
+        for i, i_b in ti.ndrange(3, self._solver._B):
+            tensor[i_b, i] = self._solver.vgeoms_state[self._idx, i_b].pos[i]
+
+    @gs.assert_built
+    def get_quat(self):
+        """
+        Get the quaternion of the geom in world frame.
+        """
+        tensor = torch.empty(self._solver._batch_shape(4, True), dtype=gs.tc_float, device=gs.device)
+        self._kernel_get_quat(tensor)
+        if self._solver.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
+
+    @ti.kernel
+    def _kernel_get_quat(self, tensor: ti.types.ndarray()):
+        for i, i_b in ti.ndrange(4, self._solver._B):
+            tensor[i_b, i] = self._solver.vgeoms_state[self._idx, i_b].quat[i]
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 
