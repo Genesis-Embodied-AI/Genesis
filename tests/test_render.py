@@ -278,13 +278,8 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     robot = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    cam = scene.add_camera(
-        res=(512, 512),
-        pos=(1.5, 0.5, 1.5),
-        lookat=(0.0, 0.0, 0.5),
-        fov=45,
-        GUI=True,
-    )
+    n_cameras = 3
+    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_cameras)]
     n_envs = 3
     env_spacing = (2.0, 2.0)
     scene.build(n_envs=n_envs, env_spacing=env_spacing)
@@ -292,7 +287,8 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     T = np.eye(4)
     T[:3, :3] = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
     T[:3, 3] = np.array([0.1, 0.0, 0.1])
-    cam.attach(robot.get_link("hand"), T)
+    for cam in cams:
+        cam.attach(robot.get_link("hand"), T)
 
     target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
     center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
@@ -320,16 +316,17 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
         scene.step()
 
         robots_rgb_arrays = []
-        rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-        assert np.std(rgb_array) > 10.0
-        robots_rgb_arrays.append(rgb_array)
+        for cam in cams:
+            rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+            assert np.std(rgb_array) > 10.0
+            robots_rgb_arrays.append(rgb_array)
         steps_rgb_queue.put(robots_rgb_arrays)
 
         if steps_rgb_queue.full():  # we have a set of 2 consecutive frames
             diff_tol = 0.02  # expect atlest 2% difference between each frame
             frames_t_minus_1 = steps_rgb_queue.get()
             frames_t = steps_rgb_queue.get()
-            for i in range(n_envs):
+            for i in range(n_cameras):
                 diff = frames_t[i] - frames_t_minus_1[i]
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
 
