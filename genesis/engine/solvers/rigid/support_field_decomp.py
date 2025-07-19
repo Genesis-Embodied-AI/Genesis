@@ -15,10 +15,16 @@ if TYPE_CHECKING:
 
 @ti.data_oriented
 class SupportField:
-    @dataclass(frozen=True)
+    # @dataclass(frozen=True)
+    # class SupportFieldStaticConfig:
+    #     # store static arguments here
+    #     support_res: int = 180  # resolution of the support field
+
+    @ti.data_oriented
     class SupportFieldStaticConfig:
-        # store static arguments here
-        support_res: int = 180  # resolution of the support field
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
     def __init__(self, rigid_solver: "RigidSolver") -> None:
         self.solver = rigid_solver

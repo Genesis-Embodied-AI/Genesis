@@ -10,12 +10,19 @@ import genesis.engine.solvers.rigid.array_class as array_class
 
 @ti.data_oriented
 class MPR:
-    @dataclass(frozen=True)
+
+    @ti.data_oriented
     class MPRStaticConfig:
-        # store static arguments here
-        CCD_EPS: float = 1e-9
-        CCD_TOLERANCE: float = 1e-6
-        CCD_ITERATIONS: int = 50
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    # @dataclass(frozen=True)
+    # class MPRStaticConfig:
+    #     # store static arguments here
+    #     CCD_EPS: float = 1e-9
+    #     CCD_TOLERANCE: float = 1e-6
+    #     CCD_ITERATIONS: int = 50
 
     def __init__(self, rigid_solver):
         self._solver = rigid_solver

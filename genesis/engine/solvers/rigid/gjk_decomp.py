@@ -65,63 +65,69 @@ def func_compare_sign(a, b):
 
 @ti.data_oriented
 class GJK:
-    @dataclass(frozen=True)
+    @ti.data_oriented
     class GJKStaticConfig:
-        # store static arguments here
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
-        # Maximum number of contact points to find per pair.
-        max_contacts_per_pair: int = 1
-        max_contact_polygon_verts: int = 1
+    # @dataclass(frozen=True)
+    # class GJKStaticConfig:
+    #     # store static arguments here
 
-        # Maximum number of iterations for GJK and EPA algorithms
-        gjk_max_iterations: int = 50
-        epa_max_iterations: int = 50
+    #     # Maximum number of contact points to find per pair.
+    #     max_contacts_per_pair: int = 1
+    #     max_contact_polygon_verts: int = 1
 
-        # When using larger minimum values (e.g. gs.EPS), unstability could occur for some examples (e.g. box pyramid).
-        # Also, since different backends could have different precisions (e.g. computing vector norm), we use a very
-        # small value, so that there is no discrepancy between backends.
-        FLOAT_MIN: float = 1e-15
-        FLOAT_MIN_SQ: float = 1e-15**2
-        FLOAT_MAX: float = 1e15
-        FLOAT_MAX_SQ: float = 1e15**2
+    #     # Maximum number of iterations for GJK and EPA algorithms
+    #     gjk_max_iterations: int = 50
+    #     epa_max_iterations: int = 50
 
-        # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
-        tolerance: float = 1e-6
+    #     # When using larger minimum values (e.g. gs.EPS), unstability could occur for some examples (e.g. box pyramid).
+    #     # Also, since different backends could have different precisions (e.g. computing vector norm), we use a very
+    #     # small value, so that there is no discrepancy between backends.
+    #     FLOAT_MIN: float = 1e-15
+    #     FLOAT_MIN_SQ: float = 1e-15**2
+    #     FLOAT_MAX: float = 1e15
+    #     FLOAT_MAX_SQ: float = 1e15**2
 
-        # If the distance between two objects is smaller than this value, we consider them colliding.
-        collision_eps: float = 1e-6
+    #     # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
+    #     tolerance: float = 1e-6
 
-        # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
-        # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
-        # coplanarity) than this threshold. This value has been experimentally determined based on the examples that
-        # we currently have (e.g. pyramid, tower, ...), but it could be further tuned based on the future examples.
-        simplex_max_degeneracy_sq: float = 1e-5**2
+    #     # If the distance between two objects is smaller than this value, we consider them colliding.
+    #     collision_eps: float = 1e-6
 
-        # 6 * epa_max_iterations is the maximum number of faces in the polytope.
-        polytope_max_faces: int = 300
+    #     # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
+    #     # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
+    #     # coplanarity) than this threshold. This value has been experimentally determined based on the examples that
+    #     # we currently have (e.g. pyramid, tower, ...), but it could be further tuned based on the future examples.
+    #     simplex_max_degeneracy_sq: float = 1e-5**2
 
-        # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
-        # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
-        # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
-        # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
-        # we consider the projection invalid, because it means numerical errors are too large. This value has been
-        # experimentally determined based on the examples that we currently have (e.g. pyramid, tower, ...). We observed
-        # the error usually reaches around 5e-4, so we set the threshold to 1e-5 to be safe. However, this value could
-        # be further tuned based on the future examples.
-        polytope_max_reprojection_error: float = 1e-5
+    #     # 6 * epa_max_iterations is the maximum number of faces in the polytope.
+    #     polytope_max_faces: int = 300
 
-        # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
-        # However, we keep the code here for compatibility with MuJoCo and for possible future use.
-        enable_mujoco_multi_contact: bool = False
+    #     # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
+    #     # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
+    #     # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
+    #     # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
+    #     # we consider the projection invalid, because it means numerical errors are too large. This value has been
+    #     # experimentally determined based on the examples that we currently have (e.g. pyramid, tower, ...). We observed
+    #     # the error usually reaches around 5e-4, so we set the threshold to 1e-5 to be safe. However, this value could
+    #     # be further tuned based on the future examples.
+    #     polytope_max_reprojection_error: float = 1e-5
 
-        # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
-        # tolerance to be considered as a valid parallel contact. The values are cosine and sine of 1.6e-3,
-        # respectively, and brought from MuJoCo's implementation. Also keep them for compatibility with MuJoCo.
-        # Increasing this value could be useful for detecting contact manifolds even when the normals are not
-        # perfectly aligned, but we observed that it leads to more false positives and thus not a perfect solution
-        # for the multi-contact detection.
-        contact_face_tol: float = 0.99999872
-        contact_edge_tol: float = 0.00159999931
+    #     # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
+    #     # However, we keep the code here for compatibility with MuJoCo and for possible future use.
+    #     enable_mujoco_multi_contact: bool = False
+
+    #     # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
+    #     # tolerance to be considered as a valid parallel contact. The values are cosine and sine of 1.6e-3,
+    #     # respectively, and brought from MuJoCo's implementation. Also keep them for compatibility with MuJoCo.
+    #     # Increasing this value could be useful for detecting contact manifolds even when the normals are not
+    #     # perfectly aligned, but we observed that it leads to more false positives and thus not a perfect solution
+    #     # for the multi-contact detection.
+    #     contact_face_tol: float = 0.99999872
+    #     contact_edge_tol: float = 0.00159999931
 
     def __init__(self, rigid_solver):
         # Initialize static configuration.

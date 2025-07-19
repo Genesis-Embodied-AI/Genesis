@@ -15,76 +15,41 @@ V = ti.ndarray if use_ndarray else ti.field
 V_ANNOTATION = ti.types.ndarray() if use_ndarray else ti.template()
 
 
-def bake(dough):
-    # this bit is field/ndarray dependent, but invariant/re-usable
-    struct_name = dough.__class__.__name__ + "Baked"
-    type_by_name: dict[str, tuple[bool, Any, Any]] = {}
-    arrays = {}
-    for child_name, member in dough.__dict__.items():
-        if child_name.startswith("_"):
-            continue
-        if inspect.ismethod(member):
-            continue
-        if isinstance(member, ti.Ndarray):
-            ndarray = cast(ti.Ndarray, member)
-            type_by_name[child_name] = (False, ndarray.dtype, ndarray.shape)
-        if isinstance(member, ti.Field):
-            field = cast(ti.Field, member)
-            type_by_name[child_name] = (True, field.dtype, field.shape)
-        arrays[child_name] = member
+# def bake(dough):
+#     # this bit is field/ndarray dependent, but invariant/re-usable
+#     struct_name = dough.__class__.__name__ + "Baked"
+#     type_by_name: dict[str, tuple[bool, Any, Any]] = {}
+#     arrays = {}
+#     for child_name, member in dough.__dict__.items():
+#         if child_name.startswith("_"):
+#             continue
+#         if inspect.ismethod(member):
+#             continue
+#         if isinstance(member, ti.Ndarray):
+#             ndarray = cast(ti.Ndarray, member)
+#             type_by_name[child_name] = (False, ndarray.dtype, ndarray.shape)
+#         if isinstance(member, ti.Field):
+#             field = cast(ti.Field, member)
+#             type_by_name[child_name] = (True, field.dtype, field.shape)
+#         arrays[child_name] = member
 
-    def create_type(is_field, element_type, shape):
-        if is_field:
-            return ti.template()
-        # return ti.types.ndarray(element_type, ndim=len(shape))
-        return ti.types.ndarray()
+#     def create_type(is_field, element_type, shape):
+#         if is_field:
+#             return ti.template()
+#         # return ti.types.ndarray(element_type, ndim=len(shape))
+#         return ti.types.ndarray()
 
-    declaration_type_by_name = [
-        (name, create_type(is_field, element_type, shape))
-        for name, (is_field, element_type, shape) in type_by_name.items()
-    ]
-    DataclassClass = dataclasses.make_dataclass(struct_name, declaration_type_by_name)
+#     declaration_type_by_name = [
+#         (name, create_type(is_field, element_type, shape))
+#         for name, (is_field, element_type, shape) in type_by_name.items()
+#     ]
+#     DataclassClass = dataclasses.make_dataclass(struct_name, declaration_type_by_name)
 
-    dataclass_object = DataclassClass(**arrays)
-    return DataclassClass, dataclass_object
+#     dataclass_object = DataclassClass(**arrays)
+#     return DataclassClass, dataclass_object
 
-    # def register(self, name, dough):
-    #     self.doughs[name] = dough
-
-
-# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
-DofsState = ti.template()
-DofsInfo = ti.template()
-GeomsState = ti.template()
-GeomsInfo = ti.template()
-GeomsInitAABB = ti.template()  # TODO: move to rigid global info
-LinksState = ti.template()
-LinksInfo = ti.template()
-JointsInfo = ti.template()
-JointsState = ti.template()
-VertsState = ti.template()
-VertsInfo = ti.template()
-EdgesInfo = ti.template()
-FacesInfo = ti.template()
-VVertsInfo = ti.template()
-VFacesInfo = ti.template()
-VGeomsInfo = ti.template()
-VGeomsState = ti.template()
-EntitiesState = ti.template()
-EntitiesInfo = ti.template()
-EqualitiesInfo = ti.template()
-
-
-# @ti.data_oriented
-# class RigidGlobalInfo:
-#     def __init__(self, solver, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
-#         self.n_awake_dofs = V(dtype=gs.ti_int, shape=f_batch())
-#         self.awake_dofs = V(dtype=gs.ti_int, shape=f_batch(n_dofs))
-
-#         self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
-#         self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
-
-#         # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+#     # def register(self, name, dough):
+#     #     self.doughs[name] = dough
 
 
 @ti.data_oriented
@@ -553,21 +518,76 @@ class SupportFieldInfo:
         self.support_vid = ti.field(dtype=gs.ti_int, shape=max(1, n_support_cells))
 
 
-@ti.data_oriented
+# @ti.data_oriented
+@dataclasses.dataclass
 class StructDofsInfo:
-    def __init__(self, solver):
-        shape = solver._batch_shape(solver.n_dofs_) if solver._options.batch_dofs_info else solver.n_dofs_
-        self.stiffness = V(dtype=gs.ti_float, shape=shape)
-        self.invweight = V(dtype=gs.ti_float, shape=shape)
-        self.armature = V(dtype=gs.ti_float, shape=shape)
-        self.damping = V(dtype=gs.ti_float, shape=shape)
-        self.motion_ang = V(dtype=gs.ti_vec3, shape=shape)
-        self.motion_vel = V(dtype=gs.ti_vec3, shape=shape)
-        self.limit = V(dtype=gs.ti_vec2, shape=shape)
-        self.dof_start = V(dtype=gs.ti_int, shape=shape)
-        self.kp = V(dtype=gs.ti_float, shape=shape)
-        self.kv = V(dtype=gs.ti_float, shape=shape)
-        self.force_range = V(dtype=gs.ti_vec2, shape=shape)
+    stiffness: V_ANNOTATION
+    invweight: V_ANNOTATION
+    armature: V_ANNOTATION
+    damping: V_ANNOTATION
+    motion_ang: V_ANNOTATION
+    motion_vel: V_ANNOTATION
+    limit: V_ANNOTATION
+    dof_start: V_ANNOTATION
+    kp: V_ANNOTATION
+    kv: V_ANNOTATION
+    force_range: V_ANNOTATION
+
+
+def get_dofs_info(solver):
+    shape = solver._batch_shape(solver.n_dofs_) if solver._options.batch_dofs_info else solver.n_dofs_
+    kwargs = {
+        "stiffness": V(dtype=gs.ti_float, shape=shape),
+        "invweight": V(dtype=gs.ti_float, shape=shape),
+        "armature": V(dtype=gs.ti_float, shape=shape),
+        "damping": V(dtype=gs.ti_float, shape=shape),
+        "motion_ang": V(dtype=gs.ti_vec3, shape=shape),
+        "motion_vel": V(dtype=gs.ti_vec3, shape=shape),
+        "limit": V(dtype=gs.ti_vec2, shape=shape),
+        "dof_start": V(dtype=gs.ti_int, shape=shape),
+        "kp": V(dtype=gs.ti_float, shape=shape),
+        "kv": V(dtype=gs.ti_float, shape=shape),
+        "force_range": V(dtype=gs.ti_vec2, shape=shape),
+    }
+
+    if use_ndarray:
+        obj = StructDofsInfo(**kwargs)
+        return obj
+
+    else:
+
+        @ti.data_oriented
+        class ClassDofsInfo:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassDofsInfo()
+
+    # if use_ndarray:
+    #     return StructDofsInfo(**kwargs)
+    # else:
+    #     @ti.data_oriented
+    #     class DofsStaticConfig:
+    #         def __init__(self, **kwargs):
+    #         for key, value in kwargs.items():
+    #             setattr(self, key, value)
+
+    #     return StructDofsInfo(**kwargs)
+
+    # self.stiffness = V(dtype=gs.ti_float, shape=shape)
+    # self.invweight = V(dtype=gs.ti_float, shape=shape)
+    # self.armature = V(dtype=gs.ti_float, shape=shape)
+    # self.damping = V(dtype=gs.ti_float, shape=shape)
+    # self.motion_ang = V(dtype=gs.ti_vec3, shape=shape)
+    # self.motion_vel = V(dtype=gs.ti_vec3, shape=shape)
+    # self.limit = V(dtype=gs.ti_vec2, shape=shape)
+    # self.dof_start = V(dtype=gs.ti_int, shape=shape)
+    # self.kp = V(dtype=gs.ti_float, shape=shape)
+    # self.kv = V(dtype=gs.ti_float, shape=shape)
+    # self.force_range = V(dtype=gs.ti_vec2, shape=shape)
+
+    return StructDofsInfo(solver)
 
 
 @ti.data_oriented
@@ -851,12 +871,35 @@ class StructEntitiesState:
         self.hibernated = V(dtype=gs.ti_int, shape=shape)
 
 
+# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
+DofsState = ti.template()
+DofsInfo = ti.template() if not use_ndarray else StructDofsInfo
+GeomsState = ti.template()
+GeomsInfo = ti.template()
+GeomsInitAABB = ti.template()  # TODO: move to rigid global info
+LinksState = ti.template()
+LinksInfo = ti.template()
+JointsInfo = ti.template()
+JointsState = ti.template()
+VertsState = ti.template()
+VertsInfo = ti.template()
+EdgesInfo = ti.template()
+FacesInfo = ti.template()
+VVertsInfo = ti.template()
+VFacesInfo = ti.template()
+VGeomsInfo = ti.template()
+VGeomsState = ti.template()
+EntitiesState = ti.template()
+EntitiesInfo = ti.template()
+EqualitiesInfo = ti.template()
+
+
 @ti.data_oriented
 class DataManager:
     def __init__(self, solver):
         # self.doughs = {}
         self.rigid_global_info = RigidGlobalInfo(solver)
-        self.dofs_info = StructDofsInfo(solver)
+        self.dofs_info = get_dofs_info(solver)
         self.dofs_state = StructDofsState(solver)
         self.links_info = StructLinksInfo(solver)
         self.links_state = StructLinksState(solver)

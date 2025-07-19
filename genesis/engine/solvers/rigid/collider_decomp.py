@@ -55,27 +55,34 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
 
 @ti.data_oriented
 class Collider:
-    @dataclass(frozen=True)
-    class ColliderStaticConfig:
-        """
-        Class to store the IMMUTABLE primitives that would require recompilation if changed.
-        """
 
-        # store static information here
-        has_nonconvex_nonterrain: bool = False
-        has_terrain: bool = False
-        # multi contact perturbation and tolerance
-        mc_perturbation: float = 0.0
-        mc_tolerance: float = 0.0
-        mpr_to_sdf_overlap_ratio: float = 0.0
-        # multiplier k for the maximum number of contact pairs for the broad phase
-        max_collision_pairs_broad_k: int = 20
-        # maximum number of contact pairs per collision pair
-        n_contacts_per_pair: int = 5
-        # maximum number of contact points for box-box collision detection
-        box_MAXCONPAIR: int = 16
-        # ccd algorithm
-        ccd_algorithm: CCD_ALGORITHM_CODE = CCD_ALGORITHM_CODE.MPR
+    @ti.data_oriented
+    class ColliderStaticConfig:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    # @dataclass(frozen=True)
+    # class ColliderStaticConfig:
+    #     """
+    #     Class to store the IMMUTABLE primitives that would require recompilation if changed.
+    #     """
+
+    #     # store static information here
+    #     has_nonconvex_nonterrain: bool = False
+    #     has_terrain: bool = False
+    #     # multi contact perturbation and tolerance
+    #     mc_perturbation: float = 0.0
+    #     mc_tolerance: float = 0.0
+    #     mpr_to_sdf_overlap_ratio: float = 0.0
+    #     # multiplier k for the maximum number of contact pairs for the broad phase
+    #     max_collision_pairs_broad_k: int = 20
+    #     # maximum number of contact pairs per collision pair
+    #     n_contacts_per_pair: int = 5
+    #     # maximum number of contact points for box-box collision detection
+    #     box_MAXCONPAIR: int = 16
+    #     # ccd algorithm
+    #     ccd_algorithm: CCD_ALGORITHM_CODE = CCD_ALGORITHM_CODE.MPR
 
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
