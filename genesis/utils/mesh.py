@@ -773,7 +773,7 @@ def create_arrow(
 
 
 def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=12):
-    vec = np.asarray(end) - np.asarray(start)
+    vec = end - start
     length = np.linalg.norm(vec)
     mesh = create_cylinder(radius, length, sections)  # along z-axis
     mesh._data["vertices"][:, -1] += length / 2.0

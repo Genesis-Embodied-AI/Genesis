@@ -12,12 +12,12 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64" if args.cpu else "32", seed=0)
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", seed=0)
 
     ########################## create a scene ##########################
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            dt=0.004,
+            dt=0.01,
         ),
         show_viewer=args.vis,
         show_FPS=False,
