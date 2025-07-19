@@ -2866,7 +2866,7 @@ class Collider:
                             i_b,
                         )
 
-    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
+    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
         contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
@@ -2906,6 +2906,9 @@ class Collider:
             if self._solver.n_envs > 0:
                 iout = iout.reshape((n_envs, n_contacts_max, 4))
                 fout = fout.reshape((n_envs, n_contacts_max, 10))
+            if keep_batch_dim and self._solver.n_envs == 0:
+                iout = iout.reshape((1, n_contacts_max, 4))
+                fout = fout.reshape((1, n_contacts_max, 10))
             iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
             fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
             values = (*iout_chunks, *fout_chunks)
