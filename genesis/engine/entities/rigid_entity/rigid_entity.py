@@ -870,28 +870,28 @@ class RigidEntity(Entity):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
-        tgt_link_state = self._solver.links_state[tgt_link_idx, i_b]
-        tgt_link_pos = tgt_link_state.pos + gu.ti_transform_by_quat(p_local, tgt_link_state.quat)
+        tgt_link_pos = self._solver.links_state.pos[tgt_link_idx, i_b] + gu.ti_transform_by_quat(
+            p_local, self._solver.links_state.quat[tgt_link_idx, i_b]
+        )
         i_l = tgt_link_idx
         while i_l > -1:
             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
-            l_info = self._solver.links_info[I_l]
-            l_state = self._solver.links_state[i_l, i_b]
 
             dof_offset = 0
-            for i_j in range(l_info.joint_start, l_info.joint_end):
+            for i_j in range(self._solver.links_info.joint_start[I_l], self._solver.links_info.joint_end[I_l]):
                 I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
-                j_info = self._solver.joints_info[I_j]
 
-                if j_info.type == gs.JOINT_TYPE.FIXED:
+                if self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.FIXED:
                     pass
 
-                elif j_info.type == gs.JOINT_TYPE.REVOLUTE:
-                    i_d = j_info.dof_start
+                elif self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
+                    i_d = self._solver.joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
-                    translation = rotation.cross(tgt_link_pos - l_state.pos)
+                    rotation = gu.ti_transform_by_quat(
+                        self._solver.dofs_info.motion_ang[I_d], self._solver.links_state.quat[i_l, i_b]
+                    )
+                    translation = rotation.cross(tgt_link_pos - self._solver.links_state.pos[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -900,31 +900,33 @@ class RigidEntity(Entity):
                     self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
                     self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
 
-                elif j_info.type == gs.JOINT_TYPE.PRISMATIC:
-                    i_d = j_info.dof_start
+                elif self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
+                    i_d = self._solver.joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    translation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_vel, l_state.quat)
+                    translation = gu.ti_transform_by_quat(
+                        self._solver.dofs_info.motion_vel[I_d], self._solver.links_state.quat[i_l, i_b]
+                    )
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
                     self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
 
-                elif j_info.type == gs.JOINT_TYPE.FREE:
+                elif self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.FREE:
                     # translation
                     for i_d_ in ti.static(range(3)):
-                        i_d = j_info.dof_start + i_d_
+                        i_d = self._solver.joints_info.dof_start[I_j] + i_d_
                         i_d_jac = i_d + dof_offset - self._dof_start
 
                         self._jacobian[i_d_, i_d_jac, i_b] = 1.0 * pos_mask[i_d_]
 
                     # rotation
                     for i_d_ in ti.static(range(3)):
-                        i_d = j_info.dof_start + i_d_ + 3
+                        i_d = self._solver.joints_info.dof_start[I_j] + i_d_ + 3
                         i_d_jac = i_d + dof_offset - self._dof_start
                         I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
-                        rotation = self._solver.dofs_info[I_d].motion_ang
-                        translation = rotation.cross(tgt_link_pos - l_state.pos)
+                        rotation = self._solver.dofs_info.motion_ang[I_d]
+                        translation = rotation.cross(tgt_link_pos - self._solver.links_state.pos[i_l, i_b])
 
                         self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                         self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -933,9 +935,9 @@ class RigidEntity(Entity):
                         self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
                         self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
 
-                dof_offset = dof_offset + j_info.n_dofs
+                dof_offset = dof_offset + self._solver.joints_info.n_dofs[I_j]
 
-            i_l = l_info.parent_idx
+            i_l = self._solver.links_info.parent_idx[I_l]
 
     @gs.assert_built
     def inverse_kinematics(
@@ -1325,7 +1327,7 @@ class RigidEntity(Entity):
                         i_l_ee = links_idx[i_ee]
 
                         tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
-                        err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
+                        err_pos_i = tgt_pos_i - self._solver.links_state.pos[i_l_ee, i_b]
                         for k in range(3):
                             err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                         if err_pos_i.norm() > pos_tol:
@@ -1336,7 +1338,7 @@ class RigidEntity(Entity):
                         )
                         err_rot_i = gu.ti_quat_to_rotvec(
                             gu.ti_transform_quat_by_quat(
-                                gu.ti_inv_quat(self._solver.links_state[i_l_ee, i_b].quat), tgt_quat_i
+                                gu.ti_inv_quat(self._solver.links_state.quat[i_l_ee, i_b]), tgt_quat_i
                             )
                         )
                         for k in range(3):
@@ -1421,7 +1423,7 @@ class RigidEntity(Entity):
                         i_l_ee = links_idx[i_ee]
 
                         tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
-                        err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
+                        err_pos_i = tgt_pos_i - self._solver.links_state.pos[i_l_ee, i_b]
                         for k in range(3):
                             err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                         if err_pos_i.norm() > pos_tol:
@@ -1432,7 +1434,7 @@ class RigidEntity(Entity):
                         )
                         err_rot_i = gu.ti_quat_to_rotvec(
                             gu.ti_transform_quat_by_quat(
-                                gu.ti_inv_quat(self._solver.links_state[i_l_ee, i_b].quat), tgt_quat_i
+                                gu.ti_inv_quat(self._solver.links_state.quat[i_l_ee, i_b]), tgt_quat_i
                             )
                         )
                         for k in range(3):
@@ -1479,29 +1481,32 @@ class RigidEntity(Entity):
                         for _i_l in range(n_links_by_dofs):
                             i_l = links_idx_by_dofs[_i_l]
                             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
-                            l_info = self._solver.links_info[I_l]
 
-                            for i_j in range(l_info.joint_start, l_info.joint_end):
+                            for i_j in range(
+                                self._solver.links_info.joint_start[I_l], self._solver.links_info.joint_end[I_l]
+                            ):
                                 I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
-                                j_info = self._solver.joints_info[I_j]
 
                                 I_dof_start = (
-                                    [j_info.dof_start, i_b]
+                                    [self._solver.joints_info.dof_start[I_j], i_b]
                                     if ti.static(self.solver._options.batch_dofs_info)
-                                    else j_info.dof_start
+                                    else self._solver.joints_info.dof_start[I_j]
                                 )
-                                dof_info = self._solver.dofs_info[I_dof_start]
-                                q_start = j_info.q_start
+                                q_start = self._solver.joints_info.q_start[I_j]
+                                dof_limit = self._solver.dofs_info.limit[I_dof_start]
 
-                                if j_info.type == gs.JOINT_TYPE.FREE:
+                                if self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.FREE:
                                     pass
 
-                                elif j_info.type == gs.JOINT_TYPE.REVOLUTE or j_info.type == gs.JOINT_TYPE.PRISMATIC:
-                                    if ti.math.isinf(dof_info.limit[0]) or ti.math.isinf(dof_info.limit[1]):
+                                elif (
+                                    self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE
+                                    or self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC
+                                ):
+                                    if ti.math.isinf(dof_limit[0]) or ti.math.isinf(dof_limit[1]):
                                         pass
                                     else:
-                                        self._solver.qpos[q_start, i_b] = dof_info.limit[0] + ti.random() * (
-                                            dof_info.limit[1] - dof_info.limit[0]
+                                        self._solver.qpos[q_start, i_b] = dof_limit[0] + ti.random() * (
+                                            dof_limit[1] - dof_limit[0]
                                         )
                     else:
                         pass  # When respect_joint_limit=False, we can simply continue from the last solution
@@ -1606,9 +1611,9 @@ class RigidEntity(Entity):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             for i in ti.static(range(3)):
-                links_pos[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].pos[i]
+                links_pos[i_b_, i_l_, i] = self._solver.links_state.pos[links_idx[i_l_], envs_idx[i_b_]]
             for i in ti.static(range(4)):
-                links_quat[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].quat[i]
+                links_quat[i_b_, i_l_, i] = self._solver.links_state.quat[links_idx[i_l_], envs_idx[i_b_]]
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
@@ -2151,7 +2156,7 @@ class RigidEntity(Entity):
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -2161,7 +2166,7 @@ class RigidEntity(Entity):
 
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_AABB(self):

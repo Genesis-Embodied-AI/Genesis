@@ -690,7 +690,7 @@ def check_mujoco_model_consistency(
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
         [
-            gs_sim.rigid_solver.dofs_info[gs_sim.rigid_solver.joints_info[i].dof_start].limit.to_numpy()
+            gs_sim.rigid_solver.dofs_info.limit[gs_sim.rigid_solver.joints_info.dof_start[i]].to_numpy()
             for i in gs_joints_idx
         ],
         axis=0,
