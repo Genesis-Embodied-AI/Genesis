@@ -146,7 +146,7 @@ class ContactIsland:
                     self.island_entity[self.entity_island[i, i_b], i_b].n = (
                         self.island_entity[self.entity_island[i, i_b], i_b].n + 1
                     )
-                    if self.solver.entities_state[i, i_b].hibernated == 0:
+                    if self.solver.entities_state.hibernated[i, i_b] == 0:
                         self.island_hibernated[self.entity_island[i, i_b], i_b] = 0
 
             entity_list_start = 0
@@ -186,7 +186,7 @@ class ContactIsland:
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_v in range(self.solver.n_entities):
-                if self.entity_edge[i_v, i_b].n > 0 and self.solver.entities_info[i_v].n_dofs > 0:
+                if self.entity_edge[i_v, i_b].n > 0 and self.solver.entities_info.n_dofs[i_v] > 0:
                     if self.entity_island[i_v, i_b] != -1:
                         continue
                     self.n_stack[i_b] = 0
@@ -207,7 +207,7 @@ class ContactIsland:
                             if next_v == v:
                                 next_v = self.ci_edges[edge, 1, i_b]
 
-                            if self.solver.entities_info[next_v].n_dofs > 0 and next_v != v:
+                            if self.solver.entities_info.n_dofs[next_v] > 0 and next_v != v:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
 
@@ -217,6 +217,6 @@ class ContactIsland:
             ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self.solver._B):
                 for i_v in range(self.solver.n_entities):
-                    if self.solver.entities_info[i_v].n_dofs > 0 and self.entity_island[i_v, i_b] == -1:
+                    if self.solver.entities_info.n_dofs[i_v] > 0 and self.entity_island[i_v, i_b] == -1:
                         self.entity_island[i_v, i_b] = self.n_island[i_b]
                         self.n_island[i_b] = self.n_island[i_b] + 1

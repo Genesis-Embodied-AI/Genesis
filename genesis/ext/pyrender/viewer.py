@@ -751,7 +751,7 @@ class Viewer(pyglet.window.Window):
         if self._run_in_thread or not self.auto_start:
             self.render_lock.release()
 
-    def on_resize(self, width, height):
+    def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
         """Resize the camera and trackball when the window is resized."""
         if self._renderer is None:
             return
@@ -763,6 +763,7 @@ class Viewer(pyglet.window.Window):
         self._trackball.resize(self._viewport_size)
         self._renderer.viewport_width = self._viewport_size[0]
         self._renderer.viewport_height = self._viewport_size[1]
+        self.viewer_interaction.on_resize(width, height)
         self.on_draw()
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -1287,6 +1288,9 @@ class Viewer(pyglet.window.Window):
             self.dispatch_events()
         if self._is_active:
             self.flip()
+
+    def update_on_sim_step(self):
+        self.viewer_interaction.update_on_sim_step()
 
     def _compute_initial_camera_pose(self):
         centroid = self.scene.centroid

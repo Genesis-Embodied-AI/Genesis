@@ -41,5 +41,12 @@ class ViewerInteractionBase():
         if self.log_events:
             gs.logger.info(f"Key released: {chr(symbol)}")
 
+    def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
+        if self.log_events:
+            gs.logger.info(f"Window resized to {width}x{height}")
+
+    def update_on_sim_step(self) -> None:
+        pass
+
     def on_draw(self) -> None:
         pass

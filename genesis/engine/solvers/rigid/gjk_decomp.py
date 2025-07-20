@@ -244,9 +244,9 @@ class GJK:
                     if distance > gjk_static_config.collision_eps:
                         radius_a, radius_b = 0.0, 0.0
                         if is_sphere_swept_geom_a:
-                            radius_a = geoms_info[i_ga].data[0]
+                            radius_a = geoms_info.data[i_ga][0]
                         if is_sphere_swept_geom_b:
-                            radius_b = geoms_info[i_gb].data[0]
+                            radius_b = geoms_info.data[i_gb][0]
 
                         wa = gjk_state.witness[i_b, 0].point_obj1
                         wb = gjk_state.witness[i_b, 0].point_obj2
@@ -509,8 +509,8 @@ class GJK:
         early_stop = False
 
         # Set initial guess of support vector using the positions, which should be a non-zero vector.
-        approx_witness_point_obj1 = geoms_state[i_ga, i_b].pos
-        approx_witness_point_obj2 = geoms_state[i_gb, i_b].pos
+        approx_witness_point_obj1 = geoms_state.pos[i_ga, i_b]
+        approx_witness_point_obj2 = geoms_state.pos[i_gb, i_b]
         support_vector = approx_witness_point_obj1 - approx_witness_point_obj2
         if support_vector.dot(support_vector) < gjk_static_config.FLOAT_MIN_SQ:
             support_vector = gs.ti_vec3(1.0, 0.0, 0.0)
@@ -2111,8 +2111,8 @@ class GJK:
 
         # Get all possible face normals for each geom
         nnorms1, nnorms2 = 0, 0
-        geom_type_a = geoms_info[i_ga].type
-        geom_type_b = geoms_info[i_gb].type
+        geom_type_a = geoms_info.type[i_ga]
+        geom_type_b = geoms_info.type[i_gb]
 
         for i_g0 in range(2):
             geom_type = geom_type_a if i_g0 == 0 else geom_type_b
@@ -2352,13 +2352,12 @@ class GJK:
 
         We identify related face normals to the simplex by checking the vertex indices of the simplex.
         """
-        g_state = geoms_state[i_g, i_b]
-        g_quat = g_state.quat
+        g_quat = geoms_state.quat[i_g, i_b]
 
         # Change to local vertex indices
-        v1 -= geoms_info[i_g].vert_start
-        v2 -= geoms_info[i_g].vert_start
-        v3 -= geoms_info[i_g].vert_start
+        v1 -= geoms_info.vert_start[i_g]
+        v2 -= geoms_info.vert_start[i_g]
+        v3 -= geoms_info.vert_start[i_g]
 
         # Number of potential face normals
         n_normals = 0
@@ -2504,8 +2503,7 @@ class GJK:
         )
 
         # Get local collision normal
-        g_state = geoms_state[i_g, i_b]
-        g_quat = g_state.quat
+        g_quat = geoms_state.quat[i_g, i_b]
         local_dir = gu.ti_transform_by_quat(dir, gu.ti_inv_quat(g_quat))
         local_dir = local_dir.normalized()
 
@@ -2549,8 +2547,7 @@ class GJK:
         We identify related face normals to the simplex by checking the vertex indices of the simplex.
         """
         # Get the geometry state and quaternion
-        g_state = geoms_state[i_g, i_b]
-        g_quat = g_state.quat
+        g_quat = geoms_state.quat[i_g, i_b]
 
         # Number of potential face normals
         n_normals = 0
@@ -2558,8 +2555,8 @@ class GJK:
         # Exhaustive search for the face normals
         # @TODO: This would require a lot of cost if the mesh is large. It would be better to precompute adjacency
         # information in the solver and use it here.
-        face_start = geoms_info[i_g].face_start
-        face_end = geoms_info[i_g].face_end
+        face_start = geoms_info.face_start[i_g]
+        face_end = geoms_info.face_end[i_g]
 
         for i_f in range(face_start, face_end):
             face = faces_info[i_f].verts_idx
@@ -2576,9 +2573,9 @@ class GJK:
                 compute_normal = compute_normal and (has_vs[j] == 1)
 
             if compute_normal:
-                v1pos = verts_info[face[0]].init_pos
-                v2pos = verts_info[face[1]].init_pos
-                v3pos = verts_info[face[2]].init_pos
+                v1pos = verts_info.init_pos[face[0]]
+                v2pos = verts_info.init_pos[face[1]]
+                v3pos = verts_info.init_pos[face[2]]
 
                 # Compute the face normal
                 n = (v2pos - v1pos).cross(v3pos - v1pos)
@@ -2644,15 +2641,14 @@ class GJK:
         We identify related edge normals to the simplex by checking the vertex indices of the simplex.
         """
         # Get the geometry state and quaternion
-        g_state = geoms_state[i_g, i_b]
-        g_pos = g_state.pos
-        g_quat = g_state.quat
-        g_size_x = geoms_info[i_g].data[0] * 0.5
-        g_size_y = geoms_info[i_g].data[1] * 0.5
-        g_size_z = geoms_info[i_g].data[2] * 0.5
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
+        g_size_x = geoms_info.data[0] * 0.5
+        g_size_y = geoms_info.data[1] * 0.5
+        g_size_z = geoms_info.data[2] * 0.5
 
-        v1i -= geoms_info[i_g].vert_start
-        v2i -= geoms_info[i_g].vert_start
+        v1i -= geoms_info.vert_start[i_g]
+        v2i -= geoms_info.vert_start[i_g]
 
         n_normals = 0
 
@@ -2711,9 +2707,8 @@ class GJK:
         We identify related edge normals to the simplex by checking the vertex indices of the simplex.
         """
         # Get the geometry state and quaternion
-        g_state = geoms_state[i_g, i_b]
-        g_pos = g_state.pos
-        g_quat = g_state.quat
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
 
         # Number of potential face normals
         n_normals = 0
@@ -2728,8 +2723,8 @@ class GJK:
         elif dim == 1:
             # If the nearest face is a point, consider every adjacent edge
             # Exhaustive search for the edge normals
-            face_start = geoms_info[i_g].face_start
-            face_end = geoms_info[i_g].face_end
+            face_start = geoms_info.face_start[i_g]
+            face_end = geoms_info.face_end[i_g]
             for i_f in range(face_start, face_end):
                 face = faces_info[i_f].verts_idx
 
@@ -2747,7 +2742,7 @@ class GJK:
                     t_v2i = face[v2_idx]
 
                     # Compute the edge normal
-                    v2_pos = verts_info[t_v2i].init_pos
+                    v2_pos = verts_info.init_pos[t_v2i]
                     v2_pos = gu.ti_transform_by_trans_quat(v2_pos, g_pos, g_quat)
                     t_res = self_unused.func_safe_normalize(gjk_static_config, v2_pos - v1)
 
@@ -2821,9 +2816,9 @@ class GJK:
         """
         Get the face vertices of the box geometry.
         """
-        g_size_x = geoms_info[i_g].data[0]
-        g_size_y = geoms_info[i_g].data[1]
-        g_size_z = geoms_info[i_g].data[2]
+        g_size_x = geoms_info.data[i_g][0]
+        g_size_y = geoms_info.data[i_g][1]
+        g_size_z = geoms_info.data[i_g][2]
 
         # Axis to fix, 0: x, 1: y, 2: z
         axis = face_idx // 2
@@ -2855,9 +2850,8 @@ class GJK:
                 vs[3 * i + 2] = s[2] * g_size_z
 
         # Get geometry position and quaternion
-        g_state = geoms_state[i_g, i_b]
-        g_pos = g_state.pos
-        g_quat = g_state.quat
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
 
         # Transform the vertices to the global coordinates
         for i in range(nface):
@@ -2886,14 +2880,13 @@ class GJK:
         Get the face vertices of the mesh.
         """
         # Get geometry position and quaternion
-        g_state = geoms_state[i_g, i_b]
-        g_pos = g_state.pos
-        g_quat = g_state.quat
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
 
         nvert = 3
         for i in range(nvert):
             i_v = faces_info[face_idx].verts_idx[i]
-            v = verts_info[i_v].init_pos
+            v = verts_info.init_pos[i_v]
             v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
             if i_o == 0:
                 gjk_state.contact_faces[i_b, i].vert1 = v
@@ -3180,7 +3173,7 @@ class GJK:
         """
         Check if the given geom is a discrete geometry.
         """
-        geom_type = geoms_info[i_g].type
+        geom_type = geoms_info.type[i_g]
         return geom_type == gs.GEOM_TYPE.MESH or geom_type == gs.GEOM_TYPE.BOX
 
     @ti.func
@@ -3188,7 +3181,7 @@ class GJK:
         """
         Check if the given geoms are sphere-swept geometries.
         """
-        geom_type = geoms_info[i_g].type
+        geom_type = geoms_info.type[i_g]
         return geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.CAPSULE
 
     @ti.func
@@ -3398,8 +3391,9 @@ class GJK:
         """
         Find the support point on a mesh in the given direction.
         """
-        g_state = geoms_state[i_g, i_b]
-        d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_state.quat))
+        g_quat = geoms_state.quat[i_g, i_b]
+        g_pos = geoms_state.pos[i_g, i_b]
+        d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_quat))
 
         # Exhaustively search for the vertex with maximum dot product
         fmax = -gjk_static_config.FLOAT_MAX
@@ -3411,23 +3405,23 @@ class GJK:
         # Use the previous maximum vertex if it is within the current range
         prev_imax = gjk_state.support_mesh_prev_vertex_id[i_b, i_o]
         if (prev_imax >= vert_start) and (prev_imax < vert_end):
-            pos = verts_info[prev_imax].init_pos
+            pos = verts_info.init_pos[prev_imax]
             fmax = d_mesh.dot(pos)
             imax = prev_imax
 
         for i in range(vert_start, vert_end):
-            pos = verts_info[i].init_pos
+            pos = verts_info.init_pos[i]
             vdot = d_mesh.dot(pos)
             if vdot > fmax:
                 fmax = vdot
                 imax = i
 
-        v = verts_info[imax].init_pos
+        v = verts_info.init_pos[imax]
         vid = imax
 
         gjk_state.support_mesh_prev_vertex_id[i_b, i_o] = vid
 
-        v_ = gu.ti_transform_by_trans_quat(v, g_state.pos, g_state.quat)
+        v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
         return v_, vid
 
     @ti.func
@@ -3457,7 +3451,7 @@ class GJK:
         v = ti.Vector.zero(gs.ti_float, 3)
         vid = -1
 
-        geom_type = geoms_info[i_g].type
+        geom_type = geoms_info.type[i_g]
         if geom_type == gs.GEOM_TYPE.SPHERE:
             v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
         elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
@@ -3897,8 +3891,9 @@ class GJK:
         """
         Get the discrete vertex of the geometry for the given index [i_v].
         """
-        geom_type = geoms_info[i_g].type
-        geom_state = geoms_state[i_g, i_b]
+        geom_type = geoms_info.type[i_g]
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
 
         # Get the vertex position in the local frame of the geometry.
         v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
@@ -3907,18 +3902,18 @@ class GJK:
             # vertex positions in a different way than the general mesh.
             v = ti.Vector(
                 [
-                    (1.0 if (i_v & 1 == 1) else -1.0) * geoms_info[i_g].data[0] * 0.5,
-                    (1.0 if (i_v & 2 == 2) else -1.0) * geoms_info[i_g].data[1] * 0.5,
-                    (1.0 if (i_v & 4 == 4) else -1.0) * geoms_info[i_g].data[2] * 0.5,
+                    (1.0 if (i_v & 1 == 1) else -1.0) * geoms_info.data[i_g][0] * 0.5,
+                    (1.0 if (i_v & 2 == 2) else -1.0) * geoms_info.data[i_g][1] * 0.5,
+                    (1.0 if (i_v & 4 == 4) else -1.0) * geoms_info.data[i_g][2] * 0.5,
                 ],
                 dt=gs.ti_float,
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
             vert_start = geoms_info.vert_start[i_g]
-            v = verts_info[vert_start + i_v].init_pos
+            v = verts_info.init_pos[vert_start + i_v]
 
         # Transform the vertex position to the world frame
-        v = gu.ti_transform_by_trans_quat(v, geom_state.pos, geom_state.quat)
+        v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
 
         return v
 
@@ -4078,7 +4073,7 @@ class GJK:
         """
         Count the number of possible support points in the given direction.
         """
-        geom_type = geoms_info[i_g].type
+        geom_type = geoms_info.type[i_g]
         count = 1
         if geom_type == gs.GEOM_TYPE.BOX:
             count = support_field._func_count_supports_box(geoms_state, geoms_info, d, i_g, i_b)
