@@ -2300,12 +2300,12 @@ class Collider:
 
                 for k in ti.static(range(3)):
                     if k != j:
-                        m = i
-                        n = 3 - k - j
-                        if k - j > 3:
-                            m = m - 1
-                            n = n + 3
-                        c3 = c3 + size2[k] * rotabs[m, n] / c1
+                        i_ = i
+                        j_ = 3 - k - j
+                        if k + j > 3:
+                            i_ = i_ - 1
+                            j_ = j_ + 3
+                        c3 = c3 + size2[k] * rotabs[i_, j_] / c1
 
                         3 * i + 3 - k - j
 
@@ -2324,12 +2324,12 @@ class Collider:
                     cle2 = 0
                     for k in ti.static(range(3)):
                         if k != j:
-                            m = i
-                            n = 3 - k - j
-                            if k - j > 3:
-                                m = m - 1
-                                n = n + 3
-                            if (rot[m, n] > 0) ^ (c2 < 0) ^ (ti.raw_mod(k - j + 3, 3) == 1):
+                            i_ = i
+                            j_ = 3 - k - j
+                            if k + j > 3:
+                                i_ = i_ - 1
+                                j_ = j_ + 3
+                            if (rot[i_, j_] > 0) ^ (c2 < 0) ^ (ti.raw_mod(k - j + 3, 3) == 1):
                                 cle2 = cle2 + (1 << k)
 
                     code = 12 + i * 3 + j
@@ -2789,7 +2789,7 @@ class Collider:
 
                             c2 = tmp2.dot(tmp2)
 
-                            if not (tmp1[2] > 0 and c2 > margin2):
+                            if not (tmp1[2] > -gs.EPS and c2 > margin2):
                                 collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + tmp1
                                 collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] * 0.5
 
@@ -2802,10 +2802,10 @@ class Collider:
                         if n < collider_static_config.box_MAXCONPAIR:
                             x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
 
-                            if nl == 0:
-                                if (nf != 0) and (x < -lx or x > lx) and (y < -ly or y > ly):
+                            if nl == 0 and nf == 0:
+                                if (x < -lx + gs.EPS or x > lx - gs.EPS) and (y < -ly + gs.EPS or y > ly - gs.EPS):
                                     continue
-                            elif x < -lx or x > lx or y < -ly or y > ly:
+                            elif x < -lx + gs.EPS or x > lx - gs.EPS or y < -ly + gs.EPS or y > ly - gs.EPS:
                                 continue
 
                             c1 = 0
@@ -2817,7 +2817,7 @@ class Collider:
 
                             c1 = c1 + (collider_state.box_pu[i, i_b][2] * innorm) ** 2
 
-                            if collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
+                            if collider_state.box_pu[i, i_b][2] > -gs.EPS and c1 > margin2:
                                 continue
 
                             tmp1 = ti.Vector(
