@@ -588,9 +588,9 @@ def test_link_velocity(gs_sim, tol):
     assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), tol=tol)
 
     init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
-    COM = gs_sim.rigid_solver.links_state[0, 0].COM
+    COM = gs_sim.rigid_solver.links_state.COM[0, 0]
     assert_allclose(COM, np.array([0.375, 0.125, 0.0]), tol=tol)
-    xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
+    xanchor = gs_sim.rigid_solver.joints_state.xanchor[1, 0]
     assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), tol=tol)
     cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
     assert_allclose(cvel_0, 0, tol=tol)
@@ -598,11 +598,11 @@ def test_link_velocity(gs_sim, tol):
 
     # Check that the velocity is valid for a random configuration
     init_simulators(gs_sim, qpos=np.array([-0.7, 0.2]), qvel=np.array([3.0, 13.0]))
-    xanchor = gs_sim.rigid_solver.joints_state[1, 0].xanchor
+    xanchor = gs_sim.rigid_solver.joints_state.xanchor[1, 0]
     theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), tol=tol)
     assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), tol=tol)
-    COM = gs_sim.rigid_solver.links_state[0, 0].COM
+    COM = gs_sim.rigid_solver.links_state.COM[0, 0]
     COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
     COM_1 = np.array(
         [
@@ -1379,12 +1379,11 @@ def test_path_planning_avoidance(n_envs, show_viewer):
     scene.build(n_envs=n_envs)
 
     hand = franka.get_link("hand")
+    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], dtype=gs.tc_float, device=gs.device)
+    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], dtype=gs.tc_float, device=gs.device)
     if n_envs > 0:
-        hand_pos_ref = torch.tensor([[0.3, 0.25, 0.25]] * n_envs, device=gs.device)
-        hand_quat_ref = torch.tensor([[0.3073, 0.5303, 0.7245, -0.2819]] * n_envs, device=gs.device)
-    else:
-        hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], device=gs.device)
-        hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], device=gs.device)
+        hand_pos_ref = hand_pos_ref.repeat((n_envs, 1))
+        hand_quat_ref = hand_quat_ref.repeat((n_envs, 1))
     qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos[..., -2:] = 0.04
 
@@ -1407,7 +1406,7 @@ def test_path_planning_avoidance(n_envs, show_viewer):
         max_nodes=4000,
         max_retry=40,
     )
-    assert_allclose(avoidance_path[0], 0, tol=gs.EPS)
+    assert_allclose(avoidance_path[0], 0.0, tol=gs.EPS)
     assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
 
     for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
@@ -2189,7 +2188,12 @@ def test_gravity(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_scene_saver_franka(show_viewer, tol):
-    scene1 = gs.Scene(show_viewer=show_viewer)
+    scene1 = gs.Scene(
+        show_viewer=show_viewer,
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+    )
     franka1 = scene1.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
