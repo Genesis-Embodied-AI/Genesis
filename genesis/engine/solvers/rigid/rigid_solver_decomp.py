@@ -287,7 +287,7 @@ class RigidSolver(Solver):
 
             self.data_manager = array_class.DataManager(self)
 
-            self._rigid_global_info = array_class.RigidGlobalInfo(self)
+            self._rigid_global_info = self.data_manager.rigid_global_info
             if self._use_hibernation:
                 rgi = self._rigid_global_info
                 self.n_awake_dofs = rgi.n_awake_dofs
@@ -669,7 +669,7 @@ class RigidSolver(Solver):
         dofs_info: array_class.DofsInfo,
         dofs_state: array_class.DofsState,
         # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -987,7 +987,10 @@ class RigidSolver(Solver):
         for i in range(n_edges):
             edges_info.v0[i] = edges[i, 0]
             edges_info.v1[i] = edges[i, 1]
-            edges_info.length[i] = (verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]).norm()
+            minus = verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]
+            edges_info.length[i] = minus.norm()
+            # FIXME: the line below does not work
+            # edges_info.length[i] = (verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]).norm()
 
     @ti.kernel
     def _kernel_init_vvert_fields(
@@ -1114,6 +1117,7 @@ class RigidSolver(Solver):
         _B = geoms_state.friction_ratio.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(n_geoms):
+            pass
             for j in ti.static(range(3)):
                 geoms_info.pos[i][j] = geoms_pos[i, j]
                 geoms_info.center[i][j] = geoms_center[i, j]
