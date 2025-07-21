@@ -63,6 +63,9 @@ class Vec3:
     def magnitude(self) -> float:
         return np.linalg.norm(self.v)
 
+    def sqr_magnitude(self) -> float:
+        return np.inner(self.v, self.v)
+
     def copy(self) -> 'Vec3':
         return Vec3(self.v.copy())
 
