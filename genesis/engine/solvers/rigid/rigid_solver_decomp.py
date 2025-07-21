@@ -647,6 +647,7 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            print("init_dof_fields")
 
         # just in case
         self.dofs_state.force.fill(0)
