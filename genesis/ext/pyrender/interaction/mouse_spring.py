@@ -32,6 +32,11 @@ class MouseSpring:
 
     def apply_force(self, control_point: Vec3, delta_time: float):
         _ensure_torch_imported()
+
+        # note when threaded: apply_force is called before attach!
+        if not self.held_geom:
+            return
+
         
         # works ok:
         # delta: Vec3 = control_point - self.prev_control_point
