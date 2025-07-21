@@ -1,12 +1,11 @@
 import argparse
 
+import genesis as gs
 import numpy as np
 import trimesh
-from tqdm import tqdm
-
-import genesis as gs
 from genesis.sensors import NPZFileWriter, RigidContactForceGridSensor, SensorDataRecorder, VideoFileWriter
 from genesis.utils.misc import tensor_to_array
+from tqdm import tqdm
 
 
 def visualize_grid_sensor(scene: gs.Scene, sensor: RigidContactForceGridSensor, min_force=0.0, max_force=1.0):
@@ -56,7 +55,7 @@ def visualize_grid_sensor(scene: gs.Scene, sensor: RigidContactForceGridSensor, 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seconds", "-t", type=float, default=1, help="Number of seconds to simulate")
-    parser.add_argument("--dt", type=float, default=1e-3, help="Simulation time step")
+    parser.add_argument("--dt", type=float, default=1e-2, help="Simulation time step")
     parser.add_argument(
         "--substeps",
         type=int,
@@ -79,6 +78,10 @@ def main():
             dt=args.dt,
             substeps=args.substeps,
             gravity=(0, 0, -9.81),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+            constraint_timeconst=max(0.01, 2 * args.dt / args.substeps),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

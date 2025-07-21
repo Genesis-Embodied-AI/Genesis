@@ -82,7 +82,10 @@ def main():
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
-        rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+            constraint_timeconst=max(0.01, 2 * args.dt / args.substeps),
+        ),
         vis_options=gs.options.VisOptions(
             show_world_frame=False,
         ),
