@@ -504,7 +504,7 @@ class ConstraintSolver:
         equalities_info: array_class.EqualitiesInfo,
         constraint_state: ti.template(),
         collider_state: ti.template(),
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         _B = dofs_state.ctrl_mode.shape[1]
@@ -746,7 +746,7 @@ class ConstraintSolver:
         joints_info: array_class.JointsInfo,
         dofs_info: array_class.DofsInfo,
         dofs_state: array_class.DofsState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         constraint_state: ti.template(),
         static_rigid_sim_config: ti.template(),
     ):
@@ -1173,7 +1173,7 @@ class ConstraintSolver:
         entities_info: array_class.EntitiesInfo,
         dofs_state: array_class.DofsState,
         constraint_state: ti.template(),
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         _B = constraint_state.grad.shape[1]
@@ -1788,7 +1788,7 @@ class ConstraintSolver:
         dofs_state: array_class.DofsState,
         entities_info: array_class.EntitiesInfo,
         constraint_state: ti.template(),
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         _B = dofs_state.acc_smooth.shape[1]

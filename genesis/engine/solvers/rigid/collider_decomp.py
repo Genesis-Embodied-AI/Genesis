@@ -134,10 +134,16 @@ class Collider:
         n_vert_neighbors = len(vert_neighbors)
 
         # Initialize [state], which stores every MUTABLE collision data.
-        self._collider_state = array_class.ColliderState(self._solver, n_possible_pairs, self._collider_static_config)
+        self._collider_state = array_class.get_collider_state(
+            self._solver, n_possible_pairs, self._collider_static_config
+        )
+        # array_class.ColliderState(self._solver, n_possible_pairs, self._collider_static_config)
 
         # Initialize [info], which stores every IMMUTABLE collision data.
-        self._collider_info = array_class.ColliderInfo(self._solver, n_vert_neighbors, self._collider_static_config)
+        # self._collider_info = array_class.ColliderInfo(self._solver, n_vert_neighbors, self._collider_static_config)
+        self._collider_info = array_class.get_collider_info(
+            self._solver, n_vert_neighbors, self._collider_static_config
+        )
         self._init_collision_pair_validity(collision_pair_validity)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(n_possible_pairs)
@@ -282,28 +288,35 @@ class Collider:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(
-            self._solver._rigid_global_info, self._solver._static_rigid_sim_config, self._collider_state, envs_idx
+            # self._solver._rigid_global_info,
+            # self._solver._static_rigid_sim_config,
+            self._collider_state,
+            # envs_idx
         )
         self._contacts_info_cache = {}
 
     @ti.kernel
     def _kernel_reset(
         self_unused,
-        rigid_global_info: ti.template(),
-        static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        envs_idx: ti.types.ndarray(),
+        # rigid_global_info: array_class.RigidGlobalInfo,
+        # static_rigid_sim_config: ti.template(),
+        collider_state: array_class.ColliderState,
+        # envs_idx: ti.types.ndarray(),
     ):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b_ in range(envs_idx.shape[0]):
-            i_b = envs_idx[i_b_]
-            collider_state.first_time[i_b] = 1
-            n_geoms = collider_state.active_buffer.shape[0]
-            for i_ga in range(n_geoms):
-                for i_gb in range(n_geoms):
-                    # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
-                    # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
-                    collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+        pass
+        # ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        # for i_b_ in range(envs_idx.shape[0]):
+        #     i_b = envs_idx[i_b_]
+        #     collider_state.first_time[i_b] = 1
+        #     n_geoms = collider_state.active_buffer.shape[0]
+        #     for i_ga in range(n_geoms):
+        #         for i_gb in range(n_geoms):
+        #             # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
+        #             # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
+        #             # a = collider_state.contact_cache.normal[0,0,0]
+        #             # print("collider_state.contact_cache.normal[0,0,0]", a)
+        #             print("collider_state.contact_cache.normal[0,0,0]", i_ga, i_gb, i_b)
+        #             collider_state.contact_cache.normal[i_ga, i_gb, i_b].fill(0.0)
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -945,7 +958,7 @@ class Collider:
         links_info: array_class.LinksInfo,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to taichi
         collider_state: ti.template(),
@@ -1187,7 +1200,7 @@ class Collider:
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
         faces_info: array_class.FacesInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
@@ -1301,7 +1314,7 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
@@ -1356,7 +1369,7 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
@@ -1417,7 +1430,7 @@ class Collider:
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
         edges_info: array_class.EdgesInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
@@ -1786,7 +1799,7 @@ class Collider:
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
         faces_info: array_class.FacesInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),
@@ -2958,7 +2971,7 @@ class Collider:
     @ti.kernel
     def _kernel_get_contacts(
         self_unused,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         collider_state: ti.template(),
         collider_info: ti.template(),

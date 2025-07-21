@@ -450,7 +450,7 @@ class RigidSolver(Solver):
         dofs_state: array_class.DofsState,
         dofs_info: array_class.DofsInfo,
         entities_info: array_class.EntitiesInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         decompose: ti.i32,
     ):
@@ -496,7 +496,7 @@ class RigidSolver(Solver):
     def _kernel_init_meaninertia(
         self_unused,
         # taichi variables
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         entities_info: array_class.EntitiesInfo,
         static_rigid_sim_config: ti.template(),
     ):
@@ -808,7 +808,7 @@ class RigidSolver(Solver):
         # taichi variables
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_links = links_parent_idx.shape[0]
@@ -987,10 +987,10 @@ class RigidSolver(Solver):
         for i in range(n_edges):
             edges_info.v0[i] = edges[i, 0]
             edges_info.v1[i] = edges[i, 1]
-            minus = verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]
-            edges_info.length[i] = minus.norm()
+            # minus = verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]
+            # edges_info.length[i] = minus.norm()
             # FIXME: the line below does not work
-            # edges_info.length[i] = (verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]).norm()
+            edges_info.length[i] = (verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]).norm()
 
     @ti.kernel
     def _kernel_init_vvert_fields(
@@ -1117,7 +1117,6 @@ class RigidSolver(Solver):
         _B = geoms_state.friction_ratio.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(n_geoms):
-            pass
             for j in ti.static(range(3)):
                 geoms_info.pos[i][j] = geoms_pos[i, j]
                 geoms_info.center[i][j] = geoms_center[i, j]
@@ -1322,7 +1321,7 @@ class RigidSolver(Solver):
         entities_info: array_class.EntitiesInfo,
         entities_state: array_class.EntitiesState,
         dofs_info: array_class.DofsInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_entities = entities_dof_start.shape[0]
@@ -1911,7 +1910,7 @@ class RigidSolver(Solver):
     def _kernel_clear_external_force(
         self_unused,
         links_state: array_class.LinksState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         self_unused._func_clear_external_force(
@@ -2030,7 +2029,7 @@ class RigidSolver(Solver):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         entities_info: array_class.EntitiesInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
@@ -2135,7 +2134,7 @@ class RigidSolver(Solver):
         geoms_info: array_class.GeomsInfo,
         geoms_state: array_class.GeomsState,
         collider_state: ti.template(),
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
@@ -2235,7 +2234,7 @@ class RigidSolver(Solver):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         entities_info: array_class.EntitiesInfo,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         for i_b in envs_idx:
@@ -4110,7 +4109,7 @@ class RigidSolver(Solver):
         self_unused,
         geoms_render_T: ti.types.ndarray(),
         geoms_state: array_class.GeomsState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_geoms = geoms_state.pos.shape[0]
@@ -4139,7 +4138,7 @@ class RigidSolver(Solver):
         vgeoms_info: array_class.VGeomsInfo,
         vgeoms_state: array_class.VGeomsState,
         links_state: array_class.LinksState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_vgeoms = vgeoms_info.link_idx.shape[0]
@@ -4177,7 +4176,7 @@ class RigidSolver(Solver):
             # links_state: array_class.LinksState,
             # dofs_state: array_class.DofsState,
             # geoms_state: array_class.GeomsState,
-            # rigid_global_info: ti.template(),
+            # rigid_global_info: array_class.RigidGlobalInfo,
             # static_rigid_sim_config: ti.template(),
 
             self._kernel_get_state(
@@ -4211,7 +4210,7 @@ class RigidSolver(Solver):
         links_state: array_class.LinksState,
         dofs_state: array_class.DofsState,
         geoms_state: array_class.GeomsState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         rgi = rigid_global_info
@@ -4295,7 +4294,7 @@ class RigidSolver(Solver):
         links_state: array_class.LinksState,
         dofs_state: array_class.DofsState,
         geoms_state: array_class.GeomsState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         rgi = rigid_global_info
@@ -4568,7 +4567,7 @@ class RigidSolver(Solver):
         envs_idx: ti.types.ndarray(),
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         rgi = rigid_global_info
@@ -4642,7 +4641,7 @@ class RigidSolver(Solver):
         envs_idx: ti.types.ndarray(),
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         rgi = rigid_global_info

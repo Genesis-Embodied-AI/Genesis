@@ -13,7 +13,8 @@ import numpy as np
 use_ndarray = os.environ.get("GS_USE_NDARRAY", "0") == "1"
 V = ti.ndarray if use_ndarray else ti.field
 V_ANNOTATION = ti.types.ndarray() if use_ndarray else ti.template()
-VEC_ARRAY = ti.Vector.ndarray if use_ndarray else ti.Vector.field
+V_VEC = ti.Vector.ndarray if use_ndarray else ti.Vector.field
+V_MAT = ti.Matrix.ndarray if use_ndarray else ti.Matrix.field
 
 # =========================================== RigidGlobalInfo ===========================================
 
@@ -26,8 +27,8 @@ class StructRigidGlobalInfo:
     awake_entities: V_ANNOTATION
     qpos0: V_ANNOTATION
     qpos: V_ANNOTATION
-    # links_T: V_ANNOTATION
-    # envs_offset: V_ANNOTATION
+    links_T: V_ANNOTATION
+    envs_offset: V_ANNOTATION
     geoms_init_AABB: V_ANNOTATION
     mass_mat: V_ANNOTATION
     mass_mat_L: V_ANNOTATION
@@ -48,9 +49,9 @@ def get_rigid_global_info(solver):
         "awake_entities": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
         "qpos0": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
-        # "links_T": ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
-        # "envs_offset": ti.Vector.field(3, dtype=gs.ti_float, shape=f_batch()),
-        "geoms_init_AABB": VEC_ARRAY(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
+        "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
+        "envs_offset": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
+        "geoms_init_AABB": V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
         "mass_mat": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
         "mass_mat_L": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
         "mass_mat_D_inv": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,))),
@@ -237,30 +238,125 @@ def get_constraint_state(constraint_solver, solver):
 
 
 @dataclasses.dataclass
+class StructContactData:
+    geom_a: V_ANNOTATION
+    geom_b: V_ANNOTATION
+    penetration: V_ANNOTATION
+    normal: V_ANNOTATION
+    pos: V_ANNOTATION
+    friction: V_ANNOTATION
+    sol_params: V_ANNOTATION
+    force: V_ANNOTATION
+    link_a: V_ANNOTATION
+    link_b: V_ANNOTATION
+
+
+def get_contact_data(solver, max_contact_pairs):
+    f_batch = solver._batch_shape
+    kwargs = {
+        "geom_a": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
+        "geom_b": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
+        "penetration": V(dtype=gs.ti_float, shape=f_batch(max(1, max_contact_pairs))),
+        "normal": V(dtype=gs.ti_vec3, shape=f_batch(max(1, max_contact_pairs))),
+        "pos": V(dtype=gs.ti_vec3, shape=f_batch(max(1, max_contact_pairs))),
+        "friction": V(dtype=gs.ti_float, shape=f_batch(max(1, max_contact_pairs))),
+        "sol_params": V(dtype=gs.ti_vec7, shape=f_batch(max(1, max_contact_pairs))),
+        "force": V(dtype=gs.ti_vec3, shape=f_batch(max(1, max_contact_pairs))),
+        "link_a": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
+        "link_b": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
+    }
+
+    if use_ndarray:
+        obj = StructContactData(**kwargs)
+        return obj
+    else:
+
+        @ti.data_oriented
+        class ClassContactData:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactData()
+
+
+@dataclasses.dataclass
+class StructSortBuffer:
+    value: V_ANNOTATION
+    i_g: V_ANNOTATION
+    is_max: V_ANNOTATION
+
+
+def get_sort_buffer(solver):
+    f_batch = solver._batch_shape
+    kwargs = {
+        "value": V(dtype=gs.ti_float, shape=f_batch(2 * solver.n_geoms_)),
+        "i_g": V(dtype=gs.ti_int, shape=f_batch(2 * solver.n_geoms_)),
+        "is_max": V(dtype=gs.ti_int, shape=f_batch(2 * solver.n_geoms_)),
+    }
+    if use_ndarray:
+        return StructSortBuffer(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassSortBuffer:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassSortBuffer()
+
+
+@dataclasses.dataclass
+class StructContactCache:
+    normal: ti.types.NDArray[gs.ti_vec3, 3]
+    # normal: V_ANNOTATION
+
+
+def get_contact_cache(solver):
+    f_batch = solver._batch_shape
+    n_geoms = solver.n_geoms_
+    kwargs = {
+        "normal": V(dtype=gs.ti_vec3, shape=f_batch((n_geoms, n_geoms))),
+    }
+    if use_ndarray:
+        return StructContactCache(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactCache:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactCache()
+
+
+@dataclasses.dataclass
 class StructColliderState:
-    sort_buffer: V_ANNOTATION
-    active_buffer_awake: V_ANNOTATION
-    active_buffer_hib: V_ANNOTATION
-    active_buffer: V_ANNOTATION
+    # sort_buffer: StructSortBuffer
+    # active_buffer_awake: V_ANNOTATION
+    # active_buffer_hib: V_ANNOTATION
+    # active_buffer: V_ANNOTATION
     first_time: V_ANNOTATION
-    n_broad_pairs: V_ANNOTATION
-    broad_collision_pairs: V_ANNOTATION
-    contact_data: V_ANNOTATION
-    n_contacts: V_ANNOTATION
-    n_contacts_hibernated: V_ANNOTATION
-    contact_cache: V_ANNOTATION
-    # Box-box fields
-    box_depth: V_ANNOTATION
-    box_points: V_ANNOTATION
-    box_pts: V_ANNOTATION
-    box_lines: V_ANNOTATION
-    box_linesu: V_ANNOTATION
-    box_axi: V_ANNOTATION
-    box_ppts2: V_ANNOTATION
-    box_pu: V_ANNOTATION
-    # Terrain fields
-    xyz_max_min: V_ANNOTATION
-    prism: V_ANNOTATION
+    # n_broad_pairs: V_ANNOTATION
+    # broad_collision_pairs: V_ANNOTATION
+    # n_contacts: V_ANNOTATION
+    # n_contacts_hibernated: V_ANNOTATION
+    # contact_data: StructContactData
+    # # Box-box fields
+    # box_depth: V_ANNOTATION
+    # box_points: V_ANNOTATION
+    # box_pts: V_ANNOTATION
+    # box_lines: V_ANNOTATION
+    # box_linesu: V_ANNOTATION
+    # box_axi: V_ANNOTATION
+    # box_ppts2: V_ANNOTATION
+    # box_pu: V_ANNOTATION
+    # # Terrain fields
+    # xyz_max_min: V_ANNOTATION
+    # prism: V_ANNOTATION
+    contact_cache: StructContactCache
 
 
 def get_collider_state(solver, n_possible_pairs, collider_static_config):
@@ -270,77 +366,36 @@ def get_collider_state(solver, n_possible_pairs, collider_static_config):
     max_collision_pairs = min(solver._max_collision_pairs, n_possible_pairs)
     max_collision_pairs_broad = max_collision_pairs * collider_static_config.max_collision_pairs_broad_k
     max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
-    use_hibernation = solver._static_rigid_sim_config.use_hibernation
-    box_box_detection = solver._static_rigid_sim_config.box_box_detection
 
     ############## broad phase SAP ##############
-    struct_sort_buffer = ti.types.struct(value=gs.ti_float, i_g=gs.ti_int, is_max=gs.ti_int)
 
+    contact_data = get_contact_data(solver, max_contact_pairs)
+    sort_buffer = get_sort_buffer(solver)
+    contact_cache = get_contact_cache(solver)
+    print("contact_cache", contact_cache)
     kwargs = {
-        "sort_buffer": struct_sort_buffer.field(shape=f_batch(2 * n_geoms), layout=ti.Layout.SOA),
-        "active_buffer": ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms)),
-        "first_time": ti.field(gs.ti_int, shape=_B),
-        "n_broad_pairs": ti.field(dtype=gs.ti_int, shape=_B),
-        "broad_collision_pairs": ti.Vector.field(2, dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
+        # "sort_buffer": sort_buffer,
+        # "active_buffer": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        "first_time": V(dtype=gs.ti_int, shape=_B),
+        # "n_broad_pairs": V(dtype=gs.ti_int, shape=_B),
+        # "broad_collision_pairs": V(dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
+        # "active_buffer_awake": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        # "active_buffer_hib": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        # "box_depth": V(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
+        # "box_points": V(gs.ti_vec3, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
+        # "box_pts": V(gs.ti_vec3, shape=f_batch(6)),
+        # "box_lines": V(gs.ti_vec6, shape=f_batch(4)),
+        # "box_linesu": V(gs.ti_vec6, shape=f_batch(4)),
+        # "box_axi": V(gs.ti_vec3, shape=f_batch(3)),
+        # "box_ppts2": V(dtype=gs.ti_float, shape=f_batch((4, 2))),
+        # "box_pu": V(gs.ti_vec3, shape=f_batch(4)),
+        # "xyz_max_min": V(dtype=gs.ti_float, shape=f_batch(6)),
+        # "prism": V(dtype=gs.ti_vec3, shape=f_batch(6)),
+        # "contact_data": contact_data,
+        # "n_contacts": V(dtype=gs.ti_int, shape=_B),
+        # "n_contacts_hibernated": V(dtype=gs.ti_int, shape=_B),
+        "contact_cache": contact_cache,
     }
-
-    if use_hibernation:
-        kwargs.update(
-            {
-                "active_buffer_awake": ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms)),
-                "active_buffer_hib": ti.field(dtype=gs.ti_int, shape=f_batch(n_geoms)),
-            }
-        )
-
-    ############## narrow phase ##############
-    struct_contact_data = ti.types.struct(
-        geom_a=gs.ti_int,
-        geom_b=gs.ti_int,
-        penetration=gs.ti_float,
-        normal=gs.ti_vec3,
-        pos=gs.ti_vec3,
-        friction=gs.ti_float,
-        sol_params=gs.ti_vec7,
-        force=gs.ti_vec3,
-        link_a=gs.ti_int,
-        link_b=gs.ti_int,
-    )
-    struct_contact_cache = ti.types.struct(
-        normal=gs.ti_vec3,
-    )
-
-    kwargs.update(
-        {
-            "contact_data": struct_contact_data.field(shape=f_batch(max(1, max_contact_pairs)), layout=ti.Layout.SOA),
-            "n_contacts": ti.field(gs.ti_int, shape=_B),
-            "n_contacts_hibernated": ti.field(gs.ti_int, shape=_B),
-            "contact_cache": struct_contact_cache.field(shape=f_batch((n_geoms, n_geoms)), layout=ti.Layout.SOA),
-        }
-    )
-
-    ########## Box-box contact detection ##########
-    if box_box_detection:
-        kwargs.update(
-            {
-                "box_depth": ti.field(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
-                "box_points": ti.field(gs.ti_vec3, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
-                "box_pts": ti.field(gs.ti_vec3, shape=f_batch(6)),
-                "box_lines": ti.field(gs.ti_vec6, shape=f_batch(4)),
-                "box_linesu": ti.field(gs.ti_vec6, shape=f_batch(4)),
-                "box_axi": ti.field(gs.ti_vec3, shape=f_batch(3)),
-                "box_ppts2": ti.field(dtype=gs.ti_float, shape=f_batch((4, 2))),
-                "box_pu": ti.field(gs.ti_vec3, shape=f_batch(4)),
-            }
-        )
-
-    ########## Terrain contact detection ##########
-    if collider_static_config.has_terrain:
-        kwargs.update(
-            {
-                "xyz_max_min": ti.field(dtype=gs.ti_float, shape=f_batch(6)),
-                "prism": ti.field(dtype=gs.ti_vec3, shape=f_batch(6)),
-            }
-        )
 
     if use_ndarray:
         return StructColliderState(**kwargs)
@@ -376,30 +431,27 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
     n_geoms = solver.n_geoms_
     n_verts = solver.n_verts_
 
-    kwargs = {
-        "vert_neighbors": ti.field(dtype=gs.ti_int, shape=max(1, n_vert_neighbors)),
-        "vert_neighbor_start": ti.field(dtype=gs.ti_int, shape=n_verts),
-        "vert_n_neighbors": ti.field(dtype=gs.ti_int, shape=n_verts),
-        "collision_pair_validity": ti.field(dtype=gs.ti_int, shape=(n_geoms, n_geoms)),
-        "_max_possible_pairs": ti.field(dtype=gs.ti_int, shape=()),
-        "_max_collision_pairs": ti.field(dtype=gs.ti_int, shape=()),
-        "_max_contact_pairs": ti.field(dtype=gs.ti_int, shape=()),
-        "_max_collision_pairs_broad": ti.field(dtype=gs.ti_int, shape=()),
-    }
-
     ########## Terrain contact detection ##########
+    terrain_hf_shape = 1
     if collider_static_config.has_terrain:
         links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
         entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
+        terrain_hf_shape = entity.terrain_hf.shape
 
-        kwargs.update(
-            {
-                "terrain_hf": ti.field(dtype=gs.ti_float, shape=entity.terrain_hf.shape),
-                "terrain_rc": ti.field(dtype=gs.ti_int, shape=2),
-                "terrain_scale": ti.field(dtype=gs.ti_float, shape=2),
-                "terrain_xyz_maxmin": ti.field(dtype=gs.ti_float, shape=6),
-            }
-        )
+    kwargs = {
+        "vert_neighbors": V(dtype=gs.ti_int, shape=max(1, n_vert_neighbors)),
+        "vert_neighbor_start": V(dtype=gs.ti_int, shape=n_verts),
+        "vert_n_neighbors": V(dtype=gs.ti_int, shape=n_verts),
+        "collision_pair_validity": V(dtype=gs.ti_int, shape=(n_geoms, n_geoms)),
+        "_max_possible_pairs": V(dtype=gs.ti_int, shape=()),
+        "_max_collision_pairs": V(dtype=gs.ti_int, shape=()),
+        "_max_contact_pairs": V(dtype=gs.ti_int, shape=()),
+        "_max_collision_pairs_broad": V(dtype=gs.ti_int, shape=()),
+        "terrain_hf": V(dtype=gs.ti_float, shape=terrain_hf_shape),
+        "terrain_rc": V(dtype=gs.ti_int, shape=2),
+        "terrain_scale": V(dtype=gs.ti_float, shape=2),
+        "terrain_xyz_maxmin": V(dtype=gs.ti_float, shape=6),
+    }
 
     if use_ndarray:
         return StructColliderInfo(**kwargs)
@@ -431,7 +483,7 @@ def get_mpr_state(f_batch):
     )
 
     kwargs = {
-        "simplex_support": struct_support.field(shape=f_batch(4), layout=ti.Layout.SOA),
+        "simplex_support": struct_support.field(shape=f_batch(4)),
         "simplex_size": ti.field(gs.ti_int, shape=f_batch()),
     }
 
@@ -1539,7 +1591,7 @@ DofsState = ti.template() if not use_ndarray else StructDofsState
 DofsInfo = ti.template() if not use_ndarray else StructDofsInfo
 GeomsState = ti.template() if not use_ndarray else StructGeomsState
 GeomsInfo = ti.template() if not use_ndarray else StructGeomsInfo
-GeomsInitAABB = ti.template() if not use_ndarray else StructGeomsInfo
+GeomsInitAABB = ti.template() if not use_ndarray else ti.types.ndarray()
 LinksState = ti.template() if not use_ndarray else StructLinksState
 LinksInfo = ti.template() if not use_ndarray else StructLinksInfo
 JointsInfo = ti.template() if not use_ndarray else StructJointsInfo
@@ -1557,3 +1609,5 @@ EntitiesState = ti.template() if not use_ndarray else StructEntitiesState
 EntitiesInfo = ti.template() if not use_ndarray else StructEntitiesInfo
 EqualitiesInfo = ti.template() if not use_ndarray else StructEqualitiesInfo
 RigidGlobalInfo = ti.template() if not use_ndarray else StructRigidGlobalInfo
+ColliderState = ti.template() if not use_ndarray else StructColliderState
+ColliderInfo = ti.template() if not use_ndarray else StructColliderInfo
