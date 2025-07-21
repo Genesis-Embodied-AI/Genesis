@@ -16,37 +16,32 @@ def _ensure_torch_imported() -> None:
 
 class MouseSpring:
     def __init__(self):
-        self.held_geom: RigidGeom | None = None
+        self.held_link: RigidLink | None = None
         self.held_point_in_local: Vec3 | None = None
         self.prev_control_point: Vec3 | None = None
 
-    def attach(self, picked_entity: RigidEntity, control_point: Vec3):
+    def attach(self, picked_link: RigidLink, control_point: Vec3):
         # for now, we just pick the first geometry
-        self.held_geom = picked_entity.geoms[0]
-        pose: Pose = Pose.from_geom(self.held_geom)
+        self.held_link = picked_link
+        pose: Pose = Pose.from_link(self.held_link)
         self.held_point_in_local = pose.inverse_transform_point(control_point)
         self.prev_control_point = control_point
 
     def detach(self):
-        self.held_geom = None
+        self.held_link = None
 
     def apply_force(self, control_point: Vec3, delta_time: float):
         _ensure_torch_imported()
 
         # note when threaded: apply_force is called before attach!
-        if not self.held_geom:
+        # note2: that was before we added a lock to ViewerInteraction; this migth be fixed now
+        if not self.held_link:
             return
-
         
-        # works ok:
-        # delta: Vec3 = control_point - self.prev_control_point
-        # pos = Vec3.from_tensor(self.held_geom.entity.get_pos())
-        # pos = pos + delta
-        # self.held_geom.entity.set_pos(pos.as_tensor())
         self.prev_control_point = control_point
 
         # do simple force on COM only:
-        link: RigidLink = self.held_geom.link
+        link: RigidLink = self.held_link
         assert link
         lin_vel: Vec3 = Vec3.from_tensor(link.get_vel())
         ang_vel: Vec3 = Vec3.from_tensor(link.get_ang())
@@ -101,4 +96,4 @@ class MouseSpring:
 
     @property
     def is_attached(self) -> bool:
-        return self.held_geom is not None
+        return self.held_link is not None

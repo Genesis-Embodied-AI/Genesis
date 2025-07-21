@@ -152,7 +152,7 @@ class Solver(RBC):
         return self._gravity.to_numpy() if self._gravity is not None else None
 
     @property
-    def entities(self):
+    def entities(self) -> list[Entity]:
         return self._entities
 
     @property
