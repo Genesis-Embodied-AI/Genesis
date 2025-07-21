@@ -1,11 +1,10 @@
 import math
 
-import numpy as np
 import numba as nb
+import numpy as np
+import taichi as ti
 import torch
 import torch.nn.functional as F
-
-import taichi as ti
 
 import genesis as gs
 
@@ -1142,7 +1141,7 @@ def z_up_to_R(z, up=None, out=None):
     if out is None:
         out_ = np.empty((*B, 3, 3), dtype=z.dtype)
     else:
-        assert out.shape == (*B, 3, 3)
+        assert out.shape == (*B, 3, 3), f"out.shape: {out.shape} != {(*B, 3, 3)}"
         out_ = out
 
     z_norm = np.sqrt(np.sum(np.square(z.reshape((-1, 3))), -1)).reshape(B)
@@ -1187,6 +1186,8 @@ def pos_lookat_up_to_T(pos, lookat, up, *, dtype=np.float32):
     z_norm = np.linalg.norm(z)
     if z_norm < gs.EPS:
         z = np.array([0.0, 1.0, 0.0], dtype=dtype)
+    if z.ndim == 2:
+        z = z[0]
     z_up_to_R(z, up=up, out=T[:3, :3])
 
     return T
