@@ -11,6 +11,8 @@ from .data_handlers import DataHandler
 class SensorDataRecorder:
     """
     Utility class to automatically collect data from sensors and process it using specified handlers.
+    Each sensor added to this recorder will be sampled depending on the specified recording options,
+    and processed in a background thread.
 
     Parameters
     ----------
