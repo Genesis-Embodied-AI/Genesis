@@ -239,31 +239,32 @@ def get_constraint_state(constraint_solver, solver):
 
 @dataclasses.dataclass
 class StructContactData:
-    geom_a: V_ANNOTATION
-    geom_b: V_ANNOTATION
-    penetration: V_ANNOTATION
-    normal: V_ANNOTATION
-    pos: V_ANNOTATION
-    friction: V_ANNOTATION
-    sol_params: V_ANNOTATION
-    force: V_ANNOTATION
-    link_a: V_ANNOTATION
-    link_b: V_ANNOTATION
+    geom_a: ti.types.NDArray[ti.i32, 2]
+    geom_b: ti.types.NDArray[ti.i32, 2]
+    penetration: ti.types.NDArray[ti.f32, 2]
+    normal: ti.types.NDArray[ti.types.vector(3, ti.f32), 2]
+    pos: ti.types.NDArray[ti.types.vector(3, ti.f32), 2]
+    friction: ti.types.NDArray[ti.f32, 2]
+    sol_params: ti.types.NDArray[ti.types.vector(7, ti.f32), 2]
+    force: ti.types.NDArray[ti.types.vector(3, ti.f32), 2]
+    link_a: ti.types.NDArray[ti.i32, 2]
+    link_b: ti.types.NDArray[ti.i32, 2]
 
 
 def get_contact_data(solver, max_contact_pairs):
     f_batch = solver._batch_shape
+    max_contact_pairs_ = max(1, max_contact_pairs)
     kwargs = {
-        "geom_a": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
-        "geom_b": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
-        "penetration": V(dtype=gs.ti_float, shape=f_batch(max(1, max_contact_pairs))),
-        "normal": V(dtype=gs.ti_vec3, shape=f_batch(max(1, max_contact_pairs))),
-        "pos": V(dtype=gs.ti_vec3, shape=f_batch(max(1, max_contact_pairs))),
-        "friction": V(dtype=gs.ti_float, shape=f_batch(max(1, max_contact_pairs))),
-        "sol_params": V(dtype=gs.ti_vec7, shape=f_batch(max(1, max_contact_pairs))),
-        "force": V(dtype=gs.ti_vec3, shape=f_batch(max(1, max_contact_pairs))),
-        "link_a": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
-        "link_b": V(dtype=gs.ti_int, shape=f_batch(max(1, max_contact_pairs))),
+        "geom_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
+        "geom_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
+        "penetration": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
+        "normal": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
+        "pos": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
+        "friction": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
+        "sol_params": V(dtype=gs.ti_vec7, shape=f_batch(max_contact_pairs_)),
+        "force": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
+        "link_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
+        "link_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
     }
 
     if use_ndarray:
@@ -309,7 +310,8 @@ def get_sort_buffer(solver):
 
 @dataclasses.dataclass
 class StructContactCache:
-    normal: ti.types.NDArray[gs.ti_vec3, 3]
+    normal: ti.types.NDArray[ti.types.vector(3, ti.f32), 3]
+    # FIXME: cannot use V_ANNOTATION?
     # normal: V_ANNOTATION
 
 
@@ -335,27 +337,25 @@ def get_contact_cache(solver):
 @dataclasses.dataclass
 class StructColliderState:
     # sort_buffer: StructSortBuffer
-    # active_buffer_awake: V_ANNOTATION
-    # active_buffer_hib: V_ANNOTATION
-    # active_buffer: V_ANNOTATION
+    contact_data: StructContactData
+    active_buffer: V_ANNOTATION
+    n_broad_pairs: V_ANNOTATION
+    broad_collision_pairs: V_ANNOTATION
+    active_buffer_awake: V_ANNOTATION
+    active_buffer_hib: V_ANNOTATION
+    box_depth: V_ANNOTATION
+    box_points: V_ANNOTATION
+    box_pts: V_ANNOTATION
+    box_lines: V_ANNOTATION
+    box_linesu: V_ANNOTATION
+    box_axi: V_ANNOTATION
+    box_ppts2: V_ANNOTATION
+    box_pu: V_ANNOTATION
+    xyz_max_min: V_ANNOTATION
+    prism: V_ANNOTATION
+    n_contacts: V_ANNOTATION
+    n_contacts_hibernated: V_ANNOTATION
     first_time: V_ANNOTATION
-    # n_broad_pairs: V_ANNOTATION
-    # broad_collision_pairs: V_ANNOTATION
-    # n_contacts: V_ANNOTATION
-    # n_contacts_hibernated: V_ANNOTATION
-    # contact_data: StructContactData
-    # # Box-box fields
-    # box_depth: V_ANNOTATION
-    # box_points: V_ANNOTATION
-    # box_pts: V_ANNOTATION
-    # box_lines: V_ANNOTATION
-    # box_linesu: V_ANNOTATION
-    # box_axi: V_ANNOTATION
-    # box_ppts2: V_ANNOTATION
-    # box_pu: V_ANNOTATION
-    # # Terrain fields
-    # xyz_max_min: V_ANNOTATION
-    # prism: V_ANNOTATION
     contact_cache: StructContactCache
 
 
@@ -372,28 +372,27 @@ def get_collider_state(solver, n_possible_pairs, collider_static_config):
     contact_data = get_contact_data(solver, max_contact_pairs)
     sort_buffer = get_sort_buffer(solver)
     contact_cache = get_contact_cache(solver)
-    print("contact_cache", contact_cache)
     kwargs = {
         # "sort_buffer": sort_buffer,
-        # "active_buffer": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        "contact_data": contact_data,
+        "active_buffer": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        "n_broad_pairs": V(dtype=gs.ti_int, shape=_B),
+        "broad_collision_pairs": V(dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
+        "active_buffer_awake": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        "active_buffer_hib": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
+        "box_depth": V(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
+        "box_points": V(gs.ti_vec3, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
+        "box_pts": V(gs.ti_vec3, shape=f_batch(6)),
+        "box_lines": V(gs.ti_vec6, shape=f_batch(4)),
+        "box_linesu": V(gs.ti_vec6, shape=f_batch(4)),
+        "box_axi": V(gs.ti_vec3, shape=f_batch(3)),
+        "box_ppts2": V(dtype=gs.ti_float, shape=f_batch((4, 2))),
+        "box_pu": V(gs.ti_vec3, shape=f_batch(4)),
+        "xyz_max_min": V(dtype=gs.ti_float, shape=f_batch(6)),
+        "prism": V(dtype=gs.ti_vec3, shape=f_batch(6)),
+        "n_contacts": V(dtype=gs.ti_int, shape=_B),
+        "n_contacts_hibernated": V(dtype=gs.ti_int, shape=_B),
         "first_time": V(dtype=gs.ti_int, shape=_B),
-        # "n_broad_pairs": V(dtype=gs.ti_int, shape=_B),
-        # "broad_collision_pairs": V(dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
-        # "active_buffer_awake": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
-        # "active_buffer_hib": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
-        # "box_depth": V(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
-        # "box_points": V(gs.ti_vec3, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
-        # "box_pts": V(gs.ti_vec3, shape=f_batch(6)),
-        # "box_lines": V(gs.ti_vec6, shape=f_batch(4)),
-        # "box_linesu": V(gs.ti_vec6, shape=f_batch(4)),
-        # "box_axi": V(gs.ti_vec3, shape=f_batch(3)),
-        # "box_ppts2": V(dtype=gs.ti_float, shape=f_batch((4, 2))),
-        # "box_pu": V(gs.ti_vec3, shape=f_batch(4)),
-        # "xyz_max_min": V(dtype=gs.ti_float, shape=f_batch(6)),
-        # "prism": V(dtype=gs.ti_vec3, shape=f_batch(6)),
-        # "contact_data": contact_data,
-        # "n_contacts": V(dtype=gs.ti_int, shape=_B),
-        # "n_contacts_hibernated": V(dtype=gs.ti_int, shape=_B),
         "contact_cache": contact_cache,
     }
 

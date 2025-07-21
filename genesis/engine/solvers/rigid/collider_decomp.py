@@ -288,20 +288,18 @@ class Collider:
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         self._kernel_reset(
-            # self._solver._rigid_global_info,
-            # self._solver._static_rigid_sim_config,
-            self._collider_state,
-            # envs_idx
+            self._solver._rigid_global_info, self._solver._static_rigid_sim_config, self._collider_state, envs_idx
         )
+        print("reset")
         self._contacts_info_cache = {}
 
     @ti.kernel
     def _kernel_reset(
         self_unused,
-        # rigid_global_info: array_class.RigidGlobalInfo,
-        # static_rigid_sim_config: ti.template(),
+        rigid_global_info: array_class.RigidGlobalInfo,
+        static_rigid_sim_config: ti.template(),
         collider_state: array_class.ColliderState,
-        # envs_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
     ):
         pass
         # ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -313,9 +311,6 @@ class Collider:
         #         for i_gb in range(n_geoms):
         #             # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
         #             # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
-        #             # a = collider_state.contact_cache.normal[0,0,0]
-        #             # print("collider_state.contact_cache.normal[0,0,0]", a)
-        #             print("collider_state.contact_cache.normal[0,0,0]", i_ga, i_gb, i_b)
         #             collider_state.contact_cache.normal[i_ga, i_gb, i_b].fill(0.0)
 
     def clear(self, envs_idx=None):
