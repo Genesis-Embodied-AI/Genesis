@@ -152,11 +152,11 @@ class BatchRenderer(RBC):
             The sequence of rgb images associated with each camera.
         depth_arr : tuple of tensors
             The sequence of depth images associated with each camera.
+        normal_arr : tuple of tensors
+            The sequence of normal images associated with each camera.
+        segementation_arr : tuple of tensors
+            The sequence of segementation images associated with each camera.
         """
-        if normal:
-            raise NotImplementedError("Normal rendering not supported from now")
-        if segmentation:
-            raise NotImplementedError("Segmentation rendering not supported from now")
 
         # Clear cache if requested or necessary
         if force_render or self._t < self._visualizer.scene.t:
@@ -201,8 +201,12 @@ class BatchRenderer(RBC):
             rgb_arr = self._data_cache[(IMAGE_TYPE.RGB, cache_key)] = buffers[0]
         if depth_:
             depth_arr = self._data_cache[(IMAGE_TYPE.DEPTH, cache_key)] = buffers[1]
+        if normal_:
+            normal_arr = self._data_cache[(IMAGE_TYPE.NORMAL, cache_key)] = buffers[2]
+        if segmentation_:
+            segmentation_arr = self._data_cache[(IMAGE_TYPE.SEGMENTATION, cache_key)] = buffers[3]
 
-        return rgb_arr, depth_arr, None, None
+        return rgb_arr, depth_arr, normal_arr, segmentation_arr
 
     def destroy(self):
         self._lights.clear()
