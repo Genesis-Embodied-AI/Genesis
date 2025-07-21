@@ -585,14 +585,14 @@ class RigidLink(RBC):
         return self._invweight
 
     @property
-    def pos(self):
+    def pos(self) -> ArrayLike:
         """
         The initial position of the link. For real-time position, use `link.get_pos()`.
         """
         return self._pos
 
     @property
-    def quat(self):
+    def quat(self) -> ArrayLike:
         """
         The initial quaternion of the link. For real-time quaternion, use `link.get_quat()`.
         """

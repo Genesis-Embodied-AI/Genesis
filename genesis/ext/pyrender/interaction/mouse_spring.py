@@ -42,11 +42,14 @@ class MouseSpring:
 
         # do simple force on COM only:
         link: RigidLink = self.held_geom.link
-        link_pos: Vec3 = Vec3.from_tensor(link.get_pos())
+        assert link
         lin_vel: Vec3 = Vec3.from_tensor(link.get_vel())
         ang_vel: Vec3 = Vec3.from_tensor(link.get_ang())
 
-        pos_err_v: Vec3 = control_point - link_pos
+        link_pose: Pose = Pose.from_link(link)
+        link_pos: Vec3 = link_pose.pos
+        # pos_err_v: Vec3 = control_point - link_pos
+        pos_err_v: Vec3 = control_point - held_point_in_world
         vel_err_v: Vec3 = Vec3.zero() - lin_vel
         inv_mass: float = float(1.0 / link.get_mass() if link.get_mass() > 0.0 else 0.0)
 
