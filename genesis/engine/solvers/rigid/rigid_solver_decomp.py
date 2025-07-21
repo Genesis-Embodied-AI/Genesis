@@ -45,7 +45,7 @@ def _sanitize_sol_params(
         default_timeconst = min_timeconst
     if (timeconst < gs.EPS).any():
         gs.logger.debug(
-            f"Constraint solver time constant not specified. Using minimum value (`{default_timeconst:0.6g}`)."
+            f"Constraint solver time constant not specified. Using default value (`{default_timeconst:0.6g}`)."
         )
     invalid_mask = (timeconst > gs.EPS) & (timeconst + gs.EPS < min_timeconst)
     if invalid_mask.any():
