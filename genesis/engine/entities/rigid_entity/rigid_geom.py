@@ -906,7 +906,7 @@ class RigidVisGeom(RBC):
     @ti.kernel
     def _kernel_get_pos(self, tensor: ti.types.ndarray()):
         for i, i_b in ti.ndrange(3, self._solver._B):
-            tensor[i_b, i] = self._solver.vgeoms_state[self._idx, i_b].pos[i]
+            tensor[i_b, i] = self._solver.vgeoms_state.pos[self._idx, i_b][i]
 
     @gs.assert_built
     def get_quat(self):
@@ -922,7 +922,7 @@ class RigidVisGeom(RBC):
     @ti.kernel
     def _kernel_get_quat(self, tensor: ti.types.ndarray()):
         for i, i_b in ti.ndrange(4, self._solver._B):
-            tensor[i_b, i] = self._solver.vgeoms_state[self._idx, i_b].quat[i]
+            tensor[i_b, i] = self._solver.vgeoms_state.quat[self._idx, i_b][i]
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
