@@ -29,7 +29,7 @@ class FrameImageExporter:
     @staticmethod
     def _export_frame_normal_camera(i_env, export_dir, i_cam, i_step, normal):
         # Take the normal channel in case the rgb tensor has RGBA channel.
-        normal = tensor_to_array(normal[i_env, ..., :3])
+        normal = np.flip(tensor_to_array(normal[i_env, ..., :3]), axis=-1)
         cv2.imwrite(f"{export_dir}/normal_cam{i_cam}_env{i_env}_{i_step:03d}.png", normal)
         
     @staticmethod
