@@ -220,7 +220,7 @@ class ConstraintSolver:
         links_state: array_class.LinksState,
         dofs_state: array_class.DofsState,
         constraint_state: ti.template(),
-        collider_state: ti.template(),
+        collider_state: array_class.ColliderState,
         static_rigid_sim_config: ti.template(),
     ):
         _B = dofs_state.ctrl_mode.shape[1]
@@ -501,7 +501,7 @@ class ConstraintSolver:
         joints_info: array_class.JointsInfo,
         equalities_info: array_class.EqualitiesInfo,
         constraint_state: ti.template(),
-        collider_state: ti.template(),
+        collider_state: array_class.ColliderState,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
@@ -1125,7 +1125,7 @@ class ConstraintSolver:
     def _func_update_contact_force(
         self_unused,
         links_state: array_class.LinksState,
-        collider_state: ti.template(),
+        collider_state: array_class.ColliderState,
         constraint_state: ti.template(),
         static_rigid_sim_config: ti.template(),
     ):

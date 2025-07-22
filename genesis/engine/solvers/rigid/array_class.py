@@ -338,7 +338,7 @@ def get_contact_cache(solver):
 
 @dataclasses.dataclass
 class StructColliderState:
-    # sort_buffer: StructSortBuffer
+    sort_buffer: StructSortBuffer
     contact_data: StructContactData
     active_buffer: V_ANNOTATION
     n_broad_pairs: V_ANNOTATION
@@ -375,11 +375,11 @@ def get_collider_state(solver, n_possible_pairs, collider_static_config):
     sort_buffer = get_sort_buffer(solver)
     contact_cache = get_contact_cache(solver)
     kwargs = {
-        # "sort_buffer": sort_buffer,
+        "sort_buffer": sort_buffer,
         "contact_data": contact_data,
         "active_buffer": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "n_broad_pairs": V(dtype=gs.ti_int, shape=_B),
-        "broad_collision_pairs": V(dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
+        "broad_collision_pairs": V_VEC(2, dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
         "active_buffer_awake": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "active_buffer_hib": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "box_depth": V(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
@@ -1615,3 +1615,4 @@ ColliderInfo = ti.template() if not use_ndarray else StructColliderInfo
 MPRState = ti.template() if not use_ndarray else StructMPRState
 SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
 ConstraintState = ti.template() if not use_ndarray else StructConstraintState
+GJKState = ti.template() if not use_ndarray else StructGJKState

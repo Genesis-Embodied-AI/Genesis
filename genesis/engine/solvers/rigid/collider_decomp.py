@@ -13,6 +13,9 @@ import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 from genesis.utils.misc import ti_field_to_torch
 import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.engine.solvers.rigid.gjk_decomp as gjk
+import genesis.engine.solvers.rigid.mpr_decomp as mpr
+import genesis.engine.solvers.rigid.support_field_decomp as support_field
 
 from .mpr_decomp import MPR
 from .gjk_decomp import GJK
@@ -92,7 +95,7 @@ class Collider:
 
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
-        self._gjk = GJK(rigid_solver) if self._solver._options.use_gjk_collision else None
+        self._gjk = GJK(rigid_solver)
 
         # Support field used for mpr and gjk. Rather than having separate support fields for each algorithm, keep only
         # one copy here to save memory and maintain cleaner code.
@@ -310,7 +313,7 @@ class Collider:
                 for i_gb in range(n_geoms):
                     # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
                     # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
-                    collider_state.contact_cache.normal[i_ga, i_gb, i_b].fill(0.0)
+                    collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -329,7 +332,7 @@ class Collider:
         links_state: array_class.LinksState,
         links_info: array_class.LinksInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
+        collider_state: array_class.ColliderState,
         envs_idx: ti.types.ndarray(),
     ):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -367,7 +370,11 @@ class Collider:
 
         self._contacts_info_cache = {}
         # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
-        self._func_update_aabbs(self._solver)
+        self._solver._kernel_update_geom_aabbs(
+            self._solver.geoms_state,
+            self._solver.geoms_init_AABB,
+            self._solver._static_rigid_sim_config,
+        )
         # timer.stamp("func_update_aabbs")
         self._func_broad_phase(
             self._solver.links_state,
@@ -395,14 +402,14 @@ class Collider:
             self._collider_static_config,
             self._mpr._mpr_state,
             self._mpr._mpr_static_config,
-            self._gjk._gjk_state if self._gjk is not None else None,
-            self._gjk._gjk_static_config if self._gjk is not None else None,
+            self._gjk._gjk_state,
+            self._gjk._gjk_static_config,
             self._support_field._support_field_info,
             self._support_field._support_field_static_config,
-            self._mpr,
-            self._gjk,
-            self._solver.sdf,
-            self._support_field,
+            # self._mpr,
+            # self._gjk,
+            # self._solver.sdf,
+            # self._
         )
         self._func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
@@ -414,7 +421,7 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
-            self._support_field,
+            self._,
         )
         # timer.stamp("func_narrow_phase")
         if self._collider_static_config.has_terrain:
@@ -432,7 +439,7 @@ class Collider:
                 self._support_field._support_field_info,
                 self._support_field._support_field_static_config,
                 self._mpr,
-                self._support_field,
+                self._,
             )
             # timer.stamp("_func_narrow_phase_any_vs_terrain")
         if self._collider_static_config.has_nonconvex_nonterrain:
@@ -627,7 +634,7 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         verts_info: array_class.VertsInfo,
-        collider_info: ti.template(),
+        collider_info: array_class.ColliderInfo,
         sdf: ti.template(),
         i_ga,
         i_gb,
@@ -736,15 +743,14 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         geoms_init_AABB: array_class.GeomsInitAABB,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
-        mpr: ti.template(),
-        support_field: ti.template(),
+        # mpr: ti.template(),
         i_ga,
         i_gb,
         i_b,
@@ -785,7 +791,6 @@ class Collider:
                     collider_static_config,
                     support_field_info,
                     support_field_static_config,
-                    support_field,
                     direction,
                     i_ga,
                     i_b,
@@ -860,7 +865,6 @@ class Collider:
                                         mpr_static_config,
                                         support_field_info,
                                         support_field_static_config,
-                                        support_field,
                                         i_ga,
                                         i_gb,
                                         i_b,
@@ -900,7 +904,7 @@ class Collider:
         geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
 
     @ti.func
-    def add_prism_vert(self_unused, collider_state: ti.template(), x, y, z, i_b):
+    def add_prism_vert(self_unused, collider_state: array_class.ColliderState, x, y, z, i_b):
         collider_state.prism[0, i_b] = collider_state.prism[1, i_b]
         collider_state.prism[1, i_b] = collider_state.prism[2, i_b]
         collider_state.prism[3, i_b] = collider_state.prism[4, i_b]
@@ -912,10 +916,10 @@ class Collider:
         collider_state.prism[5, i_b][1] = y
         collider_state.prism[5, i_b][2] = z
 
-    @ti.kernel
-    def _func_update_aabbs(self_unused, solver: ti.template()):
-        # FIXME: Remove [solver] when Rigid solver migration is done.
-        solver._func_update_geom_aabbs()
+    # @ti.kernel
+    # def _func_update_aabbs(self_unused, solver: ti.template()):
+    #     # FIXME: Remove [solver] when Rigid solver migration is done.
+    #     solver._func_update_geom_aabbs()
 
     @ti.func
     def _func_check_collision_valid(
@@ -924,7 +928,7 @@ class Collider:
         links_info: array_class.LinksInfo,
         geoms_info: array_class.GeomsInfo,
         static_rigid_sim_config: ti.template(),
-        collider_info: ti.template(),
+        collider_info: array_class.ColliderInfo,
         i_ga,
         i_gb,
         i_b,
@@ -955,8 +959,8 @@ class Collider:
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
         # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to taichi
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
     ):
         """
         Sweep and Prune (SAP) for broad-phase collision detection.
@@ -974,13 +978,13 @@ class Collider:
             # copy updated geom aabbs to buffer for sorting
             if collider_state.first_time[i_b]:
                 for i in range(n_geoms):
-                    collider_state.sort_buffer[2 * i, i_b].value = geoms_state.aabb_min[i, i_b][axis]
-                    collider_state.sort_buffer[2 * i, i_b].i_g = i
-                    collider_state.sort_buffer[2 * i, i_b].is_max = 0
+                    collider_state.sort_buffer.value[2 * i, i_b] = geoms_state.aabb_min[i, i_b][axis]
+                    collider_state.sort_buffer.i_g[2 * i, i_b] = i
+                    collider_state.sort_buffer.is_max[2 * i, i_b] = 0
 
-                    collider_state.sort_buffer[2 * i + 1, i_b].value = geoms_state.aabb_max[i, i_b][axis]
-                    collider_state.sort_buffer[2 * i + 1, i_b].i_g = i
-                    collider_state.sort_buffer[2 * i + 1, i_b].is_max = 1
+                    collider_state.sort_buffer.value[2 * i + 1, i_b] = geoms_state.aabb_max[i, i_b][axis]
+                    collider_state.sort_buffer.i_g[2 * i + 1, i_b] = i
+                    collider_state.sort_buffer.is_max[2 * i + 1, i_b] = 1
 
                     geoms_state.min_buffer_idx[i, i_b] = 2 * i
                     geoms_state.max_buffer_idx[i, i_b] = 2 * i + 1
@@ -991,47 +995,53 @@ class Collider:
                 # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
                 if ti.static(not static_rigid_sim_config.use_hibernation):
                     for i in range(n_geoms * 2):
-                        if collider_state.sort_buffer[i, i_b].is_max:
-                            collider_state.sort_buffer[i, i_b].value = geoms_state.aabb_max[
-                                collider_state.sort_buffer[i, i_b].i_g, i_b
+                        if collider_state.sort_buffer.is_max[i, i_b]:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[
+                                collider_state.sort_buffer.i_g[i, i_b], i_b
                             ][axis]
                         else:
-                            collider_state.sort_buffer[i, i_b].value = geoms_state.aabb_min[
-                                collider_state.sort_buffer[i, i_b].i_g, i_b
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[
+                                collider_state.sort_buffer.i_g[i, i_b], i_b
                             ][axis]
 
             # insertion sort, which has complexity near O(n) for nearly sorted array
             for i in range(1, 2 * n_geoms):
-                key = collider_state.sort_buffer[i, i_b]
+                key_value = collider_state.sort_buffer.value[i, i_b]
+                key_is_max = collider_state.sort_buffer.is_max[i, i_b]
+                key_i_g = collider_state.sort_buffer.i_g[i, i_b]
 
                 j = i - 1
-                while j >= 0 and key.value < collider_state.sort_buffer[j, i_b].value:
-                    collider_state.sort_buffer[j + 1, i_b] = collider_state.sort_buffer[j, i_b]
+                while j >= 0 and key_value < collider_state.sort_buffer.value[j, i_b]:
+                    collider_state.sort_buffer.value[j + 1, i_b] = collider_state.sort_buffer.value[j, i_b]
+                    collider_state.sort_buffer.is_max[j + 1, i_b] = collider_state.sort_buffer.is_max[j, i_b]
+                    collider_state.sort_buffer.i_g[j + 1, i_b] = collider_state.sort_buffer.i_g[j, i_b]
 
                     if ti.static(static_rigid_sim_config.use_hibernation):
-                        if collider_state.sort_buffer[j, i_b].is_max:
-                            geoms_state.max_buffer_idx[collider_state.sort_buffer[j, i_b].i_g, i_b] = j + 1
+                        if collider_state.sort_buffer.is_max[j, i_b]:
+                            geoms_state.max_buffer_idx[collider_state.sort_buffer.i_g[j, i_b], i_b] = j + 1
                         else:
-                            geoms_state.min_buffer_idx[collider_state.sort_buffer[j, i_b].i_g, i_b] = j + 1
+                            geoms_state.min_buffer_idx[collider_state.sort_buffer.i_g[j, i_b], i_b] = j + 1
 
                     j -= 1
-                collider_state.sort_buffer[j + 1, i_b] = key
+                collider_state.sort_buffer.value[j + 1, i_b] = key_value
+                collider_state.sort_buffer.is_max[j + 1, i_b] = key_is_max
+                collider_state.sort_buffer.i_g[j + 1, i_b] = key_i_g
 
                 if ti.static(static_rigid_sim_config.use_hibernation):
-                    if key.is_max:
-                        geoms_state.max_buffer_idx[key.i_g, i_b] = j + 1
+                    if key_is_max:
+                        geoms_state.max_buffer_idx[key_i_g, i_b] = j + 1
                     else:
-                        geoms_state.min_buffer_idx[key.i_g, i_b] = j + 1
+                        geoms_state.min_buffer_idx[key_i_g, i_b] = j + 1
 
             # sweep over the sorted AABBs to find potential collision pairs
             collider_state.n_broad_pairs[i_b] = 0
             if ti.static(not static_rigid_sim_config.use_hibernation):
                 n_active = 0
                 for i in range(2 * n_geoms):
-                    if not collider_state.sort_buffer[i, i_b].is_max:
+                    if not collider_state.sort_buffer.is_max[i, i_b]:
                         for j in range(n_active):
                             i_ga = collider_state.active_buffer[j, i_b]
-                            i_gb = collider_state.sort_buffer[i, i_b].i_g
+                            i_gb = collider_state.sort_buffer.i_g[i, i_b]
                             if i_ga > i_gb:
                                 i_ga, i_gb = i_gb, i_ga
 
@@ -1051,7 +1061,9 @@ class Collider:
                                 # Clear collision normal cache if not in contact
                                 if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
-                                    collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                                    collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(
+                                        gs.ti_float, 3
+                                    )
                                 continue
 
                             i_p = collider_state.n_broad_pairs[i_b]
@@ -1062,10 +1074,10 @@ class Collider:
                             collider_state.broad_collision_pairs[i_p, i_b][1] = i_gb
                             collider_state.n_broad_pairs[i_b] += 1
 
-                        collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer[i, i_b].i_g
+                        collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
                         n_active = n_active + 1
                     else:
-                        i_g_to_remove = collider_state.sort_buffer[i, i_b].i_g
+                        i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
                         for j in range(n_active):
                             if collider_state.active_buffer[j, i_b] == i_g_to_remove:
                                 if j < n_active - 1:
@@ -1079,14 +1091,14 @@ class Collider:
                     n_active_hib = 0
                     for i in range(2 * n_geoms):
                         is_incoming_geom_hibernated = geoms_state.hibernated[
-                            collider_state.sort_buffer[i, i_b].i_g, i_b
+                            collider_state.sort_buffer.i_g[i, i_b], i_b
                         ]
 
-                        if not collider_state.sort_buffer[i, i_b].is_max:
+                        if not collider_state.sort_buffer.is_max[i, i_b]:
                             # both awake and hibernated geom check with active awake geoms
                             for j in range(n_active_awake):
                                 i_ga = collider_state.active_buffer_awake[j, i_b]
-                                i_gb = collider_state.sort_buffer[i, i_b].i_g
+                                i_gb = collider_state.sort_buffer.i_g[i, i_b]
                                 if i_ga > i_gb:
                                     i_ga, i_gb = i_gb, i_ga
 
@@ -1108,7 +1120,9 @@ class Collider:
                                     # Clear collision normal cache if not in contact
                                     if ti.static(not static_rigid_sim_config._enable_mujoco_compatibility):
                                         # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
-                                        collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                                        collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(
+                                            gs.ti_float, 3
+                                        )
                                     continue
 
                                 collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][0] = i_ga
@@ -1119,7 +1133,7 @@ class Collider:
                             if not is_incoming_geom_hibernated:
                                 for j in range(n_active_hib):
                                     i_ga = collider_state.active_buffer_hib[j, i_b]
-                                    i_gb = collider_state.sort_buffer[i, i_b].i_g
+                                    i_gb = collider_state.sort_buffer.i_g[i, i_b]
                                     if i_ga > i_gb:
                                         i_ga, i_gb = i_gb, i_ga
 
@@ -1140,7 +1154,9 @@ class Collider:
                                     ):
                                         # Clear collision normal cache if not in contact
                                         # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
-                                        collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                                        collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(
+                                            gs.ti_float, 3
+                                        )
                                         continue
 
                                     collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][
@@ -1152,17 +1168,17 @@ class Collider:
                                     collider_state.n_broad_pairs[i_b] = collider_state.n_broad_pairs[i_b] + 1
 
                             if is_incoming_geom_hibernated:
-                                collider_state.active_buffer_hib[n_active_hib, i_b] = collider_state.sort_buffer[
+                                collider_state.active_buffer_hib[n_active_hib, i_b] = collider_state.sort_buffer.i_g[
                                     i, i_b
-                                ].i_g
+                                ]
                                 n_active_hib = n_active_hib + 1
                             else:
-                                collider_state.active_buffer_awake[n_active_awake, i_b] = collider_state.sort_buffer[
-                                    i, i_b
-                                ].i_g
+                                collider_state.active_buffer_awake[n_active_awake, i_b] = (
+                                    collider_state.sort_buffer.i_g[i, i_b]
+                                )
                                 n_active_awake = n_active_awake + 1
                         else:
-                            i_g_to_remove = collider_state.sort_buffer[i, i_b].i_g
+                            i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
                             if is_incoming_geom_hibernated:
                                 for j in range(n_active_hib):
                                     if collider_state.active_buffer_hib[j, i_b] == i_g_to_remove:
@@ -1196,21 +1212,21 @@ class Collider:
         faces_info: array_class.FacesInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
-        mpr_state: ti.template(),
+        mpr_state: array_class.MPRState,
         mpr_static_config: ti.template(),
-        gjk_state: ti.template(),
+        gjk_state: array_class.GJKState,
         gjk_static_config: ti.template(),
-        support_field_info: ti.template(),
+        support_field_info: array_class.SupportFieldInfo,
         support_field_static_config: ti.template(),
         # FIXME: We need mpr, gjk, sdf, and support_field for now to call their class functions. After migration is
         # done, remove these arguments as the class functions will be called directly.
-        mpr: ti.template(),
-        gjk: ti.template(),
-        sdf: ti.template(),
-        support_field: ti.template(),
+        # # mpr: ti.template(),
+        # gjk: ti.template(),
+        # sdf: ti.template(),
+        #
     ):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
@@ -1261,10 +1277,10 @@ class Collider:
                             gjk_static_config,
                             support_field_info,
                             support_field_static_config,
-                            mpr,
-                            gjk,
-                            sdf,
-                            support_field,
+                            # mpr,
+                            # gjk,
+                            # sdf,
+                            #
                             i_ga,
                             i_gb,
                             i_b,
@@ -1295,7 +1311,6 @@ class Collider:
                                 mpr,
                                 gjk,
                                 sdf,
-                                support_field,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -1310,12 +1325,11 @@ class Collider:
         verts_info: array_class.VertsInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
         # FIXME: We need support_field for now to call its class functions. After migration is done, remove these
         # arguments as the class functions will be called directly.
-        support_field: ti.template(),
     ):
         _B = collider_state.active_buffer.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -1338,7 +1352,6 @@ class Collider:
                             collider_state,
                             collider_info,
                             collider_static_config,
-                            support_field,
                             i_ga,
                             i_gb,
                             i_b,
@@ -1365,8 +1378,8 @@ class Collider:
         geoms_init_AABB: array_class.GeomsInitAABB,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
@@ -1374,8 +1387,7 @@ class Collider:
         support_field_static_config: ti.template(),
         # FIXME: We need mpr and support_field for now to call their class functions. After migration is done, remove
         # these arguments as the class functions will be called directly.
-        mpr: ti.template(),
-        support_field: ti.template(),
+        # mpr: ti.template(),
     ):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1408,7 +1420,6 @@ class Collider:
                             support_field_info,
                             support_field_static_config,
                             mpr,
-                            support_field,
                             i_ga,
                             i_gb,
                             i_b,
@@ -1426,8 +1437,8 @@ class Collider:
         edges_info: array_class.EdgesInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
         sdf: ti.template(),
     ):
@@ -1601,10 +1612,10 @@ class Collider:
         geoms_init_AABB: array_class.GeomsInitAABB,
         verts_info: array_class.VertsInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
-        support_field: ti.template(),
+        #
         i_ga,
         i_gb,
         i_b,
@@ -1668,8 +1679,8 @@ class Collider:
         self_unused,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         i_ga,
         i_gb,
         normal: ti.types.vector(3),
@@ -1795,8 +1806,8 @@ class Collider:
         faces_info: array_class.FacesInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
         mpr_state: ti.template(),
         mpr_static_config: ti.template(),
@@ -1804,10 +1815,10 @@ class Collider:
         gjk_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
-        mpr: ti.template(),
-        gjk: ti.template(),
-        sdf: ti.template(),
-        support_field: ti.template(),
+        # mpr: ti.template(),
+        # gjk: ti.template(),
+        # sdf: ti.template(),
+        #
         i_ga,
         i_gb,
         i_b,
@@ -1823,7 +1834,6 @@ class Collider:
                     collider_state,
                     collider_info,
                     collider_static_config,
-                    support_field,
                     i_ga,
                     i_gb,
                     i_b,
@@ -1894,7 +1904,6 @@ class Collider:
                             collider_static_config,
                             support_field_info,
                             support_field_static_config,
-                            support_field,
                             normal,
                             i_gb,
                             i_b,
@@ -1910,7 +1919,7 @@ class Collider:
                             # Try using MPR before anything else
                             is_mpr_updated = False
                             is_mpr_guess_direction_available = True
-                            normal_ws = collider_state.contact_cache[i_ga, i_gb, i_b].normal
+                            normal_ws = collider_state.contact_cache.normal[i_ga, i_gb, i_b]
                             for i_mpr in range(2):
                                 if i_mpr == 1:
                                     # Try without warm-start if no contact was detected using it.
@@ -1935,7 +1944,6 @@ class Collider:
                                         mpr_static_config,
                                         support_field_info,
                                         support_field_static_config,
-                                        support_field,
                                         i_ga,
                                         i_gb,
                                         i_b,
@@ -1972,7 +1980,6 @@ class Collider:
                                 gjk_static_config,
                                 support_field_info,
                                 support_field_static_config,
-                                support_field,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -2109,11 +2116,11 @@ class Collider:
                         if ti.static(
                             collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
                         ):
-                            collider_state.contact_cache[i_ga, i_gb, i_b].normal = normal
+                            collider_state.contact_cache.normal[i_ga, i_gb, i_b] = normal
                     else:
                         # Clear collision normal cache if not in contact
                         # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
-                        collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
+                        collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
                 elif multi_contact and is_col_0 > 0 and is_col > 0:
                     if ti.static(
@@ -2215,8 +2222,8 @@ class Collider:
         self_unused,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
         i_ga,
         i_gb,
@@ -2967,8 +2974,8 @@ class Collider:
         self_unused,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        collider_state: ti.template(),
-        collider_info: ti.template(),
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
         is_padded: ti.template(),
         iout: ti.types.ndarray(),
         fout: ti.types.ndarray(),

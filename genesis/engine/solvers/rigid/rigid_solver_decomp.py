@@ -2158,7 +2158,7 @@ class RigidSolver(Solver):
         entities_info: array_class.EntitiesInfo,
         geoms_info: array_class.GeomsInfo,
         geoms_state: array_class.GeomsState,
-        collider_state: ti.template(),
+        collider_state: array_class.ColliderState,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
@@ -2283,13 +2283,9 @@ class RigidSolver(Solver):
 
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         if self._enable_collision or self._enable_joint_limit or self.n_equalities > 0:
-            self._func_constraint_clear(
-                links_state=self.links_state,
-                links_info=self.links_info,
-                constraint_state=self.constraint_solver.constraint_state,
-                collider_state=self.collider._collider_state,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+            self.constraint_solver.constraint_state.n_constraints.fill(0)
+            self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
+            self._func_constraint_clear()
             # timer.stamp("constraint_solver.clear")
 
         if self._enable_collision:
@@ -2300,47 +2296,49 @@ class RigidSolver(Solver):
             self.constraint_solver.handle_constraints()
         # timer.stamp("constraint_solver.handle_constraints")
 
-    @ti.kernel
-    def _func_constraint_clear(
-        self_unused,
-        links_state: array_class.LinksState,
-        links_info: array_class.LinksInfo,
-        constraint_state: array_class.ConstraintState,
-        collider_state: array_class.ColliderState,
-        static_rigid_sim_config: ti.template(),
-    ):
+    def _func_constraint_clear(self):
+        self.constraint_solver.constraint_state.n_constraints.fill(0)
+        self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
+        self.collider._collider_state.n_contacts.fill(0)
 
-        constraint_state.n_constraints.fill(0)
-        if ti.static(not static_rigid_sim_config.use_contact_island):
-            constraint_state.n_constraints_equality.fill(0)
+    # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
+    # right now, a python-scope function is more convenient since .fill(0) only works on python scope for ndarray
+    # @ti.kernel
+    # def _func_constraint_clear(
+    #     self_unused,
+    #     links_state: array_class.LinksState,
+    #     links_info: array_class.LinksInfo,
+    #     collider_state: array_class.ColliderState,
+    #     static_rigid_sim_config: ti.template(),
+    # ):
 
-        if static_rigid_sim_config.enable_collision:
-            if ti.static(static_rigid_sim_config.use_hibernation):
-                collider_state.n_contacts_hibernated.fill(0)
-                _B = collider_state.n_contacts.shape[0]
-                ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-                for i_b in range(_B):
-                    # Advect hibernated contacts
-                    for i_c in range(collider_state.n_contacts[i_b]):
-                        i_la = collider_state.contact_data[i_c, i_b].link_a
-                        i_lb = collider_state.contact_data[i_c, i_b].link_b
-                        I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
-                        I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
+    #     if static_rigid_sim_config.enable_collision:
+    #         if ti.static(static_rigid_sim_config.use_hibernation):
+    #             collider_state.n_contacts_hibernated.fill(0)
+    #             _B = collider_state.n_contacts.shape[0]
+    #             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    #             for i_b in range(_B):
+    #                 # Advect hibernated contacts
+    #                 for i_c in range(collider_state.n_contacts[i_b]):
+    #                     i_la = collider_state.contact_data[i_c, i_b].link_a
+    #                     i_lb = collider_state.contact_data[i_c, i_b].link_b
+    #                     I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
+    #                     I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-                        # Pair of hibernated-fixed links -> hibernated contact
-                        # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
-                        # once a new collision is detected
-                        if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                            links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
-                        ):
-                            i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
-                            if i_c != i_c_hibernated:
-                                collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
-                            collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
+    #                     # Pair of hibernated-fixed links -> hibernated contact
+    #                     # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
+    #                     # once a new collision is detected
+    #                     if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+    #                         links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+    #                     ):
+    #                         i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
+    #                         if i_c != i_c_hibernated:
+    #                             collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
+    #                         collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
-                    collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-            else:
-                collider_state.n_contacts.fill(0)
+    #                 collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
+    #         else:
+    #             collider_state.n_contacts.fill(0)
 
     def _batch_array(self, arr, first_dim=False):
         if first_dim:
@@ -3062,22 +3060,29 @@ class RigidSolver(Solver):
                     self.verts_info.init_pos[i_v], g_pos, g_quat
                 )
 
-    @ti.func
-    def _func_update_geom_aabbs(self):
-        ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g, i_b in ti.ndrange(self.n_geoms, self._B):
-            g_pos = self.geoms_state.pos[i_g, i_b]
-            g_quat = self.geoms_state.quat[i_g, i_b]
+    @ti.kernel
+    def _kernel_update_geom_aabbs(
+        self_unused,
+        geoms_state: array_class.GeomsState,
+        geoms_init_AABB: array_class.GeomsInitAABB,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_geoms = geoms_state.pos.shape[0]
+        _B = geoms_state.pos.shape[1]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_g, i_b in ti.ndrange(n_geoms, _B):
+            g_pos = geoms_state.pos[i_g, i_b]
+            g_quat = geoms_state.quat[i_g, i_b]
 
             lower = gu.ti_vec3(ti.math.inf)
             upper = gu.ti_vec3(-ti.math.inf)
             for i_corner in ti.static(range(8)):
-                corner_pos = gu.ti_transform_by_trans_quat(self.geoms_init_AABB[i_g, i_corner], g_pos, g_quat)
+                corner_pos = gu.ti_transform_by_trans_quat(geoms_init_AABB[i_g, i_corner], g_pos, g_quat)
                 lower = ti.min(lower, corner_pos)
                 upper = ti.max(upper, corner_pos)
 
-            self.geoms_state.aabb_min[i_g, i_b] = lower
-            self.geoms_state.aabb_max[i_g, i_b] = upper
+            geoms_state.aabb_min[i_g, i_b] = lower
+            geoms_state.aabb_max[i_g, i_b] = upper
 
     @ti.kernel
     def _kernel_update_vgeoms(
