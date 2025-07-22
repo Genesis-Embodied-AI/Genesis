@@ -14,6 +14,7 @@ from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
@@ -51,7 +52,7 @@ class RigidLink(RBC):
     ):
         self._name: str = name
         self._entity: "RigidEntity" = entity
-        self._solver = entity.solver
+        self._solver: "RigidSolver" = entity.solver
         self._entity_idx_in_solver = entity.idx
 
         self._uid = gs.UID()
@@ -265,7 +266,7 @@ class RigidLink(RBC):
         return self._solver.get_links_quat([self._idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None):
+    def get_vel(self, envs_idx=None) -> torch.Tensor:
         """
         Get the linear velocity of the link in the world frame.
 
@@ -277,7 +278,7 @@ class RigidLink(RBC):
         return self._solver.get_links_vel([self._idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_ang(self, envs_idx=None):
+    def get_ang(self, envs_idx=None) -> torch.Tensor:
         """
         Get the angular velocity of the link in the world frame.
 
@@ -313,7 +314,7 @@ class RigidLink(RBC):
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -323,7 +324,7 @@ class RigidLink(RBC):
 
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_vverts(self):
@@ -340,11 +341,11 @@ class RigidLink(RBC):
     def _kernel_get_vverts(self, tensor: ti.types.ndarray()):
         for i_vg_, i_b in ti.ndrange(self.n_vgeoms, self._solver._B):
             i_vg = i_vg_ + self._vgeom_start
-            g_info = self._solver.vgeoms_info[i_vg]
-            g_state = self._solver.vgeoms_state[i_vg, i_b]
-            for i_v in range(g_info.vvert_start, g_info.vvert_end):
+            for i_v in range(self._solver.vgeoms_info.vvert_start[i_vg], self._solver.vgeoms_info.vvert_end[i_vg]):
                 vvert_pos = gu.ti_transform_by_trans_quat(
-                    self._solver.vverts_info[i_v].init_pos, g_state.pos, g_state.quat
+                    self._solver.vverts_info.init_pos[i_v],
+                    self._solver.vgeoms_state.pos[i_vg, i_b],
+                    self._solver.vgeoms_state.quat[i_vg, i_b],
                 )
                 for j in range(3):
                     tensor[i_b, i_v - self._vvert_start, j] = vvert_pos[j]
