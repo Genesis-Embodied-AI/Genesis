@@ -632,22 +632,21 @@ class RigidSolver(Solver):
         has_dofs = sum(joint.n_dofs for joint in joints) > 0
         if has_dofs:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             self._kernel_init_dof_fields(
-                # dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
-                # dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
-                # dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
-                # dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
-                # dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                # dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
-                # dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
-                # dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
-                # dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
-                # dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
+                dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
+                dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
+                dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
+                dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
+                dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
+                dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
+                dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
+                dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
+                dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
+                dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
                 dofs_info=self.dofs_info,
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
-            print("init_dof_fields")
 
         # just in case
         self.dofs_state.force.fill(0)
@@ -656,16 +655,16 @@ class RigidSolver(Solver):
     def _kernel_init_dof_fields(
         self_unused,
         # input np array
-        # dofs_motion_ang: ti.types.ndarray(),
-        # dofs_motion_vel: ti.types.ndarray(),
-        # dofs_limit: ti.types.ndarray(),
-        # dofs_invweight: ti.types.ndarray(),
-        # dofs_stiffness: ti.types.ndarray(),
-        # dofs_damping: ti.types.ndarray(),
-        # dofs_armature: ti.types.ndarray(),
-        # dofs_kp: ti.types.ndarray(),
-        # dofs_kv: ti.types.ndarray(),
-        # dofs_force_range: ti.types.ndarray(),
+        dofs_motion_ang: ti.types.ndarray(),
+        dofs_motion_vel: ti.types.ndarray(),
+        dofs_limit: ti.types.ndarray(),
+        dofs_invweight: ti.types.ndarray(),
+        dofs_stiffness: ti.types.ndarray(),
+        dofs_damping: ti.types.ndarray(),
+        dofs_armature: ti.types.ndarray(),
+        dofs_kp: ti.types.ndarray(),
+        dofs_kv: ti.types.ndarray(),
+        dofs_force_range: ti.types.ndarray(),
         # taichi variables
         dofs_info: array_class.DofsInfo,
         dofs_state: array_class.DofsState,
@@ -673,40 +672,39 @@ class RigidSolver(Solver):
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
-        pass
-        # n_dofs = dofs_state.ctrl_mode.shape[0]
-        # _B = dofs_state.ctrl_mode.shape[1]
-        # for I in ti.grouped(dofs_info.invweight):
-        #     i = I[0]  # batching (if any) will be the second dim
+        n_dofs = dofs_state.ctrl_mode.shape[0]
+        _B = dofs_state.ctrl_mode.shape[1]
+        for I in ti.grouped(dofs_info.invweight):
+            i = I[0]  # batching (if any) will be the second dim
 
-        #     for j in ti.static(range(3)):
-        #         dofs_info.motion_ang[I][j] = dofs_motion_ang[i, j]
-        #         dofs_info.motion_vel[I][j] = dofs_motion_vel[i, j]
+            for j in ti.static(range(3)):
+                dofs_info.motion_ang[I][j] = dofs_motion_ang[i, j]
+                dofs_info.motion_vel[I][j] = dofs_motion_vel[i, j]
 
-        #     for j in ti.static(range(2)):
-        #         dofs_info.limit[I][j] = dofs_limit[i, j]
-        #         dofs_info.force_range[I][j] = dofs_force_range[i, j]
+            for j in ti.static(range(2)):
+                dofs_info.limit[I][j] = dofs_limit[i, j]
+                dofs_info.force_range[I][j] = dofs_force_range[i, j]
 
-        #     dofs_info.armature[I] = dofs_armature[i]
-        #     dofs_info.invweight[I] = dofs_invweight[i]
-        #     dofs_info.stiffness[I] = dofs_stiffness[i]
-        #     dofs_info.damping[I] = dofs_damping[i]
-        #     dofs_info.kp[I] = dofs_kp[i]
-        #     dofs_info.kv[I] = dofs_kv[i]
+            dofs_info.armature[I] = dofs_armature[i]
+            dofs_info.invweight[I] = dofs_invweight[i]
+            dofs_info.stiffness[I] = dofs_stiffness[i]
+            dofs_info.damping[I] = dofs_damping[i]
+            dofs_info.kp[I] = dofs_kp[i]
+            dofs_info.kv[I] = dofs_kv[i]
 
-        # ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        # for i, b in ti.ndrange(n_dofs, _B):
-        #     dofs_state.ctrl_mode[i, b] = gs.CTRL_MODE.FORCE
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i, b in ti.ndrange(n_dofs, _B):
+            dofs_state.ctrl_mode[i, b] = gs.CTRL_MODE.FORCE
 
-        # if ti.static(static_rigid_sim_config.use_hibernation):
-        #     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        #     for i, b in ti.ndrange(n_dofs, _B):
-        #         dofs_state.hibernated[i, b] = False
-        #         rigid_global_info.awake_dofs[i, b] = i
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for i, b in ti.ndrange(n_dofs, _B):
+                dofs_state.hibernated[i, b] = False
+                rigid_global_info.awake_dofs[i, b] = i
 
-        #     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        #     for b in range(_B):
-        #         rigid_global_info.n_awake_dofs[b] = n_dofs
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            for b in range(_B):
+                rigid_global_info.n_awake_dofs[b] = n_dofs
 
     def _init_link_fields(self):
         self.links_info = self.data_manager.links_info
@@ -1961,63 +1959,64 @@ class RigidSolver(Solver):
     @ti.func
     def _func_update_cartesian_space(
         self_unused,
-        i_b,
-        links_state,
-        links_info,
-        joints_state,
-        joints_info,
-        dofs_state,
-        dofs_info,
-        geoms_info,
-        geoms_state,
-        entities_info,
+        # i_b,
+        # links_state,
+        # links_info,
+        # joints_state,
+        # joints_info,
+        # dofs_state,
+        # dofs_info,
+        # geoms_info,
+        # geoms_state,
+        # entities_info,
         rigid_global_info,
-        static_rigid_sim_config: ti.template(),
+        # static_rigid_sim_config: ti.template(),
     ):
-        self_unused._func_forward_kinematics(
-            i_b,
-            links_state=links_state,
-            links_info=links_info,
-            joints_state=joints_state,
-            joints_info=joints_info,
-            dofs_state=dofs_state,
-            dofs_info=dofs_info,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-        self_unused._func_COM_links(
-            i_b,
-            links_state=links_state,
-            links_info=links_info,
-            joints_state=joints_state,
-            joints_info=joints_info,
-            dofs_state=dofs_state,
-            dofs_info=dofs_info,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-        self_unused._func_forward_velocity(
-            i_b,
-            entities_info=entities_info,
-            links_info=links_info,
-            links_state=links_state,
-            joints_info=joints_info,
-            dofs_state=dofs_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
+        pass
+        # self_unused._func_forward_kinematics(
+        #     i_b,
+        #     links_state=links_state,
+        #     links_info=links_info,
+        #     joints_state=joints_state,
+        #     joints_info=joints_info,
+        #     dofs_state=dofs_state,
+        #     dofs_info=dofs_info,
+        #     entities_info=entities_info,
+        #     rigid_global_info=rigid_global_info,
+        #     static_rigid_sim_config=static_rigid_sim_config,
+        # )
+        # self_unused._func_COM_links(
+        #     i_b,
+        #     links_state=links_state,
+        #     links_info=links_info,
+        #     joints_state=joints_state,
+        #     joints_info=joints_info,
+        #     dofs_state=dofs_state,
+        #     dofs_info=dofs_info,
+        #     entities_info=entities_info,
+        #     rigid_global_info=rigid_global_info,
+        #     static_rigid_sim_config=static_rigid_sim_config,
+        # )
+        # self_unused._func_forward_velocity(
+        #     i_b,
+        #     entities_info=entities_info,
+        #     links_info=links_info,
+        #     links_state=links_state,
+        #     joints_info=joints_info,
+        #     dofs_state=dofs_state,
+        #     rigid_global_info=rigid_global_info,
+        #     static_rigid_sim_config=static_rigid_sim_config,
+        # )
 
-        self_unused._func_update_geoms(
-            i_b=i_b,
-            entities_info=entities_info,
-            geoms_info=geoms_info,
-            geoms_state=geoms_state,
-            links_state=links_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
+        # self_unused._func_update_geoms(
+        #     i_b=i_b,
+        #     entities_info=entities_info,
+        #     geoms_info=geoms_info,
+        #     geoms_state=geoms_state,
+        #     links_state=links_state,
+        #     rigid_global_info=rigid_global_info,
+        #     static_rigid_sim_config=static_rigid_sim_config,
+        # )
 
     @ti.kernel
     def _kernel_step_1(
@@ -2241,18 +2240,18 @@ class RigidSolver(Solver):
     ):
         for i_b in envs_idx:
             self_unused._func_update_cartesian_space(
-                i_b=i_b,
-                links_state=links_state,
-                links_info=links_info,
-                joints_state=joints_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
-                dofs_info=dofs_info,
-                geoms_info=geoms_info,
-                geoms_state=geoms_state,
-                entities_info=entities_info,
+                # i_b=i_b,
+                # links_state=links_state,
+                # links_info=links_info,
+                # joints_state=joints_state,
+                # joints_info=joints_info,
+                # dofs_state=dofs_state,
+                # dofs_info=dofs_info,
+                # geoms_info=geoms_info,
+                # geoms_state=geoms_state,
+                # entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
+                # static_rigid_sim_config=static_rigid_sim_config,
             )
 
     def _func_constraint_force(self):

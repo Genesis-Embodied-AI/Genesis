@@ -161,61 +161,61 @@ def get_constraint_state(constraint_solver, solver):
         )
 
     kwargs = {
-        "n_constraints": ti.field(dtype=gs.ti_int, shape=f_batch()),
-        "ti_n_equalities": ti.field(gs.ti_int, shape=solver._batch_shape()),
-        "jac": ti.field(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
-        "diag": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "aref": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "jac_relevant_dofs": ti.field(gs.ti_int, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
-        "jac_n_relevant_dofs": ti.field(gs.ti_int, shape=solver._batch_shape(len_constraints_)),
-        "n_constraints_equality": ti.field(gs.ti_int, shape=solver._batch_shape()),
-        "improved": ti.field(gs.ti_int, shape=solver._batch_shape()),
-        "Jaref": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "Ma": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "Ma_ws": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "grad": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "Mgrad": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "search": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "efc_D": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "efc_force": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "active": ti.field(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
-        "prev_active": ti.field(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
-        "qfrc_constraint": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "qacc": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "qacc_ws": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "qacc_prev": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "cost_ws": ti.field(gs.ti_float, shape=solver._batch_shape()),
-        "gauss": ti.field(gs.ti_float, shape=solver._batch_shape()),
-        "cost": ti.field(gs.ti_float, shape=solver._batch_shape()),
-        "prev_cost": ti.field(gs.ti_float, shape=solver._batch_shape()),
-        "gtol": ti.field(gs.ti_float, shape=solver._batch_shape()),
-        "mv": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "jv": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "quad_gauss": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(3)),
-        "quad": ti.field(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, 3))),
-        "candidates": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(12)),
-        "ls_its": ti.field(gs.ti_float, shape=solver._batch_shape()),
-        "ls_result": ti.field(gs.ti_int, shape=solver._batch_shape()),
+        "n_constraints": V(dtype=gs.ti_int, shape=f_batch()),
+        "ti_n_equalities": V(gs.ti_int, shape=solver._batch_shape()),
+        "jac": V(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
+        "diag": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "aref": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "jac_relevant_dofs": V(gs.ti_int, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
+        "jac_n_relevant_dofs": V(gs.ti_int, shape=solver._batch_shape(len_constraints_)),
+        "n_constraints_equality": V(gs.ti_int, shape=solver._batch_shape()),
+        "improved": V(gs.ti_int, shape=solver._batch_shape()),
+        "Jaref": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "Ma": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "Ma_ws": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "grad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "Mgrad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "search": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "efc_D": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "efc_force": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
+        "prev_active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
+        "qfrc_constraint": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "qacc": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "qacc_ws": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "qacc_prev": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "cost_ws": V(gs.ti_float, shape=solver._batch_shape()),
+        "gauss": V(gs.ti_float, shape=solver._batch_shape()),
+        "cost": V(gs.ti_float, shape=solver._batch_shape()),
+        "prev_cost": V(gs.ti_float, shape=solver._batch_shape()),
+        "gtol": V(gs.ti_float, shape=solver._batch_shape()),
+        "mv": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "jv": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "quad_gauss": V(dtype=gs.ti_float, shape=solver._batch_shape(3)),
+        "quad": V(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, 3))),
+        "candidates": V(dtype=gs.ti_float, shape=solver._batch_shape(12)),
+        "ls_its": V(gs.ti_float, shape=solver._batch_shape()),
+        "ls_result": V(gs.ti_int, shape=solver._batch_shape()),
+        "cg_prev_grad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "cg_prev_Mgrad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "cg_beta": V(gs.ti_float, shape=solver._batch_shape()),
+        "cg_pg_dot_pMg": V(gs.ti_float, shape=solver._batch_shape()),
+        "nt_H": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
+        "nt_vec": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
     }
 
     # Add solver-specific fields
-    if constraint_solver._solver_type == gs.constraint_solver.CG:
-        kwargs.update(
-            {
-                "cg_prev_grad": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-                "cg_prev_Mgrad": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-                "cg_beta": ti.field(gs.ti_float, shape=solver._batch_shape()),
-                "cg_pg_dot_pMg": ti.field(gs.ti_float, shape=solver._batch_shape()),
-            }
-        )
+    # if constraint_solver._solver_type == gs.constraint_solver.CG:
+    #     kwargs.update(
+    #         {
+    #         }
+    #     )
 
-    if constraint_solver._solver_type == gs.constraint_solver.Newton:
-        kwargs.update(
-            {
-                "nt_H": ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
-                "nt_vec": ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-            }
-        )
+    # if constraint_solver._solver_type == gs.constraint_solver.Newton:
+    #     kwargs.update(
+    #         {
+    #         }
+    #     )
 
     if use_ndarray:
         obj = StructConstraintState(**kwargs)
@@ -687,9 +687,9 @@ class StructSupportFieldInfo:
 
 def get_support_field_info(n_geoms, n_support_cells):
     kwargs = {
-        "support_cell_start": ti.field(dtype=gs.ti_int, shape=n_geoms),
-        "support_v": ti.Vector.field(3, dtype=gs.ti_float, shape=max(1, n_support_cells)),
-        "support_vid": ti.field(dtype=gs.ti_int, shape=max(1, n_support_cells)),
+        "support_cell_start": V(dtype=gs.ti_int, shape=n_geoms),
+        "support_v": V_VEC(3, dtype=gs.ti_float, shape=max(1, n_support_cells)),
+        "support_vid": V(dtype=gs.ti_int, shape=max(1, n_support_cells)),
     }
 
     if use_ndarray:
@@ -710,17 +710,17 @@ def get_support_field_info(n_geoms, n_support_cells):
 
 @dataclasses.dataclass
 class StructDofsInfo:
-    stiffness: V_ANNOTATION
-    invweight: V_ANNOTATION
-    armature: V_ANNOTATION
-    damping: V_ANNOTATION
-    motion_ang: V_ANNOTATION
-    motion_vel: V_ANNOTATION
-    limit: V_ANNOTATION
-    dof_start: V_ANNOTATION
-    kp: V_ANNOTATION
-    kv: V_ANNOTATION
-    force_range: V_ANNOTATION
+    stiffness: ti.types.NDArray[ti.f32, 1]
+    invweight: ti.types.NDArray[ti.f32, 1]
+    armature: ti.types.NDArray[ti.f32, 1]
+    damping: ti.types.NDArray[ti.f32, 1]
+    motion_ang: ti.types.NDArray[ti.types.vector(3, ti.f32), 1]
+    motion_vel: ti.types.NDArray[ti.types.vector(3, ti.f32), 1]
+    limit: ti.types.NDArray[ti.types.vector(2, ti.f32), 1]
+    dof_start: ti.types.NDArray[ti.i32, 1]
+    kp: ti.types.NDArray[ti.f32, 1]
+    kv: ti.types.NDArray[ti.f32, 1]
+    force_range: ti.types.NDArray[ti.types.vector(2, ti.f32), 1]
 
 
 def get_dofs_info(solver):
@@ -1610,3 +1610,6 @@ EqualitiesInfo = ti.template() if not use_ndarray else StructEqualitiesInfo
 RigidGlobalInfo = ti.template() if not use_ndarray else StructRigidGlobalInfo
 ColliderState = ti.template() if not use_ndarray else StructColliderState
 ColliderInfo = ti.template() if not use_ndarray else StructColliderInfo
+MPRState = ti.template() if not use_ndarray else StructMPRState
+SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
+ConstraintState = ti.template() if not use_ndarray else StructConstraintState

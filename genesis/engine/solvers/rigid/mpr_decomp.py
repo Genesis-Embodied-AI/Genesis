@@ -36,7 +36,7 @@ class MPR:
         self.init_state()
 
     def init_state(self):
-        self._mpr_state = array_class.MPRState(self._solver._batch_shape)
+        self._mpr_state = array_class.get_mpr_state(self._solver._batch_shape)
 
     def reset(self):
         pass

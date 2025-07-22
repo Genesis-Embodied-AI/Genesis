@@ -34,7 +34,7 @@ class ConstraintSolver:
         )
         self.len_constraints_ = max(1, self.len_constraints)
 
-        self.constraint_state = array_class.ConstraintState(self, self._solver)
+        self.constraint_state = array_class.get_constraint_state(self, self._solver)
 
         # self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
         # self.ti_n_equalities.from_numpy(np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int))
@@ -1026,19 +1026,30 @@ class ConstraintSolver:
     def reset(self, envs_idx=None):
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        self._kernel_reset(envs_idx)
+        self._kernel_reset(
+            envs_idx=envs_idx,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
 
     @ti.kernel
-    def _kernel_reset(self, envs_idx: ti.types.ndarray()):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+    def _kernel_reset(
+        self_unused,
+        envs_idx: ti.types.ndarray(),
+        constraint_state: array_class.ConstraintState,
+        static_rigid_sim_config: ti.template(),
+    ):
+        n_dofs = constraint_state.qacc_ws.shape[0]
+        len_constraints = constraint_state.jac.shape[0]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            for i_d in range(self._solver.n_dofs_):
-                self.qacc_ws[i_d, i_b] = 0
-                for i_c in range(self.len_constraints_):
-                    self.jac[i_c, i_d, i_b] = 0
-            for i_c in range(self.len_constraints_):
-                self.jac_n_relevant_dofs[i_c, i_b] = 0
+            for i_d in range(n_dofs):
+                constraint_state.qacc_ws[i_d, i_b] = 0
+                for i_c in range(len_constraints):
+                    constraint_state.jac[i_c, i_d, i_b] = 0
+            for i_c in range(len_constraints):
+                constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
     def handle_constraints(self):
         self.add_equality_constraints(

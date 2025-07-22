@@ -88,10 +88,8 @@ class SupportField:
             support_cell_start = np.zeros([1], dtype=gs.np_int)
 
         n_support_cells = start
-        self._support_field_info = array_class.SupportFieldInfo(
-            n_geoms=self.solver.n_geoms_,
-            n_support_cells=n_support_cells,
-        )
+        self._support_field_info = array_class.get_support_field_info(self.solver.n_geoms, n_support_cells)
+
         self._kernel_init_support(
             self.solver._static_rigid_sim_config, self._support_field_info, support_cell_start, support_v, support_vid
         )
@@ -100,7 +98,7 @@ class SupportField:
     def _kernel_init_support(
         self_unused,
         static_rigid_sim_config: ti.template(),
-        support_field_info: ti.template(),
+        support_field_info: array_class.SupportFieldInfo,
         support_cell_start: ti.types.ndarray(),
         support_v: ti.types.ndarray(),
         support_vid: ti.types.ndarray(),
