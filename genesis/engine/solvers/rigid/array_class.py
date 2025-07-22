@@ -36,6 +36,7 @@ class StructRigidGlobalInfo:
     _mass_mat_mask: V_ANNOTATION
     meaninertia: V_ANNOTATION
     mass_parent_mask: V_ANNOTATION
+    gravity: V_ANNOTATION
 
 
 def get_rigid_global_info(solver):
@@ -58,6 +59,7 @@ def get_rigid_global_info(solver):
         "_mass_mat_mask": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_)),
         "meaninertia": V(dtype=gs.ti_float, shape=solver._batch_shape()),
         "mass_parent_mask": V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
+        "gravity": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
     }
 
     if use_ndarray:

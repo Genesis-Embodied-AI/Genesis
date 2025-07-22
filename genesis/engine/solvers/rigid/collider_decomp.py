@@ -301,17 +301,16 @@ class Collider:
         collider_state: array_class.ColliderState,
         envs_idx: ti.types.ndarray(),
     ):
-        pass
-        # ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        # for i_b_ in range(envs_idx.shape[0]):
-        #     i_b = envs_idx[i_b_]
-        #     collider_state.first_time[i_b] = 1
-        #     n_geoms = collider_state.active_buffer.shape[0]
-        #     for i_ga in range(n_geoms):
-        #         for i_gb in range(n_geoms):
-        #             # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
-        #             # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
-        #             collider_state.contact_cache.normal[i_ga, i_gb, i_b].fill(0.0)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            collider_state.first_time[i_b] = 1
+            n_geoms = collider_state.active_buffer.shape[0]
+            for i_ga in range(n_geoms):
+                for i_gb in range(n_geoms):
+                    # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
+                    # self.contact_cache[i_ga, i_gb, i_b].penetration = 0.0
+                    collider_state.contact_cache.normal[i_ga, i_gb, i_b].fill(0.0)
 
     def clear(self, envs_idx=None):
         if envs_idx is None:

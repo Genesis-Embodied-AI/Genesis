@@ -428,8 +428,6 @@ class ConstraintSolver:
     ):
         n_dofs = constraint_state.jac.shape[1]
 
-        rgi = rigid_global_info
-
         sol_params = equalities_info.sol_params[i_e, i_b]
 
         I_joint1 = (
@@ -460,10 +458,10 @@ class ConstraintSolver:
             for i_d in range(n_dofs):
                 constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
-        pos1 = rgi.qpos[i_qpos1, i_b]
-        pos2 = rgi.qpos[i_qpos2, i_b]
-        ref1 = rgi.qpos0[i_qpos1, i_b]
-        ref2 = rgi.qpos0[i_qpos2, i_b]
+        pos1 = rigid_global_info.qpos[i_qpos1, i_b]
+        pos2 = rigid_global_info.qpos[i_qpos2, i_b]
+        ref1 = rigid_global_info.qpos0[i_qpos1, i_b]
+        ref2 = rigid_global_info.qpos0[i_qpos2, i_b]
 
         # TODO: zero objid2
         diff = pos2 - ref2
@@ -753,7 +751,7 @@ class ConstraintSolver:
         _B = constraint_state.jac.shape[2]
         n_links = links_info.root_idx.shape[0]
         n_dofs = dofs_state.ctrl_mode.shape[0]
-        rgi = rigid_global_info
+
         # TODO: sparse mode
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_b in range(_B):
@@ -770,8 +768,8 @@ class ConstraintSolver:
                         i_q = joints_info.q_start[I_j]
                         i_d = joints_info.dof_start[I_j]
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                        pos_delta_min = rgi.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
-                        pos_delta_max = dofs_info.limit[I_d][1] - rgi.qpos[i_q, i_b]
+                        pos_delta_min = rigid_global_info.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
+                        pos_delta_max = dofs_info.limit[I_d][1] - rigid_global_info.qpos[i_q, i_b]
                         pos_delta = min(pos_delta_min, pos_delta_max)
 
                         if pos_delta < 0:
@@ -1227,7 +1225,7 @@ class ConstraintSolver:
         rigid_global_info,
         static_rigid_sim_config: ti.template(),
     ):
-        rgi = rigid_global_info
+
         n_dofs = constraint_state.search.shape[0]
         n_entities = entities_info.dof_start.shape[0]
         # mv and jv
@@ -1235,7 +1233,7 @@ class ConstraintSolver:
             for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                 mv = gs.ti_float(0.0)
                 for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    mv += rgi.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                    mv += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
                 constraint_state.mv[i_d1, i_b] = mv
 
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1781,8 +1779,8 @@ class ConstraintSolver:
         rigid_global_info,
         static_rigid_sim_config: ti.template(),
     ):
-        rgi = rigid_global_info
-        _B = rgi.mass_mat.shape[2]
+
+        _B = rigid_global_info.mass_mat.shape[2]
         n_entities = entities_info.n_links.shape[0]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
@@ -1790,7 +1788,7 @@ class ConstraintSolver:
                 i_d1 = entities_info.dof_start[i_e] + i_d1_
                 Ma_ = gs.ti_float(0.0)
                 for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    Ma_ += rgi.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+                    Ma_ += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
                 Ma[i_d1, i_b] = Ma_
 
     @ti.kernel
