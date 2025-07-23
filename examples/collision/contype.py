@@ -1,3 +1,13 @@
+"""
+NOTE: contype and conaffinity are 32-bit integer bitmasks used for contact filtering of contact pairs.
+When the contype of one geom and the conaffinity of the other geom share a common bit set to 1, two geoms can collide.
+Plane:      contype=0xFFFF, conaffinity=0xFFFF (1111 1111 1111 1111)
+Red Cube:   contype=1, conaffinity=1 (0001) -> collide with Plane and Blue Cube
+Green Cube: contype=2, conaffinity=2 (0010) -> collide with Plane and Blue Cube
+Blue Cube:  contype=3, conaffinity=3 (0011) -> collide with Plane, Red Cube, and Green Cube
+Dragon:     contype=4, conaffinity=4 (0100) -> collide with Plane only
+"""
+
 import argparse
 
 import genesis as gs
@@ -22,14 +32,6 @@ def main():
 
     scene.add_entity(gs.morphs.Plane())
 
-    # NOTE: contype and conaffinity are 32-bit integer bitmasks used for contact filtering of contact pairs.
-    # When the contype of one geom and the conaffinity of the other geom share a common bit set to 1, two geoms can collide.
-    # Plane:      contype=0xFFFF, conaffinity=0xFFFF (1111 1111 1111 1111)
-    # Red Cube:   contype=1, conaffinity=1 (0001) -> collide with Plane and Blue Cube
-    # Green Cube: contype=2, conaffinity=2 (0010) -> collide with Plane and Blue Cube
-    # Blue Cube:  contype=3, conaffinity=3 (0011) -> collide with Plane, Red Cube, and Green Cube
-    # Dragon:     contype=4, conaffinity=4 (0100) -> collide with Plane only
-
     scene.add_entity(
         gs.morphs.Box(
             pos=(0.025, 0, 0.5),
@@ -42,7 +44,6 @@ def main():
             color=(1.0, 0.0, 0.0, 1.0),
         ),
     )
-
     scene.add_entity(
         gs.morphs.Box(
             pos=(-0.025, 0, 1.0),
@@ -55,7 +56,6 @@ def main():
             color=(0.0, 1.0, 0.0, 1.0),
         ),
     )
-
     scene.add_entity(
         gs.morphs.Box(
             pos=(0.0, 0, 1.5),
@@ -68,7 +68,6 @@ def main():
             color=(0.0, 0.0, 1.0, 1.0),
         ),
     )
-
     scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/dragon/dragon.obj",
