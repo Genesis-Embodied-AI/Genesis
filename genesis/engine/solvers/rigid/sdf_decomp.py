@@ -54,14 +54,14 @@ class SDF:
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i in range(self.solver.n_geoms):
             for j, k in ti.static(ti.ndrange(4, 4)):
-                self.geoms_info[i].T_mesh_to_sdf[j, k] = geoms_T_mesh_to_sdf[i, j, k]
+                self.geoms_info.T_mesh_to_sdf[i][j, k] = geoms_T_mesh_to_sdf[i, j, k]
 
             for j in ti.static(range(3)):
-                self.geoms_info[i].sdf_res[j] = geoms_sdf_res[i, j]
+                self.geoms_info.sdf_res[i][j] = geoms_sdf_res[i, j]
 
-            self.geoms_info[i].sdf_cell_start = geoms_sdf_cell_start[i]
-            self.geoms_info[i].sdf_max = geoms_sdf_max[i]
-            self.geoms_info[i].sdf_cell_size = geoms_sdf_cell_size[i]
+            self.geoms_info.sdf_cell_start[i] = geoms_sdf_cell_start[i]
+            self.geoms_info.sdf_max[i] = geoms_sdf_max[i]
+            self.geoms_info.sdf_cell_size[i] = geoms_sdf_cell_size[i]
 
         for i in range(self.solver.n_cells_):
             self.geoms_sdf_val[i] = geoms_sdf_val[i]
@@ -72,7 +72,7 @@ class SDF:
     @ti.func
     def ravel_cell_idx(self, cell_idx, sdf_res, geom_idx):
         return (
-            self.geoms_info[geom_idx].sdf_cell_start
+            self.geoms_info.sdf_cell_start[geom_idx]
             + cell_idx[0] * sdf_res[1] * sdf_res[2]
             + cell_idx[1] * sdf_res[2]
             + cell_idx[2]
@@ -84,7 +84,7 @@ class SDF:
         Use direction to sdf center to approximate gradient direction.
         Only considers region outside of cube.
         """
-        center = (self.geoms_info[geom_idx].sdf_res - 1) / 2.0
+        center = (self.geoms_info.sdf_res[geom_idx] - 1) / 2.0
         proxy_sdf_grad = gu.ti_normalize(pos_sdf - center)
         return proxy_sdf_grad
 
@@ -93,9 +93,9 @@ class SDF:
         """
         Use distance to center as a proxy sdf, strictly greater than any point inside the cube to ensure value comparison is valid. Only considers region outside of cube.
         """
-        center = (self.geoms_info[geom_idx].sdf_res - 1) / 2.0
-        sd = (pos_sdf - center).norm() / self.geoms_info[geom_idx].sdf_cell_size
-        return sd + self.geoms_info[geom_idx].sdf_max
+        center = (self.geoms_info.sdf_res[geom_idx] - 1) / 2.0
+        sd = (pos_sdf - center).norm() / self.geoms_info.sdf_cell_size[geom_idx]
+        return sd + self.geoms_info.sdf_max[geom_idx]
 
     @ti.func
     def true_sdf_grad_sdf(self, pos_sdf, geom_idx):
@@ -103,7 +103,7 @@ class SDF:
         True sdf grad interpolated using stored sdf grad grid.
         """
         sdf_grad_sdf = ti.Vector.zero(gs.ti_float, 3)
-        if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.TERRAIN:  # Terrain uses finite difference
+        if self.solver.geoms_info.type[geom_idx] == gs.GEOM_TYPE.TERRAIN:  # Terrain uses finite difference
             if ti.static(self.solver.collider._collider_static_config.has_terrain):  # for speed up compilation
                 # since we are in sdf frame, delta can be a relatively big value
                 delta = gs.ti_float(1e-2)
@@ -118,7 +118,7 @@ class SDF:
                     )
 
         else:
-            geom_sdf_res = self.geoms_info[geom_idx].sdf_res
+            geom_sdf_res = self.geoms_info.sdf_res[geom_idx]
             base = ti.min(ti.floor(pos_sdf, gs.ti_int), geom_sdf_res - 2)
             for offset in ti.grouped(ti.ndrange(2, 2, 2)):
                 pos_cell = base + offset
@@ -135,7 +135,7 @@ class SDF:
         """
         True sdf interpolated using stored sdf grid.
         """
-        geom_sdf_res = self.geoms_info[geom_idx].sdf_res
+        geom_sdf_res = self.geoms_info.sdf_res[geom_idx]
         base = ti.min(ti.floor(pos_sdf, gs.ti_int), geom_sdf_res - 2)
         signed_dist = gs.ti_float(0.0)
         for offset in ti.grouped(ti.ndrange(2, 2, 2)):
@@ -152,21 +152,22 @@ class SDF:
         sdf value from world coordinate
         """
 
-        g_state = self.solver.geoms_state[geom_idx, batch_idx]
+        g_pos = self.solver.geoms_state.pos[geom_idx, batch_idx]
+        g_quat = self.solver.geoms_state.quat[geom_idx, batch_idx]
 
         sd = gs.ti_float(0.0)
-        if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.SPHERE:
-            sd = (pos_world - g_state.pos).norm() - self.solver.geoms_info[geom_idx].data[0]
+        if self.solver.geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+            sd = (pos_world - g_pos).norm() - self.solver.geoms_info.data[geom_idx][0]
 
-        elif self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.PLANE:
-            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
-            geom_data = self.solver.geoms_info[geom_idx].data
+        elif self.solver.geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
+            geom_data = self.solver.geoms_info.data[geom_idx]
             plane_normal = gs.ti_vec3([geom_data[0], geom_data[1], geom_data[2]])
             sd = pos_mesh.dot(plane_normal)
 
         else:
-            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
-            pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info[geom_idx].T_mesh_to_sdf)
+            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
+            pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info.T_mesh_to_sdf[geom_idx])
             sd = self.sdf_sdf(pos_sdf, geom_idx)
 
         return sd
@@ -203,29 +204,30 @@ class SDF:
 
     @ti.func
     def sdf_grad_world(self, pos_world, geom_idx, batch_idx):
-        g_state = self.solver.geoms_state[geom_idx, batch_idx]
+        g_pos = self.solver.geoms_state.pos[geom_idx, batch_idx]
+        g_quat = self.solver.geoms_state.quat[geom_idx, batch_idx]
 
         grad_world = ti.Vector.zero(gs.ti_float, 3)
-        if self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.SPHERE:
-            grad_world = gu.ti_normalize(pos_world - g_state.pos)
+        if self.solver.geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+            grad_world = gu.ti_normalize(pos_world - g_pos)
 
-        elif self.solver.geoms_info[geom_idx].type == gs.GEOM_TYPE.PLANE:
-            geom_data = self.solver.geoms_info[geom_idx].data
+        elif self.solver.geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+            geom_data = self.solver.geoms_info.data[geom_idx]
             plane_normal = gs.ti_vec3([geom_data[0], geom_data[1], geom_data[2]])
-            grad_world = gu.ti_transform_by_quat(plane_normal, g_state.quat)
+            grad_world = gu.ti_transform_by_quat(plane_normal, g_quat)
 
         else:
-            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
-            pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info[geom_idx].T_mesh_to_sdf)
+            pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
+            pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info.T_mesh_to_sdf[geom_idx])
             grad_sdf = self.sdf_grad_sdf(pos_sdf, geom_idx)
 
             grad_mesh = grad_sdf  # no rotation between mesh and sdf frame
-            grad_world = gu.ti_transform_by_quat(grad_mesh, g_state.quat)
+            grad_world = gu.ti_transform_by_quat(grad_mesh, g_quat)
         return grad_world
 
     @ti.func
     def is_outside_sdf_grid(self, pos_sdf, geom_idx):
-        res = self.geoms_info[geom_idx].sdf_res
+        res = self.geoms_info.sdf_res[geom_idx]
         return (pos_sdf >= res - 1).any() or (pos_sdf <= 0).any()
 
     @ti.func
@@ -233,12 +235,13 @@ class SDF:
         """
         Returns vert of geom that's closest to pos_world
         """
-        g_state = self.solver.geoms_state[geom_idx, i_b]
-        geom_sdf_res = self.geoms_info[geom_idx].sdf_res
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_state.pos, g_state.quat)
-        pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info[geom_idx].T_mesh_to_sdf)
+        g_pos = self.solver.geoms_state.pos[geom_idx, i_b]
+        g_quat = self.solver.geoms_state.quat[geom_idx, i_b]
+        geom_sdf_res = self.geoms_info.sdf_res[geom_idx]
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
+        pos_sdf = gu.ti_transform_by_T(pos_mesh, self.geoms_info.T_mesh_to_sdf[geom_idx])
         nearest_cell = ti.cast(ti.min(ti.max(pos_sdf, 0), geom_sdf_res - 1), gs.ti_int)
         return (
             self.geoms_sdf_closest_vert[self.ravel_cell_idx(nearest_cell, geom_sdf_res, geom_idx)]
-            + self.solver.geoms_info[geom_idx].vert_start
+            + self.solver.geoms_info.vert_start[geom_idx]
         )

@@ -30,7 +30,7 @@ class RigidGeom(RBC):
 
     def __init__(
         self,
-        link,
+        link: "RigidLink",
         idx,
         cell_start,
         vert_start,
@@ -365,7 +365,7 @@ class RigidGeom(RBC):
     @ti.kernel
     def _kernel_get_pos(self, tensor: ti.types.ndarray()):
         for i, i_b in ti.ndrange(3, self._solver._B):
-            tensor[i_b, i] = self._solver.geoms_state[self._idx, i_b].pos[i]
+            tensor[i_b, i] = self._solver.geoms_state.pos[self._idx, i_b][i]
 
     @gs.assert_built
     def get_quat(self):
@@ -381,7 +381,7 @@ class RigidGeom(RBC):
     @ti.kernel
     def _kernel_get_quat(self, tensor: ti.types.ndarray()):
         for i, i_b in ti.ndrange(4, self._solver._B):
-            tensor[i_b, i] = self._solver.geoms_state[self._idx, i_b].quat[i]
+            tensor[i_b, i] = self._solver.geoms_state.quat[self._idx, i_b][i]
 
     @gs.assert_built
     def get_verts(self):
@@ -407,7 +407,7 @@ class RigidGeom(RBC):
 
         for i_v, j, i_b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i_v + self._verts_state_start
-            tensor[i_b, i_v, j] = self._solver.free_verts_state[idx_vert, i_b].pos[j]
+            tensor[i_b, i_v, j] = self._solver.free_verts_state.pos[idx_vert, i_b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -415,7 +415,7 @@ class RigidGeom(RBC):
 
         for i_v, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i_v + self._verts_state_start
-            tensor[i_v, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i_v, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_AABB(self):
@@ -494,14 +494,14 @@ class RigidGeom(RBC):
         return self._metadata
 
     @property
-    def link(self):
+    def link(self) -> "RigidLink":
         """
         Get the link that the geom belongs to.
         """
         return self._link
 
     @property
-    def entity(self):
+    def entity(self) -> "RigidEntity":
         """
         Get the entity that the geom belongs to.
         """

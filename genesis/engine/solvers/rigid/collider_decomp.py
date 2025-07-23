@@ -336,8 +336,8 @@ class Collider:
                     # pair of hibernated-fixed links -> hibernated contact
                     # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
                     # once a new collision is detected
-                    if (links_state[i_la, i_b].hibernated and links_info[I_lb].is_fixed) or (
-                        links_state[i_lb, i_b].hibernated and links_info[I_la].is_fixed
+                    if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                        links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
                     ):
                         i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                         if i_c != i_c_hibernated:
@@ -448,7 +448,7 @@ class Collider:
         i_g,
         i_b,
     ):
-        return (point < geoms_state[i_g, i_b].aabb_max).all() and (point > geoms_state[i_g, i_b].aabb_min).all()
+        return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
 
     @ti.func
     def _func_is_geom_aabbs_overlap(
@@ -460,8 +460,8 @@ class Collider:
         i_b,
     ):
         return not (
-            (geoms_state[i_ga, i_b].aabb_max <= geoms_state[i_gb, i_b].aabb_min).any()
-            or (geoms_state[i_ga, i_b].aabb_min >= geoms_state[i_gb, i_b].aabb_max).any()
+            (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
+            or (geoms_state.aabb_min[i_ga, i_b] >= geoms_state.aabb_max[i_gb, i_b]).any()
         )
 
     @ti.func
@@ -469,8 +469,8 @@ class Collider:
         self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, i_ga, i_gb
     ):
         # return the center of the intersecting AABB of AABBs of two geoms
-        intersect_lower = ti.max(geoms_state[i_ga].aabb_min, geoms_state[i_gb].aabb_min)
-        intersect_upper = ti.min(geoms_state[i_ga].aabb_max, geoms_state[i_gb].aabb_max)
+        intersect_lower = ti.max(geoms_state.aabb_min[i_ga, i_b], geoms_state.aabb_min[i_gb, i_b])
+        intersect_upper = ti.min(geoms_state.aabb_max[i_ga, i_b], geoms_state.aabb_max[i_gb, i_b])
         return 0.5 * (intersect_lower + intersect_upper)
 
     @ti.func
@@ -483,14 +483,13 @@ class Collider:
         i_gb,
         i_b,
     ):
-        ga_info = geoms_info[i_ga]
         is_col = False
         penetration = gs.ti_float(0.0)
         normal = ti.Vector.zero(gs.ti_float, 3)
         contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
-        sphere_center = geoms_state[i_ga, i_b].pos
-        sphere_radius = ga_info.data[0]
+        sphere_center = geoms_state.pos[i_ga, i_b]
+        sphere_radius = geoms_info.data[i_ga][0]
 
         center_to_b_dist = sdf.sdf_world(sphere_center, i_gb, i_b)
         if center_to_b_dist < sphere_radius:
@@ -512,17 +511,16 @@ class Collider:
         i_gb,
         i_b,
     ):
-        ga_info = geoms_info[i_ga]
-        ga_pos = geoms_state[i_ga, i_b].pos
-        ga_quat = geoms_state[i_ga, i_b].quat
+        ga_pos = geoms_state.pos[i_ga, i_b]
+        ga_quat = geoms_state.quat[i_ga, i_b]
 
         is_col = False
         penetration = gs.ti_float(0.0)
         normal = ti.Vector.zero(gs.ti_float, 3)
         contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
-        for i_v in range(ga_info.vert_start, ga_info.vert_end):
-            vertex_pos = gu.ti_transform_by_trans_quat(verts_info[i_v].init_pos, ga_pos, ga_quat)
+        for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
+            vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
             if self_unused._func_point_in_geom_aabb(geoms_state, geoms_info, vertex_pos, i_gb, i_b):
                 new_penetration = -sdf.sdf_world(vertex_pos, i_gb, i_b)
                 if new_penetration > penetration:
@@ -551,25 +549,26 @@ class Collider:
         i_gb,
         i_b,
     ):
-        ga_info = geoms_info[i_ga]
-        ga_state = geoms_state[i_ga, i_b]
-
         is_col = False
         penetration = gs.ti_float(0.0)
         normal = ti.Vector.zero(gs.ti_float, 3)
         contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
-        ga_sdf_cell_size = sdf.geoms_info[i_ga].sdf_cell_size
+        ga_sdf_cell_size = sdf.geoms_info.sdf_cell_size[i_ga]
 
-        for i_e in range(ga_info.edge_start, ga_info.edge_end):
-            cur_length = edges_info[i_e].length
+        for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
+            cur_length = edges_info.length[i_e]
             if cur_length > ga_sdf_cell_size:
 
-                i_v0 = edges_info[i_e].v0
-                i_v1 = edges_info[i_e].v1
+                i_v0 = edges_info.v0[i_e]
+                i_v1 = edges_info.v1[i_e]
 
-                p_0 = gu.ti_transform_by_trans_quat(verts_info[i_v0].init_pos, ga_state.pos, ga_state.quat)
-                p_1 = gu.ti_transform_by_trans_quat(verts_info[i_v1].init_pos, ga_state.pos, ga_state.quat)
+                p_0 = gu.ti_transform_by_trans_quat(
+                    verts_info.init_pos[i_v0], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+                )
+                p_1 = gu.ti_transform_by_trans_quat(
+                    verts_info.init_pos[i_v1], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+                )
                 vec_01 = gu.ti_normalize(p_1 - p_0)
 
                 sdf_grad_0_b = sdf.sdf_grad_world(p_0, i_gb, i_b)
@@ -621,11 +620,11 @@ class Collider:
         i_b,
         i_va_ws,
     ):
-        gb_vert_start = geoms_info[i_gb].vert_start
-        ga_pos = geoms_state[i_ga, i_b].pos
-        ga_quat = geoms_state[i_ga, i_b].quat
-        gb_pos = geoms_state[i_gb, i_b].pos
-        gb_quat = geoms_state[i_gb, i_b].quat
+        gb_vert_start = geoms_info.vert_start[i_gb]
+        ga_pos = geoms_state.pos[i_ga, i_b]
+        ga_quat = geoms_state.quat[i_ga, i_b]
+        gb_pos = geoms_state.pos[i_gb, i_b]
+        gb_quat = geoms_state.quat[i_gb, i_b]
 
         is_col = False
         penetration = gs.ti_float(0.0)
@@ -635,10 +634,10 @@ class Collider:
         i_va = i_va_ws
         if i_va == -1:
             # start traversing on the vertex graph with a smart initial vertex
-            pos_vb = gu.ti_transform_by_trans_quat(verts_info[gb_vert_start].init_pos, gb_pos, gb_quat)
+            pos_vb = gu.ti_transform_by_trans_quat(verts_info.init_pos[gb_vert_start], gb_pos, gb_quat)
             i_va = sdf._func_find_closest_vert(pos_vb, i_ga, i_b)
         i_v_closest = i_va
-        pos_v_closest = gu.ti_transform_by_trans_quat(verts_info[i_v_closest].init_pos, ga_pos, ga_quat)
+        pos_v_closest = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v_closest], ga_pos, ga_quat)
         sd_v_closest = sdf.sdf_world(pos_v_closest, i_gb, i_b)
 
         while True:
@@ -647,7 +646,7 @@ class Collider:
                 collider_info.vert_neighbor_start[i_va] + collider_info.vert_n_neighbors[i_va],
             ):
                 i_neighbor = collider_info.vert_neighbors[i_neighbor_]
-                pos_neighbor = gu.ti_transform_by_trans_quat(verts_info[i_neighbor].init_pos, ga_pos, ga_quat)
+                pos_neighbor = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_neighbor], ga_pos, ga_quat)
                 sd_neighbor = sdf.sdf_world(pos_neighbor, i_gb, i_b)
                 if (
                     sd_neighbor < sd_v_closest - 1e-5
@@ -677,7 +676,7 @@ class Collider:
                 i_neighbor = collider_info.vert_neighbors[i_neighbor_]
 
                 p_0 = pos_v_closest
-                p_1 = gu.ti_transform_by_trans_quat(verts_info[i_neighbor].init_pos, ga_pos, ga_quat)
+                p_1 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_neighbor], ga_pos, ga_quat)
                 vec_01 = gu.ti_normalize(p_1 - p_0)
 
                 sdf_grad_0_b = sdf.sdf_grad_world(p_0, i_gb, i_b)
@@ -693,7 +692,7 @@ class Collider:
                     # check if closest point is between the two points
                     if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
                         cur_length = (p_1 - p_0).norm()
-                        ga_sdf_cell_size = sdf.geoms_info[i_ga].sdf_cell_size
+                        ga_sdf_cell_size = sdf.geoms_info.sdf_cell_size[i_ga]
                         while cur_length > ga_sdf_cell_size:
                             p_mid = 0.5 * (p_0 + p_1)
                             if sdf.sdf_grad_world(p_mid, i_gb, i_b).dot(vec_01) < 0:
@@ -736,8 +735,8 @@ class Collider:
         i_gb,
         i_b,
     ):
-        ga_pos, ga_quat = geoms_state[i_ga, i_b].pos, geoms_state[i_ga, i_b].quat
-        gb_pos, gb_quat = geoms_state[i_gb, i_b].pos, geoms_state[i_gb, i_b].quat
+        ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+        gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
         margin = gs.ti_float(0.0)
 
         is_return = False
@@ -751,11 +750,11 @@ class Collider:
         #         is_return = True
 
         if not is_return:
-            geoms_state[i_ga, i_b].pos, geoms_state[i_ga, i_b].quat = gu.ti_transform_pos_quat_by_trans_quat(
-                ga_pos - geoms_state[i_gb, i_b].pos,
+            geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = gu.ti_transform_pos_quat_by_trans_quat(
+                ga_pos - geoms_state.pos[i_gb, i_b],
                 ga_quat,
                 ti.Vector.zero(gs.ti_float, 3),
-                gu.ti_inv_quat(geoms_state[i_gb, i_b].quat),
+                gu.ti_inv_quat(geoms_state.quat[i_gb, i_b]),
             )
 
             for i_axis, i_m in ti.ndrange(3, 2):
@@ -827,14 +826,14 @@ class Collider:
                                     or collider_state.prism[4, i_b][2] >= collider_state.xyz_max_min[5, i_b]
                                     or collider_state.prism[5, i_b][2] >= collider_state.xyz_max_min[5, i_b]
                                 ):
-                                    center_a = gu.ti_transform_by_trans_quat(geoms_info[i_ga].center, ga_pos, ga_quat)
+                                    center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos, ga_quat)
                                     center_b = ti.Vector.zero(gs.ti_float, 3)
                                     for i_p in ti.static(range(6)):
                                         center_b = center_b + collider_state.prism[i_p, i_b]
                                     center_b = center_b / 6.0
 
-                                    geoms_state[i_gb, i_b].pos = ti.Vector.zero(gs.ti_float, 3)
-                                    geoms_state[i_gb, i_b].quat = gu.ti_identity_quat()
+                                    geoms_state.pos[i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                                    geoms_state.quat[i_gb, i_b] = gu.ti_identity_quat()
 
                                     is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
                                         geoms_state,
@@ -883,8 +882,8 @@ class Collider:
                                             )
                                             n_con = n_con + 1
 
-        geoms_state[i_ga, i_b].pos, geoms_state[i_ga, i_b].quat = ga_pos, ga_quat
-        geoms_state[i_gb, i_b].pos, geoms_state[i_gb, i_b].quat = gb_pos, gb_quat
+        geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
+        geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
 
     @ti.func
     def add_prism_vert(self_unused, collider_state: ti.template(), x, y, z, i_b):
@@ -920,13 +919,13 @@ class Collider:
 
         # hibernated <-> fixed links
         if ti.static(static_rigid_sim_config.use_hibernation):
-            i_la = geoms_info[i_ga].link_idx
-            i_lb = geoms_info[i_gb].link_idx
+            i_la = geoms_info.link_idx[i_ga]
+            i_lb = geoms_info.link_idx[i_gb]
             I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
             I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-            if (links_state[i_la, i_b].hibernated and links_info[I_lb].is_fixed) or (
-                links_state[i_lb, i_b].hibernated and links_info[I_la].is_fixed
+            if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
             ):
                 is_valid = False
 
@@ -961,16 +960,16 @@ class Collider:
             # copy updated geom aabbs to buffer for sorting
             if collider_state.first_time[i_b]:
                 for i in range(n_geoms):
-                    collider_state.sort_buffer[2 * i, i_b].value = geoms_state[i, i_b].aabb_min[axis]
+                    collider_state.sort_buffer[2 * i, i_b].value = geoms_state.aabb_min[i, i_b][axis]
                     collider_state.sort_buffer[2 * i, i_b].i_g = i
                     collider_state.sort_buffer[2 * i, i_b].is_max = 0
 
-                    collider_state.sort_buffer[2 * i + 1, i_b].value = geoms_state[i, i_b].aabb_max[axis]
+                    collider_state.sort_buffer[2 * i + 1, i_b].value = geoms_state.aabb_max[i, i_b][axis]
                     collider_state.sort_buffer[2 * i + 1, i_b].i_g = i
                     collider_state.sort_buffer[2 * i + 1, i_b].is_max = 1
 
-                    geoms_state[i, i_b].min_buffer_idx = 2 * i
-                    geoms_state[i, i_b].max_buffer_idx = 2 * i + 1
+                    geoms_state.min_buffer_idx[i, i_b] = 2 * i
+                    geoms_state.max_buffer_idx[i, i_b] = 2 * i + 1
 
                 collider_state.first_time[i_b] = False
 
@@ -979,13 +978,13 @@ class Collider:
                 if ti.static(not static_rigid_sim_config.use_hibernation):
                     for i in range(n_geoms * 2):
                         if collider_state.sort_buffer[i, i_b].is_max:
-                            collider_state.sort_buffer[i, i_b].value = geoms_state[
+                            collider_state.sort_buffer[i, i_b].value = geoms_state.aabb_max[
                                 collider_state.sort_buffer[i, i_b].i_g, i_b
-                            ].aabb_max[axis]
+                            ][axis]
                         else:
-                            collider_state.sort_buffer[i, i_b].value = geoms_state[
+                            collider_state.sort_buffer[i, i_b].value = geoms_state.aabb_min[
                                 collider_state.sort_buffer[i, i_b].i_g, i_b
-                            ].aabb_min[axis]
+                            ][axis]
 
             # insertion sort, which has complexity near O(n) for nearly sorted array
             for i in range(1, 2 * n_geoms):
@@ -997,18 +996,18 @@ class Collider:
 
                     if ti.static(static_rigid_sim_config.use_hibernation):
                         if collider_state.sort_buffer[j, i_b].is_max:
-                            geoms_state[collider_state.sort_buffer[j, i_b].i_g, i_b].max_buffer_idx = j + 1
+                            geoms_state.max_buffer_idx[collider_state.sort_buffer[j, i_b].i_g, i_b] = j + 1
                         else:
-                            geoms_state[collider_state.sort_buffer[j, i_b].i_g, i_b].min_buffer_idx = j + 1
+                            geoms_state.min_buffer_idx[collider_state.sort_buffer[j, i_b].i_g, i_b] = j + 1
 
                     j -= 1
                 collider_state.sort_buffer[j + 1, i_b] = key
 
                 if ti.static(static_rigid_sim_config.use_hibernation):
                     if key.is_max:
-                        geoms_state[key.i_g, i_b].max_buffer_idx = j + 1
+                        geoms_state.max_buffer_idx[key.i_g, i_b] = j + 1
                     else:
-                        geoms_state[key.i_g, i_b].min_buffer_idx = j + 1
+                        geoms_state.min_buffer_idx[key.i_g, i_b] = j + 1
 
             # sweep over the sorted AABBs to find potential collision pairs
             collider_state.n_broad_pairs[i_b] = 0
@@ -1065,9 +1064,9 @@ class Collider:
                     n_active_awake = 0
                     n_active_hib = 0
                     for i in range(2 * n_geoms):
-                        is_incoming_geom_hibernated = geoms_state[
+                        is_incoming_geom_hibernated = geoms_state.hibernated[
                             collider_state.sort_buffer[i, i_b].i_g, i_b
-                        ].hibernated
+                        ]
 
                         if not collider_state.sort_buffer[i, i_b].is_max:
                             # both awake and hibernated geom check with active awake geoms
@@ -1215,17 +1214,17 @@ class Collider:
                 i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
 
-                if geoms_info[i_ga].type > geoms_info[i_gb].type:
+                if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
                     i_ga, i_gb = i_gb, i_ga
 
                 if (
-                    geoms_info[i_ga].is_convex
-                    and geoms_info[i_gb].is_convex
-                    and not geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN
+                    geoms_info.is_convex[i_ga]
+                    and geoms_info.is_convex[i_gb]
+                    and not geoms_info.type[i_gb] == gs.GEOM_TYPE.TERRAIN
                     and not (
                         static_rigid_sim_config.box_box_detection
-                        and geoms_info[i_ga].type == gs.GEOM_TYPE.BOX
-                        and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                        and geoms_info.type[i_ga] == gs.GEOM_TYPE.BOX
+                        and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX
                     )
                 ):
                     if ti.static(sys.platform == "darwin"):
@@ -1258,7 +1257,7 @@ class Collider:
                         )
                     else:
                         if not (
-                            geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX
+                            geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX
                         ):
                             self_unused._func_convex_convex_contact(
                                 links_state,
@@ -1311,11 +1310,11 @@ class Collider:
                 i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
                 i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
 
-                if geoms_info[i_ga].type > geoms_info[i_gb].type:
+                if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
                     i_ga, i_gb = i_gb, i_ga
 
                 if ti.static(sys.platform != "darwin"):
-                    if geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX:
+                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
                         self_unused._func_plane_box_contact(
                             geoms_state,
                             geoms_info,
@@ -1332,7 +1331,7 @@ class Collider:
                         )
 
                 if ti.static(static_rigid_sim_config.box_box_detection):
-                    if geoms_info[i_ga].type == gs.GEOM_TYPE.BOX and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX:
+                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.BOX and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
                         self_unused._func_box_box_contact(
                             geoms_state,
                             geoms_info,
@@ -1378,10 +1377,10 @@ class Collider:
                 i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
 
                 if ti.static(collider_static_config.has_terrain):
-                    if geoms_info[i_ga].type == gs.GEOM_TYPE.TERRAIN:
+                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.TERRAIN:
                         i_ga, i_gb = i_gb, i_ga
 
-                    if geoms_info[i_gb].type == gs.GEOM_TYPE.TERRAIN:
+                    if geoms_info.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
                         self_unused._func_contact_mpr_terrain(
                             geoms_state,
                             geoms_info,
@@ -1433,8 +1432,8 @@ class Collider:
 
                 if ti.static(collider_static_config.has_nonconvex_nonterrain):
                     if (
-                        not (geoms_info[i_ga].is_convex and geoms_info[i_gb].is_convex)
-                        and geoms_info[i_gb].type != gs.GEOM_TYPE.TERRAIN
+                        not (geoms_info.is_convex[i_ga] and geoms_info.is_convex[i_gb])
+                        and geoms_info.type[i_gb] != gs.GEOM_TYPE.TERRAIN
                     ):
                         is_col = False
                         tolerance = self_unused._func_compute_tolerance(
@@ -1468,10 +1467,8 @@ class Collider:
 
                             if ti.static(static_rigid_sim_config.enable_multi_contact):
                                 if not is_col and is_col_i:
-                                    ga_state = geoms_state[i_ga, i_b]
-                                    gb_state = geoms_state[i_gb, i_b]
-                                    ga_pos, ga_quat = ga_state.pos, ga_state.quat
-                                    gb_pos, gb_quat = gb_state.pos, gb_state.quat
+                                    ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+                                    gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
 
                                     # Perturb geom_a around two orthogonal axes to find multiple contacts
                                     axis_0, axis_1 = self_unused._func_contact_orthogonals(
@@ -1561,10 +1558,8 @@ class Collider:
                                                     )
                                                     n_con += 1
 
-                                        geoms_state[i_ga, i_b].pos = ga_pos
-                                        geoms_state[i_ga, i_b].quat = ga_quat
-                                        geoms_state[i_gb, i_b].pos = gb_pos
-                                        geoms_state[i_gb, i_b].quat = gb_quat
+                                        geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
+                                        geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
 
                         if not is_col:  # check edge-edge if vertex-face is not detected
                             is_col, normal, penetration, contact_pos = self_unused._func_contact_edge_sdf(
@@ -1600,17 +1595,17 @@ class Collider:
         i_gb,
         i_b,
     ):
-        ga_info = geoms_info[i_ga]
-        gb_info = geoms_info[i_gb]
-        ga_state = geoms_state[i_ga, i_b]
-        gb_state = geoms_state[i_gb, i_b]
+        ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+        gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
 
-        plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
-        plane_dir = gu.ti_transform_by_quat(plane_dir, ga_state.quat)
+        plane_dir = ti.Vector(
+            [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
+        )
+        plane_dir = gu.ti_transform_by_quat(plane_dir, ga_quat)
         normal = -plane_dir.normalized()
 
         v1, _ = support_field._func_support_box(geoms_state, geoms_info, normal, i_gb, i_b)
-        penetration = normal.dot(v1 - ga_state.pos)
+        penetration = normal.dot(v1 - ga_pos)
 
         if penetration > 0.0:
             contact_pos = v1 - 0.5 * penetration * normal
@@ -1633,12 +1628,10 @@ class Collider:
                 tolerance = self_unused._func_compute_tolerance(
                     geoms_info, geoms_init_AABB, collider_static_config, i_ga, i_gb, i_b
                 )
-                for i_v in range(gb_info.vert_start, gb_info.vert_end):
+                for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
                     if n_con < ti.static(collider_static_config.n_contacts_per_pair):
-                        pos_corner = gu.ti_transform_by_trans_quat(
-                            verts_info[i_v].init_pos, gb_state.pos, gb_state.quat
-                        )
-                        penetration = normal.dot(pos_corner - ga_state.pos)
+                        pos_corner = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], gb_pos, gb_quat)
+                        penetration = normal.dot(pos_corner - ga_pos)
                         if penetration > 0.0:
                             contact_pos = pos_corner - 0.5 * penetration * normal
                             if (contact_pos - contact_pos_0).norm() > tolerance:
@@ -1677,11 +1670,8 @@ class Collider:
             # print(self._warn_msg_max_collision_pairs)
             pass
         else:
-            ga_info = geoms_info[i_ga]
-            gb_info = geoms_info[i_gb]
-
-            friction_a = ga_info.friction * geoms_state[i_ga, i_b].friction_ratio
-            friction_b = gb_info.friction * geoms_state[i_gb, i_b].friction_ratio
+            friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
+            friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
             # b to a
             collider_state.contact_data[i_c, i_b].geom_a = i_ga
@@ -1690,9 +1680,11 @@ class Collider:
             collider_state.contact_data[i_c, i_b].pos = contact_pos
             collider_state.contact_data[i_c, i_b].penetration = penetration
             collider_state.contact_data[i_c, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
-            collider_state.contact_data[i_c, i_b].sol_params = 0.5 * (ga_info.sol_params + gb_info.sol_params)
-            collider_state.contact_data[i_c, i_b].link_a = ga_info.link_idx
-            collider_state.contact_data[i_c, i_b].link_b = gb_info.link_idx
+            collider_state.contact_data[i_c, i_b].sol_params = 0.5 * (
+                geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb]
+            )
+            collider_state.contact_data[i_c, i_b].link_a = geoms_info.link_idx[i_ga]
+            collider_state.contact_data[i_c, i_b].link_b = geoms_info.link_idx[i_gb]
 
             collider_state.n_contacts[i_b] = i_c + 1
 
@@ -1712,7 +1704,7 @@ class Collider:
         # to change dynamically.
         aabb_size_b = (geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]).norm()
         aabb_size = aabb_size_b
-        if geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE:
+        if geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
             aabb_size_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]).norm()
             aabb_size = ti.min(aabb_size_a, aabb_size_b)
 
@@ -1753,7 +1745,7 @@ class Collider:
             # the contact point. Basically, the smallest one between the two, which can be approximated
             # by the volume of their respective bounding box.
             i_g = i_gb
-            if geoms_info[i_ga].type != gs.GEOM_TYPE.PLANE:
+            if geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
                 size_ga = geoms_init_AABB[i_ga, 7]
                 volume_ga = size_ga[0] * size_ga[1] * size_ga[2]
                 size_gb = geoms_init_AABB[i_gb, 7]
@@ -1761,8 +1753,8 @@ class Collider:
                 i_g = i_ga if volume_ga < volume_gb else i_gb
 
             # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
-            i_l = geoms_info[i_g].link_idx
-            rot = gu.ti_quat_to_R(links_state[i_l, i_b].i_quat)
+            i_l = geoms_info.link_idx[i_g]
+            rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b])
             axis_idx = gs.ti_int(0)
             axis_angle_max = gs.ti_float(0.0)
             for i in ti.static(range(3)):
@@ -1806,7 +1798,7 @@ class Collider:
         i_gb,
         i_b,
     ):
-        if geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE and geoms_info[i_gb].type == gs.GEOM_TYPE.BOX:
+        if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
             if ti.static(sys.platform == "darwin"):
                 self_unused._func_plane_box_contact(
                     geoms_state,
@@ -1829,10 +1821,10 @@ class Collider:
             multi_contact = (
                 static_rigid_sim_config.enable_multi_contact
                 # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
-                and geoms_info[i_ga].type != gs.GEOM_TYPE.SPHERE
-                and geoms_info[i_ga].type != gs.GEOM_TYPE.ELLIPSOID
-                and geoms_info[i_gb].type != gs.GEOM_TYPE.SPHERE
-                and geoms_info[i_gb].type != gs.GEOM_TYPE.ELLIPSOID
+                and geoms_info.type[i_ga] != gs.GEOM_TYPE.SPHERE
+                and geoms_info.type[i_ga] != gs.GEOM_TYPE.ELLIPSOID
+                and geoms_info.type[i_gb] != gs.GEOM_TYPE.SPHERE
+                and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
             )
 
             tolerance = self_unused._func_compute_tolerance(
@@ -1840,10 +1832,8 @@ class Collider:
             )
 
             # Backup state before local perturbation
-            ga_state = geoms_state[i_ga, i_b]
-            gb_state = geoms_state[i_gb, i_b]
-            ga_pos, ga_quat = ga_state.pos, ga_state.quat
-            gb_pos, gb_quat = gb_state.pos, gb_state.quat
+            ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+            gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
 
             # Pre-allocate some buffers
             is_col_0 = False
@@ -1874,10 +1864,12 @@ class Collider:
 
                 if (multi_contact and is_col_0) or (i_detection == 0):
                     try_sdf = False
-                    if geoms_info[i_ga].type == gs.GEOM_TYPE.PLANE:
-                        ga_info = geoms_info[i_ga]
-                        plane_dir = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float)
-                        plane_dir = gu.ti_transform_by_quat(plane_dir, geoms_state[i_ga, i_b].quat)
+                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                        plane_dir = ti.Vector(
+                            [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]],
+                            dt=gs.ti_float,
+                        )
+                        plane_dir = gu.ti_transform_by_quat(plane_dir, geoms_state.quat[i_ga, i_b])
                         normal = -plane_dir.normalized()
 
                         v1 = mpr.support_driver(
@@ -1893,7 +1885,7 @@ class Collider:
                             i_gb,
                             i_b,
                         )
-                        penetration = normal.dot(v1 - geoms_state[i_ga, i_b].pos)
+                        penetration = normal.dot(v1 - geoms_state.pos[i_ga, i_b])
                         contact_pos = v1 - 0.5 * penetration * normal
                         is_col = penetration > 0
                     else:
@@ -2182,10 +2174,10 @@ class Collider:
                             )
                             n_con = n_con + 1
 
-                geoms_state[i_ga, i_b].pos = ga_pos
-                geoms_state[i_ga, i_b].quat = ga_quat
-                geoms_state[i_gb, i_b].pos = gb_pos
-                geoms_state[i_gb, i_b].quat = gb_quat
+                geoms_state.pos[i_ga, i_b] = ga_pos
+                geoms_state.quat[i_ga, i_b] = ga_quat
+                geoms_state.pos[i_gb, i_b] = gb_pos
+                geoms_state.quat[i_gb, i_b] = gb_quat
 
     @ti.func
     def _func_rotate_frame(
@@ -2197,12 +2189,12 @@ class Collider:
         qrot: ti.types.vector(4),
         i_b,
     ):
-        geoms_state[i_g, i_b].quat = gu.ti_transform_quat_by_quat(geoms_state[i_g, i_b].quat, qrot)
+        geoms_state.quat[i_g, i_b] = gu.ti_transform_quat_by_quat(geoms_state.quat[i_g, i_b], qrot)
 
-        rel = contact_pos - geoms_state[i_g, i_b].pos
+        rel = contact_pos - geoms_state.pos[i_g, i_b]
         vec = gu.ti_transform_by_quat(rel, qrot)
         vec = vec - rel
-        geoms_state[i_g, i_b].pos = geoms_state[i_g, i_b].pos - vec
+        geoms_state.pos[i_g, i_b] = geoms_state.pos[i_g, i_b] - vec
 
     @ti.func
     def _func_box_box_contact(
@@ -2235,16 +2227,22 @@ class Collider:
         margin2 = margin * margin
         rotmore = ti.Matrix.zero(gs.ti_float, 3, 3)
 
-        ga_info = geoms_info[i_ga]
-        gb_info = geoms_info[i_gb]
-        ga_state = geoms_state[i_ga, i_b]
-        gb_state = geoms_state[i_gb, i_b]
+        ga_pos = geoms_state.pos[i_ga, i_b]
+        gb_pos = geoms_state.pos[i_gb, i_b]
+        ga_quat = geoms_state.quat[i_ga, i_b]
+        gb_quat = geoms_state.quat[i_gb, i_b]
 
-        size1 = ti.Vector([ga_info.data[0], ga_info.data[1], ga_info.data[2]], dt=gs.ti_float) / 2
-        size2 = ti.Vector([gb_info.data[0], gb_info.data[1], gb_info.data[2]], dt=gs.ti_float) / 2
+        size1 = (
+            ti.Vector([geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float)
+            / 2
+        )
+        size2 = (
+            ti.Vector([geoms_info.data[i_gb][0], geoms_info.data[i_gb][1], geoms_info.data[i_gb][2]], dt=gs.ti_float)
+            / 2
+        )
 
-        pos1, pos2 = ga_state.pos, gb_state.pos
-        mat1, mat2 = gu.ti_quat_to_R(ga_state.quat), gu.ti_quat_to_R(gb_state.quat)
+        pos1, pos2 = ga_pos, gb_pos
+        mat1, mat2 = gu.ti_quat_to_R(ga_quat), gu.ti_quat_to_R(gb_quat)
 
         tmp1 = pos2 - pos1
         pos21 = mat1.transpose() @ tmp1
@@ -2302,12 +2300,12 @@ class Collider:
 
                 for k in ti.static(range(3)):
                     if k != j:
-                        m = i
-                        n = 3 - k - j
-                        if k - j > 3:
-                            m = m - 1
-                            n = n + 3
-                        c3 = c3 + size2[k] * rotabs[m, n] / c1
+                        i_ = i
+                        j_ = 3 - k - j
+                        if k + j > 3:
+                            i_ = i_ - 1
+                            j_ = j_ + 3
+                        c3 = c3 + size2[k] * rotabs[i_, j_] / c1
 
                         3 * i + 3 - k - j
 
@@ -2326,12 +2324,12 @@ class Collider:
                     cle2 = 0
                     for k in ti.static(range(3)):
                         if k != j:
-                            m = i
-                            n = 3 - k - j
-                            if k - j > 3:
-                                m = m - 1
-                                n = n + 3
-                            if (rot[m, n] > 0) ^ (c2 < 0) ^ (ti.raw_mod(k - j + 3, 3) == 1):
+                            i_ = i
+                            j_ = 3 - k - j
+                            if k + j > 3:
+                                i_ = i_ - 1
+                                j_ = j_ + 3
+                            if (rot[i_, j_] > 0) ^ (c2 < 0) ^ (ti.raw_mod(k - j + 3, 3) == 1):
                                 cle2 = cle2 + (1 << k)
 
                     code = 12 + i * 3 + j
@@ -2791,7 +2789,7 @@ class Collider:
 
                             c2 = tmp2.dot(tmp2)
 
-                            if not (tmp1[2] > 0 and c2 > margin2):
+                            if not (tmp1[2] > -gs.EPS and c2 > margin2):
                                 collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + tmp1
                                 collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] * 0.5
 
@@ -2804,10 +2802,10 @@ class Collider:
                         if n < collider_static_config.box_MAXCONPAIR:
                             x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
 
-                            if nl == 0:
-                                if (nf != 0) and (x < -lx or x > lx) and (y < -ly or y > ly):
+                            if nl == 0 and nf == 0:
+                                if (x < -lx + gs.EPS or x > lx - gs.EPS) and (y < -ly + gs.EPS or y > ly - gs.EPS):
                                     continue
-                            elif x < -lx or x > lx or y < -ly or y > ly:
+                            elif x < -lx + gs.EPS or x > lx - gs.EPS or y < -ly + gs.EPS or y > ly - gs.EPS:
                                 continue
 
                             c1 = 0
@@ -2819,7 +2817,7 @@ class Collider:
 
                             c1 = c1 + (collider_state.box_pu[i, i_b][2] * innorm) ** 2
 
-                            if collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
+                            if collider_state.box_pu[i, i_b][2] > -gs.EPS and c1 > margin2:
                                 continue
 
                             tmp1 = ti.Vector(
@@ -2868,7 +2866,7 @@ class Collider:
                             i_b,
                         )
 
-    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
+    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
         contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
@@ -2908,6 +2906,9 @@ class Collider:
             if self._solver.n_envs > 0:
                 iout = iout.reshape((n_envs, n_contacts_max, 4))
                 fout = fout.reshape((n_envs, n_contacts_max, 10))
+            if keep_batch_dim and self._solver.n_envs == 0:
+                iout = iout.reshape((1, n_contacts_max, 4))
+                fout = fout.reshape((1, n_contacts_max, 10))
             iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
             fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
             values = (*iout_chunks, *fout_chunks)

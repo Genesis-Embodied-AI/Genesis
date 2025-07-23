@@ -538,6 +538,7 @@ def build_genesis_sim(
     # Force matching Mujoco safety factor for constraint time constant.
     # Note that this time constant affects the penetration depth at rest.
     gs_sim = scene.sim
+    gs_sim.rigid_solver._sol_default_timeconst = None
     gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
 
     # Force recomputation of invweights to make sure it works fine
@@ -668,13 +669,13 @@ def check_mujoco_model_consistency(
     gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
     mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
     gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
     mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
     # FIXME: Masking geometries and equality constraints is not supported for now
@@ -683,14 +684,14 @@ def check_mujoco_model_consistency(
     ).reshape((-1, 7))
     mj_eq_solparams = np.concatenate((mj_sim.model.eq_solref, mj_sim.model.eq_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_eq_solparams, mj_eq_solparams, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
         [
-            gs_sim.rigid_solver.dofs_info[gs_sim.rigid_solver.joints_info[i].dof_start].limit.to_numpy()
+            gs_sim.rigid_solver.dofs_info.limit[gs_sim.rigid_solver.joints_info.dof_start[i]].to_numpy()
             for i in gs_joints_idx
         ],
         axis=0,
