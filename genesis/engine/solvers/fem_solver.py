@@ -1,3 +1,7 @@
+# pylint: disable=no-value-for-parameter
+
+import numpy as np
+import igl
 import taichi as ti
 import torch
 
@@ -5,9 +9,10 @@ import genesis as gs
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
+from genesis.utils.misc import ti_field_to_torch
+from genesis.utils.geom import ti_transform_by_quat, ti_transform_quat_by_quat
 
 from .base_solver import Solver
-import numpy as np
 
 
 @ti.data_oriented
@@ -46,6 +51,9 @@ class FEMSolver(Solver):
         # boundary
         self.setup_boundary()
 
+        # lazy initialization
+        self._constraints_initialized = False
+
     def _batch_shape(self, shape=None, first_dim=False, B=None):
         if B is None:
             B = self._B
@@ -62,19 +70,19 @@ class FEMSolver(Solver):
 
     def init_batch_fields(self):
         self.batch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
 
         self.batch_pcg_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
 
         self.batch_linesearch_active = ti.field(
-            dtype=ti.u1,
+            dtype=gs.ti_bool,
             shape=self._batch_shape(),
             needs_grad=False,
         )
@@ -122,7 +130,7 @@ class FEMSolver(Solver):
 
         # element state without gradient
         element_state_el_ng = ti.types.struct(
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # element info (properties that remain static through time)
@@ -154,7 +162,9 @@ class FEMSolver(Solver):
 
         element_v_info = ti.types.struct(
             mass=gs.ti_float,  # mass of the vertex
+            mass_inv=gs.ti_float,  # inverse mass of the vertex
             mass_over_dt2=gs.ti_float,  # scaled mass of the vertex over dt^2
+            friction_mu=gs.ti_float,  # friction coefficient for contact
         )
 
         pcg_state_v = ti.types.struct(
@@ -235,7 +245,7 @@ class FEMSolver(Solver):
         surface_state = ti.types.struct(
             tri2v=gs.ti_ivec3,  # vertex index of a triangle
             tri2el=gs.ti_int,  # element index of a triangle
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # for rendering (this is more of a surface)
@@ -265,8 +275,87 @@ class FEMSolver(Solver):
             layout=ti.Layout.SOA,
         )
 
+    def _init_surface_info(self):
+        self.vertices_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_vertices,))
+        self.elements_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_elements,))
+        self.compute_surface_vertices()
+        self.compute_surface_elements()
+        vertices_on_surface_np = self.vertices_on_surface.to_numpy()
+        elements_on_surface_np = self.elements_on_surface.to_numpy()
+        (surface_vertices_np,) = vertices_on_surface_np.nonzero()
+        self.surface_vertices = ti.field(
+            dtype=ti.i32,
+            shape=(len(surface_vertices_np),),
+            needs_grad=False,
+        )
+        self.surface_vertices.from_numpy(surface_vertices_np)
+        (surface_elements_np,) = elements_on_surface_np.nonzero()
+        self.surface_elements = ti.field(
+            dtype=ti.i32,
+            shape=(len(surface_elements_np),),
+            needs_grad=False,
+        )
+        self.surface_elements.from_numpy(surface_elements_np)
+
+        surface_triangles_np = self.surface.tri2v.to_numpy()
+        pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :][surface_vertices_np]
+        surface_vertices_mapping = np.full(self.n_vertices, -1, dtype=np.int32)
+        surface_vertices_mapping[surface_vertices_np] = np.arange(len(surface_vertices_np))
+        mass = igl.massmatrix(pos_np, surface_vertices_mapping[surface_triangles_np])
+        surface_vert_mass_np = mass.diagonal().astype(gs.np_float, copy=False)
+        self.surface_vert_mass = ti.field(
+            dtype=gs.ti_float,
+            shape=(len(surface_vertices_np),),
+            needs_grad=False,
+        )
+        self.surface_vert_mass.from_numpy(surface_vert_mass_np)
+
+    @ti.kernel
+    def compute_surface_vertices(self):
+        for i_v in range(self.n_vertices):
+            self.vertices_on_surface[i_v] = 0
+
+        for i_s in range(self.n_surfaces):
+            tri2v = self.surface[i_s].tri2v
+            for i in ti.static(range(3)):
+                self.vertices_on_surface[tri2v[i]] = 1
+
+    @ti.kernel
+    def compute_surface_elements(self):
+        for i_e in range(self.n_elements):
+            i_v = self.elements_i[i_e].el2v
+            self.elements_on_surface[i_e] = (
+                self.vertices_on_surface[i_v[0]]
+                or self.vertices_on_surface[i_v[1]]
+                or self.vertices_on_surface[i_v[2]]
+                or self.vertices_on_surface[i_v[3]]
+            )
+
     def init_ckpt(self):
         self._ckpt = dict()
+
+    def init_constraints(self):
+        self._constraints_initialized = True
+
+        vertex_constraint_info = ti.types.struct(
+            is_constrained=gs.ti_bool,  # boolean flag indicating if vertex is constrained
+            target_pos=gs.ti_vec3,  # target position for the constraint
+            is_soft_constraint=gs.ti_bool,  # use spring for soft constraints
+            stiffness=gs.ti_float,  # spring stiffness
+            damping=gs.ti_float,  # spring damping
+            link_idx=gs.ti_int,  # index of the rigid link (-1 if not linked)
+            link_offset_pos=gs.ti_vec3,  # offset position of link
+            link_init_quat=gs.ti_vec4,  # offset rotation of link
+        )
+
+        self.vertex_constraints = vertex_constraint_info.field(
+            shape=self._batch_shape((self.n_vertices)),
+            needs_grad=False,
+            layout=ti.Layout.AOS,
+        )
+
+        self.vertex_constraints.is_constrained.fill(False)
+        self.vertex_constraints.link_idx.fill(-1)
 
     def reset_grad(self):
         self.elements_v.grad.fill(0)
@@ -276,11 +365,17 @@ class FEMSolver(Solver):
             entity.reset_grad()
 
     def build(self):
+        super().build()
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
+        self.tet_wrong_order = ti.field(dtype=gs.ti_bool, shape=(), needs_grad=False)
 
         # batch fields
         self.init_batch_fields()
+
+        # rendering
+        self.envs_offset = ti.Vector.field(3, dtype=ti.f32, shape=self._B)
+        self.envs_offset.from_numpy(self._scene.envs_offset.astype(np.float32))
 
         # elements and bodies
         self._n_elements_max = self.n_elements
@@ -295,6 +390,14 @@ class FEMSolver(Solver):
 
         for mat in self._mats:
             mat.build(self)
+
+        if self.n_elements_max > 0:
+            self._init_surface_info()
+            if self.tet_wrong_order[None]:
+                raise RuntimeError(
+                    "The order of vertices in the tetrahedral elements is not correct. "
+                    "Please check the input mesh or the FEM solver implementation."
+                )
 
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
@@ -371,52 +474,50 @@ class FEMSolver(Solver):
             verts = self.elements_i[i_e].el2v
             mass_scaled = self.elements_i[i_e].mass_scaled
             H_scaled = -V_scaled * stress @ B.transpose()
-            dt = self.substep_dt
             for k in ti.static(range(3)):
                 force_scaled = ti.Vector([H_scaled[j, k] for j in range(3)])
-                dv = dt * force_scaled / mass_scaled
+
+                # store so forces can be read out
+                self.elements_v_energy[i_b, verts[k]].force = force_scaled
+
+                dv = self.substep_dt * force_scaled / mass_scaled
                 self.elements_v[f + 1, verts[k], i_b].vel += dv
                 self.elements_v[f + 1, verts[3], i_b].vel -= dv
 
     @ti.kernel
     def apply_uniform_force(self, f: ti.i32):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
-            dt = self.substep_dt
-
             # NOTE: damping should only be applied to velocity from internal force and thus come first here
             #       given the immediate previous function call is compute_internal_vel --> however, shouldn't
             #       be done at dv only and need to wait for all elements updated (cannot be in the compute_internal_vel kernel)
             #       however, this inevitably damp the gravity.
-            self.elements_v[f + 1, i_v, i_b].vel *= ti.exp(-dt * self.damping)
+            self.elements_v[f + 1, i_v, i_b].vel *= ti.exp(-self.substep_dt * self.damping)
             # Add gravity (avoiding damping on gravity)
-            self.elements_v[f + 1, i_v, i_b].vel += dt * self._gravity[None]
+            self.elements_v[f + 1, i_v, i_b].vel += self.substep_dt * self._gravity[i_b]
 
     @ti.kernel
     def compute_pos(self, f: ti.i32):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
-            dt = self.substep_dt
             self.elements_v[f + 1, i_v, i_b].pos = (
-                dt * self.elements_v[f + 1, i_v, i_b].vel + self.elements_v[f, i_v, i_b].pos
+                self.substep_dt * self.elements_v[f + 1, i_v, i_b].vel + self.elements_v[f, i_v, i_b].pos
             )
 
     @ti.kernel
     def precompute_material_data(self, f: ti.i32):
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
-            if not self.batch_active[i_b]:
-                continue
-
             J, F = self._compute_ele_J_F(f, i_e, i_b)  # use last time step's pos to compute
-
             for mat_idx in ti.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
                     self._mats[mat_idx].pre_compute(J=J, F=F, i_e=i_e, i_b=i_b)
 
     @ti.kernel
     def init_pos_and_inertia(self, f: ti.i32):
-        dt = self.substep_dt
+        dt2 = self.substep_dt**2
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             self.elements_v_energy[i_b, i_v].inertia = (
-                self.elements_v[f, i_v, i_b].pos + self.elements_v[f, i_v, i_b].vel * dt + self._gravity[None] * dt**2
+                self.elements_v[f, i_v, i_b].pos
+                + self.elements_v[f, i_v, i_b].vel * self.substep_dt
+                + self._gravity[i_b] * dt2
             )
             self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f, i_v, i_b].pos
 
@@ -583,6 +684,7 @@ class FEMSolver(Solver):
             gradient = self.elements_el_energy[i_b, i_e].gradient
             force = -V * gradient @ B.transpose()
             i_v = self.elements_i[i_e].el2v
+
             # atomic
             self.elements_v_energy[i_b, i_v[0]].force += force[:, 0]
             self.elements_v_energy[i_b, i_v[1]].force += force[:, 1]
@@ -610,7 +712,6 @@ class FEMSolver(Solver):
                 S_H_St_x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i, j in ti.static(ti.ndrange(4, 3)):
                     S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
-                # print("S_H_St_x_diff", S_H_St_x_diff)
                 for i in ti.static(range(4)):
                     self.elements_v_energy[i_b, i_v[i]].force += (
                         -damping_beta_over_dt * V * S_H_St_x_diff[i * 3 : i * 3 + 3]
@@ -632,12 +733,12 @@ class FEMSolver(Solver):
             # Other options for preconditioner:
             # Uncomment one of the following lines to test different preconditioners
             # Use identity for preconditioner
-            # self.pcg_state[i_v, i_b].prec = ti.Matrix.identity(gs.ti_float, 3)
+            # self.pcg_state_v[i_b, i_v].prec = ti.Matrix.identity(gs.ti_float, 3)
 
             # Use diagonal for preconditioner
-            # self.pcg_state[i_v, i_b].prec = ti.Matrix([[1 / self.pcg_state[i_v, i_b].diag3x3[0, 0], 0, 0],
-            #                                            [0, 1 / self.pcg_state[i_v, i_b].diag3x3[1, 1], 0],
-            #                                            [0, 0, 1 / self.pcg_state[i_v, i_b].diag3x3[2, 2]]])
+            # self.pcg_state_v[i_b, i_v].prec = ti.Matrix([[1 / self.pcg_state_v[i_b, i_v].diag3x3[0, 0], 0, 0],
+            #                                            [0, 1 / self.pcg_state_v[i_b, i_v].diag3x3[1, 1], 0],
+            #                                            [0, 0, 1 / self.pcg_state_v[i_b, i_v].diag3x3[2, 2]]])
 
     @ti.func
     def compute_Ap(self):
@@ -754,7 +855,7 @@ class FEMSolver(Solver):
         for i_b in range(self._B):
             if not self.batch_pcg_active[i_b]:
                 continue
-            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTr_new / self.pcg_state[i_b].rTr
+            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
             self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
             self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
 
@@ -840,12 +941,23 @@ class FEMSolver(Solver):
                 continue
             self.linesearch_state[i_b].step_size *= self._linesearch_tau
 
+    @ti.kernel
+    def skip_linesearch(self, f: ti.i32):
+        # Inertia, x_prev, m
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+            if not self.batch_active[i_b]:
+                continue
+            self.elements_v[f + 1, i_v, i_b].pos = self.elements_v[f + 1, i_v, i_b].pos + self.pcg_state_v[i_b, i_v].x
+
     def linesearch(self, f: ti.i32):
         """
         Note
         ------
         https://en.wikipedia.org/wiki/Backtracking_line_search#Algorithm
         """
+        if self._n_linesearch_iterations <= 0:
+            self.skip_linesearch(f)
+            return
         self.init_linesearch(f)
         for i in range(self._n_linesearch_iterations):
             self.one_linesearch_iter(f)
@@ -902,6 +1014,8 @@ class FEMSolver(Solver):
                 self.init_pos_and_vel(f)
                 self.compute_vel(f)
                 self.apply_uniform_force(f)
+                if self._constraints_initialized:
+                    self.apply_soft_constraints(f)
 
     def substep_pre_coupling_grad(self, f):
         if self.is_active():
@@ -914,6 +1028,8 @@ class FEMSolver(Solver):
     def substep_post_coupling(self, f):
         if self.is_active():
             self.compute_pos(f)
+            if self._constraints_initialized and not self._use_implicit_solver:
+                self.apply_hard_constraints(f)
 
     def substep_post_coupling_grad(self, f):
         if self.is_active():
@@ -1033,6 +1149,18 @@ class FEMSolver(Solver):
 
         return vertices, indices
 
+    def get_forces(self):
+        """
+        Get forces on all vertices.
+
+        Returns:
+            torch.Tensor : shape (B, n_vertices, 3) where B is batch size
+        """
+        if not self.is_active():
+            return None
+
+        return ti_field_to_torch(self.elements_v_energy.force)
+
     @ti.kernel
     def _kernel_add_elements(
         self,
@@ -1057,10 +1185,14 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        for i_v in range(n_verts_local):
+            i_global = i_v + v_start
             self.elements_v_info[i_global].mass = 0.0
             self.elements_v_info[i_global].mass_over_dt2 = 0.0
+            self.elements_v_info[i_global].friction_mu = mat_friction_mu
 
-        one_over_dt2 = 1.0 / (self.substep_dt**2)
+        dt2_inv = 1.0 / (self.substep_dt**2)
         n_elems_local = elems.shape[0]
         for i_e in range(n_elems_local):
             i_global = i_e + el_start
@@ -1071,7 +1203,11 @@ class FEMSolver(Solver):
             d = self.elements_v[f, elems[i_e, 3] + v_start, 0].pos
             B_inv = ti.Matrix.cols([a - d, b - d, c - d])
             self.elements_i[i_global].B = B_inv.inverse()
-            V = ti.abs(B_inv.determinant()) / 6
+            det = B_inv.determinant()
+            # Determinant should be consistently smaller than 0
+            if det >= 0.0:
+                self.tet_wrong_order[None] = True
+            V = ti.abs(det) / 6.0
             self.elements_i[i_global].V = V
             V_scaled = V * self._vol_scale
             self.elements_i[i_global].V_scaled = V_scaled
@@ -1086,21 +1222,25 @@ class FEMSolver(Solver):
             for j in ti.static(range(4)):
                 mass = 0.25 * mat_rho * V
                 self.elements_v_info[self.elements_i[i_global].el2v[j]].mass += mass
-                self.elements_v_info[self.elements_i[i_global].el2v[j]].mass_over_dt2 += mass * one_over_dt2
+                self.elements_v_info[self.elements_i[i_global].el2v[j]].mass_over_dt2 += mass * dt2_inv
             self.elements_i[i_global].muscle_group = 0
             self.elements_i[i_global].muscle_direction = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+
+        for i_v in range(n_verts_local):
+            i_global = i_v + v_start
+            self.elements_v_info[i_global].mass_inv = 1.0 / self.elements_v_info[i_global].mass
 
         for i_e, i_b in ti.ndrange(n_elems_local, self._B):
             i_global = i_e + el_start
             self.elements_el[f, i_global, i_b].actu = 0.0
-            self.elements_el_ng[f, i_global, i_b].active = 1
+            self.elements_el_ng[f, i_global, i_b].active = True
 
         for i_s in range(n_surfaces):
             i_global = i_s + s_start
             for j in ti.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
             self.surface[i_global].tri2el = tri2el[i_s] + el_start
-            self.surface[i_global].active = 1
+            self.surface[i_global].active = True
 
     @ti.kernel
     def _kernel_set_elements_pos(
@@ -1247,7 +1387,8 @@ class FEMSolver(Solver):
     def get_state_render_kernel(self, f: ti.i32):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             for j in ti.static(range(3)):
-                self.surface_render_v[i_v, i_b].vertices[j] = ti.cast(self.elements_v[f, i_v, i_b].pos[j], ti.f32)
+                pos_j = ti.cast(self.elements_v[f, i_v, i_b].pos[j], ti.f32)
+                self.surface_render_v[i_v, i_b].vertices[j] = pos_j + self.envs_offset[i_b][j]
 
         for i_s, i_b in ti.ndrange(self.n_surfaces, self._B):
             for j in ti.static(range(3)):
@@ -1316,3 +1457,100 @@ class FEMSolver(Solver):
     @property
     def vol_scale(self):
         return self._vol_scale
+
+    @property
+    def n_surface_vertices(self):
+        return self.surface_vertices.shape[0]
+
+    @property
+    def n_surface_elements(self):
+        return self.surface_elements.shape[0]
+
+    # ------------------------------------------------------------------------------------
+    # -------------------------------- vertex constraints --------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @ti.kernel
+    def _kernel_update_linked_vertex_constraints(
+        self,
+        links_pos: ti.template(),  # matrix field
+        links_quat: ti.template(),  # matrix field
+    ):
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            vc = self.vertex_constraints[i_v, i_b]
+            if vc.is_constrained and vc.link_idx >= 0:
+                i_l = vc.link_idx
+                pos = links_pos[i_l, i_b]
+                quat = links_quat[i_l, i_b]
+
+                offset_pos = vc.link_offset_pos
+                offset_quat = ti_transform_quat_by_quat(vc.link_init_quat, quat)
+                self.vertex_constraints[i_v, i_b].target_pos = pos + ti_transform_by_quat(offset_pos, offset_quat)
+
+    @ti.kernel
+    def apply_hard_constraints(self, f: ti.i32):
+        """Apply hard constraints by directly overriding positions and velocities."""
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            vc = self.vertex_constraints[i_v, i_b]
+            if vc.is_constrained and not vc.is_soft_constraint:
+                self.elements_v[f + 1, i_v, i_b].pos = vc.target_pos
+                self.elements_v[f + 1, i_v, i_b].vel.fill(0.0)
+
+    @ti.kernel
+    def apply_soft_constraints(self, f: ti.i32):
+        """Apply soft constraints as spring forces for explicit solver."""
+        for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
+            vc = self.vertex_constraints[i_v, i_b]
+            if vc.is_constrained and vc.is_soft_constraint:
+                pos_error = self.elements_v[f, i_v, i_b].pos - vc.target_pos
+                vel_error = self.elements_v[f + 1, i_v, i_b].vel - self.elements_v[f, i_v, i_b].vel
+                spring_force = -vc.stiffness * pos_error
+                damping_force = -2.0 * ti.math.sqrt(vc.stiffness) * vel_error
+
+                dv = self.substep_dt * (spring_force + damping_force)
+                self.elements_v[f + 1, i_v, i_b].vel += dv
+
+    @ti.kernel
+    def _kernel_set_vertex_constraints(
+        self,
+        f: ti.i32,
+        verts_idx: ti.types.ndarray(),  # shape [B, V]
+        target_poss: ti.types.ndarray(),  # shape [B, V, 3]
+        is_soft_constraint: ti.i32,
+        stiffness: ti.f32,
+        link_idx: ti.i32,
+        link_init_pos: ti.types.ndarray(),  # shape [B, 3]
+        link_init_quat: ti.types.ndarray(),  # shape [B, 4]
+        envs_idx: ti.types.ndarray(),  # shape [B]
+    ):
+        for i_v_, i_b_ in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            i_v = verts_idx[i_b, i_v_]
+            self.vertex_constraints[i_v, i_b].is_constrained = True
+            self.vertex_constraints[i_v, i_b].is_soft_constraint = is_soft_constraint
+            self.vertex_constraints[i_v, i_b].stiffness = stiffness
+            self.vertex_constraints[i_v, i_b].link_idx = link_idx
+
+            cur_pos = self.elements_v[f, i_v, i_b].pos
+            for j in ti.static(range(3)):
+                self.vertex_constraints[i_v, i_b].target_pos[j] = target_poss[i_b_, i_v_, j]
+                self.vertex_constraints[i_v, i_b].link_offset_pos[j] = cur_pos[j] - link_init_pos[i_b_, j]
+            for j in ti.static(range(4)):
+                self.vertex_constraints[i_v, i_b].link_init_quat[j] = link_init_quat[i_b_, j]
+
+    @ti.kernel
+    def _kernel_update_constraint_targets(
+        self, verts_idx: ti.types.ndarray(), new_target_poss: ti.types.ndarray(), envs_idx: ti.types.ndarray()
+    ):
+        for i_v_, i_b_ in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            i_v = verts_idx[i_b, i_v_]
+            for j in ti.static(range(3)):
+                self.vertex_constraints[i_v, i_b].target_pos[j] = new_target_poss[i_b_, i_v_, j]
+
+    @ti.kernel
+    def _kernel_remove_specific_constraints(self, verts_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
+        for i_v_, i_b_ in ti.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            i_v = verts_idx[i_b, i_v_]
+            self.vertex_constraints[i_v, i_b].is_constrained = False

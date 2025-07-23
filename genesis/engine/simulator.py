@@ -7,7 +7,8 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
-    CouplerOptions,
+    BaseCouplerOptions,
+    LegacyCouplerOptions,
     SAPCouplerOptions,
     FEMOptions,
     MPMOptions,
@@ -20,8 +21,9 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .coupler import Coupler, SAPCoupler
+from .couplers import LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
+from .solvers.base_solver import Solver
 from .solvers import (
     AvatarSolver,
     FEMSolver,
@@ -74,7 +76,7 @@ class Simulator(RBC):
         self,
         scene: "Scene",
         options: SimOptions,
-        coupler_options: CouplerOptions,
+        coupler_options: BaseCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
         avatar_options: AvatarOptions,
@@ -136,8 +138,12 @@ class Simulator(RBC):
         # coupler
         if isinstance(self.coupler_options, SAPCouplerOptions):
             self._coupler = SAPCoupler(self, self.coupler_options)
+        elif isinstance(self.coupler_options, LegacyCouplerOptions):
+            self._coupler = LegacyCoupler(self, self.coupler_options)
         else:
-            self._coupler = Coupler(self, self.coupler_options)
+            gs.raise_exception(
+                f"Coupler options {self.coupler_options} not supported. Please use SAPCouplerOptions or LegacyCouplerOptions."
+            )
 
         # states
         self._queried_states = QueriedStates()
@@ -205,12 +211,12 @@ class Simulator(RBC):
             if isinstance(entity, HybridEntity):
                 entity.build()
 
-    def reset(self, state, envs_idx=None):
+    def reset(self, state: SimState, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):
-            solver.set_state(0, solver_state, envs_idx)
+            if solver.n_entities > 0:
+                solver.set_state(0, solver_state, envs_idx)
 
-        # TODO: keeping as is for now, since coupler is currently for non-batched scenes
-        self.coupler.reset()
+        self.coupler.reset(envs_idx=envs_idx)
 
         # TODO: keeping as is for now
         self.reset_grad()
@@ -267,7 +273,11 @@ class Simulator(RBC):
                     self.save_ckpt()
 
         if self.rigid_solver.is_active():
-            self.rigid_solver._kernel_clear_external_force()
+            self.rigid_solver._kernel_clear_external_force(
+                links_state=self.rigid_solver.links_state,
+                rigid_global_info=self.rigid_solver._rigid_global_info,
+                static_rigid_sim_config=self.rigid_solver._static_rigid_sim_config,
+            )
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
@@ -394,6 +404,10 @@ class Simulator(RBC):
         self._queried_states.append(state)
 
         return state
+
+    def set_gravity(self, gravity, envs_idx=None):
+        for solver in self._solvers:
+            solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

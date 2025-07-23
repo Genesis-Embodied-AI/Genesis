@@ -17,16 +17,22 @@ class ContactIsland:
             start=gs.ti_int,
         )
 
-        self.ci_edges = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs, 2)))
+        self.ci_edges = ti.field(
+            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None], 2))
+        )
 
-        self.edge_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs * 2)))
+        self.edge_id = ti.field(
+            dtype=gs.ti_int,
+            shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None] * 2)),
+        )
 
         self.constraint_list = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs))
+            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None]))
         )
 
         self.constraint_id = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._max_contact_pairs * 2))
+            dtype=gs.ti_int,
+            shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None] * 2)),
         )
 
         self.entity_edge = struct_agg_list.field(
@@ -86,8 +92,8 @@ class ContactIsland:
     def add_island(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
-            for i_col in range(self.collider.n_contacts[i_b]):
-                impact = self.collider.contact_data[i_col, i_b]
+            for i_col in range(self.collider._collider_state.n_contacts[i_b]):
+                impact = self.collider._collider_state.contact_data[i_col, i_b]
                 self.add_edge(impact.link_a, impact.link_b, i_b)
 
     def construct(self):
@@ -101,8 +107,8 @@ class ContactIsland:
     def postprocess_island(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
-            for i_col in range(self.collider.n_contacts[i_b]):
-                impact = self.collider.contact_data[i_col, i_b]
+            for i_col in range(self.collider._collider_state.n_contacts[i_b]):
+                impact = self.collider._collider_state.contact_data[i_col, i_b]
                 link_a = impact.link_a
                 link_b = impact.link_b
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
@@ -129,7 +135,7 @@ class ContactIsland:
 
                 self.island_hibernated[i, i_b] = 1
 
-            for i_col in range(self.collider.n_contacts[i_b]):
+            for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 island = self.constraint_list[i_col, i_b]
                 self.constraint_id[self.island_col[island, i_b].curr, i_b] = i_col
                 self.island_col[island, i_b].curr = self.island_col[island, i_b].curr + 1
@@ -140,7 +146,7 @@ class ContactIsland:
                     self.island_entity[self.entity_island[i, i_b], i_b].n = (
                         self.island_entity[self.entity_island[i, i_b], i_b].n + 1
                     )
-                    if self.solver.entities_state[i, i_b].hibernated == 0:
+                    if self.solver.entities_state.hibernated[i, i_b] == 0:
                         self.island_hibernated[self.entity_island[i, i_b], i_b] = 0
 
             entity_list_start = 0
@@ -180,7 +186,7 @@ class ContactIsland:
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_v in range(self.solver.n_entities):
-                if self.entity_edge[i_v, i_b].n > 0 and self.solver.entities_info[i_v].n_dofs > 0:
+                if self.entity_edge[i_v, i_b].n > 0 and self.solver.entities_info.n_dofs[i_v] > 0:
                     if self.entity_island[i_v, i_b] != -1:
                         continue
                     self.n_stack[i_b] = 0
@@ -201,7 +207,7 @@ class ContactIsland:
                             if next_v == v:
                                 next_v = self.ci_edges[edge, 1, i_b]
 
-                            if self.solver.entities_info[next_v].n_dofs > 0 and next_v != v:
+                            if self.solver.entities_info.n_dofs[next_v] > 0 and next_v != v:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
 
@@ -211,6 +217,6 @@ class ContactIsland:
             ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self.solver._B):
                 for i_v in range(self.solver.n_entities):
-                    if self.solver.entities_info[i_v].n_dofs > 0 and self.entity_island[i_v, i_b] == -1:
+                    if self.solver.entities_info.n_dofs[i_v] > 0 and self.entity_island[i_v, i_b] == -1:
                         self.entity_island[i_v, i_b] = self.n_island[i_b]
                         self.n_island[i_b] = self.n_island[i_b] + 1

@@ -130,10 +130,11 @@ class HoverEnv:
         self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["pos_z_range"], (len(envs_idx),), gs.device)
 
     def _at_target(self):
-        at_target = (
-            (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"]).nonzero(as_tuple=False).flatten()
+        return (
+            (torch.norm(self.rel_pos, dim=1) < self.env_cfg["at_target_threshold"])
+            .nonzero(as_tuple=False)
+            .reshape((-1,))
         )
-        return at_target
 
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
@@ -180,11 +181,11 @@ class HoverEnv:
         )
         self.reset_buf = (self.episode_length_buf > self.max_episode_length) | self.crash_condition
 
-        time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).flatten()
+        time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).reshape((-1,))
         self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=gs.device, dtype=gs.tc_float)
         self.extras["time_outs"][time_out_idx] = 1.0
 
-        self.reset_idx(self.reset_buf.nonzero(as_tuple=False).flatten())
+        self.reset_idx(self.reset_buf.nonzero(as_tuple=False).reshape((-1,)))
 
         # compute reward
         self.rew_buf[:] = 0.0

@@ -1,4 +1,7 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
+from numpy.typing import ArrayLike
 import taichi as ti
 import torch
 
@@ -8,6 +11,10 @@ from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 
 from .rigid_geom import RigidGeom, RigidVisGeom
+
+if TYPE_CHECKING:
+    from .rigid_entity import RigidEntity
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
@@ -43,41 +50,47 @@ class RigidLink(RBC):
         invweight,
         visualize_contact,
     ):
-        self._name = name
-        self._entity = entity
-        self._solver = entity.solver
+        self._name: str = name
+        self._entity: "RigidEntity" = entity
+        self._solver: "RigidSolver" = entity.solver
         self._entity_idx_in_solver = entity.idx
 
         self._uid = gs.UID()
-        self._idx = idx
-        self._parent_idx = parent_idx
-        self._root_idx = root_idx
-        self._child_idxs = list()
-        self._invweight = invweight
+        self._idx: int = idx
+        self._parent_idx: int = parent_idx  # -1 if no parent
+        self._root_idx: int | None = root_idx  # None if no root
+        self._child_idxs: list[int] = list()
+        self._invweight: float | None = invweight
 
-        self._joint_start = joint_start
-        self._n_joints = n_joints
+        self._joint_start: int = joint_start
+        self._n_joints: int = n_joints
 
-        self._geom_start = geom_start
-        self._cell_start = cell_start
-        self._vert_start = vert_start
-        self._face_start = face_start
-        self._edge_start = edge_start
-        self._verts_state_start = verts_state_start
-        self._vgeom_start = vgeom_start
-        self._vvert_start = vvert_start
-        self._vface_start = vface_start
+        self._geom_start: int = geom_start
+        self._cell_start: int = cell_start
+        self._vert_start: int = vert_start
+        self._face_start: int = face_start
+        self._edge_start: int = edge_start
+        self._verts_state_start: int = verts_state_start
+        self._vgeom_start: int = vgeom_start
+        self._vvert_start: int = vvert_start
+        self._vface_start: int = vface_start
 
-        self._pos = pos
-        self._quat = quat
-        self._inertial_pos = inertial_pos
-        self._inertial_quat = inertial_quat
+        # Link position & rotation at creation time:
+        self._pos: ArrayLike = pos
+        self._quat: ArrayLike = quat
+        # Link's center-of-mass position & principal axes frame rotation at creation time:
+        if inertial_pos is not None:
+            inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
+        self._inertial_pos: ArrayLike | None = inertial_pos
+        if inertial_quat is not None:
+            inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
+        self._inertial_quat: ArrayLike | None = inertial_quat
         self._inertial_mass = inertial_mass
         self._inertial_i = inertial_i
 
         self._visualize_contact = visualize_contact
 
-        self._geoms = gs.List()
+        self._geoms: list[RigidGeom] = gs.List()
         self._vgeoms = gs.List()
 
     def _build(self):
@@ -99,7 +112,7 @@ class RigidLink(RBC):
                 is_fixed = False
         if self._root_idx is None:
             self._root_idx = gs.np_int(link.idx)
-        self.is_fixed = gs.np_int(is_fixed)
+        self.is_fixed: np.int32 = gs.np_int(is_fixed)  # note: type inconsistent with is_built, is_free, is_leaf: bool
 
         # inertial_mass and inertia_i
         if self._inertial_mass is None:
@@ -253,7 +266,7 @@ class RigidLink(RBC):
         return self._solver.get_links_quat([self._idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None):
+    def get_vel(self, envs_idx=None) -> torch.Tensor:
         """
         Get the linear velocity of the link in the world frame.
 
@@ -265,7 +278,7 @@ class RigidLink(RBC):
         return self._solver.get_links_vel([self._idx], envs_idx).squeeze(-2)
 
     @gs.assert_built
-    def get_ang(self, envs_idx=None):
+    def get_ang(self, envs_idx=None) -> torch.Tensor:
         """
         Get the angular velocity of the link in the world frame.
 
@@ -301,7 +314,7 @@ class RigidLink(RBC):
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -311,7 +324,7 @@ class RigidLink(RBC):
 
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_vverts(self):
@@ -328,11 +341,11 @@ class RigidLink(RBC):
     def _kernel_get_vverts(self, tensor: ti.types.ndarray()):
         for i_vg_, i_b in ti.ndrange(self.n_vgeoms, self._solver._B):
             i_vg = i_vg_ + self._vgeom_start
-            g_info = self._solver.vgeoms_info[i_vg]
-            g_state = self._solver.vgeoms_state[i_vg, i_b]
-            for i_v in range(g_info.vvert_start, g_info.vvert_end):
+            for i_v in range(self._solver.vgeoms_info.vvert_start[i_vg], self._solver.vgeoms_info.vvert_end[i_vg]):
                 vvert_pos = gu.ti_transform_by_trans_quat(
-                    self._solver.vverts_info[i_v].init_pos, g_state.pos, g_state.quat
+                    self._solver.vverts_info.init_pos[i_v],
+                    self._solver.vgeoms_state.pos[i_vg, i_b],
+                    self._solver.vgeoms_state.quat[i_vg, i_b],
                 )
                 for j in range(3):
                     tensor[i_b, i_v - self._vvert_start, j] = vvert_pos[j]
@@ -379,7 +392,9 @@ class RigidLink(RBC):
             self._invweight /= ratio
         self._inertial_i *= ratio
 
-        self._solver._kernel_adjust_link_inertia(self.idx, ratio)
+        self._solver._kernel_adjust_link_inertia(
+            self.idx, ratio, self._solver.links_info, self._solver._static_rigid_sim_config
+        )
 
     @gs.assert_built
     def get_mass(self):

@@ -65,9 +65,14 @@ class Viewer(RBC):
         if opengl_platform_orig is None:
             if gs.platform == "Windows":
                 all_opengl_platforms = ("wgl",)  # same as "native"
+            elif gs.platform == "Linux":
+                # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
-                all_opengl_platforms = ("native", "egl", "glx")  # "native" is platform-specific ("egl" or "glx")
+                all_opengl_platforms = ("native",)
         else:
+            if gs.platform == "Windows" and opengl_platform_orig == "osmesa":
+                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is not supported on Windows OS.")
             all_opengl_platforms = (opengl_platform_orig,)
 
         for i, platform in enumerate(all_opengl_platforms):
@@ -108,11 +113,10 @@ class Viewer(RBC):
 
                 if i == len(all_opengl_platforms) - 1:
                     raise
-            finally:
-                if opengl_platform_orig is None:
-                    del os.environ["PYOPENGL_PLATFORM"]
-                else:
-                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
+
+            # Select PyOpenGL backend compatible with `pyrender.OffscreenRenderer`
+            if platform not in ("osmesa", "pyglet", "egl"):
+                os.environ["PYOPENGL_PLATFORM"] = "pyglet"
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
@@ -131,22 +135,19 @@ class Viewer(RBC):
         return self._pyrender_viewer is not None and self._pyrender_viewer.is_active
 
     def setup_camera(self):
-        pos = np.array(self._camera_init_pos)
-        up = np.array(self._camera_up)
-        lookat = np.array(self._camera_init_lookat)
-
         yfov = self._camera_fov / 180.0 * np.pi
-        z = pos - lookat
-        R = gu.z_up_to_R(z, up=up)
-        pose = gu.trans_R_to_T(pos, R)
+        pose = gu.pos_lookat_up_to_T(self._camera_init_pos, self._camera_init_lookat, self._camera_up)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
     def update(self, auto_refresh=None):
         if self._followed_entity is not None:
             self.update_following()
 
+        self._pyrender_viewer.update_on_sim_step()
+
         with self.lock:
-            self._pyrender_viewer.pending_buffer_updates |= self.context.update()
+            # Update context
+            self.context.update()
 
             # Refresh viewer by default if and if this is possible
             if auto_refresh is None:
@@ -159,6 +160,9 @@ class Viewer(RBC):
         # lock FPS
         if self._max_FPS is not None:
             self.rate.sleep()
+
+    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
+        return self._pyrender_viewer.render_offscreen(camera_node, render_target, depth, seg, normal)
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
         """
@@ -175,20 +179,12 @@ class Viewer(RBC):
         """
         if pose is None:
             if pos is None:
-                pos = np.array(self._camera_init_pos)
-            else:
-                pos = np.array(pos)
-
+                pos = self._camera_init_pos
             if lookat is None:
-                lookat = np.array(self._camera_init_lookat)
-            else:
-                lookat = np.array(lookat)
+                lookat = self._camera_init_lookat
+            up = self._camera_up
 
-            up = np.array(self._camera_up)
-
-            z = pos - lookat
-            R = gu.z_up_to_R(z, up=up)
-            pose = gu.trans_R_to_T(pos, R)
+            pose = gu.pos_lookat_up_to_T(pos, lookat, up)
         else:
             if np.array(pose).shape != (4, 4):
                 gs.raise_exception("pose should be a 4x4 matrix.")

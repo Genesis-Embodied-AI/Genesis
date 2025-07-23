@@ -7,13 +7,14 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.repr_base import RBC
+from genesis.sensors import Sensor
+from genesis.utils.misc import tensor_to_array
 
 
-class Camera(RBC):
+class Camera(Sensor):
     """
-    Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
-    The camera also comes with handy tools such as video recording.
+    A camera which can be used to render RGB, depth, and segmentation images.
+    Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
 
     Parameters
     ----------
@@ -42,7 +43,9 @@ class Camera(RBC):
     spp : int, optional
         Samples per pixel. Only available when using the RayTracer renderer. Defaults to 256.
     denoise : bool
-        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option when building RayTracer.
+        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer.
+        Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
+        option when building RayTracer.
     near : float
         The near plane of the camera.
     far : float
@@ -91,6 +94,7 @@ class Camera(RBC):
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
+        self._attached_env_idx = None
 
         self._in_recording = False
         self._recorded_imgs = []
@@ -124,7 +128,7 @@ class Camera(RBC):
         self._is_built = True
         self.set_pose(self._transform, self._pos, self._lookat, self._up)
 
-    def attach(self, rigid_link, offset_T):
+    def attach(self, rigid_link, offset_T, env_idx: int | None = None):
         """
         Attach the camera to a rigid link in the scene.
 
@@ -136,9 +140,26 @@ class Camera(RBC):
             The rigid link to which the camera should be attached.
         offset_T : np.ndarray, shape (4, 4)
             The transformation matrix specifying the camera's pose relative to the rigid link.
+        env_idx : int
+            The environment index this camera should be tied to. Offsets the `offset_T` accordingly. Must be specified
+            if running parallel environments
+
+        Raises
+        ------
+        Exception
+            If running parallel simulations but env_idx is not specified.
+        Exception
+            If invalid env_idx is specified (env_idx >= n_envs)
         """
         self._attached_link = rigid_link
         self._attached_offset_T = offset_T
+        if self._visualizer._scene.n_envs > 0 and env_idx is None:
+            gs.raise_exception("Must specify env_idx when running parallel simulations")
+        if env_idx is not None:
+            n_envs = self._visualizer._scene.n_envs
+            if env_idx >= n_envs:
+                gs.raise_exception(f"Invalid env_idx {env_idx} for camera, configured for {n_envs} environments")
+            self._attached_env_idx = env_idx
 
     def detach(self):
         """
@@ -148,6 +169,7 @@ class Camera(RBC):
         """
         self._attached_link = None
         self._attached_offset_T = None
+        self._attached_env_idx = None
 
     @gs.assert_built
     def move_to_attach(self):
@@ -160,19 +182,27 @@ class Camera(RBC):
         ------
         Exception
             If the camera has not been mounted using `attach()`.
-        Exception
-            If the simulation is running in parallel (`n_envs > 0`), which is currently unsupported for mounted cameras.
         """
         if self._attached_link is None:
             gs.raise_exception(f"The camera hasn't been mounted!")
-        if self._visualizer._scene.n_envs > 0:
-            gs.raise_exception(f"Mounted camera not supported in parallel simulation!")
 
-        link_pos = self._attached_link.get_pos().cpu().numpy()
-        link_quat = self._attached_link.get_quat().cpu().numpy()
+        link_pos = tensor_to_array(self._attached_link.get_pos(envs_idx=self._attached_env_idx))
+        link_quat = tensor_to_array(self._attached_link.get_quat(envs_idx=self._attached_env_idx))
+        if self._attached_env_idx is not None:
+            link_pos = link_pos[0] + self._visualizer._scene.envs_offset[self._attached_env_idx]
+            link_quat = link_quat[0]
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = link_T @ self._attached_offset_T
         self.set_pose(transform=transform)
+
+    @gs.assert_built
+    def read(self):
+        """
+        Obtain the RGB camera view.
+        This is a temporary implementation to make Camera a Sensor.
+        """
+        rgb, _, _, _ = self.render()
+        return rgb
 
     @gs.assert_built
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
@@ -237,13 +267,12 @@ class Camera(RBC):
             gs.raise_exception("No renderer was found.")
 
         if seg_idxc_arr is not None:
-            seg_idx_arr = self._rasterizer._context.seg_idxc_to_idx(seg_idxc_arr)
             if colorize_seg or (self._GUI and self._visualizer.connected_to_display):
                 seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
             if colorize_seg:
                 seg_arr = seg_color_arr
             else:
-                seg_arr = seg_idx_arr
+                seg_arr = seg_idxc_arr
 
         # succeed rendering, and display image
         if self._GUI and self._visualizer.connected_to_display:
@@ -289,6 +318,21 @@ class Camera(RBC):
             self._recorded_imgs.append(rgb_arr)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
+
+    @gs.assert_built
+    def get_segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+        """
+        return self._rasterizer._context.seg_idxc_map
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
@@ -345,29 +389,29 @@ class Camera(RBC):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
-                x = x.flatten()
-                y = y.flatten()
+                y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+                x = x.reshape((-1,))
+                y = y.reshape((-1,))
 
                 # Normalize pixel coordinates
-                normalized_x = x.astype(np.float32) - _cx
-                normalized_y = y.astype(np.float32) - _cy
+                normalized_x = x - _cx
+                normalized_y = y - _cy
 
                 # Convert to world coordinates
-                world_x = normalized_x * depth[y, x] / _fx
-                world_y = normalized_y * depth[y, x] / _fy
-                world_z = depth[y, x]
+                depth_grid = depth[y, x]
+                world_x = normalized_x * depth_grid / _fx
+                world_y = normalized_y * depth_grid / _fy
+                world_z = depth_grid
 
-                pc = np.vstack((world_x, world_y, world_z)).T
+                pc = np.stack((world_x, world_y, world_z), axis=1)
 
-                point_cloud_h = np.hstack((pc, np.ones((pc.shape[0], 1))))
+                point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
                 if world:
-                    point_cloud_world = (pose @ point_cloud_h.T).T
-                    point_cloud_world = point_cloud_world[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
-
+                    point_cloud_world = point_cloud_h @ pose.T
+                    point_cloud_world = point_cloud_world[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
                     return point_cloud_world, mask
                 else:
-                    point_cloud = point_cloud_h[:, :3].reshape(depth.shape[0], depth.shape[1], 3)
+                    point_cloud = point_cloud_h[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
                     return point_cloud, mask
 
             intrinsic_K = opengl_projection_matrix_to_intrinsics(
@@ -376,7 +420,7 @@ class Camera(RBC):
                 height=self.res[1],
             )
 
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
             cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
             pc, mask = backproject_depth_to_pointcloud(

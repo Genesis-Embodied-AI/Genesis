@@ -959,7 +959,7 @@ class Renderer(object):
             fragment_shader = "point_shadow.frag"
             geometry_shader = "point_shadow.geom"
         elif (
-            bool(program_flags & ProgramFlags.USE_MATERIAL)
+            program_flags & ProgramFlags.USE_MATERIAL
             and not flags & RenderFlags.DEPTH_ONLY
             and not flags & RenderFlags.FLAT
             and not flags & RenderFlags.SEG
@@ -969,7 +969,7 @@ class Renderer(object):
             if primitive.double_sided:
                 geometry_shader = "mesh_double_sided.geom"
                 defines["DOUBLE_SIDED"] = 1
-        elif bool(program_flags & (ProgramFlags.VERTEX_NORMALS | ProgramFlags.FACE_NORMALS)):
+        elif program_flags & (ProgramFlags.VERTEX_NORMALS | ProgramFlags.FACE_NORMALS):
             vertex_shader = "vertex_normals.vert"
             if primitive.mode == GLTF.POINTS:
                 geometry_shader = "vertex_normals_pc.geom"
@@ -982,6 +982,9 @@ class Renderer(object):
         elif flags & RenderFlags.SEG:
             vertex_shader = "segmentation.vert"
             fragment_shader = "segmentation.frag"
+            if primitive.double_sided:
+                geometry_shader = "segmentation_double_sided.geom"
+                defines["DOUBLE_SIDED"] = 1
         else:
             vertex_shader = "mesh_depth.vert"
             fragment_shader = "mesh_depth.frag"
@@ -1031,7 +1034,7 @@ class Renderer(object):
             defines["FACE_NORMALS"] = 1
 
         # Set up material texture defines
-        if bool(program_flags & ProgramFlags.USE_MATERIAL):
+        if program_flags & ProgramFlags.USE_MATERIAL:
             tf = primitive.material.tex_flags
             if tf & TexFlags.NORMAL:
                 defines["HAS_NORMAL_TEX"] = 1
@@ -1195,12 +1198,15 @@ class Renderer(object):
             glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self._main_db)
 
             # Generate multisample buffer
+            num_samples = min(glGetIntegerv(GL_MAX_SAMPLES), 4)
             self._main_cb_ms, self._main_db_ms = glGenRenderbuffers(2)
             glBindRenderbuffer(GL_RENDERBUFFER, self._main_cb_ms)
-            glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_RGBA, self.viewport_width, self.viewport_height)
+            glRenderbufferStorageMultisample(
+                GL_RENDERBUFFER, num_samples, GL_RGBA, self.viewport_width, self.viewport_height
+            )
             glBindRenderbuffer(GL_RENDERBUFFER, self._main_db_ms)
             glRenderbufferStorageMultisample(
-                GL_RENDERBUFFER, 4, GL_DEPTH_COMPONENT24, self.viewport_width, self.viewport_height
+                GL_RENDERBUFFER, num_samples, GL_DEPTH_COMPONENT24, self.viewport_width, self.viewport_height
             )
             self._main_fb_ms = glGenFramebuffers(1)
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb_ms)

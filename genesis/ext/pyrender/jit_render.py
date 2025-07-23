@@ -1,19 +1,16 @@
 import numpy as np
-from numba import *
-from numba.extending import intrinsic
+import numba as nb
+
 import OpenGL.GL as GL
 import OpenGL.constant as GL_constant
 from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
+
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
 from .light import DirectionalLight, PointLight
 from .constants import RenderFlags, MAX_N_LIGHTS
-from time import time
 from .numba_gl_wrapper import GLWrapper
 
-import os
 import genesis as gs
-
-os.environ["NUMBA_CACHE_DIR"] = os.path.join(gs.utils.misc.get_cache_dir(), "numba")
 
 
 def load_const(const_name):
@@ -64,7 +61,7 @@ RenderFlags_REFLECTIVE_FLOOR = RenderFlags.REFLECTIVE_FLOOR
 RenderFlags_FLAT = RenderFlags.FLAT
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def get_uniform_location(pid, name, gl):
     n = len(name)
     arr = np.zeros(n + 1, np.uint8)
@@ -73,7 +70,7 @@ def get_uniform_location(pid, name, gl):
     return gl.glGetUniformLocation(pid, arr.ctypes.data)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_matrix_4fv(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -82,7 +79,7 @@ def set_uniform_matrix_4fv(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_1i(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -91,7 +88,7 @@ def set_uniform_1i(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_1f(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -100,7 +97,7 @@ def set_uniform_1f(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_2f(pid, name, value1, value2, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -109,7 +106,7 @@ def set_uniform_2f(pid, name, value1, value2, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_3fv(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -118,7 +115,7 @@ def set_uniform_3fv(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_4fv(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -127,7 +124,7 @@ def set_uniform_4fv(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl):
     n = len(light)
     set_uniform_3fv(pid, "ambient_light", ambient_light, gl)
@@ -181,15 +178,13 @@ def bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl
     return active_texture
 
 
-@intrinsic
+@nb.extending.intrinsic
 def address_to_ptr(typingctx, src):
     """returns a void pointer from a given memory address"""
-    from numba.core import types, cgutils
-
-    sig = types.voidptr(src)
+    sig = nb.core.types.voidptr(src)
 
     def codegen(cgctx, builder, sig, args):
-        return builder.inttoptr(args[0], cgutils.voidptr_t)
+        return builder.inttoptr(args[0], nb.core.cgutils.voidptr_t)
 
     return sig, codegen
 
@@ -364,31 +359,31 @@ class JITRenderer:
         IS_OPENGL_42_AVAILABLE = hasattr(self.gl.wrapper_instance, "glDrawElementsInstancedBaseInstance")
         OPENGL_42_ERROR_MSG = "Seperated env rendering not supported because OpenGL 4.2 not available on this machine."
 
-        @njit(
-            none(
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                int32[:, :],
-                float32[:, :],
-                float32[:, :],
-                int8[:, :],
-                int32[:],
-                int32[:],
-                int32[:],
-                float32[:, :],
-                int32[:],
-                float32[:, :, :, :],
-                float32[:],
-                float32[:, :],
-                float32[:, :],
-                float32[:],
-                int32,
-                float32[:, :],
-                float32[:, :],
-                int32,
-                float32[:],
-                int32,
+        @nb.jit(
+            nb.none(
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.int32[:, :],
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.int8[:, :],
+                nb.int32[:],
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :],
+                nb.int32[:],
+                nb.float32[:, :, :, :],
+                nb.float32[:],
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.float32[:],
+                nb.int32,
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.int32,
+                nb.float32[:],
+                nb.int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -542,18 +537,18 @@ class JITRenderer:
             gl.glUseProgram(0)
             gl.glFlush()
 
-        @njit(
-            none(
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                int32[:],
-                int32[:],
-                int32[:],
-                float32[:, :],
-                float32[:, :],
-                int8[:, :],
-                int32,
+        @nb.jit(
+            nb.none(
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.int32[:],
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.int8[:, :],
+                nb.int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -605,18 +600,18 @@ class JITRenderer:
             gl.glUseProgram(0)
             gl.glFlush()
 
-        @njit(
-            none(
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                int32[:],
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                float32[:],
-                int8[:, :],
-                int32,
+        @nb.jit(
+            nb.none(
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.int32[:],
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.float32[:],
+                nb.int8[:, :],
+                nb.int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -669,7 +664,7 @@ class JITRenderer:
             gl.glUseProgram(0)
             gl.glFlush()
 
-        @njit(float32[:, :](int32, int32, float32, float32, self.gl.wrapper_type), cache=True)
+        @nb.jit(nb.float32[:, :](nb.int32, nb.int32, nb.float32, nb.float32, self.gl.wrapper_type), cache=True)
         def read_depth_buf(width, height, z_near, z_far, gl):
             buf = np.zeros((height, width), np.float32)
             gl.glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, address_to_ptr(buf.ctypes.data))
@@ -680,7 +675,7 @@ class JITRenderer:
                 depth_im = (z_near * z_far) / (z_far + z_near - depth_im * (z_far - z_near)) * 2
             return depth_im
 
-        @njit(uint8[:, :, :](int32, int32, int32, self.gl.wrapper_type), cache=True)
+        @nb.jit(nb.uint8[:, :, :](nb.int32, nb.int32, nb.int32, self.gl.wrapper_type), cache=True)
         def read_color_buf(width, height, rgba, gl):
             if rgba:
                 buf = np.zeros((height, width, 4), np.uint8)
@@ -690,7 +685,7 @@ class JITRenderer:
                 gl.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, address_to_ptr(buf.ctypes.data))
             return buf[::-1, :, :]
 
-        @njit(float32[:, :](float32[:, :, :]), cache=True)
+        @nb.jit(nb.float32[:, :](nb.float32[:, :, :]), cache=True)
         def update_normal_flat(p):
             face_normal = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
             vertex_normal = np.zeros((p.shape[0] * 3, 3), p.dtype)
@@ -702,7 +697,7 @@ class JITRenderer:
                 vertex_normal[f * 3 + 2] = n
             return vertex_normal
 
-        @njit(float32[:, :](float32[:, :], int32[:, :]), cache=True)
+        @nb.jit(nb.float32[:, :](nb.float32[:, :], nb.int32[:, :]), cache=True)
         def update_normal_smooth(p, idx):
             face_normal = np.cross(p[idx[:, 1]] - p[idx[:, 0]], p[idx[:, 2]] - p[idx[:, 0]])
             vertex_normal = np.zeros_like(p)
@@ -714,7 +709,7 @@ class JITRenderer:
                 vertex_normal[v] /= np.linalg.norm(vertex_normal[v])
             return vertex_normal
 
-        @njit(none(int64[:, :], self.gl.wrapper_type), cache=True)
+        @nb.jit(nb.none(nb.int64[:, :], self.gl.wrapper_type), cache=True)
         def update_buffer(updates, gl):
             for i in range(updates.shape[0]):
                 buffer_id = updates[i, 0]
@@ -769,9 +764,9 @@ class JITRenderer:
             self.shadow_map,
             self.light_matrix,
             self.ambient_light,
-            V.astype(np.float32),
-            P.astype(np.float32),
-            cam_pos.astype(np.float32),
+            V.astype(np.float32, copy=False),
+            P.astype(np.float32, copy=False),
+            cam_pos.astype(np.float32, copy=False),
             flags,
             color_list if flags & RenderFlags.SEG else self.pbr_mat,
             reflection_mat,
@@ -792,8 +787,8 @@ class JITRenderer:
             self.mode,
             self.n_instances,
             self.n_indices,
-            V.astype(np.float32),
-            P.astype(np.float32),
+            V.astype(np.float32, copy=False),
+            P.astype(np.float32, copy=False),
             self.render_flags,
             env_idx,
             self.gl.wrapper_instance,
@@ -810,8 +805,8 @@ class JITRenderer:
             self.mode,
             self.n_instances,
             self.n_indices,
-            light_matrix.astype(np.float32),
-            light_pos.astype(np.float32),
+            light_matrix.astype(np.float32, copy=False),
+            light_pos.astype(np.float32, copy=False),
             self.render_flags,
             env_idx,
             self.gl.wrapper_instance,
@@ -831,6 +826,10 @@ class JITRenderer:
             return self._update_normal_flat(vertices.reshape((-1, 3, 3)))
 
     def update_buffer(self, buffer_updates):
+        # Early return if nothing to do
+        if not buffer_updates:
+            return
+
         updates = np.zeros((len(buffer_updates), 3), dtype=np.int64)
         buffers = []
         for idx, (id, data) in enumerate(buffer_updates.items()):

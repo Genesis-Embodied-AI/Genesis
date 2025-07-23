@@ -140,10 +140,34 @@ class ImageTexture(Texture):
 
         elif self.image_array is not None:
             if not isinstance(self.image_array, np.ndarray):
-                gs.raise_exception("`image_array` needs to be an numpy array.")
+                gs.raise_exception("`image_array` needs to be a numpy array.")
+            arr = self.image_array
+            if arr.dtype != np.uint8:
+                if np.issubdtype(arr.dtype, np.floating):
+                    if arr.max() <= 1.0:
+                        arr = (arr * 255.0).round()
+                    arr = np.clip(arr, 0.0, 255.0).astype(np.uint8)
+                elif arr.dtype == np.bool_:
+                    arr = arr.astype(np.uint8) * 255
+                elif np.issubdtype(arr.dtype, np.integer):
+                    arr = np.clip(arr, 0, 255).astype(np.uint8)
+                else:
+                    gs.raise_exception(
+                        f"Unsupported image dtype {arr.dtype}. "
+                        "Only uint8, integer, floating-point, or bool types are supported."
+                    )
+            self.image_array = arr
 
         # calculate channel
         if self.image_array is None:
+            if isinstance(self.resolution, (tuple, list)):
+                H, W = self.resolution
+            else:
+                H = W = self.resolution
+
+            # Default to 3-channel RGB
+            white = np.array([255, 255, 255], dtype=np.uint8)
+            self.image_array = np.full((H, W, 3), white, dtype=np.uint8)
             self._mean_color = np.array([1.0, 1.0, 1.0], dtype=np.float16)
             self._channel = 3
         else:
@@ -162,8 +186,6 @@ class ImageTexture(Texture):
         self.encoding = self.encoding.lower()
         if self.encoding not in ["srgb", "linear"]:
             gs.raise_exception(f"Invalid image encoding: {self.encoding}.")
-
-        assert self.image_array is None or self.image_array.dtype == np.uint8
 
     def check_dim(self, dim):
         if self.image_array is not None:

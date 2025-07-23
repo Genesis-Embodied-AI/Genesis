@@ -1,6 +1,10 @@
-from pyglet.event import EVENT_HANDLE_STATE
+from typing import Union, Literal
 
 import genesis as gs
+
+
+EVENT_HANDLE_STATE = Union[Literal[True], None]
+EVENT_HANDLED = True
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 
@@ -36,6 +40,13 @@ class ViewerInteractionBase():
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         if self.log_events:
             gs.logger.info(f"Key released: {chr(symbol)}")
+
+    def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
+        if self.log_events:
+            gs.logger.info(f"Window resized to {width}x{height}")
+
+    def update_on_sim_step(self) -> None:
+        pass
 
     def on_draw(self) -> None:
         pass
