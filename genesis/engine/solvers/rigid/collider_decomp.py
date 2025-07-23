@@ -1,24 +1,21 @@
 import sys
-from typing import TYPE_CHECKING
 from dataclasses import dataclass
+from enum import IntEnum
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
+import taichi as ti
 import torch
 
-import taichi as ti
-
 import genesis as gs
+import genesis.engine.solvers.rigid.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.styles import colors, formats
-from genesis.utils.misc import ti_field_to_torch
-import genesis.engine.solvers.rigid.array_class as array_class
 
-from .mpr_decomp import MPR
 from .gjk_decomp import GJK
+from .mpr_decomp import MPR
 from .support_field_decomp import SupportField
-
-from enum import IntEnum
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
@@ -559,7 +556,6 @@ class Collider:
         for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
             cur_length = edges_info.length[i_e]
             if cur_length > ga_sdf_cell_size:
-
                 i_v0 = edges_info.v0[i_e]
                 i_v1 = edges_info.v1[i_e]
 
@@ -581,10 +577,8 @@ class Collider:
                 normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
 
                 if normal_edge_0.dot(sdf_grad_0_b) < 0 or normal_edge_1.dot(sdf_grad_1_b) < 0:
-
                     # check if closest point is between the two points
                     if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
-
                         while cur_length > ga_sdf_cell_size:
                             p_mid = 0.5 * (p_0 + p_1)
                             if sdf.sdf_grad_world(p_mid, i_gb, i_b).dot(vec_01) < 0:
@@ -1129,12 +1123,12 @@ class Collider:
                                         collider_state.contact_cache[i_ga, i_gb, i_b].normal.fill(0.0)
                                         continue
 
-                                    collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][
-                                        0
-                                    ] = i_ga
-                                    collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][
-                                        1
-                                    ] = i_gb
+                                    collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][0] = (
+                                        i_ga
+                                    )
+                                    collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][1] = (
+                                        i_gb
+                                    )
                                     collider_state.n_broad_pairs[i_b] = collider_state.n_broad_pairs[i_b] + 1
 
                             if is_incoming_geom_hibernated:
@@ -2866,7 +2860,7 @@ class Collider:
                             i_b,
                         )
 
-    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
+    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
         contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
         if contacts_info is not None:
@@ -2906,9 +2900,6 @@ class Collider:
             if self._solver.n_envs > 0:
                 iout = iout.reshape((n_envs, n_contacts_max, 4))
                 fout = fout.reshape((n_envs, n_contacts_max, 10))
-            if keep_batch_dim and self._solver.n_envs == 0:
-                iout = iout.reshape((1, n_contacts_max, 4))
-                fout = fout.reshape((1, n_contacts_max, 10))
             iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
             fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
             values = (*iout_chunks, *fout_chunks)
