@@ -15,10 +15,12 @@ from genesis.utils.misc import ti_field_to_torch
 import genesis.engine.solvers.rigid.array_class as array_class
 import genesis.engine.solvers.rigid.gjk_decomp as gjk
 import genesis.engine.solvers.rigid.mpr_decomp as mpr
+import genesis.engine.solvers.rigid.sdf_decomp as sdf
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
 
 from .mpr_decomp import MPR
 from .gjk_decomp import GJK
+from .sdf_decomp import SDF
 from .support_field_decomp import SupportField
 
 from enum import IntEnum
@@ -96,6 +98,7 @@ class Collider:
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
         self._gjk = GJK(rigid_solver)
+        self._sdf = SDF(rigid_solver)
 
         # Support field used for mpr and gjk. Rather than having separate support fields for each algorithm, keep only
         # one copy here to save memory and maintain cleaner code.
@@ -404,12 +407,9 @@ class Collider:
             self._mpr._mpr_static_config,
             self._gjk._gjk_state,
             self._gjk._gjk_static_config,
+            self._sdf._sdf_info,
             self._support_field._support_field_info,
             self._support_field._support_field_static_config,
-            # self._mpr,
-            # self._gjk,
-            # self._solver.sdf,
-            # self._
         )
         self._func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
@@ -453,7 +453,7 @@ class Collider:
                 self._collider_state,
                 self._collider_info,
                 self._collider_static_config,
-                self._solver.sdf,
+                self._sdf._sdf_info,
             )
             # timer.stamp("_func_narrow_phase_nonconvex_vs_nonterrain")
 
@@ -496,7 +496,8 @@ class Collider:
         self_unused,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
-        sdf: ti.template(),
+        collider_static_config: ti.template(),
+        sdf_info: array_class.SDFInfo,
         i_ga,
         i_gb,
         i_b,
@@ -509,10 +510,12 @@ class Collider:
         sphere_center = geoms_state.pos[i_ga, i_b]
         sphere_radius = geoms_info.data[i_ga][0]
 
-        center_to_b_dist = sdf.sdf_world(sphere_center, i_gb, i_b)
+        center_to_b_dist = sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, sphere_center, i_gb, i_b)
         if center_to_b_dist < sphere_radius:
             is_col = True
-            normal = sdf.sdf_normal_world(sphere_center, i_gb, i_b)
+            normal = sdf.sdf_func_normal_world(
+                geoms_state, geoms_info, collider_static_config, sdf_info, sphere_center, i_gb, i_b
+            )
             penetration = sphere_radius - center_to_b_dist
             contact_pos = sphere_center - (sphere_radius - 0.5 * penetration) * normal
 
@@ -524,7 +527,8 @@ class Collider:
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         verts_info: array_class.VertsInfo,
-        sdf: ti.template(),
+        collider_static_config: ti.template(),
+        sdf_info: array_class.SDFInfo,
         i_ga,
         i_gb,
         i_b,
@@ -540,7 +544,7 @@ class Collider:
         for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
             vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
             if self_unused._func_point_in_geom_aabb(geoms_state, geoms_info, vertex_pos, i_gb, i_b):
-                new_penetration = -sdf.sdf_world(vertex_pos, i_gb, i_b)
+                new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, vertex_pos, i_gb, i_b)
                 if new_penetration > penetration:
                     is_col = True
                     contact_pos = vertex_pos
@@ -548,7 +552,9 @@ class Collider:
 
         # Compute contact normal only once, and only in case of contact
         if is_col:
-            normal = sdf.sdf_normal_world(contact_pos, i_gb, i_b)
+            normal = sdf.sdf_func_normal_world(
+                geoms_state, geoms_info, collider_static_config, sdf_info, contact_pos, i_gb, i_b
+            )
 
         # The contact point must be offsetted by half the penetration depth
         contact_pos += 0.5 * penetration * normal
@@ -562,7 +568,8 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         verts_info: array_class.VertsInfo,
         edges_info: array_class.EdgesInfo,
-        sdf: ti.template(),
+        collider_static_config: ti.template(),
+        sdf_info: array_class.SDFInfo,
         i_ga,
         i_gb,
         i_b,
@@ -572,7 +579,7 @@ class Collider:
         normal = ti.Vector.zero(gs.ti_float, 3)
         contact_pos = ti.Vector.zero(gs.ti_float, 3)
 
-        ga_sdf_cell_size = sdf.geoms_info.sdf_cell_size[i_ga]
+        ga_sdf_cell_size = sdf_info.geoms_info.sdf_cell_size[i_ga]
 
         for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
             cur_length = edges_info.length[i_e]
@@ -589,12 +596,20 @@ class Collider:
                 )
                 vec_01 = gu.ti_normalize(p_1 - p_0)
 
-                sdf_grad_0_b = sdf.sdf_grad_world(p_0, i_gb, i_b)
-                sdf_grad_1_b = sdf.sdf_grad_world(p_1, i_gb, i_b)
+                sdf_grad_0_b = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_0, i_gb, i_b
+                )
+                sdf_grad_1_b = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_1, i_gb, i_b
+                )
 
                 # check if the edge on a is facing towards mesh b (I am not 100% sure about this, subject to removal)
-                sdf_grad_0_a = sdf.sdf_grad_world(p_0, i_ga, i_b)
-                sdf_grad_1_a = sdf.sdf_grad_world(p_1, i_ga, i_b)
+                sdf_grad_0_a = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_0, i_ga, i_b
+                )
+                sdf_grad_1_a = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_1, i_ga, i_b
+                )
                 normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
                 normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
 
@@ -605,18 +620,25 @@ class Collider:
 
                         while cur_length > ga_sdf_cell_size:
                             p_mid = 0.5 * (p_0 + p_1)
-                            if sdf.sdf_grad_world(p_mid, i_gb, i_b).dot(vec_01) < 0:
+                            if (
+                                sdf.sdf_func_grad_world(
+                                    geoms_state, geoms_info, collider_static_config, sdf_info, p_mid, i_gb, i_b
+                                ).dot(vec_01)
+                                < 0
+                            ):
                                 p_0 = p_mid
                             else:
                                 p_1 = p_mid
                             cur_length = 0.5 * cur_length
 
                         p = 0.5 * (p_0 + p_1)
-                        new_penetration = -sdf.sdf_world(p, i_gb, i_b)
+                        new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, p, i_gb, i_b)
 
                         if new_penetration > penetration:
                             is_col = True
-                            normal = sdf.sdf_normal_world(p, i_gb, i_b)
+                            normal = sdf.sdf_func_normal_world(
+                                geoms_state, geoms_info, collider_static_config, sdf_info, p, i_gb, i_b
+                            )
                             contact_pos = p
                             penetration = new_penetration
 
@@ -632,7 +654,8 @@ class Collider:
         geoms_info: array_class.GeomsInfo,
         verts_info: array_class.VertsInfo,
         collider_info: array_class.ColliderInfo,
-        sdf: ti.template(),
+        collider_static_config: ti.template(),
+        sdf_info: array_class.SDFInfo,
         i_ga,
         i_gb,
         i_b,
@@ -653,10 +676,10 @@ class Collider:
         if i_va == -1:
             # start traversing on the vertex graph with a smart initial vertex
             pos_vb = gu.ti_transform_by_trans_quat(verts_info.init_pos[gb_vert_start], gb_pos, gb_quat)
-            i_va = sdf._func_find_closest_vert(pos_vb, i_ga, i_b)
+            i_va = sdf.sdf_func_find_closest_vert(geoms_state, geoms_info, sdf_info, pos_vb, i_ga, i_b)
         i_v_closest = i_va
         pos_v_closest = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v_closest], ga_pos, ga_quat)
-        sd_v_closest = sdf.sdf_world(pos_v_closest, i_gb, i_b)
+        sd_v_closest = sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, pos_v_closest, i_gb, i_b)
 
         while True:
             for i_neighbor_ in range(
@@ -665,7 +688,7 @@ class Collider:
             ):
                 i_neighbor = collider_info.vert_neighbors[i_neighbor_]
                 pos_neighbor = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_neighbor], ga_pos, ga_quat)
-                sd_neighbor = sdf.sdf_world(pos_neighbor, i_gb, i_b)
+                sd_neighbor = sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, pos_neighbor, i_gb, i_b)
                 if (
                     sd_neighbor < sd_v_closest - 1e-5
                 ):  # 1e-5 (0.01mm) to avoid endless loop due to numerical instability
@@ -682,7 +705,9 @@ class Collider:
         pos_a = pos_v_closest
         if sd_v_closest < 0:
             is_col = True
-            normal = sdf.sdf_normal_world(pos_a, i_gb, i_b)
+            normal = sdf.sdf_func_normal_world(
+                geoms_state, geoms_info, collider_static_config, sdf_info, pos_a, i_gb, i_b
+            )
             contact_pos = pos_a
             penetration = -sd_v_closest
 
@@ -697,12 +722,20 @@ class Collider:
                 p_1 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_neighbor], ga_pos, ga_quat)
                 vec_01 = gu.ti_normalize(p_1 - p_0)
 
-                sdf_grad_0_b = sdf.sdf_grad_world(p_0, i_gb, i_b)
-                sdf_grad_1_b = sdf.sdf_grad_world(p_1, i_gb, i_b)
+                sdf_grad_0_b = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_0, i_gb, i_b
+                )
+                sdf_grad_1_b = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_1, i_gb, i_b
+                )
 
                 # check if the edge on a is facing towards mesh b (I am not 100% sure about this, subject to removal)
-                sdf_grad_0_a = sdf.sdf_grad_world(p_0, i_ga, i_b)
-                sdf_grad_1_a = sdf.sdf_grad_world(p_1, i_ga, i_b)
+                sdf_grad_0_a = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_0, i_ga, i_b
+                )
+                sdf_grad_1_a = sdf.sdf_func_grad_world(
+                    geoms_state, geoms_info, collider_static_config, sdf_info, p_1, i_ga, i_b
+                )
                 normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
                 normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
 
@@ -710,10 +743,15 @@ class Collider:
                     # check if closest point is between the two points
                     if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
                         cur_length = (p_1 - p_0).norm()
-                        ga_sdf_cell_size = sdf.geoms_info.sdf_cell_size[i_ga]
+                        ga_sdf_cell_size = sdf_info.geoms_info.sdf_cell_size[i_ga]
                         while cur_length > ga_sdf_cell_size:
                             p_mid = 0.5 * (p_0 + p_1)
-                            if sdf.sdf_grad_world(p_mid, i_gb, i_b).dot(vec_01) < 0:
+                            if (
+                                sdf.sdf_func_grad_world(
+                                    geoms_state, geoms_info, collider_static_config, sdf_info, p_mid, i_gb, i_b
+                                ).dot(vec_01)
+                                < 0
+                            ):
                                 p_0 = p_mid
                             else:
                                 p_1 = p_mid
@@ -722,11 +760,13 @@ class Collider:
 
                         p = 0.5 * (p_0 + p_1)
 
-                        new_penetration = -sdf.sdf_world(p, i_gb, i_b)
+                        new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, p, i_gb, i_b)
 
                         if new_penetration > 0:
                             is_col = True
-                            normal = sdf.sdf_normal_world(p, i_gb, i_b)
+                            normal = sdf.sdf_func_normal_world(
+                                geoms_state, geoms_info, collider_static_config, sdf_info, p, i_gb, i_b
+                            )
                             contact_pos = p
                             penetration = new_penetration
                             break
@@ -1216,14 +1256,9 @@ class Collider:
         mpr_static_config: ti.template(),
         gjk_state: array_class.GJKState,
         gjk_static_config: ti.template(),
+        sdf_info: array_class.SDFInfo,
         support_field_info: array_class.SupportFieldInfo,
         support_field_static_config: ti.template(),
-        # FIXME: We need mpr, gjk, sdf, and support_field for now to call their class functions. After migration is
-        # done, remove these arguments as the class functions will be called directly.
-        # # mpr: ti.template(),
-        # gjk: ti.template(),
-        # sdf: ti.template(),
-        #
     ):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
@@ -1272,6 +1307,7 @@ class Collider:
                             mpr_static_config,
                             gjk_state,
                             gjk_static_config,
+                            sdf_info,
                             support_field_info,
                             support_field_static_config,
                             i_ga,
@@ -1298,6 +1334,7 @@ class Collider:
                                 mpr_static_config=mpr_static_config,
                                 gjk_state=gjk_state,
                                 gjk_static_config=gjk_static_config,
+                                sdf_info=sdf_info,
                                 support_field_info=support_field_info,
                                 support_field_static_config=support_field_static_config,
                                 i_ga=i_ga,
@@ -1429,7 +1466,7 @@ class Collider:
         collider_state: array_class.ColliderState,
         collider_info: array_class.ColliderInfo,
         collider_static_config: ti.template(),
-        sdf: ti.template(),
+        sdf_info: array_class.SDFInfo,
     ):
         """
         NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1463,7 +1500,14 @@ class Collider:
                             contact_pos_i = ti.Vector.zero(gs.ti_float, 3)
                             if not is_col:
                                 is_col_i, normal_i, penetration_i, contact_pos_i = self_unused._func_contact_vertex_sdf(
-                                    geoms_state, geoms_info, verts_info, sdf, i_ga, i_gb, i_b
+                                    geoms_state,
+                                    geoms_info,
+                                    verts_info,
+                                    collider_static_config,
+                                    sdf_info,
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
                                 )
                                 if is_col_i:
                                     self_unused._func_add_contact(
@@ -1511,7 +1555,14 @@ class Collider:
                                         )
 
                                         is_col, normal, penetration, contact_pos = self_unused._func_contact_vertex_sdf(
-                                            geoms_state, geoms_info, verts_info, sdf, i_ga, i_gb, i_b
+                                            geoms_state,
+                                            geoms_info,
+                                            verts_info,
+                                            collider_static_config,
+                                            sdf_info,
+                                            i_ga,
+                                            i_gb,
+                                            i_b,
                                         )
 
                                         if is_col:
@@ -1688,17 +1739,17 @@ class Collider:
             friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
             # b to a
-            collider_state.contact_data[i_c, i_b].geom_a = i_ga
-            collider_state.contact_data[i_c, i_b].geom_b = i_gb
-            collider_state.contact_data[i_c, i_b].normal = normal
-            collider_state.contact_data[i_c, i_b].pos = contact_pos
-            collider_state.contact_data[i_c, i_b].penetration = penetration
-            collider_state.contact_data[i_c, i_b].friction = ti.max(ti.max(friction_a, friction_b), 1e-2)
-            collider_state.contact_data[i_c, i_b].sol_params = 0.5 * (
+            collider_state.contact_data.geom_a[i_c, i_b] = i_ga
+            collider_state.contact_data.geom_b[i_c, i_b] = i_gb
+            collider_state.contact_data.normal[i_c, i_b] = normal
+            collider_state.contact_data.pos[i_c, i_b] = contact_pos
+            collider_state.contact_data.penetration[i_c, i_b] = penetration
+            collider_state.contact_data.friction[i_c, i_b] = ti.max(ti.max(friction_a, friction_b), 1e-2)
+            collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
                 geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb]
             )
-            collider_state.contact_data[i_c, i_b].link_a = geoms_info.link_idx[i_ga]
-            collider_state.contact_data[i_c, i_b].link_b = geoms_info.link_idx[i_gb]
+            collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
+            collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
 
             collider_state.n_contacts[i_b] = i_c + 1
 
@@ -1801,13 +1852,13 @@ class Collider:
         mpr_static_config: ti.template(),
         gjk_state: array_class.GJKState,
         gjk_static_config: ti.template(),
+        sdf_info: array_class.SDFInfo,
         support_field_info: array_class.SupportFieldInfo,
         support_field_static_config: ti.template(),
         i_ga,
         i_gb,
         i_b,
     ):
-        pass
         if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
             if ti.static(sys.platform == "darwin"):
                 self_unused._func_plane_box_contact(
@@ -2028,7 +2079,8 @@ class Collider:
                                     geoms_state,
                                     geoms_info,
                                     verts_info,
-                                    sdf,
+                                    collider_static_config,
+                                    sdf_info,
                                     i_ga if i_sdf == 0 else i_gb,
                                     i_gb if i_sdf == 0 else i_ga,
                                     i_b,
@@ -2159,7 +2211,7 @@ class Collider:
                     for i_c in range(n_con):
                         if not repeated:
                             idx_prev = collider_state.n_contacts[i_b] - 1 - i_c
-                            prev_contact = collider_state.contact_data[idx_prev, i_b].pos
+                            prev_contact = collider_state.contact_data.pos[idx_prev, i_b]
                             if (contact_pos - prev_contact).norm() < tolerance:
                                 repeated = True
 
