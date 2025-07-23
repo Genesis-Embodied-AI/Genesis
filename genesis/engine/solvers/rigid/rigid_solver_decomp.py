@@ -5816,42 +5816,35 @@ class RigidSolver(Solver):
     def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
         n_welds = tuple(self.constraint_solver.ti_n_equalities.to_numpy())
         n_envs = len(n_welds)
-        max_welds = max(n_welds) if n_welds else 0
-        if max_welds == 0:
-            empty = torch.empty if to_torch else np.empty
-            obj_a = empty((0,), dtype=np.int32)
-            obj_b = empty((0,), dtype=np.int32)
-            if n_envs == 1:
-                return {"obj_a": obj_a, "obj_b": obj_b}
-            return {
-                "obj_a": [obj_a] * n_envs,
-                "obj_b": [obj_b] * n_envs,
-            }
-
-        total = n_envs * max_welds
-        if to_torch:
-            buf = torch.full((total, 3), -1, dtype=gs.tc_int, device=gs.device)
-        else:
-            buf = np.full((total, 3), -1, dtype=np.int32)
-
-        self._kernel_collect_welds(buf)
+        n_welds_max = max(n_welds) if n_welds else 0
+        out_size = n_welds_max * n_envs
 
         if to_torch:
-            buf = buf.view(n_envs, max_welds, 3)
+            buf = torch.full((out_size, 3), -1, dtype=gs.tc_int, device=gs.device)
         else:
-            buf = buf.reshape(n_envs, max_welds, 3)
-        env_idx = buf[..., 0]
-        obj_a = buf[..., 1]
-        obj_b = buf[..., 2]
+            buf = np.full((out_size, 3), -1, dtype=np.int32)
+
+        if n_welds_max > 0:
+            self._kernel_collect_welds(buf)
+
+        if to_torch:
+            buf_view = buf.view(n_envs, n_welds_max, 3)
+        else:
+            buf_view = buf.reshape(n_envs, n_welds_max, 3)
+        env_idx = buf_view[..., 0]
+        obj_a = buf_view[..., 1]
+        obj_b = buf_view[..., 2]
 
         if as_tensor:
             return {"env": env_idx, "obj_a": obj_a, "obj_b": obj_b}
-        else:
-            result_a, result_b = [], []
-            for e, count in enumerate(n_welds):
-                result_a.append(obj_a[e, :count].copy())
-                result_b.append(obj_b[e, :count].copy())
-            return {"obj_a": result_a, "obj_b": result_b}
+        result_a = []
+        result_b = []
+        for e, count in enumerate(n_welds):
+            result_a.append(obj_a[e, :count].copy())
+            result_b.append(obj_b[e, :count].copy())
+        if n_envs == 1:
+            return {"obj_a": result_a[0], "obj_b": result_b[0]}
+        return {"obj_a": result_a, "obj_b": result_b}
 
     @ti.kernel
     def _kernel_collect_welds(self, buf: ti.types.ndarray()):
