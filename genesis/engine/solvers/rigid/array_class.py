@@ -241,16 +241,16 @@ def get_constraint_state(constraint_solver, solver):
 
 @dataclasses.dataclass
 class StructContactData:
-    geom_a: ti.types.NDArray[ti.i32, 2]
-    geom_b: ti.types.NDArray[ti.i32, 2]
-    penetration: ti.types.NDArray[ti.f32, 2]
-    normal: ti.types.NDArray[ti.types.vector(3, ti.f32), 2]
-    pos: ti.types.NDArray[ti.types.vector(3, ti.f32), 2]
-    friction: ti.types.NDArray[ti.f32, 2]
-    sol_params: ti.types.NDArray[ti.types.vector(7, ti.f32), 2]
-    force: ti.types.NDArray[ti.types.vector(3, ti.f32), 2]
-    link_a: ti.types.NDArray[ti.i32, 2]
-    link_b: ti.types.NDArray[ti.i32, 2]
+    geom_a: V_ANNOTATION
+    geom_b: V_ANNOTATION
+    penetration: V_ANNOTATION
+    normal: V_ANNOTATION
+    pos: V_ANNOTATION
+    friction: V_ANNOTATION
+    sol_params: V_ANNOTATION
+    force: V_ANNOTATION
+    link_a: V_ANNOTATION
+    link_b: V_ANNOTATION
 
 
 def get_contact_data(solver, max_contact_pairs):
@@ -505,27 +505,341 @@ def get_mpr_state(f_batch):
 
 
 @dataclasses.dataclass
+class StructMDVertex:
+    # Vertex of the Minkowski difference
+    obj1: V_ANNOTATION
+    obj2: V_ANNOTATION
+    id1: V_ANNOTATION
+    id2: V_ANNOTATION
+    mink: V_ANNOTATION
+
+
+def get_gjk_simplex_vertex(solver):
+    _B = solver._B
+    kwargs = {
+        "obj1": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+        "obj2": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+        "id1": V(dtype=gs.ti_int, shape=(_B, 4)),
+        "id2": V(dtype=gs.ti_int, shape=(_B, 4)),
+        "mink": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+    }
+
+    if use_ndarray:
+        return StructMDVertex(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassGJKSimplexVertex:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassGJKSimplexVertex()
+
+
+def get_epa_polytope_vertex(solver, gjk_static_config):
+    _B = solver._B
+    max_num_polytope_verts = 5 + gjk_static_config.epa_max_iterations
+    kwargs = {
+        "obj1": V(dtype=gs.ti_vec3, shape=(_B, max_num_polytope_verts)),
+        "obj2": V(dtype=gs.ti_vec3, shape=(_B, max_num_polytope_verts)),
+        "id1": V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
+        "id2": V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
+        "mink": V(dtype=gs.ti_vec3, shape=(_B, max_num_polytope_verts)),
+    }
+
+    if use_ndarray:
+        return StructMDVertex(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassEPAPolytopeVertex:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassEPAPolytopeVertex()
+
+
+@dataclasses.dataclass
+class StructGJKSimplex:
+    nverts: V_ANNOTATION
+    dist: V_ANNOTATION
+
+
+def get_gjk_simplex(solver):
+    _B = solver._B
+    kwargs = {
+        "nverts": V(dtype=gs.ti_int, shape=(_B,)),
+        "dist": V(dtype=gs.ti_float, shape=(_B,)),
+    }
+
+    if use_ndarray:
+        return StructGJKSimplex(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassGJKSimplex:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassGJKSimplex()
+
+
+@dataclasses.dataclass
+class StructGJKSimplexBuffer:
+    normal: V_ANNOTATION
+    sdist: V_ANNOTATION
+
+
+def get_gjk_simplex_buffer(solver):
+    _B = solver._B
+    kwargs = {
+        "normal": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+        "sdist": V(dtype=gs.ti_float, shape=(_B, 4)),
+    }
+
+    if use_ndarray:
+        return StructGJKSimplexBuffer(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassGJKSimplexBuffer:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassGJKSimplexBuffer()
+
+
+@dataclasses.dataclass
+class StructEPAPolytope:
+    nverts: V_ANNOTATION
+    nfaces: V_ANNOTATION
+    nfaces_map: V_ANNOTATION
+    horizon_nedges: V_ANNOTATION
+    horizon_w: V_ANNOTATION
+
+
+def get_epa_polytope(solver):
+    _B = solver._B
+    kwargs = {
+        "nverts": V(dtype=gs.ti_int, shape=(_B,)),
+        "nfaces": V(dtype=gs.ti_int, shape=(_B,)),
+        "nfaces_map": V(dtype=gs.ti_int, shape=(_B,)),
+        "horizon_nedges": V(dtype=gs.ti_int, shape=(_B,)),
+        "horizon_w": V(dtype=gs.ti_vec3, shape=(_B,)),
+    }
+
+    if use_ndarray:
+        return StructEPAPolytope(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassEPAPolytope:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassEPAPolytope()
+
+
+@dataclasses.dataclass
+class StructEPAPolytopeFace:
+    verts_idx: V_ANNOTATION
+    adj_idx: V_ANNOTATION
+    normal: V_ANNOTATION
+    dist2: V_ANNOTATION
+    map_idx: V_ANNOTATION
+
+
+def get_epa_polytope_face(solver, polytope_max_faces):
+    _B = solver._B
+
+    kwargs = {
+        "verts_idx": V(dtype=gs.ti_ivec3, shape=(_B, polytope_max_faces)),
+        "adj_idx": V(dtype=gs.ti_ivec3, shape=(_B, polytope_max_faces)),
+        "normal": V(dtype=gs.ti_vec3, shape=(_B, polytope_max_faces)),
+        "dist2": V(dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
+        "map_idx": V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
+    }
+
+    if use_ndarray:
+        return StructEPAPolytopeFace(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassEPAPolytopeFace:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassEPAPolytopeFace()
+
+
+@dataclasses.dataclass
+class StructEPAPolytopeHorizonData:
+    face_idx: V_ANNOTATION
+    edge_idx: V_ANNOTATION
+
+
+def get_epa_polytope_horizon_data(solver, polytope_max_horizons):
+    _B = solver._B
+    kwargs = {
+        "face_idx": V(dtype=gs.ti_int, shape=(_B, polytope_max_horizons)),
+        "edge_idx": V(dtype=gs.ti_int, shape=(_B, polytope_max_horizons)),
+    }
+
+    if use_ndarray:
+        return StructEPAPolytopeHorizonData(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassEPAPolytopeHorizonData:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassEPAPolytopeHorizonData()
+
+
+@dataclasses.dataclass
+class StructContactFace:
+    vert1: V_ANNOTATION
+    vert2: V_ANNOTATION
+    endverts: V_ANNOTATION
+    normal1: V_ANNOTATION
+    normal2: V_ANNOTATION
+    id1: V_ANNOTATION
+    id2: V_ANNOTATION
+
+
+def get_contact_face(solver, max_contact_polygon_verts):
+    _B = solver._B
+    kwargs = {
+        "vert1": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "vert2": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "endverts": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "normal1": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "normal2": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "id1": V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
+        "id2": V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
+    }
+
+    if use_ndarray:
+        return StructContactFace(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactFace:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactFace()
+
+
+@dataclasses.dataclass
+class StructContactNormal:
+    endverts: V_ANNOTATION
+    normal: V_ANNOTATION
+    id: V_ANNOTATION
+
+
+def get_contact_normal(solver, max_contact_polygon_verts):
+    _B = solver._B
+    kwargs = {
+        "endverts": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "normal": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "id": V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
+    }
+    if use_ndarray:
+        return StructContactNormal(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactNormal:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactNormal()
+
+
+@dataclasses.dataclass
+class StructContactHalfspace:
+    normal: V_ANNOTATION
+    dist: V_ANNOTATION
+
+
+def get_contact_halfspace(solver, max_contact_polygon_verts):
+    _B = solver._B
+    kwargs = {
+        "normal": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "dist": V(dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+    }
+    if use_ndarray:
+        return StructContactHalfspace(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactHalfspace:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactHalfspace()
+
+
+@dataclasses.dataclass
+class StructWitness:
+    point_obj1: V_ANNOTATION
+    point_obj2: V_ANNOTATION
+
+
+def get_witness(solver, max_contacts_per_pair):
+    _B = solver._B
+    kwargs = {
+        "point_obj1": V(dtype=gs.ti_vec3, shape=(_B, max_contacts_per_pair)),
+        "point_obj2": V(dtype=gs.ti_vec3, shape=(_B, max_contacts_per_pair)),
+    }
+
+    if use_ndarray:
+        return StructWitness(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassWitness:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassWitness()
+
+
+@dataclasses.dataclass
 class StructGJKState:
     support_mesh_prev_vertex_id: V_ANNOTATION
-    simplex_vertex: V_ANNOTATION
-    simplex_buffer: V_ANNOTATION
-    simplex: V_ANNOTATION
-    simplex_vertex_intersect: V_ANNOTATION
-    simplex_buffer_intersect: V_ANNOTATION
+    simplex_vertex: StructMDVertex
+    simplex_buffer: StructGJKSimplexBuffer
+    simplex: StructGJKSimplex
+    simplex_vertex_intersect: StructMDVertex
+    simplex_buffer_intersect: StructGJKSimplexBuffer
     nsimplex: V_ANNOTATION
     last_searched_simplex_vertex_id: V_ANNOTATION
-    polytope: V_ANNOTATION
-    polytope_verts: V_ANNOTATION
-    polytope_faces: V_ANNOTATION
-    polytope_horizon_data: V_ANNOTATION
+    polytope: StructEPAPolytope
+    polytope_verts: StructMDVertex
+    polytope_faces: StructEPAPolytopeFace
     polytope_faces_map: V_ANNOTATION
-    polytope_horizon_stack: V_ANNOTATION
-    contact_faces: V_ANNOTATION
-    contact_normals: V_ANNOTATION
-    contact_halfspaces: V_ANNOTATION
+    polytope_horizon_data: StructEPAPolytopeHorizonData
+    polytope_horizon_stack: StructEPAPolytopeHorizonData
+    contact_faces: StructContactFace
+    contact_normals: StructContactNormal
+    contact_halfspaces: StructContactHalfspace
     contact_clipped_polygons: V_ANNOTATION
     multi_contact_flag: V_ANNOTATION
-    witness: V_ANNOTATION
+    witness: StructWitness
     n_witness: V_ANNOTATION
     n_contacts: V_ANNOTATION
     contact_pos: V_ANNOTATION
@@ -537,123 +851,76 @@ class StructGJKState:
 
 def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
     _B = solver._B
+    enable_mujoco_compatibility = static_rigid_sim_config.enable_mujoco_compatibility
     polytope_max_faces = gjk_static_config.polytope_max_faces
     max_contacts_per_pair = gjk_static_config.max_contacts_per_pair
     max_contact_polygon_verts = gjk_static_config.max_contact_polygon_verts
 
-    # Struct definitions
-    struct_simplex_vertex = ti.types.struct(
-        obj1=gs.ti_vec3,
-        obj2=gs.ti_vec3,
-        id1=gs.ti_int,
-        id2=gs.ti_int,
-        mink=gs.ti_vec3,
-    )
-    struct_simplex = ti.types.struct(
-        nverts=gs.ti_int,
-        dist=gs.ti_float,
-    )
-    struct_simplex_buffer = ti.types.struct(
-        normal=gs.ti_vec3,
-        sdist=gs.ti_float,
-    )
+    ### GJK simplex
+    simplex_vertex = get_gjk_simplex_vertex(solver)
+    simplex = get_gjk_simplex(solver)
+    simplex_buffer = get_gjk_simplex_buffer(solver)
+
+    # FIXME: If enable_mujoco_compatibility is False, we don't need the following states.
+    simplex_vertex_intersect = get_gjk_simplex_vertex(solver)  # if enable_mujoco_compatibility else None
+    simplex_buffer_intersect = get_gjk_simplex_buffer(solver)  # if enable_mujoco_compatibility else None
+    nsimplex = V(dtype=gs.ti_int, shape=(_B,))  # if enable_mujoco_compatibility else None
 
     kwargs = {
-        "support_mesh_prev_vertex_id": ti.field(dtype=gs.ti_int, shape=(_B, 2)),
-        "simplex_vertex": struct_simplex_vertex.field(shape=(_B, 4)),
-        "simplex_buffer": struct_simplex_buffer.field(shape=(_B, 4)),
-        "simplex": struct_simplex.field(shape=(_B,)),
-        "last_searched_simplex_vertex_id": ti.field(dtype=gs.ti_int, shape=(_B,)),
+        "support_mesh_prev_vertex_id": V(dtype=gs.ti_int, shape=(_B, 2)),
+        "simplex_vertex": simplex_vertex,
+        "simplex_buffer": simplex_buffer,
+        "simplex": simplex,
+        "last_searched_simplex_vertex_id": V(dtype=gs.ti_int, shape=(_B,)),
+        "simplex_vertex_intersect": simplex_vertex_intersect,
+        "simplex_buffer_intersect": simplex_buffer_intersect,
+        "nsimplex": nsimplex,
     }
 
-    # MuJoCo compatibility fields
-    if static_rigid_sim_config.enable_mujoco_compatibility:
-        kwargs.update(
-            {
-                "simplex_vertex_intersect": struct_simplex_vertex.field(shape=(_B, 4)),
-                "simplex_buffer_intersect": struct_simplex_buffer.field(shape=(_B, 4)),
-                "nsimplex": ti.field(dtype=gs.ti_int, shape=(_B,)),
-            }
-        )
-
     ### EPA polytope
-    struct_polytope_vertex = struct_simplex_vertex
-    struct_polytope_face = ti.types.struct(
-        verts_idx=gs.ti_ivec3,
-        adj_idx=gs.ti_ivec3,
-        normal=gs.ti_vec3,
-        dist2=gs.ti_float,
-        map_idx=gs.ti_int,
-    )
-    struct_polytope_horizon_data = ti.types.struct(
-        face_idx=gs.ti_int,
-        edge_idx=gs.ti_int,
-    )
-    struct_polytope = ti.types.struct(
-        nverts=gs.ti_int,
-        nfaces=gs.ti_int,
-        nfaces_map=gs.ti_int,
-        horizon_nedges=gs.ti_int,
-        horizon_w=gs.ti_vec3,
-    )
+    polytope = get_epa_polytope(solver)
+    polytope_vertex = get_epa_polytope_vertex(solver, gjk_static_config)
+    polytope_face = get_epa_polytope_face(solver, polytope_max_faces)
+    polytope_horizon_data = get_epa_polytope_horizon_data(solver, 6 + gjk_static_config.epa_max_iterations)
+    polytope_horizon_stack = get_epa_polytope_horizon_data(solver, polytope_max_faces * 3)
 
     kwargs.update(
         {
-            "polytope": struct_polytope.field(shape=(_B,)),
-            "polytope_verts": struct_polytope_vertex.field(shape=(_B, 5 + gjk_static_config.epa_max_iterations)),
-            "polytope_faces": struct_polytope_face.field(shape=(_B, polytope_max_faces)),
-            "polytope_horizon_data": struct_polytope_horizon_data.field(
-                shape=(_B, 6 + gjk_static_config.epa_max_iterations)
-            ),
-            "polytope_faces_map": ti.Vector.field(n=polytope_max_faces, dtype=gs.ti_int, shape=(_B,)),
-            "polytope_horizon_stack": struct_polytope_horizon_data.field(shape=(_B, polytope_max_faces * 3)),
+            "polytope": polytope,
+            "polytope_verts": polytope_vertex,
+            "polytope_faces": polytope_face,
+            "polytope_faces_map": V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
+            "polytope_horizon_data": polytope_horizon_data,
+            "polytope_horizon_stack": polytope_horizon_stack,
         }
     )
 
-    # Multi-contact detection
-    if gjk_static_config.enable_mujoco_multi_contact:
-        struct_contact_face = ti.types.struct(
-            vert1=gs.ti_vec3,
-            vert2=gs.ti_vec3,
-            endverts=gs.ti_vec3,
-            normal1=gs.ti_vec3,
-            normal2=gs.ti_vec3,
-            id1=gs.ti_int,
-            id2=gs.ti_int,
-        )
-        struct_contact_normal = ti.types.struct(
-            endverts=gs.ti_vec3,
-            normal=gs.ti_vec3,
-            id=gs.ti_int,
-        )
-        struct_contact_halfspace = ti.types.struct(
-            normal=gs.ti_vec3,
-            dist=gs.ti_float,
-        )
-        kwargs.update(
-            {
-                "contact_faces": struct_contact_face.field(shape=(_B, max_contact_polygon_verts)),
-                "contact_normals": struct_contact_normal.field(shape=(_B, max_contact_polygon_verts)),
-                "contact_halfspaces": struct_contact_halfspace.field(shape=(_B, max_contact_polygon_verts)),
-                "contact_clipped_polygons": gs.ti_vec3.field(shape=(_B, 2, max_contact_polygon_verts)),
-            }
-        )
-
+    ### Multi-contact detection (MuJoCo compatibility)
+    # FIXME: If enable_mujoco_compatibility is False, we don't need the following states.
+    contact_face = get_contact_face(solver, max_contact_polygon_verts)  # if enable_mujoco_compatibility else None
+    contact_normal = get_contact_normal(solver, max_contact_polygon_verts)  # if enable_mujoco_compatibility else None
+    contact_halfspace = get_contact_halfspace(
+        solver, max_contact_polygon_verts
+    )  # if enable_mujoco_compatibility else None
+    contact_clipped_polygons = V(
+        dtype=gs.ti_vec3, shape=(_B, 2, max_contact_polygon_verts)
+    )  # if enable_mujoco_compatibility else None
     kwargs.update(
         {
-            "multi_contact_flag": ti.field(dtype=gs.ti_int, shape=(_B,)),
+            "contact_faces": contact_face,
+            "contact_normals": contact_normal,
+            "contact_halfspaces": contact_halfspace,
+            "contact_clipped_polygons": contact_clipped_polygons,
+            "multi_contact_flag": V(dtype=gs.ti_int, shape=(_B,)),
         }
     )
 
     ### Final results
-    struct_witness = ti.types.struct(
-        point_obj1=gs.ti_vec3,
-        point_obj2=gs.ti_vec3,
-    )
+    witness = get_witness(solver, max_contacts_per_pair)
 
     kwargs.update(
         {
-            "witness": struct_witness.field(shape=(_B, max_contacts_per_pair)),
+            "witness": witness,
             "n_witness": ti.field(dtype=gs.ti_int, shape=(_B,)),
             "n_contacts": ti.field(dtype=gs.ti_int, shape=(_B,)),
             "contact_pos": gs.ti_vec3.field(shape=(_B, max_contacts_per_pair)),

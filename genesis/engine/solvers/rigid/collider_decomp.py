@@ -421,7 +421,6 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
-            self._,
         )
         # timer.stamp("func_narrow_phase")
         if self._collider_static_config.has_terrain:
@@ -438,8 +437,6 @@ class Collider:
                 self._mpr._mpr_static_config,
                 self._support_field._support_field_info,
                 self._support_field._support_field_static_config,
-                self._mpr,
-                self._,
             )
             # timer.stamp("_func_narrow_phase_any_vs_terrain")
         if self._collider_static_config.has_nonconvex_nonterrain:
@@ -1277,10 +1274,6 @@ class Collider:
                             gjk_static_config,
                             support_field_info,
                             support_field_static_config,
-                            # mpr,
-                            # gjk,
-                            # sdf,
-                            #
                             i_ga,
                             i_gb,
                             i_b,
@@ -1308,9 +1301,6 @@ class Collider:
                                 gjk_static_config,
                                 support_field_info,
                                 support_field_static_config,
-                                mpr,
-                                gjk,
-                                sdf,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -1815,10 +1805,6 @@ class Collider:
         gjk_static_config: ti.template(),
         support_field_info: ti.template(),
         support_field_static_config: ti.template(),
-        # mpr: ti.template(),
-        # gjk: ti.template(),
-        # sdf: ti.template(),
-        #
         i_ga,
         i_gb,
         i_b,
@@ -1968,7 +1954,7 @@ class Collider:
                         elif ti.static(
                             collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                         ):
-                            gjk.func_gjk_contact(
+                            self_unused._gjk.func_gjk_contact(
                                 geoms_state,
                                 geoms_info,
                                 verts_info,
