@@ -321,7 +321,7 @@ def get_contact_cache(solver):
     f_batch = solver._batch_shape
     n_geoms = solver.n_geoms_
     kwargs = {
-        "normal": V(dtype=gs.ti_vec3, shape=f_batch((n_geoms, n_geoms))),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=f_batch((n_geoms, n_geoms))),
     }
     if use_ndarray:
         return StructContactCache(**kwargs)
@@ -383,15 +383,15 @@ def get_collider_state(solver, n_possible_pairs, collider_static_config):
         "active_buffer_awake": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "active_buffer_hib": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "box_depth": V(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
-        "box_points": V(gs.ti_vec3, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
-        "box_pts": V(gs.ti_vec3, shape=f_batch(6)),
-        "box_lines": V(gs.ti_vec6, shape=f_batch(4)),
-        "box_linesu": V(gs.ti_vec6, shape=f_batch(4)),
-        "box_axi": V(gs.ti_vec3, shape=f_batch(3)),
+        "box_points": V_VEC(3, dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
+        "box_pts": V_VEC(3, dtype=gs.ti_float, shape=f_batch(6)),
+        "box_lines": V_VEC(6, dtype=gs.ti_float, shape=f_batch(4)),
+        "box_linesu": V_VEC(6, dtype=gs.ti_float, shape=f_batch(4)),
+        "box_axi": V_VEC(3, dtype=gs.ti_float, shape=f_batch(3)),
         "box_ppts2": V(dtype=gs.ti_float, shape=f_batch((4, 2))),
-        "box_pu": V(gs.ti_vec3, shape=f_batch(4)),
+        "box_pu": V_VEC(3, dtype=gs.ti_float, shape=f_batch(4)),
         "xyz_max_min": V(dtype=gs.ti_float, shape=f_batch(6)),
-        "prism": V(dtype=gs.ti_vec3, shape=f_batch(6)),
+        "prism": V_VEC(3, dtype=gs.ti_float, shape=f_batch(6)),
         "n_contacts": V(dtype=gs.ti_int, shape=_B),
         "n_contacts_hibernated": V(dtype=gs.ti_int, shape=_B),
         "first_time": V(dtype=gs.ti_int, shape=_B),
@@ -471,21 +471,43 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
 
 
 @dataclasses.dataclass
+class StructMPRSimplexSupport:
+    v1: V_ANNOTATION
+    v2: V_ANNOTATION
+    v: V_ANNOTATION
+
+
+def get_mpr_simplex_support(f_batch):
+    kwargs = {
+        "v1": V_VEC(3, dtype=gs.ti_float, shape=f_batch(4)),
+        "v2": V_VEC(3, dtype=gs.ti_float, shape=f_batch(4)),
+        "v": V_VEC(3, dtype=gs.ti_float, shape=f_batch(4)),
+    }
+
+    if use_ndarray:
+        return StructMPRSimplexSupport(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassMPRSimplexSupport:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassMPRSimplexSupport()
+
+
+@dataclasses.dataclass
 class StructMPRState:
-    simplex_support: V_ANNOTATION
+    simplex_support: StructMPRSimplexSupport
     simplex_size: V_ANNOTATION
 
 
 def get_mpr_state(f_batch):
-    struct_support = ti.types.struct(
-        v1=gs.ti_vec3,
-        v2=gs.ti_vec3,
-        v=gs.ti_vec3,
-    )
-
+    simplex_support = get_mpr_simplex_support(f_batch)
     kwargs = {
-        "simplex_support": struct_support.field(shape=f_batch(4)),
-        "simplex_size": ti.field(gs.ti_int, shape=f_batch()),
+        "simplex_support": simplex_support,
+        "simplex_size": V(dtype=gs.ti_int, shape=f_batch()),
     }
 
     if use_ndarray:
@@ -517,11 +539,11 @@ class StructMDVertex:
 def get_gjk_simplex_vertex(solver):
     _B = solver._B
     kwargs = {
-        "obj1": V(dtype=gs.ti_vec3, shape=(_B, 4)),
-        "obj2": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+        "obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
+        "obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
         "id1": V(dtype=gs.ti_int, shape=(_B, 4)),
         "id2": V(dtype=gs.ti_int, shape=(_B, 4)),
-        "mink": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+        "mink": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
     }
 
     if use_ndarray:
@@ -541,11 +563,11 @@ def get_epa_polytope_vertex(solver, gjk_static_config):
     _B = solver._B
     max_num_polytope_verts = 5 + gjk_static_config.epa_max_iterations
     kwargs = {
-        "obj1": V(dtype=gs.ti_vec3, shape=(_B, max_num_polytope_verts)),
-        "obj2": V(dtype=gs.ti_vec3, shape=(_B, max_num_polytope_verts)),
+        "obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
+        "obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
         "id1": V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
         "id2": V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
-        "mink": V(dtype=gs.ti_vec3, shape=(_B, max_num_polytope_verts)),
+        "mink": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
     }
 
     if use_ndarray:
@@ -596,7 +618,7 @@ class StructGJKSimplexBuffer:
 def get_gjk_simplex_buffer(solver):
     _B = solver._B
     kwargs = {
-        "normal": V(dtype=gs.ti_vec3, shape=(_B, 4)),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
         "sdist": V(dtype=gs.ti_float, shape=(_B, 4)),
     }
 
@@ -629,7 +651,7 @@ def get_epa_polytope(solver):
         "nfaces": V(dtype=gs.ti_int, shape=(_B,)),
         "nfaces_map": V(dtype=gs.ti_int, shape=(_B,)),
         "horizon_nedges": V(dtype=gs.ti_int, shape=(_B,)),
-        "horizon_w": V(dtype=gs.ti_vec3, shape=(_B,)),
+        "horizon_w": V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
     }
 
     if use_ndarray:
@@ -658,9 +680,9 @@ def get_epa_polytope_face(solver, polytope_max_faces):
     _B = solver._B
 
     kwargs = {
-        "verts_idx": V(dtype=gs.ti_ivec3, shape=(_B, polytope_max_faces)),
-        "adj_idx": V(dtype=gs.ti_ivec3, shape=(_B, polytope_max_faces)),
-        "normal": V(dtype=gs.ti_vec3, shape=(_B, polytope_max_faces)),
+        "verts_idx": V_VEC(3, dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
+        "adj_idx": V_VEC(3, dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
         "dist2": V(dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
         "map_idx": V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
     }
@@ -718,11 +740,11 @@ class StructContactFace:
 def get_contact_face(solver, max_contact_polygon_verts):
     _B = solver._B
     kwargs = {
-        "vert1": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
-        "vert2": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
-        "endverts": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
-        "normal1": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
-        "normal2": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "vert1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+        "vert2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+        "endverts": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+        "normal1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+        "normal2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
         "id1": V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
         "id2": V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
     }
@@ -750,8 +772,8 @@ class StructContactNormal:
 def get_contact_normal(solver, max_contact_polygon_verts):
     _B = solver._B
     kwargs = {
-        "endverts": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
-        "normal": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "endverts": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
         "id": V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
     }
     if use_ndarray:
@@ -776,7 +798,7 @@ class StructContactHalfspace:
 def get_contact_halfspace(solver, max_contact_polygon_verts):
     _B = solver._B
     kwargs = {
-        "normal": V(dtype=gs.ti_vec3, shape=(_B, max_contact_polygon_verts)),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
         "dist": V(dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
     }
     if use_ndarray:
@@ -801,8 +823,8 @@ class StructWitness:
 def get_witness(solver, max_contacts_per_pair):
     _B = solver._B
     kwargs = {
-        "point_obj1": V(dtype=gs.ti_vec3, shape=(_B, max_contacts_per_pair)),
-        "point_obj2": V(dtype=gs.ti_vec3, shape=(_B, max_contacts_per_pair)),
+        "point_obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "point_obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
     }
 
     if use_ndarray:
@@ -896,14 +918,14 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
     )
 
     ### Multi-contact detection (MuJoCo compatibility)
-    # FIXME: If enable_mujoco_compatibility is False, we don't need the following states.
+    # FIXME: These are not needed, but keeping them for possible future use.
     contact_face = get_contact_face(solver, max_contact_polygon_verts)  # if enable_mujoco_compatibility else None
     contact_normal = get_contact_normal(solver, max_contact_polygon_verts)  # if enable_mujoco_compatibility else None
     contact_halfspace = get_contact_halfspace(
         solver, max_contact_polygon_verts
     )  # if enable_mujoco_compatibility else None
-    contact_clipped_polygons = V(
-        dtype=gs.ti_vec3, shape=(_B, 2, max_contact_polygon_verts)
+    contact_clipped_polygons = V_VEC(
+        3, dtype=gs.ti_float, shape=(_B, 2, max_contact_polygon_verts)
     )  # if enable_mujoco_compatibility else None
     kwargs.update(
         {
@@ -923,8 +945,8 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
             "witness": witness,
             "n_witness": ti.field(dtype=gs.ti_int, shape=(_B,)),
             "n_contacts": ti.field(dtype=gs.ti_int, shape=(_B,)),
-            "contact_pos": gs.ti_vec3.field(shape=(_B, max_contacts_per_pair)),
-            "normal": gs.ti_vec3.field(shape=(_B, max_contacts_per_pair)),
+            "contact_pos": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+            "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
             "is_col": ti.field(dtype=gs.ti_int, shape=(_B,)),
             "penetration": ti.field(dtype=gs.ti_float, shape=(_B,)),
             "distance": ti.field(dtype=gs.ti_float, shape=(_B,)),
@@ -972,6 +994,71 @@ def get_support_field_info(n_geoms, n_support_cells):
                     setattr(self, k, v)
 
         return ClassSupportFieldInfo()
+
+
+# =========================================== SDF ===========================================
+
+
+@dataclasses.dataclass
+class StructSDFGeomInfo:
+    T_mesh_to_sdf: V_ANNOTATION
+    sdf_res: V_ANNOTATION
+    sdf_max: V_ANNOTATION
+    sdf_cell_size: V_ANNOTATION
+    sdf_cell_start: V_ANNOTATION
+
+
+def get_sdf_geom_info(n_geoms):
+    kwargs = {
+        "T_mesh_to_sdf": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=(n_geoms,)),
+        "sdf_res": V_VEC(3, dtype=gs.ti_int, shape=(n_geoms,)),
+        "sdf_max": V(dtype=gs.ti_float, shape=(n_geoms,)),
+        "sdf_cell_size": V(dtype=gs.ti_float, shape=(n_geoms,)),
+        "sdf_cell_start": V(dtype=gs.ti_int, shape=(n_geoms,)),
+    }
+
+    if use_ndarray:
+        return StructSDFGeomInfo(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassSDFGeomInfo:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassSDFGeomInfo()
+
+
+@dataclasses.dataclass
+class StructSDFInfo:
+    geoms_info: StructSDFGeomInfo
+    geoms_sdf_start: V_ANNOTATION
+    geoms_sdf_val: V_ANNOTATION
+    geoms_sdf_grad: V_ANNOTATION
+    geoms_sdf_closest_vert: V_ANNOTATION
+
+
+def get_sdf_info(n_geoms, n_cells):
+    kwargs = {
+        "geoms_info": get_sdf_geom_info(n_geoms),
+        "geoms_sdf_start": V(dtype=gs.ti_int, shape=(n_geoms,)),
+        "geoms_sdf_val": V(dtype=gs.ti_float, shape=(n_cells,)),
+        "geoms_sdf_grad": V_VEC(3, dtype=gs.ti_float, shape=(n_cells,)),
+        "geoms_sdf_closest_vert": V(dtype=gs.ti_int, shape=(n_cells,)),
+    }
+
+    if use_ndarray:
+        return StructSDFInfo(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassSDFInfo:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassSDFInfo()
 
 
 # =========================================== DofsInfo and DofsState ===========================================
@@ -1883,3 +1970,4 @@ MPRState = ti.template() if not use_ndarray else StructMPRState
 SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
 ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
+SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
