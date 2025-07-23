@@ -203,15 +203,20 @@ class ConstraintSolver:
     def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        self._kernel_clear(envs_idx)
+        self._kernel_clear(envs_idx, self._solver._static_rigid_sim_config, self.constraint_state)
 
     @ti.kernel
-    def _kernel_clear(self, envs_idx: ti.types.ndarray()):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+    def _kernel_clear(
+        self_unused,
+        envs_idx: ti.types.ndarray(),
+        static_rigid_sim_config: ti.template(),
+        constraint_state: array_class.ConstraintState,
+    ):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
-            self.n_constraints[i_b] = 0
-            self.n_constraints_equality[i_b] = 0
+            constraint_state.n_constraints[i_b] = 0
+            constraint_state.n_constraints_equality[i_b] = 0
 
     @ti.kernel
     def add_collision_constraints(
@@ -219,7 +224,7 @@ class ConstraintSolver:
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
         dofs_state: array_class.DofsState,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         collider_state: array_class.ColliderState,
         static_rigid_sim_config: ti.template(),
     ):
@@ -229,13 +234,21 @@ class ConstraintSolver:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_col in range(collider_state.n_contacts[i_b]):
-                contact_data = collider_state.contact_data[i_col, i_b]
-                link_a = contact_data.link_a
-                link_b = contact_data.link_b
+                contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
+                contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
+
+                contact_data_pos = collider_state.contact_data.pos[i_col, i_b]
+                contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
+                contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+                contact_data_sol_params = collider_state.contact_data.sol_params[i_col, i_b]
+                contact_data_penetration = collider_state.contact_data.penetration[i_col, i_b]
+
+                link_a = contact_data_link_a
+                link_b = contact_data_link_b
                 link_a_maybe_batch = [link_a, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link_a
                 link_b_maybe_batch = [link_b, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link_b
 
-                d1, d2 = gu.ti_orthogonals(contact_data.normal)
+                d1, d2 = gu.ti_orthogonals(contact_data_normal)
 
                 invweight = links_info.invweight[link_a_maybe_batch][0]
                 if link_b > -1:
@@ -243,7 +256,7 @@ class ConstraintSolver:
 
                 for i in range(4):
                     d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                    n = d * contact_data.friction - contact_data.normal
+                    n = d * contact_data_friction - contact_data_normal
 
                     n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
                     if ti.static(static_rigid_sim_config.sparse_solve):
@@ -276,7 +289,7 @@ class ConstraintSolver:
                                 cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                                 t_quat = gu.ti_identity_quat()
-                                t_pos = contact_data.pos - links_state.COM[link, i_b]
+                                t_pos = contact_data_pos - links_state.COM[link, i_b]
                                 _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                                 diff = sign * vel
@@ -293,11 +306,11 @@ class ConstraintSolver:
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
                     imp, aref = gu.imp_aref(
-                        contact_data.sol_params, -contact_data.penetration, jac_qvel, -contact_data.penetration
+                        contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                     )
 
-                    diag = invweight + contact_data.friction * contact_data.friction * invweight
-                    diag *= 2 * contact_data.friction * contact_data.friction * (1 - imp) / imp
+                    diag = invweight + contact_data_friction * contact_data_friction * invweight
+                    diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
                     diag = ti.max(diag, gs.EPS)
 
                     constraint_state.diag[n_con, i_b] = diag
@@ -309,12 +322,12 @@ class ConstraintSolver:
         self_unused,
         i_b,
         i_e,
-        links_info,
-        links_state,
-        dofs_state,
-        equalities_info,
-        constraint_state,
-        collider_state,
+        links_info: array_class.LinksInfo,
+        links_state: array_class.LinksState,
+        dofs_state: array_class.DofsState,
+        equalities_info: array_class.EqualitiesInfo,
+        constraint_state: array_class.ConstraintState,
+        collider_state: array_class.ColliderState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -418,12 +431,12 @@ class ConstraintSolver:
         self_unused,
         i_b,
         i_e,
-        joints_info,
-        dofs_state,
-        dofs_info,
-        equalities_info,
-        constraint_state,
-        rigid_global_info,
+        joints_info: array_class.JointsInfo,
+        dofs_state: array_class.DofsState,
+        dofs_info: array_class.DofsInfo,
+        equalities_info: array_class.EqualitiesInfo,
+        constraint_state: array_class.ConstraintState,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.jac.shape[1]
@@ -500,7 +513,7 @@ class ConstraintSolver:
         dofs_info: array_class.DofsInfo,
         joints_info: array_class.JointsInfo,
         equalities_info: array_class.EqualitiesInfo,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         collider_state: array_class.ColliderState,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
@@ -551,11 +564,11 @@ class ConstraintSolver:
         self_unused,
         i_b,
         i_e,
-        links_info,
-        links_state,
-        dofs_state,
-        equalities_info,
-        constraint_state,
+        links_info: array_class.LinksInfo,
+        links_state: array_class.LinksState,
+        dofs_state: array_class.DofsState,
+        equalities_info: array_class.EqualitiesInfo,
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -745,7 +758,7 @@ class ConstraintSolver:
         dofs_info: array_class.DofsInfo,
         dofs_state: array_class.DofsState,
         rigid_global_info: array_class.RigidGlobalInfo,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         _B = constraint_state.jac.shape[2]
@@ -801,9 +814,9 @@ class ConstraintSolver:
     def _func_nt_hessian_incremental(
         self_unused,
         i_b,
-        entities_info,
-        constraint_state,
-        rigid_global_info,
+        entities_info: array_class.EntitiesInfo,
+        constraint_state: array_class.ConstraintState,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.nt_H.shape[0]
@@ -912,9 +925,9 @@ class ConstraintSolver:
     def _func_nt_hessian_direct(
         self_unused,
         i_b,
-        entities_info,
-        constraint_state,
-        rigid_global_info,
+        entities_info: array_class.EntitiesInfo,
+        constraint_state: array_class.ConstraintState,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.nt_H.shape[0]
@@ -970,7 +983,7 @@ class ConstraintSolver:
     def _func_nt_chol_factor(
         self_unused,
         i_b,
-        constraint_state,
+        constraint_state: array_class.ConstraintState,
     ):
         n_dofs = constraint_state.nt_H.shape[0]
         rank = n_dofs
@@ -997,7 +1010,7 @@ class ConstraintSolver:
     def _func_nt_chol_solve(
         self_unused,
         i_b,
-        constraint_state,
+        constraint_state: array_class.ConstraintState,
     ):
         n_dofs = constraint_state.Mgrad.shape[0]
         for i_d in range(n_dofs):
@@ -1108,6 +1121,7 @@ class ConstraintSolver:
         )
         # timer.stamp("_func_solve")
         self._func_update_qacc(
+            qacc_ws=self.qacc_ws,
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
@@ -1126,7 +1140,7 @@ class ConstraintSolver:
         self_unused,
         links_state: array_class.LinksState,
         collider_state: array_class.ColliderState,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_links = links_state.contact_force.shape[0]
@@ -1140,29 +1154,33 @@ class ConstraintSolver:
         for i_b in range(_B):
             const_start = constraint_state.n_constraints_equality[i_b]
             for i_c in range(collider_state.n_contacts[i_b]):
-                contact_data = collider_state.contact_data[i_c, i_b]
+                contact_data_normal = collider_state.contact_data.normal[i_c, i_b]
+                contact_data_friction = collider_state.contact_data.friction[i_c, i_b]
+                contact_data_link_a = collider_state.contact_data.link_a[i_c, i_b]
+                contact_data_link_b = collider_state.contact_data.link_b[i_c, i_b]
 
                 force = ti.Vector.zero(gs.ti_float, 3)
-                d1, d2 = gu.ti_orthogonals(contact_data.normal)
+                d1, d2 = gu.ti_orthogonals(contact_data_normal)
                 for i_dir in range(4):
                     d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
-                    n = d * contact_data.friction - contact_data.normal
+                    n = d * contact_data_friction - contact_data_normal
                     force += n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
-                collider_state.contact_data[i_c, i_b].force = force
+                collider_state.contact_data.force[i_c, i_b] = force
 
-                links_state.contact_force[contact_data.link_a, i_b] = (
-                    links_state.contact_force[contact_data.link_a, i_b] - force
+                links_state.contact_force[contact_data_link_a, i_b] = (
+                    links_state.contact_force[contact_data_link_a, i_b] - force
                 )
-                links_state.contact_force[contact_data.link_b, i_b] = (
-                    links_state.contact_force[contact_data.link_b, i_b] + force
+                links_state.contact_force[contact_data_link_b, i_b] = (
+                    links_state.contact_force[contact_data_link_b, i_b] + force
                 )
 
     @ti.kernel
     def _func_update_qacc(
         self_unused,
+        qacc_ws: array_class.V_ANNOTATION,
         dofs_state: array_class.DofsState,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = dofs_state.acc.shape[0]
@@ -1174,14 +1192,14 @@ class ConstraintSolver:
             dofs_state.force[i_d, i_b] += constraint_state.qfrc_constraint[i_d, i_b]
 
         for i_d, i_b in ti.ndrange(n_dofs, _B):
-            self_unused.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
     @ti.kernel
     def _func_solve(
         self_unused,
         entities_info: array_class.EntitiesInfo,
         dofs_state: array_class.DofsState,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
@@ -1219,10 +1237,10 @@ class ConstraintSolver:
     def _func_ls_init(
         self_unused,
         i_b,
-        entities_info,
-        dofs_state,
-        constraint_state,
-        rigid_global_info,
+        entities_info: array_class.EntitiesInfo,
+        dofs_state: array_class.DofsState,
+        constraint_state: array_class.ConstraintState,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
 
@@ -1277,7 +1295,7 @@ class ConstraintSolver:
         self_unused,
         i_b,
         alpha,
-        constraint_state,
+        constraint_state: array_class.ConstraintState,
     ):
         tmp_quad_total0, tmp_quad_total1, tmp_quad_total2 = gs.ti_float(0.0), gs.ti_float(0.0), gs.ti_float(0.0)
         for _i0 in range(1):
@@ -1316,10 +1334,10 @@ class ConstraintSolver:
     def _func_linesearch(
         self_unused,
         i_b,
-        entities_info,
-        dofs_state,
-        rigid_global_info,
-        constraint_state,
+        entities_info: array_class.EntitiesInfo,
+        dofs_state: array_class.DofsState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.search.shape[0]
@@ -1514,7 +1532,7 @@ class ConstraintSolver:
         p_deriv_0,
         p_deriv_1,
         i_b,
-        constraint_state,
+        constraint_state: array_class.ConstraintState,
     ):
         flag = 0
 
@@ -1560,10 +1578,10 @@ class ConstraintSolver:
     def _func_solve_body(
         self_unused,
         i_b,
-        entities_info,
-        dofs_state,
-        rigid_global_info,
-        constraint_state,
+        entities_info: array_class.EntitiesInfo,
+        dofs_state: array_class.DofsState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.qacc.shape[0]
@@ -1661,11 +1679,11 @@ class ConstraintSolver:
     def _func_update_constraint(
         self_unused,
         i_b,
-        qacc,
-        Ma,
-        cost,
-        dofs_state,
-        constraint_state,
+        qacc: array_class.V_ANNOTATION,
+        Ma: array_class.V_ANNOTATION,
+        cost: array_class.V_ANNOTATION,
+        dofs_state: array_class.DofsState,
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.qfrc_constraint.shape[0]
@@ -1719,10 +1737,10 @@ class ConstraintSolver:
     def _func_update_gradient(
         self_unused,
         i_b,
-        dofs_state,
-        entities_info,
-        rigid_global_info,
-        constraint_state,
+        dofs_state: array_class.DofsState,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         n_dofs = constraint_state.grad.shape[0]
@@ -1751,8 +1769,8 @@ class ConstraintSolver:
     @ti.func
     def initialize_Jaref(
         self_unused,
-        qacc,
-        constraint_state,
+        qacc: array_class.V_ANNOTATION,
+        constraint_state: array_class.ConstraintState,
         static_rigid_sim_config: ti.template(),
     ):
         _B = constraint_state.jac.shape[2]
@@ -1773,10 +1791,10 @@ class ConstraintSolver:
     @ti.func
     def initialize_Ma(
         self_unused,
-        Ma,
-        qacc,
-        entities_info,
-        rigid_global_info,
+        Ma: array_class.V_ANNOTATION,
+        qacc: array_class.V_ANNOTATION,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
 
@@ -1796,7 +1814,7 @@ class ConstraintSolver:
         self_unused,
         dofs_state: array_class.DofsState,
         entities_info: array_class.EntitiesInfo,
-        constraint_state: ti.template(),
+        constraint_state: array_class.ConstraintState,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):

@@ -3416,8 +3416,8 @@ class RigidSolver(Solver):
     @ti.func
     def _func_clear_external_force(
         self_unused,
-        links_state,
-        rigid_global_info,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
         _B = links_state.pos.shape[1]
@@ -3896,10 +3896,10 @@ class RigidSolver(Solver):
     @ti.func
     def _func_integrate(
         self_unused,
-        dofs_state,
-        links_info,
-        joints_info,
-        rigid_global_info,
+        dofs_state: array_class.DofsState,
+        links_info: array_class.LinksInfo,
+        joints_info: array_class.JointsInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
 

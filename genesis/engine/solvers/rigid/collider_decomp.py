@@ -2953,7 +2953,7 @@ class Collider:
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
-                self._collider_static_config,
+                self._collider_info,
                 as_tensor,
                 iout,
                 fout,
@@ -3036,12 +3036,12 @@ class Collider:
             for i_c_ in range(collider_state.n_contacts[i_b]):
                 i_c = i_c_start + i_c_
 
-                iout[i_c, 0] = collider_state.contact_data[i_c_, i_b].link_a
-                iout[i_c, 1] = collider_state.contact_data[i_c_, i_b].link_b
-                iout[i_c, 2] = collider_state.contact_data[i_c_, i_b].geom_a
-                iout[i_c, 3] = collider_state.contact_data[i_c_, i_b].geom_b
-                fout[i_c, 0] = collider_state.contact_data[i_c_, i_b].penetration
+                iout[i_c, 0] = collider_state.contact_data.link_a[i_c_, i_b]
+                iout[i_c, 1] = collider_state.contact_data.link_b[i_c_, i_b]
+                iout[i_c, 2] = collider_state.contact_data.geom_a[i_c_, i_b]
+                iout[i_c, 3] = collider_state.contact_data.geom_b[i_c_, i_b]
+                fout[i_c, 0] = collider_state.contact_data.penetration[i_c_, i_b]
                 for j in ti.static(range(3)):
-                    fout[i_c, 1 + j] = collider_state.contact_data[i_c_, i_b].pos[j]
-                    fout[i_c, 4 + j] = collider_state.contact_data[i_c_, i_b].normal[j]
-                    fout[i_c, 7 + j] = collider_state.contact_data[i_c_, i_b].force[j]
+                    fout[i_c, 1 + j] = collider_state.contact_data.pos[i_c_, i_b][j]
+                    fout[i_c, 4 + j] = collider_state.contact_data.normal[i_c_, i_b][j]
+                    fout[i_c, 7 + j] = collider_state.contact_data.force[i_c_, i_b][j]
