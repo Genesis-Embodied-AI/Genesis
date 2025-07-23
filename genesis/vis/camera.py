@@ -7,14 +7,14 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.repr_base import RBC
+from genesis.sensors import Sensor
 from genesis.utils.misc import tensor_to_array
 
 
-class Camera(RBC):
+class Camera(Sensor):
     """
-    Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
-    The camera also comes with handy tools such as video recording.
+    A camera which can be used to render RGB, depth, and segmentation images.
+    Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
 
     Parameters
     ----------
@@ -43,7 +43,9 @@ class Camera(RBC):
     spp : int, optional
         Samples per pixel. Only available when using the RayTracer renderer. Defaults to 256.
     denoise : bool
-        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option when building RayTracer.
+        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer.
+        Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
+        option when building RayTracer.
     near : float
         The near plane of the camera.
     far : float
@@ -192,6 +194,15 @@ class Camera(RBC):
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = link_T @ self._attached_offset_T
         self.set_pose(transform=transform)
+
+    @gs.assert_built
+    def read(self):
+        """
+        Obtain the RGB camera view.
+        This is a temporary implementation to make Camera a Sensor.
+        """
+        rgb, _, _, _ = self.render()
+        return rgb
 
     @gs.assert_built
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
