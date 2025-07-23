@@ -13,33 +13,12 @@ from genesis.utils.misc import tensor_to_array
 from .base_sensor import Sensor
 
 
-@ti.func
-def _ti_get_normal_tangential(force_local, normal_local, force_eps):
-    fn = force_local.dot(normal_local)
-    force_tangential = force_local - fn * normal_local
-    ft = force_tangential.norm()
-    tx, ty = 0.0, 0.0
-
-    if ft > force_eps:
-        tangent_x = ti.Vector.zero(ti.f32, 3)
-        if ti.abs(normal_local[0]) < 0.9:
-            tangent_x = ti.Vector([1.0, 0.0, 0.0]) - normal_local[0] * normal_local
-        else:
-            tangent_x = ti.Vector([0.0, 1.0, 0.0]) - normal_local[1] * normal_local
-        tangent_x = tangent_x.normalized()
-        tangent_y = normal_local.cross(tangent_x)
-
-        ft_inv = 1.0 / ft
-        tx = force_tangential.dot(tangent_x) * ft_inv
-        ty = force_tangential.dot(tangent_y) * ft_inv
-
-    return fn, ft, tx, ty
-
-
 @ti.data_oriented
 class RigidContactSensor(Sensor):
     """
     Sensor that returns bool based on whether associated RigidLink is in collision.
+
+    read() -> np.ndarray of shape (batch_size,) of bool values
 
     Parameters
     ----------
@@ -64,7 +43,7 @@ class RigidContactSensor(Sensor):
         self._cached = None
         self._last_cache_step = -1
 
-    def read(self, envs_idx: Optional[List[int]] = None):
+    def read(self, envs_idx: Optional[List[int]] = None) -> np.ndarray:
         if type(self)._cached_link_is_colliding is None:
             type(self)._cached_link_is_colliding = torch.zeros(
                 (self._sim._B, self._solver.n_links), dtype=gs.tc_bool, device=gs.device
@@ -79,7 +58,7 @@ class RigidContactSensor(Sensor):
             )
 
         if self._cached is None:
-            self._cached = torch.zeros((self._sim._B, 1), dtype=gs.tc_bool, device=gs.device)
+            self._cached = torch.zeros((self._sim._B,), dtype=gs.tc_bool, device=gs.device)
 
         if self._last_cache_step != self._sim.cur_step_global:
             self._last_cache_step = self._sim.cur_step_global
@@ -103,6 +82,8 @@ class RigidContactSensor(Sensor):
 class RigidContactForceSensor(RigidContactSensor):
     """
     Sensor that returns contact force (Fx, Fy, Fz) in the associated RigidLink's local frame.
+
+    read() -> np.ndarray of shape (batch_size, 3) representing the contact force.
 
     Parameters
     ----------
@@ -167,8 +148,11 @@ class RigidContactForceSensor(RigidContactSensor):
 @ti.data_oriented
 class RigidNormalTangentialForceSensor(RigidContactSensor):
     """
-    Sensor that returns (|fn|, |ft|, tx, ty) for contact force normal, tangential shear force, and tangential direction
-    as a unit vector in the associated RigidLink's local frame.
+    Sensor that returns (|fn|, |ft|, tx, ty) for contact force normal, tangential shear force, and tangential
+    direction as a unit vector in the associated RigidLink's local frame.
+    The tangential direction will not be computed if the tangential force < FORCE_EPSILON, since it will be noise.
+
+    read() -> np.ndarray of shape (batch_size, 4) representing the normal and tangential forces.
 
     Parameters
     ----------
@@ -178,7 +162,7 @@ class RigidNormalTangentialForceSensor(RigidContactSensor):
         The index of the link to which this sensor is attached. If None, defaults to the base link of the entity.
     """
 
-    FORCE_EPSILON = 1e-6
+    FORCE_EPSILON = 1e-5
     _cached_link_norm_tan: torch.Tensor | None = None
     _last_shared_cache_step = -1
 
@@ -260,6 +244,8 @@ class RigidContactGridSensor(RigidContactSensor):
     """
     Sensor that returns ndarray of shape [grid_x, grid_y, grid_z] representing whether or not contact is detected
     in each grid cell based on the associated RigidLink's collision info.
+
+    read() -> np.ndarray of shape (batch_size, grid_x, grid_y, grid_z) of bool values
 
     Parameters
     ----------
@@ -411,6 +397,8 @@ class RigidContactForceGridSensor(RigidContactGridSensor):
     """
     Sensor that returns ndarray of shape (grid_x, grid_y, grid_z, 3) reprsenting the contact forces (Fx, Fy, Fz)
     in the associated RigidLink's local frame accumulated in a grid.
+
+    read() -> np.ndarray of shape (batch_size, grid_x, grid_y, grid_z, 3) representing the contact forces.
 
     Parameters
     ----------
@@ -569,6 +557,10 @@ class RigidNormalTangentialForceGridSensor(RigidContactForceGridSensor):
     Each grid cell contains (|fn|, |ft|, tx, ty) for contact force normal, tangential shear force, and tangential
     direction as a unit vector in the associated RigidLink's local frame.
 
+    The tangential direction will not be computed if the tangential force < FORCE_EPSILON, since it will be noise.
+
+    read() -> np.ndarray of shape (batch_size, grid_x, grid_y, grid_z, 4) representing the contact forces.
+
     Parameters
     ----------
     entity : RigidEntity
@@ -582,7 +574,7 @@ class RigidNormalTangentialForceGridSensor(RigidContactForceGridSensor):
         from the mesh after scale but before any rigid transformations are applied.
     """
 
-    FORCE_EPSILON = 1e-6
+    FORCE_EPSILON = 1e-5
     _cached_contacts_local_norm_tans: torch.Tensor | None = None
     _last_shared_cache_step = -1
 
@@ -591,15 +583,18 @@ class RigidNormalTangentialForceGridSensor(RigidContactForceGridSensor):
             self._max_contacts = self._solver.collider._collider_info._max_contact_pairs[None]
 
         if type(self)._cached_contacts_local_pos is None:
-            n_local_contacts = self._max_contacts * 2  # two links per contact
             type(self)._cached_contacts_local_pos = torch.zeros(
-                (self._sim._B, n_local_contacts, 3), dtype=gs.tc_float, device=gs.device
+                (self._sim._B, self._max_contacts * 2, 3), dtype=gs.tc_float, device=gs.device
             )
+
+        if type(self)._cached_contacts_link is None:
             type(self)._cached_contacts_link = torch.zeros(
-                (self._sim._B, n_local_contacts), dtype=gs.tc_int, device=gs.device
+                (self._sim._B, self._max_contacts * 2), dtype=gs.tc_int, device=gs.device
             )
+
+        if type(self)._cached_contacts_local_norm_tans is None:
             type(self)._cached_contacts_local_norm_tans = torch.zeros(
-                (self._sim._B, n_local_contacts, 4), dtype=gs.tc_float, device=gs.device
+                (self._sim._B, self._max_contacts * 2, 4), dtype=gs.tc_float, device=gs.device
             )
 
         if type(self)._last_shared_cache_step != self._sim.cur_step_global:
