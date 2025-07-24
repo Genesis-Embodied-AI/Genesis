@@ -2090,10 +2090,10 @@ class RigidSolver(Solver):
     @ti.func
     def _func_implicit_damping(
         self_unused,
-        dofs_state,
-        dofs_info,
-        entities_info,
-        rigid_global_info,
+        dofs_state: array_class.DofsState,
+        dofs_info: array_class.DofsInfo,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
     ):
 
