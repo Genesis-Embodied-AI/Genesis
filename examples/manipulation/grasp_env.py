@@ -1,11 +1,8 @@
 import torch
-import numpy as np
 import math
 from typing import Literal
 import genesis as gs
 from genesis.utils.geom import xyz_to_quat, transform_quat_by_quat, transform_by_quat
-
-import time
 
 
 class GraspEnv:
@@ -88,10 +85,9 @@ class GraspEnv:
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=gs.device)
         #
-        self.goal_pos = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
         self.action_buf = torch.zeros((self.num_envs, self.num_actions), device=self.device)
         #
-        self.hand_z_offset = 0.0
+        self.hand_z_offset = 0.15
 
         #
         self.extras = dict()
@@ -107,10 +103,9 @@ class GraspEnv:
         self.robot.reset(envs_idx)
         # reset object
         num_reset = len(envs_idx)
-        random_x = torch.rand(num_reset, device=self.device) * 0.4 + 0.2
-        random_y = (torch.rand(num_reset, device=self.device) - 0.5) * 0.0  # 0.0 ~ 0.0
-        random_z = torch.ones(num_reset, device=self.device) * 0.15
-        self.goal_pos[envs_idx] = torch.stack([random_x, random_y, random_z], dim=-1)
+        random_x = torch.rand(num_reset, device=self.device) * 0.4 + 0.2  # 0.2 ~ 0.6
+        random_y = (torch.rand(num_reset, device=self.device) - 0.5) * 0.5  # -0.25 ~ 0.25
+        random_z = torch.ones(num_reset, device=self.device) * 0.025  # 0.15 ~ 0.15
 
         #
         self.object.set_pos(torch.stack([random_x, random_y, random_z], dim=-1), envs_idx=envs_idx)
@@ -179,14 +174,14 @@ class GraspEnv:
     def get_observations(self):
         # Current end-effector pose
         ee_pos, ee_quat = self.robot.ee_pose[:, :3], self.robot.ee_pose[:, 3:7]
-        # obj_pos, obj_quat = self.object.get_pos(), self.object.get_quat()
-        obj_pos = self.goal_pos
+        obj_pos, obj_quat = self.object.get_pos(), self.object.get_quat()
         #
         pos_diff = ee_pos - obj_pos
         obs_components = [
             pos_diff,  # 3D position difference
             ee_quat,  # current orientation (4D quaternion)
             obj_pos,  # goal pose (7D: pos + quat)
+            obj_quat,  # goal pose (7D: pos + quat)
         ]
         obs_tensor = torch.cat(obs_components, dim=-1)
         self.extras["observations"]["critic"] = obs_tensor
@@ -206,7 +201,7 @@ class GraspEnv:
 
         #
         facing_down_quaternion = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-        goal_pos = self.goal_pos
+        goal_pos = self.object.get_pos()
         goal_pos[:, 2] += self.hand_z_offset
         object_pos_keypoints = self._to_world_frame(goal_pos, facing_down_quaternion, keypoints_offset)
         #
@@ -215,48 +210,6 @@ class GraspEnv:
 
     def _reward_action(self):
         return -torch.norm(self.action_buf, dim=-1).sum(-1)
-
-    def _reward_downward_facing(self):
-        """
-        Reward for ensuring the hand is close to the object AND facing downward.
-        Ignores yaw - only cares about position and downward orientation.
-        """
-        # Get current hand pose and object position
-        hand_pos = self.robot.ee_pose[:, :3]  # [num_envs, 3]
-        hand_quat = self.robot.ee_pose[:, 3:7]  # [num_envs, 4]
-        obj_pos = self.goal_pos
-
-        # Position reward: hand should be close to the object with z-offset
-        target_hand_pos = obj_pos.clone()
-        target_hand_pos[:, 2] += self.hand_z_offset  # Add z-offset to keep hand above object
-        pos_error = torch.norm(hand_pos - target_hand_pos, dim=-1)
-        pos_reward = torch.exp(-pos_error)  # Exponential decay with distance
-
-        # Orientation reward: hand should be facing downward
-        # Extract z-axis from hand quaternion
-        # For quaternion [w, x, y, z], the z-axis of the rotated frame is:
-        # [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)]
-        w, x, y, z = hand_quat[:, 0], hand_quat[:, 1], hand_quat[:, 2], hand_quat[:, 3]
-        hand_z_axis = torch.stack([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)], dim=-1)
-
-        # Desired z-axis: pointing downward [0, 0, -1]
-        target_z_axis = torch.tensor([0.0, 0.0, -1.0], device=self.device).repeat(self.num_envs, 1)
-
-        # Calculate how well the z-axis aligns with downward direction
-        # Dot product gives us alignment (1 = perfectly aligned, -1 = opposite)
-        alignment = torch.sum(hand_z_axis * target_z_axis, dim=-1)
-
-        # Convert to orientation reward (1 = perfect downward facing, 0 = horizontal, -1 = facing up)
-        orientation_reward = (alignment + 1.0) / 2.0  # Maps [-1, 1] to [0, 1]
-
-        # Combine position and orientation rewards
-        # You can adjust these weights based on your preference
-        pos_weight = 1.0
-        orientation_weight = 0.5
-
-        total_reward = pos_weight * pos_reward + orientation_weight * orientation_reward
-
-        return total_reward
 
     def _to_world_frame(
         self,
@@ -311,7 +264,7 @@ class Manipulator:
         )
         self._robot_entity: gs.Entity = scene.add_entity(material=material, morph=morph)
 
-        self._ctrl_mode: Literal["pose", "rel_pose", "dls"] = "dls"
+        self._ctrl_mode: Literal["pose", "rel_pose", "dls"] = args["ctrl_mode"]
 
         # == some buffer initialization ==
         self._init()
@@ -377,8 +330,6 @@ class Manipulator:
             pos=target_position,
             quat=target_orientation,
             dofs_idx_local=self._arm_dof_idx,
-            max_samples=10,
-            max_solver_iters=20,
         )
 
         # set gripper to open

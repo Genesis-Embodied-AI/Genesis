@@ -59,7 +59,7 @@ def get_train_cfg(exp_name, max_iterations):
             "run_name": "",
         },
         "runner_class_name": "OnPolicyRunner",
-        "num_steps_per_env": 32,
+        "num_steps_per_env": 24,
         "save_interval": 100,
         "empirical_normalization": None,
         "seed": 1,
@@ -78,17 +78,16 @@ def get_cfgs():
     reward_cfg = {
         "reward_scales": {
             "keypoints": 1.0,
-            "action": 0.000,
-            "downward_facing": 0.0,
         },
     }
+    # panda robot specific
     robot_cfg = {
         "ee_link_name": "hand",
         "gripper_link_names": ["left_finger", "right_finger"],
         "default_arm_dof": [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785],
         "default_gripper_dof": [-0.04, 0.04],
+        "ctrl_mode": "dls",
     }
-
     return env_cfg, reward_cfg, robot_cfg
 
 
