@@ -1,4 +1,4 @@
-name: Generic - CPU only
+name: Generic
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: ['ubuntu-22.04', 'ubuntu-24.04', 'macos-15', 'windows-2025']
+        OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15", "windows-cpu-4-core"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12"]
 
     env:
@@ -32,6 +32,19 @@ jobs:
     runs-on: ${{ matrix.OS }}
 
     steps:
+      - name: Print system information (Windows)
+        if: startsWith(matrix.OS, 'windows-')
+        shell: pwsh
+        run: |
+          $cpu = Get-CimInstance -ClassName Win32_Processor
+          $ram = Get-CimInstance -ClassName Win32_ComputerSystem
+          [PSCustomObject]@{
+              CPU_Name                 = $cpu.Name
+              Physical_Cores           = ($cpu | Measure-Object -Property NumberOfCores -Sum).Sum
+              Logical_Processors       = ($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+              Total_RAM_GB             = [math]::Round($ram.TotalPhysicalMemory / 1GB, 2)
+          }
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -55,13 +68,9 @@ jobs:
         if: startsWith(matrix.OS, 'windows-')
         shell: bash
         run: |
-          # FIXME: Updating to 25.1.0 breaks rendering regardless PYOPENGL_PLATFORM is set to osmesa or egl.
-          curl -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/24.3.4/mesa3d-24.3.4-release-msvc.7z
+          curl -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.5/mesa3d-25.1.5-release-msvc.7z
           7z x mesa.7z -omesa
           mv -v mesa/x64/* /C/Windows/System32/
-          ls -alt /C/Windows/System32/opengl32.dll
-
-          echo "PYOPENGL_PLATFORM=osmesa" >> $GITHUB_ENV
 
       - name: Install system dependencies (Linux)
         if: startsWith(matrix.OS, 'ubuntu-')
@@ -98,7 +107,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --forked -m required ./tests
+          pytest -v --logical --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: always()

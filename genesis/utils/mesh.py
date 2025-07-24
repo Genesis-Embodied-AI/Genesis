@@ -190,9 +190,9 @@ def compute_sdf_data(mesh, res):
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
     voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
-    voxels = voxels.reshape([res, res, res])
+    voxels = voxels.reshape((res, res, res)).astype(gs.np_float, copy=False)
 
-    T_mesh_to_sdf = np.eye(4)
+    T_mesh_to_sdf = np.eye(4, dtype=gs.np_float)
     T_mesh_to_sdf[:3, :3] *= (res - 1) / (voxels_radius * 2)
     T_mesh_to_sdf[:3, 3] = (res - 1) / 2
 
@@ -583,7 +583,7 @@ def create_camera_frustum(camera, color):
     # Create the frustum mesh
     frustum_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     frustum_mesh.visual = trimesh.visual.ColorVisuals(
-        vertex_colors=np.tile(color, [len(frustum_mesh.vertices), 1]).astype(float)
+        vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(frustum_mesh.vertices), 1))
     )
     return trimesh.util.concatenate([camera_mesh, frustum_mesh])
 
@@ -773,7 +773,7 @@ def create_arrow(
 
 
 def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=12):
-    vec = np.asarray(end) - np.asarray(start)
+    vec = end - start
     length = np.linalg.norm(vec)
     mesh = create_cylinder(radius, length, sections)  # along z-axis
     mesh._data["vertices"][:, -1] += length / 2.0
@@ -863,18 +863,33 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
     mesh = trimesh.creation.box(extents=[size, size, thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
+
+    half = size * 0.5
+    verts = np.array(
+        [
+            [-half, -half, 0.0],
+            [half, -half, 0.0],
+            [half, half, 0.0],
+            [-half, -half, 0.0],
+            [half, half, 0.0],
+            [-half, half, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+    vmesh = trimesh.Trimesh(verts, faces, process=False)
+    vmesh.vertices[:, 2] -= thickness / 2
+    vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
-        mesh.visual = trimesh.visual.TextureVisuals(
+        vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
                     [0, 0],
+                    [size, 0],
+                    [size, size],
                     [0, 0],
-                    [0, size],
-                    [0, size],
-                    [size, 0],
-                    [size, 0],
                     [size, size],
-                    [size, size],
+                    [0, size],
                 ],
                 dtype=np.float32,
             ),
@@ -883,8 +898,11 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
-    return mesh
+        vmesh.visual = trimesh.visual.ColorVisuals(
+            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
+        )
+
+    return vmesh, mesh
 
 
 def generate_tetgen_config_from_morph(morph):
@@ -951,11 +969,10 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
     else:
         # get cell centroids
         cells = grid.cells.reshape(-1, 5)[:, 1:]
-        cell_center = grid.points[cells].mean(1)
+        cell_center = grid.points[cells].mean(axis=1)
 
         # extract cells below the 0 xy plane
-        mask = cell_center[:, 2] < 0
-        cell_ind = mask.nonzero()[0]
+        cell_ind = (cell_center[:, 2] < 0.0).nonzero(as_tuple=False)
         subgrid = grid.extract_cells(cell_ind)
 
         # advanced plotting

@@ -207,7 +207,7 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
     return asset_path
 
 
-def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
+def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=""):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
     if tol is not None:
         atol = tol
@@ -230,8 +230,8 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
-def assert_array_equal(actual, desired, *, err_msg=None):
-    np.testing.assert_array_equal(actual, desired, err_msg=err_msg)
+def assert_array_equal(actual, desired, *, err_msg=""):
+    assert_allclose(actual, desired, atol=0.0, rtol=0.0, err_msg=err_msg)
 
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
@@ -538,6 +538,7 @@ def build_genesis_sim(
     # Force matching Mujoco safety factor for constraint time constant.
     # Note that this time constant affects the penetration depth at rest.
     gs_sim = scene.sim
+    gs_sim.rigid_solver._sol_default_timeconst = None
     gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
 
     # Force recomputation of invweights to make sure it works fine
@@ -668,13 +669,13 @@ def check_mujoco_model_consistency(
     gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
     mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
     gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
     mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
     # FIXME: Masking geometries and equality constraints is not supported for now
@@ -683,14 +684,14 @@ def check_mujoco_model_consistency(
     ).reshape((-1, 7))
     mj_eq_solparams = np.concatenate((mj_sim.model.eq_solref, mj_sim.model.eq_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_eq_solparams, mj_eq_solparams, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
         [
-            gs_sim.rigid_solver.dofs_info[gs_sim.rigid_solver.joints_info[i].dof_start].limit.to_numpy()
+            gs_sim.rigid_solver.dofs_info.limit[gs_sim.rigid_solver.joints_info.dof_start[i]].to_numpy()
             for i in gs_joints_idx
         ],
         axis=0,
@@ -762,7 +763,7 @@ def check_mujoco_data_consistency(
     mj_qfrc_actuator = mj_sim.data.qfrc_actuator
     assert_allclose(gs_qfrc_actuator, mj_qfrc_actuator[mj_dofs_idx], tol=tol)
 
-    gs_n_contacts = gs_sim.rigid_solver.collider.n_contacts.to_numpy()[0]
+    gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]
     mj_n_contacts = mj_sim.data.ncon
     assert gs_n_contacts == mj_n_contacts
     gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
@@ -770,7 +771,7 @@ def check_mujoco_data_consistency(
     assert gs_n_constraints == mj_n_constraints
 
     if gs_n_constraints:
-        gs_contact_pos = gs_sim.rigid_solver.collider.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
+        gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
         mj_contact_pos = mj_sim.data.contact.pos
         # Sort based on the axis with the largest variation
         max_var_axis = 0
@@ -785,10 +786,14 @@ def check_mujoco_data_consistency(
         gs_sidx = np.argsort(gs_contact_pos[:, max_var_axis])
         mj_sidx = np.argsort(mj_contact_pos[:, max_var_axis])
         assert_allclose(gs_contact_pos[gs_sidx], mj_contact_pos[mj_sidx], tol=tol)
-        gs_contact_normal = gs_sim.rigid_solver.collider.contact_data.normal.to_numpy()[:gs_n_contacts, 0]
+        gs_contact_normal = gs_sim.rigid_solver.collider._collider_state.contact_data.normal.to_numpy()[
+            :gs_n_contacts, 0
+        ]
         mj_contact_normal = -mj_sim.data.contact.frame[:, :3]
         assert_allclose(gs_contact_normal[gs_sidx], mj_contact_normal[mj_sidx], tol=tol)
-        gs_penetration = gs_sim.rigid_solver.collider.contact_data.penetration.to_numpy()[:gs_n_contacts, 0]
+        gs_penetration = gs_sim.rigid_solver.collider._collider_state.contact_data.penetration.to_numpy()[
+            :gs_n_contacts, 0
+        ]
         mj_penetration = -mj_sim.data.contact.dist
         assert_allclose(gs_penetration[gs_sidx], mj_penetration[mj_sidx], tol=tol)
 

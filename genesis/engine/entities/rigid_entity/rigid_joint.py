@@ -67,13 +67,6 @@ class RigidJoint(RBC):
         self._dofs_kv = dofs_kv
         self._dofs_force_range = dofs_force_range
 
-        # NOTE: temp hack to use 0 damping/armature for drone
-        if isinstance(self._entity, gs.engine.entities.DroneEntity) and self._type == gs.JOINT_TYPE.FREE:
-            import numpy as np
-
-            self._dofs_damping = np.zeros_like(self._dofs_damping)
-            self._dofs_armature = np.zeros_like(self._dofs_armature)
-
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -115,7 +108,7 @@ class RigidJoint(RBC):
     @ti.kernel
     def _kernel_get_anchor_pos(self, tensor: ti.types.ndarray()):
         for i_b in range(self._solver._B):
-            xpos = self._solver.joints_state[self._idx, i_b].xanchor
+            xpos = self._solver.joints_state.xanchor[self._idx, i_b]
             for i in ti.static(range(3)):
                 tensor[i_b, i] = xpos[i]
 
@@ -135,7 +128,7 @@ class RigidJoint(RBC):
     @ti.kernel
     def _kernel_get_anchor_axis(self, tensor: ti.types.ndarray()):
         for i_b in range(self._solver._B):
-            xaxis = self._solver.joints_state[self._idx, i_b].xaxis
+            xaxis = self._solver.joints_state.xaxis[self._idx, i_b]
             for i in ti.static(range(3)):
                 tensor[i_b, i] = xaxis[i]
 

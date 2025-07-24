@@ -105,7 +105,7 @@ class PBDSolver(Solver):
 
         struct_vvert_state_render = ti.types.struct(
             pos=gs.ti_vec3,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
         self.vverts_render = struct_vvert_state_render.field(
             shape=self._batch_shape(shape=max(1, self._n_vverts)), layout=ti.Layout.SOA
@@ -126,7 +126,7 @@ class PBDSolver(Solver):
         )
         # particles state (dynamic)
         struct_particle_state = ti.types.struct(
-            free=gs.ti_int,  # if not free, the particle is not affected by internal forces and solely controlled by external user until released
+            free=gs.ti_bool,  # if not free, the particle is not affected by internal forces and solely controlled by external user until released
             pos=gs.ti_vec3,  # position
             ipos=gs.ti_vec3,  # initial position
             dpos=gs.ti_vec3,  # delta position
@@ -138,14 +138,14 @@ class PBDSolver(Solver):
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
             reordered_idx=gs.ti_int,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # single frame particle state for rendering
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         self.particles_info = struct_particle_info.field(shape=self._n_particles, layout=ti.Layout.SOA)
@@ -358,7 +358,7 @@ class PBDSolver(Solver):
         )
 
         # copy to reordered
-        self.particles_ng_reordered.active.fill(0)
+        self.particles_ng_reordered.active.fill(False)
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[i_p, i_b].active:
                 reordered_idx = self.particles_ng[i_p, i_b].reordered_idx
@@ -401,8 +401,8 @@ class PBDSolver(Solver):
                 v1 = self.edges_info[i_e].v1
                 v2 = self.edges_info[i_e].v2
 
-                w1 = 1.0 / self.particles_info[v1].mass * self.particles[v1, i_b].free
-                w2 = 1.0 / self.particles_info[v2].mass * self.particles[v2, i_b].free
+                w1 = self.particles[v1, i_b].free / self.particles_info[v1].mass
+                w2 = self.particles[v2, i_b].free / self.particles_info[v2].mass
                 n = self.particles[v1, i_b].pos - self.particles[v2, i_b].pos
                 C = n.norm() - self.edges_info[i_e].len_rest
                 alpha = self.edges_info[i_e].stretch_compliance / (self._substep_dt**2)
@@ -444,10 +444,10 @@ class PBDSolver(Solver):
                 v3 = self.inner_edges_info[i_ie].v3
                 v4 = self.inner_edges_info[i_ie].v4
 
-                w1 = 1.0 / self.particles_info[v1].mass * self.particles[v1, i_b].free
-                w2 = 1.0 / self.particles_info[v2].mass * self.particles[v2, i_b].free
-                w3 = 1.0 / self.particles_info[v3].mass * self.particles[v3, i_b].free
-                w4 = 1.0 / self.particles_info[v4].mass * self.particles[v4, i_b].free
+                w1 = self.particles[v1, i_b].free / self.particles_info[v1].mass
+                w2 = self.particles[v2, i_b].free / self.particles_info[v2].mass
+                w3 = self.particles[v3, i_b].free / self.particles_info[v3].mass
+                w4 = self.particles[v4, i_b].free / self.particles_info[v4].mass
 
                 if w1 + w2 + w3 + w4 > 0.0:
                     # https://matthias-research.github.io/pages/publications/posBasedDyn.pdf
@@ -507,10 +507,10 @@ class PBDSolver(Solver):
                 grad3 = (p4 - p1).cross(p2 - p1) / 6.0
                 grad4 = (p2 - p1).cross(p3 - p1) / 6.0
 
-                w1 = 1.0 / self.particles_info[v1].mass * grad1.norm_sqr() * self.particles[v1, i_b].free
-                w2 = 1.0 / self.particles_info[v2].mass * grad2.norm_sqr() * self.particles[v2, i_b].free
-                w3 = 1.0 / self.particles_info[v3].mass * grad3.norm_sqr() * self.particles[v3, i_b].free
-                w4 = 1.0 / self.particles_info[v4].mass * grad4.norm_sqr() * self.particles[v4, i_b].free
+                w1 = self.particles[v1, i_b].free / self.particles_info[v1].mass * grad1.norm_sqr()
+                w2 = self.particles[v2, i_b].free / self.particles_info[v2].mass * grad2.norm_sqr()
+                w3 = self.particles[v3, i_b].free / self.particles_info[v3].mass * grad3.norm_sqr()
+                w4 = self.particles[v4, i_b].free / self.particles_info[v4].mass * grad4.norm_sqr()
 
                 if w1 + w2 + w3 + w4 > 0.0:
                     vol = gu.ti_tet_vol(p1, p2, p3, p4)
@@ -538,8 +538,8 @@ class PBDSolver(Solver):
         ).norm(gs.EPS)
         target_dist = self._particle_size  # target particle distance is 2 * particle radius, i.e. particle_size
         if cur_dist < target_dist and rest_dist > target_dist:
-            wi = 1.0 / self.particles_info_reordered[i, i_b].mass * self.particles_reordered[i, i_b].free
-            wj = 1.0 / self.particles_info_reordered[j, i_b].mass * self.particles_reordered[j, i_b].free
+            wi = self.particles_reordered[i, i_b].free / self.particles_info_reordered[i, i_b].mass
+            wj = self.particles_reordered[j, i_b].free / self.particles_info_reordered[j, i_b].mass
             n = (self.particles_reordered[i, i_b].pos - self.particles_reordered[j, i_b].pos) / cur_dist
 
             ### resolve collision ###
@@ -840,8 +840,8 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].pos[k] = pos[i_p, k]
-            self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+                self.particles[i_global, i_b].pos[k] = pos[i_b, i_p, k]
+            self.particles[i_global, i_b].vel.fill(0.0)
 
     @ti.kernel
     def _kernel_set_particles_vel(
@@ -862,7 +862,7 @@ class PBDSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        active: ti.i32,  # scalar flag (0 or 1)
+        active: ti.i32,
     ):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
@@ -880,7 +880,7 @@ class PBDSolver(Solver):
             for j in ti.static(range(3)):
                 pos[i_b, i_p, j] = self.particles[i_p, i_b].pos[j]
                 vel[i_b, i_p, j] = self.particles[i_p, i_b].vel[j]
-            free[i_b, i_p] = self.particles[i_p, i_b].free
+            free[i_b, i_p] = ti.cast(self.particles[i_p, i_b].free, gs.ti_bool)
 
     @ti.kernel
     def _kernel_set_frame(

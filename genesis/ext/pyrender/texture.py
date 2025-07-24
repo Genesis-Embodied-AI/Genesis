@@ -213,9 +213,9 @@ class Texture(object):
 
         glTexParameteri(self.tex_type, GL_TEXTURE_WRAP_S, self.sampler.wrapS)
         glTexParameteri(self.tex_type, GL_TEXTURE_WRAP_T, self.sampler.wrapT)
-        border_color = 255 * np.ones(4).astype(np.uint8)
+        border_color = np.full((4,), fill_value=255, dtype=np.uint8)
         if self.data_format == GL_FLOAT:
-            border_color = np.ones(4).astype(np.float32)
+            border_color = np.ones((4,), dtype=np.float32)
         glTexParameterfv(self.tex_type, GL_TEXTURE_BORDER_COLOR, border_color)
 
         if texture_filter_anisotropic.glInitTextureFilterAnisotropicEXT():

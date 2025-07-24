@@ -77,7 +77,7 @@ class SPHSolver(Solver):
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
             reordered_idx=gs.ti_int,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # static particle info
@@ -94,7 +94,7 @@ class SPHSolver(Solver):
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # construct fields
@@ -180,7 +180,7 @@ class SPHSolver(Solver):
         )
 
         # copy to reordered
-        self.particles_ng_reordered.active.fill(0)
+        self.particles_ng_reordered.active.fill(False)
 
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[i_p, i_b].active:
@@ -742,7 +742,7 @@ class SPHSolver(Solver):
     ):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
-            self.particles_ng[i_global, i_b].active = active
+            self.particles_ng[i_global, i_b].active = ti.cast(active, gs.ti_bool)
             for j in ti.static(range(3)):
                 self.particles[i_global, i_b].pos[j] = pos[i_p, j]
             self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
@@ -781,11 +781,11 @@ class SPHSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].pos[k] = pos[i_p, k]
+                self.particles[i_global, i_b].pos[k] = pos[i_b, i_p, k]
 
             # we reset vel and acc when directly setting pos
-            self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
-            self.particles[i_global, i_b].acc = ti.Vector.zero(gs.ti_float, 3)
+            self.particles[i_global, i_b].vel.fill(0.0)
+            self.particles[i_global, i_b].acc.fill(0.0)
 
     @ti.kernel
     def _kernel_set_particles_vel(

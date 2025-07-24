@@ -141,6 +141,8 @@ class HybridEntity(Entity):
                     part_soft=part_soft,
                 )
             )
+            if muscle_group is not None:
+                muscle_group = muscle_group.astype(gs.np_int, copy=False)
 
             # set muscle group
             mat_soft._n_groups = len(link_idcs)
@@ -154,10 +156,10 @@ class HybridEntity(Entity):
                     trans_local_to_global=gs.ti_vec3,
                     quat_local_to_global=gs.ti_vec4,
                 ).field(shape=(mat_soft.n_groups,), needs_grad=False, layout=ti.Layout.SOA)
-                part_soft_info.link_idx.from_numpy(np.array(link_idcs).astype(gs.np_int))
-                part_soft_info.geom_idx.from_numpy(np.array(geom_idcs).astype(gs.np_int))
-                part_soft_info.trans_local_to_global.from_numpy(np.array(trans_local_to_global).astype(gs.np_float))
-                part_soft_info.quat_local_to_global.from_numpy(np.array(quat_local_to_global).astype(gs.np_float))
+                part_soft_info.link_idx.from_numpy(np.asarray(link_idcs, dtype=gs.np_int))
+                part_soft_info.geom_idx.from_numpy(np.asarray(geom_idcs, dtype=gs.np_int))
+                part_soft_info.trans_local_to_global.from_numpy(np.asarray(trans_local_to_global, dtype=gs.np_float))
+                part_soft_info.quat_local_to_global.from_numpy(np.asarray(quat_local_to_global, dtype=gs.np_float))
 
                 part_soft_init_positions = ti.field(dtype=gs.ti_vec3, shape=(part_soft.init_particles.shape[0],))
                 part_soft_init_positions.from_torch(gs.Tensor(part_soft.init_particles))
@@ -352,7 +354,7 @@ class HybridEntity(Entity):
         # can only be called here (at sim build)
         if not self.material.use_default_coupling and self._muscle_group_cache is not None:
             self._part_soft.set_muscle(
-                muscle_group=gs.tensor(self._muscle_group_cache.astype(gs.np_int)),
+                muscle_group=gs.tensor(self._muscle_group_cache),
                 # no muscle direction as the soft body is actuated by rigid parts
             )
 
@@ -382,13 +384,13 @@ class HybridEntity(Entity):
                 # get corresponding link
                 group_idx = self._solver_soft.particles_info[i_global].muscle_group
 
-                link_idx = self._part_soft_info[group_idx].link_idx
-                geom_idx = self._part_soft_info[group_idx].geom_idx
-                trans_local_to_global = self._part_soft_info[group_idx].trans_local_to_global
-                quat_local_to_global = self._part_soft_info[group_idx].quat_local_to_global
+                link_idx = self._part_soft_info.link_idx[group_idx]
+                geom_idx = self._part_soft_info.geom_idx[group_idx]
+                trans_local_to_global = self._part_soft_info.trans_local_to_global[group_idx]
+                quat_local_to_global = self._part_soft_info.quat_local_to_global[group_idx]
 
-                link = self._solver_rigid.links_state[link_idx, i_b]
-                geom_info = self._solver_rigid.geoms_info[geom_idx]
+                g_pos = self._solver_rigid.geoms_state.pos[geom_idx, i_b]
+                g_quat = self._solver_rigid.geoms_state.quat[geom_idx, i_b]
 
                 # compute new pos in minimal coordinate using rigid-bodied dynamics
                 x_init_pos = self._part_soft_init_positions[i_p_]
@@ -396,14 +398,14 @@ class HybridEntity(Entity):
                     x_init_pos, trans_local_to_global, quat_local_to_global
                 )
                 scaled_pos = gu.ti_transform_by_quat(
-                    gu.ti_inv_transform_by_quat(geom_info.pos, geom_info.quat),
-                    geom_info.quat,
+                    gu.ti_inv_transform_by_quat(g_pos, g_quat),
+                    g_quat,
                 )
                 tx_pos, tx_quat = gu.ti_transform_pos_quat_by_trans_quat(
                     scaled_pos,
-                    geom_info.quat,
-                    link.pos,
-                    link.quat,
+                    g_quat,
+                    self._solver_rigid.links_state.pos[link_idx, i_b],
+                    self._solver_rigid.links_state.quat[link_idx, i_b],
                 )
                 new_x_pos = gu.ti_transform_by_trans_quat(
                     x_init_local,
@@ -416,11 +418,11 @@ class HybridEntity(Entity):
                 dt_scale = (
                     self._solver_soft.substep_dt / self._solver_rigid.dt
                 )  # NOTE: move soft part incrementally at soft solver's substeps
-                x_pos = self._solver_soft.particles[f_, i_global, i_b].pos
+                x_pos = self._solver_soft.particles.pos[f_, i_global, i_b]
                 xd_vel = (new_x_pos - x_pos) / dt
                 xd_vel *= dt_scale  # assume linear scaling between the timestep difference of soft/rigid solver
 
-                vel_d = xd_vel - self._solver_soft.particles[f_, i_global, i_b].vel
+                vel_d = xd_vel - self._solver_soft.particles.vel[f_, i_global, i_b]
                 vel_d *= ti.exp(-self._solver_soft.dt * self.material.damping)
 
                 # soft-to-rigid coupling
@@ -430,12 +432,12 @@ class HybridEntity(Entity):
                 mass_real = self._solver_soft.particles_info[i_global].mass / self._solver_soft._p_vol_scale
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
-                frc_ang = (x_pos - link.COM).cross(frc_vel)
-                self._solver_rigid.links_state[link_idx, i_b].cfrc_applied_vel += frc_vel
-                self._solver_rigid.links_state[link_idx, i_b].cfrc_applied_ang += frc_ang
+                frc_ang = (x_pos - self._solver_rigid.links_state.COM[link_idx, i_b]).cross(frc_vel)
+                self._solver_rigid.links_state.cfrc_applied_vel[link_idx, i_b] += frc_vel
+                self._solver_rigid.links_state.cfrc_applied_ang[link_idx, i_b] += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
-                self._solver_soft.particles[f_, i_global, i_b].vel += vel_d * self.material.soft_dv_coef
+                self._solver_soft.particles.vel[f_, i_global, i_b] += vel_d * self.material.soft_dv_coef
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -618,7 +620,7 @@ def default_func_instantiate_rigid_from_soft(
     # add rigid entity
     mesh_center = (mesh.vertices.max(0) + mesh.vertices.min(0)) / 2.0
     offset = (graph_pos[src_node] - mesh_center) * morph.scale
-    pos_rigid = morph.pos + offset.astype(gs.np_float)
+    pos_rigid = morph.pos + offset.astype(gs.np_float, copy=False)
     quat_rigid = morph.quat
     scale_rigid = morph.scale
     morph_rigid = gs.morphs.URDF(
@@ -700,11 +702,10 @@ def default_func_instantiate_rigid_soft_association_from_soft(
         dist_to_p1 = np.linalg.norm(positions - p1, axis=-1)
         dist_to_line = np.sqrt(dist_to_p0**2 - ((positions_proj_on_line_t[:, None] * line_vec) ** 2).sum(-1))
 
-        dist_to_link = (
-            dist_to_p0 * (positions_proj_on_line_t < 0).astype(float)
-            + dist_to_p1 * (positions_proj_on_line_t > 1).astype(float)
-            + dist_to_line * np.logical_and(positions_proj_on_line_t >= 0, positions_proj_on_line_t <= 1).astype(float)
-        )
+        is_clipped_low = positions_proj_on_line_t < 0.0
+        is_clipped_high = positions_proj_on_line_t > 1.0
+        is_valid = ~is_clipped_low & ~is_clipped_high
+        dist_to_link = dist_to_p0 * is_clipped_low + dist_to_p1 * is_clipped_high + dist_to_line * is_valid
 
         trans, quat = gu.transform_pos_quat_by_trans_quat(
             geom.init_pos, geom.init_quat, link.init_x_pos, link.init_x_quat

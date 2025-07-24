@@ -37,14 +37,6 @@ _torch_ops = (
 )
 
 
-def _is_float(torch_tensor):
-    return torch_tensor.dtype in (torch.float32, torch.float64)
-
-
-def _is_int(torch_tensor):
-    return torch_tensor.dtype in (torch.int32, torch.int64)
-
-
 def torch_op_wrapper(torch_op):
     @wraps(torch_op)
     def _wrapper(*args, dtype=None, requires_grad=False, scene=None, **kwargs):
@@ -75,18 +67,15 @@ def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene
     By default, detach is True, meaning that this function returns a new leaf tensor which is not connected to torch_tensor's computation gragh.
     """
     if dtype is None:
-        if _is_float(torch_tensor):
-            dtype = gs.tc_float
-        elif _is_int(torch_tensor):
-            dtype = gs.tc_int
-        else:
-            dtype = torch_tensor.dtype
-    elif dtype is float:
+        dtype = torch_tensor.dtype
+    if dtype in (float, torch.float32, torch.float64):
         dtype = gs.tc_float
-    elif dtype is int:
+    elif dtype in (int, torch.int32, torch.int64):
         dtype = gs.tc_int
+    elif dtype in (bool, torch.bool):
+        dtype = torch.bool
     else:
-        gs.raise_exception("Supported dtype: [None, int, float]")
+        gs.raise_exception(f"Unsupported dtype: {dtype}")
 
     if torch_tensor.requires_grad and (not detach) and (not requires_grad):
         gs.logger.warning(
