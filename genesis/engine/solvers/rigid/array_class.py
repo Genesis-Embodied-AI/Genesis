@@ -260,18 +260,17 @@ def get_contact_data(solver, max_contact_pairs):
         "geom_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "geom_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "penetration": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
-        "normal": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
-        "pos": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
+        "pos": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
         "friction": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
-        "sol_params": V(dtype=gs.ti_vec7, shape=f_batch(max_contact_pairs_)),
+        "sol_params": V_VEC(7, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
         "force": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
         "link_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "link_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
     }
 
     if use_ndarray:
-        obj = StructContactData(**kwargs)
-        return obj
+        return StructContactData(**kwargs)
     else:
 
         @ti.data_oriented
@@ -943,13 +942,13 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
     kwargs.update(
         {
             "witness": witness,
-            "n_witness": ti.field(dtype=gs.ti_int, shape=(_B,)),
-            "n_contacts": ti.field(dtype=gs.ti_int, shape=(_B,)),
+            "n_witness": V(dtype=gs.ti_int, shape=(_B,)),
+            "n_contacts": V(dtype=gs.ti_int, shape=(_B,)),
             "contact_pos": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
             "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
-            "is_col": ti.field(dtype=gs.ti_int, shape=(_B,)),
-            "penetration": ti.field(dtype=gs.ti_float, shape=(_B,)),
-            "distance": ti.field(dtype=gs.ti_float, shape=(_B,)),
+            "is_col": V(dtype=gs.ti_int, shape=(_B,)),
+            "penetration": V(dtype=gs.ti_float, shape=(_B,)),
+            "distance": V(dtype=gs.ti_float, shape=(_B,)),
         }
     )
 
