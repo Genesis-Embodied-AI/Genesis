@@ -559,6 +559,7 @@ class StructDofsInfo:
         shape = solver._batch_shape(solver.n_dofs_) if solver._options.batch_dofs_info else solver.n_dofs_
         self.stiffness = V(dtype=gs.ti_float, shape=shape)
         self.invweight = V(dtype=gs.ti_float, shape=shape)
+        self.frictionloss = V(dtype=gs.ti_float, shape=shape)
         self.armature = V(dtype=gs.ti_float, shape=shape)
         self.damping = V(dtype=gs.ti_float, shape=shape)
         self.motion_ang = V(dtype=gs.ti_vec3, shape=shape)

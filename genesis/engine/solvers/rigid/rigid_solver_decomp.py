@@ -636,6 +636,7 @@ class RigidSolver(Solver):
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
+                dofs_frictionloss=np.concatenate([joint.dofs_frictionloss for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
@@ -659,6 +660,7 @@ class RigidSolver(Solver):
         dofs_motion_vel: ti.types.ndarray(),
         dofs_limit: ti.types.ndarray(),
         dofs_invweight: ti.types.ndarray(),
+        dofs_frictionloss: ti.types.ndarray(),
         dofs_stiffness: ti.types.ndarray(),
         dofs_damping: ti.types.ndarray(),
         dofs_armature: ti.types.ndarray(),
@@ -687,6 +689,7 @@ class RigidSolver(Solver):
 
             dofs_info.armature[I] = dofs_armature[i]
             dofs_info.invweight[I] = dofs_invweight[i]
+            dofs_info.frictionloss[I] = dofs_frictionloss[i]
             dofs_info.stiffness[I] = dofs_stiffness[i]
             dofs_info.damping[I] = dofs_damping[i]
             dofs_info.kp[I] = dofs_kp[i]
