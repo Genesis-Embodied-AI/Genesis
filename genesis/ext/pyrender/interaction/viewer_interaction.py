@@ -212,8 +212,7 @@ class ViewerInteraction(ViewerInteractionBase):
         else:
             closest_hit = RayHit.no_hit()
             for link in entity.links:
-                # how to check if the link is dynamic ??
-                if 0.0 < link.get_mass(): 
+                if not link.is_fixed: 
                     for geom in link.geoms:
                         obb: OBB = self._get_geom_placeholder_obb(geom)
                         ray_hit = obb.raycast(ray)
