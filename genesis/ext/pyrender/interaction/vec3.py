@@ -64,7 +64,7 @@ class Vec3:
         return np.linalg.norm(self.v)
 
     def sqr_magnitude(self) -> float:
-        return np.inner(self.v, self.v)
+        return np.dot(self.v, self.v)
 
     def copy(self) -> 'Vec3':
         return Vec3(self.v.copy())
@@ -118,12 +118,16 @@ class Vec3:
 
 
     @classmethod
-    def zero(cls):
+    def zero(cls) -> 'Vec3':
         return cls(np.array([0, 0, 0], dtype=np.float32))
 
     @classmethod
-    def one(cls):
+    def one(cls) -> 'Vec3':
         return cls(np.array([1, 1, 1], dtype=np.float32))
+
+    @classmethod
+    def full(cls, fill_value: float) -> 'Vec3':
+        return cls(np.full((3,), fill_value, dtype=np.float32))
 
 
 class Quat:
@@ -245,6 +249,9 @@ class Pose:
             return self.pos + self.rot * other
         else:
             return NotImplemented        
+
+    def __repr__(self) -> str:
+        return f"Pose(pos={self.pos}, rot={self.rot})"
 
     @classmethod
     def from_geom(cls, geom: 'RigidGeom') -> 'Pose':

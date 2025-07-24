@@ -15,22 +15,22 @@ def _ensure_torch_imported() -> None:
     import torch
 
 class MouseSpring:
-    def __init__(self):
+    def __init__(self) -> None:
         self.held_link: RigidLink | None = None
         self.held_point_in_local: Vec3 | None = None
         self.prev_control_point: Vec3 | None = None
 
-    def attach(self, picked_link: RigidLink, control_point: Vec3):
+    def attach(self, picked_link: RigidLink, control_point: Vec3) -> None:
         # for now, we just pick the first geometry
         self.held_link = picked_link
         pose: Pose = Pose.from_link(self.held_link)
         self.held_point_in_local = pose.inverse_transform_point(control_point)
         self.prev_control_point = control_point
 
-    def detach(self):
+    def detach(self) -> None:
         self.held_link = None
 
-    def apply_force(self, control_point: Vec3, delta_time: float):
+    def apply_force(self, control_point: Vec3, delta_time: float) -> None:
         _ensure_torch_imported()
 
         # note when threaded: apply_force is called before attach!
@@ -42,7 +42,6 @@ class MouseSpring:
 
         # do simple force on COM only:
         link: RigidLink = self.held_link
-        assert link
         lin_vel: Vec3 = Vec3.from_tensor(link.get_vel())
         ang_vel: Vec3 = Vec3.from_tensor(link.get_ang())
         link_pose: Pose = Pose.from_link(link)
@@ -53,7 +52,7 @@ class MouseSpring:
         link_T_principal: Pose = Pose(Vec3.from_arraylike(link.inertial_pos), Quat.from_arraylike(link.inertial_quat))
         world_T_principal: Pose = link_pose * link_T_principal
 
-        arm_in_principal: Vec3 = link_T_principal.get_inverse() * self.held_point_in_local   # for non-spherical inertia
+        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(self.held_point_in_local)   # for non-spherical inertia
         arm_in_world: Vec3 = world_T_principal.rot * arm_in_principal  # for spherical inertia
 
         pos_err_v: Vec3 = control_point - held_point_in_world

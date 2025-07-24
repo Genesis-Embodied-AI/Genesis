@@ -33,7 +33,7 @@ class ViewerInteraction(ViewerInteractionBase):
         camera_yfov: float,
         log_events: bool = False,
         camera_fov: float = 60.0,
-    ):
+    ) -> None:
         super().__init__(log_events)
         self.camera: 'Node' = camera
         self.scene: 'Scene' = scene
@@ -123,7 +123,7 @@ class ViewerInteraction(ViewerInteractionBase):
                     else:
                         #apply displacement
                         pos = Vec3.from_tensor(self.picked_link.entity.get_pos())
-                        pos = pos + delta_3d_pos
+                        pos += delta_3d_pos
                         self.picked_link.entity.set_pos(pos.as_tensor())
 
     @override
@@ -234,13 +234,13 @@ class ViewerInteraction(ViewerInteractionBase):
     def _get_box_obb(self, box_entity: RigidEntity) -> OBB:
         box: gs.morphs.Box = box_entity.morph
         pose = Pose.from_link(box_entity.links[0])
-        size = Vec3.from_xyz(*box.size)
-        return OBB.from_center_and_size(size, pose)
+        half_extents = 0.5 * Vec3.from_xyz(*box.size)
+        return OBB(pose, half_extents)
 
     def _get_geom_placeholder_obb(self, geom: 'RigidGeom') -> OBB:
         pose = Pose.from_geom(geom)
-        size = 0.125 * Vec3.one()
-        return OBB.from_center_and_size(size, pose)
+        half_extents = Vec3.full(0.5 * 0.125)
+        return OBB(pose, half_extents)
 
     def _draw_arrow(
         self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
@@ -256,7 +256,6 @@ class ViewerInteraction(ViewerInteractionBase):
             obb = self._get_geom_placeholder_obb(geom)
         
         if obb:
-            aabb: AABB = AABB.from_center_and_size(obb.pose.pos, obb.extents)
-            aabb.expand(0.01)
+            aabb: AABB = AABB.from_center_and_half_extents(obb.pose.pos, obb.half_extents)
+            aabb.expand(padding=0.01)
             self.scene.draw_debug_box(aabb.v, color=Color.red().with_alpha(0.5).tuple(), wireframe=False)
-
