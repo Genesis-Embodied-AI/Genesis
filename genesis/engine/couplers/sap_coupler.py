@@ -1460,38 +1460,6 @@ class SAPCoupler(RBC):
                 self.batch_linesearch_active[i_b] = False
 
     # ------------------------------------------------------------------------------------
-    # ----------------------------------- For Debug  -------------------------------------
-    # ------------------------------------------------------------------------------------
-    def save_contact_file(self, f):
-        """
-        Save the contact pairs for debugging purposes.
-
-        This function is not used in the simulation but can be used for debugging.
-        """
-        for contact in self.contacts:
-            contact.save_contact_file(f)
-
-    def save_pos_file(self, f):
-        """
-        Save the position for debugging purposes.
-
-        This function is not used in the simulation but can be used for debugging.
-        """
-        if self.fem_solver.is_active():
-            pos_np = self.fem_solver.elements_v.pos.to_numpy()[f, ...].reshape(-1, 3)
-            np.save(f"contact_debug/V_{self.sim.cur_step_global}.npy", pos_np)
-
-    def save_elements_file(self):
-        """
-        Save the elements for debugging purposes.
-
-        This function is not used in the simulation but can be used for debugging.
-        """
-        if self.fem_solver.is_active():
-            ele_np = self.fem_solver.elements_i.el2v.to_numpy().reshape(-1, 4)
-            np.save(f"contact_debug/T.npy", ele_np)
-
-    # ------------------------------------------------------------------------------------
     # ----------------------------------- Properties -------------------------------------
     # ------------------------------------------------------------------------------------
     @property
@@ -1688,29 +1656,6 @@ class BaseContact(RBC):
         sap_info[i_p].mu_hat = sap_info[i_p].mu * Rt * sap_info[i_p].Rn_inv
         sap_info[i_p].mu_factor = 1.0 / (1.0 + sap_info[i_p].mu * sap_info[i_p].mu_hat)
 
-    def save_contact_file(self, f):
-        self.compute_contact_pos(f)
-        n_contact_pairs = int(self.n_contact_pairs[None])
-        gamma_np = self.contact_pairs.sap_info.gamma.to_numpy()
-        batch_idx_np = self.contact_pairs.batch_idx.to_numpy()
-        contact_pos_np = self.contact_pairs.contact_pos.to_numpy()
-        contact_pos = []
-        contact_vec = []
-        for i in range(n_contact_pairs):
-            if batch_idx_np[i] != 0 or np.linalg.norm(gamma_np[i]) < gs.EPS:
-                continue
-            contact_vec.append(gamma_np[i])
-            contact_pos.append(contact_pos_np[i])
-        if len(contact_pos) == 0:
-            return
-        contact_pos = np.array(contact_pos)
-        contact_vec = np.array(contact_vec)
-        np.savez(
-            f"contact_debug/{self.name}_{self.sim.cur_step_global}.npz",
-            contact_pos=contact_pos,
-            contact_vec=contact_vec,
-        )
-
 
 @ti.data_oriented
 class RigidContact(BaseContact):
@@ -1815,13 +1760,6 @@ class FEMContact(BaseContact):
             x = self.compute_Jx(i_p, coupler.pcg_fem_state_v.p)
             x = sap_info[i_p].G @ x
             self.add_Jt_x(coupler.pcg_fem_state_v.Ap, i_p, x)
-
-    @ti.kernel
-    def compute_contact_pos(self, f: ti.i32):
-        pairs = ti.static(self.contact_pairs)
-        fem_solver = self.fem_solver
-        for i_p in range(self.n_contact_pairs[None]):
-            pairs[i_p].contact_pos = self.compute_contact_point(i_p, fem_solver.elements_v.pos, f)
 
     @ti.func
     def compute_vc(self, i_p):
@@ -2028,18 +1966,6 @@ class FEMFloorTetContact(FEMContact):
         for i in ti.static(range(4)):
             i_v = fem_solver.elements_i[i_g].el2v[i]
             Jx += pairs[i_p].barycentric[i] * x[i_b, i_v]
-        return Jx
-
-    @ti.func
-    def compute_contact_point(self, i_p, x, f):
-        fem_solver = self.fem_solver
-        pairs = ti.static(self.contact_pairs)
-        i_b = pairs[i_p].batch_idx
-        i_g = pairs[i_p].geom_idx
-        Jx = ti.Vector.zero(gs.ti_float, 3)
-        for i in ti.static(range(4)):
-            i_v = fem_solver.elements_i[i_g].el2v[i]
-            Jx += pairs[i_p].barycentric[i] * x[f, i_v, i_b]
         return Jx
 
     @ti.func
@@ -2364,22 +2290,6 @@ class FEMSelfTetContact(FEMContact):
         return Jx
 
     @ti.func
-    def compute_contact_point(self, i_p, x, f):
-        fem_solver = self.fem_solver
-        pairs = ti.static(self.contact_pairs)
-        i_b = pairs[i_p].batch_idx
-        i_g0 = pairs[i_p].geom_idx0
-        i_g1 = pairs[i_p].geom_idx1
-        Jx = ti.Vector.zero(gs.ti_float, 3)
-        for i in ti.static(range(4)):
-            i_v = fem_solver.elements_i[i_g0].el2v[i]
-            Jx += pairs[i_p].barycentric0[i] * x[f, i_v, i_b]
-        for i in ti.static(range(4)):
-            i_v = fem_solver.elements_i[i_g1].el2v[i]
-            Jx += pairs[i_p].barycentric1[i] * x[f, i_v, i_b]
-        return Jx * 0.5
-
-    @ti.func
     def add_Jt_x(self, y, i_p, x):
         fem_solver = self.fem_solver
         pairs = ti.static(self.contact_pairs)
@@ -2490,14 +2400,6 @@ class FEMFloorVertContact(FEMContact):
         i_b = pairs[i_p].batch_idx
         i_g = pairs[i_p].geom_idx
         Jx = x[i_b, i_g]
-        return Jx
-
-    @ti.func
-    def compute_contact_point(self, i_p, x, f):
-        pairs = ti.static(self.contact_pairs)
-        i_b = pairs[i_p].batch_idx
-        i_g = pairs[i_p].geom_idx
-        Jx = x[f, i_g, i_b]
         return Jx
 
     @ti.func
