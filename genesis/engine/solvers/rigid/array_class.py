@@ -311,9 +311,7 @@ def get_sort_buffer(solver):
 
 @dataclasses.dataclass
 class StructContactCache:
-    normal: ti.types.NDArray[ti.types.vector(3, ti.f32), 3]
-    # FIXME: cannot use V_ANNOTATION?
-    # normal: V_ANNOTATION
+    normal: V_ANNOTATION
 
 
 def get_contact_cache(solver):
@@ -1065,17 +1063,17 @@ def get_sdf_info(n_geoms, n_cells):
 
 @dataclasses.dataclass
 class StructDofsInfo:
-    stiffness: ti.types.NDArray[ti.f32, 1]
-    invweight: ti.types.NDArray[ti.f32, 1]
-    armature: ti.types.NDArray[ti.f32, 1]
-    damping: ti.types.NDArray[ti.f32, 1]
-    motion_ang: ti.types.NDArray[ti.types.vector(3, ti.f32), 1]
-    motion_vel: ti.types.NDArray[ti.types.vector(3, ti.f32), 1]
-    limit: ti.types.NDArray[ti.types.vector(2, ti.f32), 1]
-    dof_start: ti.types.NDArray[ti.i32, 1]
-    kp: ti.types.NDArray[ti.f32, 1]
-    kv: ti.types.NDArray[ti.f32, 1]
-    force_range: ti.types.NDArray[ti.types.vector(2, ti.f32), 1]
+    stiffness: V_ANNOTATION
+    invweight: V_ANNOTATION
+    armature: V_ANNOTATION
+    damping: V_ANNOTATION
+    motion_ang: V_ANNOTATION
+    motion_vel: V_ANNOTATION
+    limit: V_ANNOTATION
+    dof_start: V_ANNOTATION
+    kp: V_ANNOTATION
+    kv: V_ANNOTATION
+    force_range: V_ANNOTATION
 
 
 def get_dofs_info(solver):

@@ -347,8 +347,8 @@ def mpr_find_pos(
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         for i in range(4):
             i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
-            vec = mpr_state.simplex_support[i1, i_b].v.cross(mpr_state.simplex_support[i2, i_b].v)
-            b[i] = vec.dot(mpr_state.simplex_support[i3, i_b].v) * (1 - 2 * (((i + 1) // 2) % 2))
+            vec = mpr_state.simplex_support.v[i1, i_b].cross(mpr_state.simplex_support.v[i2, i_b])
+            b[i] = vec.dot(mpr_state.simplex_support.v[i3, i_b]) * (1 - 2 * (((i + 1) // 2) % 2))
 
     sum_ = b.sum()
 
