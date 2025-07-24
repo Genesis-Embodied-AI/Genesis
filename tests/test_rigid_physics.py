@@ -2676,6 +2676,29 @@ def test_get_cartesian_space_variables(show_viewer, tol):
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_geom_pos_quat(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 2.0),
+        )
+    )
+    scene.build()
+
+    for link in box.links:
+        for vgeom, geom in zip(link.vgeoms, link.geoms):
+            assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=tol)
+            assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_contype_conaffinity(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
