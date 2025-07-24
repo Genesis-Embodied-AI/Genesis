@@ -2004,7 +2004,7 @@ class Collider:
                         elif ti.static(
                             collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                         ):
-                            self_unused._gjk.func_gjk_contact(
+                            gjk.func_gjk_contact(
                                 geoms_state,
                                 geoms_info,
                                 verts_info,
