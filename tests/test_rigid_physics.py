@@ -2681,7 +2681,7 @@ def test_contype_conaffinity(show_viewer, tol):
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -10.0),
         ),
-        show_viewer=True,
+        show_viewer=show_viewer,
     )
 
     plane = scene.add_entity(
