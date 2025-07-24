@@ -29,7 +29,7 @@ def animate(imgs, filename=None, fps=60):
         filename = os.path.splitext(os.path.basename(caller_file))[0] + f'_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
     os.makedirs(os.path.abspath(os.path.dirname(filename)), exist_ok=True)
 
-    gs.logger.info(f"Saving video to ~<{filename}>~.")
+    gs.logger.info(f'Saving video to ~<"{filename}">~...')
     from moviepy import ImageSequenceClip
 
     imgs = ImageSequenceClip(imgs, fps=fps)

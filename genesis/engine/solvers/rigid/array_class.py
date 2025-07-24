@@ -1,10 +1,56 @@
-from dataclasses import dataclass
 from typing import Callable
+import dataclasses
+import os
+import inspect
+from typing import Any, Type, cast
 
 import taichi as ti
 
 import genesis as gs
 import numpy as np
+
+# as a temporary solution, we get is_ndarray from os's environment variable
+use_ndarray = os.environ.get("GS_USE_NDARRAY", "0") == "1"
+V = ti.ndarray if use_ndarray else ti.field
+V_ANNOTATION = ti.types.ndarray() if use_ndarray else ti.template()
+
+
+def bake(dough):
+    # this bit is field/ndarray dependent, but invariant/re-usable
+    struct_name = dough.__class__.__name__ + "Baked"
+    type_by_name: dict[str, tuple[bool, Any, Any]] = {}
+    arrays = {}
+    for child_name, member in dough.__dict__.items():
+        if child_name.startswith("_"):
+            continue
+        if inspect.ismethod(member):
+            continue
+        if isinstance(member, ti.Ndarray):
+            ndarray = cast(ti.Ndarray, member)
+            type_by_name[child_name] = (False, ndarray.dtype, ndarray.shape)
+        if isinstance(member, ti.Field):
+            field = cast(ti.Field, member)
+            type_by_name[child_name] = (True, field.dtype, field.shape)
+        arrays[child_name] = member
+
+    def create_type(is_field, element_type, shape):
+        if is_field:
+            return ti.template()
+        # return ti.types.ndarray(element_type, ndim=len(shape))
+        return ti.types.ndarray()
+
+    declaration_type_by_name = [
+        (name, create_type(is_field, element_type, shape))
+        for name, (is_field, element_type, shape) in type_by_name.items()
+    ]
+    DataclassClass = dataclasses.make_dataclass(struct_name, declaration_type_by_name)
+
+    dataclass_object = DataclassClass(**arrays)
+    return DataclassClass, dataclass_object
+
+    # def register(self, name, dough):
+    #     self.doughs[name] = dough
+
 
 # we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
 DofsState = ti.template()
@@ -29,16 +75,71 @@ EntitiesInfo = ti.template()
 EqualitiesInfo = ti.template()
 
 
+# @ti.data_oriented
+# class RigidGlobalInfo:
+#     def __init__(self, solver, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
+#         self.n_awake_dofs = V(dtype=gs.ti_int, shape=f_batch())
+#         self.awake_dofs = V(dtype=gs.ti_int, shape=f_batch(n_dofs))
+
+#         self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+#         self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+
+#         # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+
+
 @ti.data_oriented
 class RigidGlobalInfo:
-    def __init__(self, solver, n_dofs: int, n_entities: int, n_geoms: int, _B: int, f_batch: Callable):
-        self.n_awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch())
-        self.awake_dofs = ti.field(dtype=gs.ti_int, shape=f_batch(n_dofs))
+    def __init__(self, solver):
+        f_batch = solver._batch_shape
+        self.n_awake_dofs = V(dtype=gs.ti_int, shape=f_batch())
+        self.awake_dofs = V(dtype=gs.ti_int, shape=f_batch(solver.n_dofs_))
 
-        self.qpos0 = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
-        self.qpos = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+        self.n_awake_entities = ti.field(dtype=gs.ti_int, shape=f_batch())
+        self.awake_entities = ti.field(dtype=gs.ti_int, shape=f_batch(solver.n_entities_))
 
-        # self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+        self.qpos0 = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+        self.qpos = V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_))
+
+        self.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links)
+        self.envs_offset = ti.Vector.field(3, dtype=gs.ti_float, shape=f_batch())
+        self.geoms_init_AABB = ti.Vector.field(
+            3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)
+        )  # stores 8 corners of AABB
+
+        self.init_mass_mat(solver)
+
+    def init_mass_mat(self, solver):
+
+        # self.entity_max_dofs = max([entity.n_dofs for entity in solver._entities])
+
+        self.mass_mat = V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_L = V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_D_inv = V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,)))
+
+        self._mass_mat_mask = V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_))
+
+        self.meaninertia = V(dtype=gs.ti_float, shape=solver._batch_shape())
+
+        # tree structure information
+        mass_parent_mask = np.zeros((solver.n_dofs_, solver.n_dofs_), dtype=gs.np_float)
+
+        for i in range(solver.n_links):
+            j = i
+            while j != -1:
+                for i_d, j_d in ti.ndrange(
+                    (solver.links[i].dof_start, solver.links[i].dof_end),
+                    (solver.links[j].dof_start, solver.links[j].dof_end),
+                ):
+                    mass_parent_mask[i_d, j_d] = 1.0
+                j = solver.links[j].parent_idx
+
+        self.mass_parent_mask = V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_))
+        self.mass_parent_mask.from_numpy(mass_parent_mask)
+
+        self._mass_mat_mask.fill(1)
+        self.mass_mat_L.fill(0)
+        self.mass_mat_D_inv.fill(0)
+        self.meaninertia.fill(0)
 
 
 # =========================================== Constraint ===========================================
@@ -50,9 +151,77 @@ class ConstraintState:
     Class to store the mutable constraint data, all of which type is [ti.fields].
     """
 
-    def __init__(self, solver):
+    def __init__(self, constraint_solver, solver):
         f_batch = solver._batch_shape
         self.n_constraints = ti.field(dtype=gs.ti_int, shape=f_batch())
+
+        # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 3 constraints per equality
+        len_constraints = constraint_solver.len_constraints
+        len_constraints_ = constraint_solver.len_constraints_
+        self.ti_n_equalities = ti.field(gs.ti_int, shape=solver._batch_shape())
+        self.ti_n_equalities.from_numpy(np.full((solver._B,), solver.n_equalities, dtype=gs.np_int))
+
+        jac_shape = solver._batch_shape((len_constraints_, solver.n_dofs_))
+        if (jac_shape[0] * jac_shape[1] * jac_shape[2]) > np.iinfo(np.int32).max:
+            raise ValueError(
+                f"Jacobian shape {jac_shape} is too large for int32. "
+                "Consider reducing the number of constraints or the number of degrees of freedom."
+            )
+
+        self.jac = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, solver.n_dofs_)))
+        self.diag = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_))
+        self.aref = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_))
+
+        self.jac_relevant_dofs = ti.field(gs.ti_int, shape=solver._batch_shape((len_constraints_, solver.n_dofs_)))
+        self.jac_n_relevant_dofs = ti.field(gs.ti_int, shape=solver._batch_shape(len_constraints_))
+
+        self.n_constraints = ti.field(gs.ti_int, shape=solver._batch_shape())
+        self.n_constraints_equality = ti.field(gs.ti_int, shape=solver._batch_shape())
+        self.improved = ti.field(gs.ti_int, shape=solver._batch_shape())
+
+        self.Jaref = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_))
+        self.Ma = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.Ma_ws = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.grad = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.Mgrad = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.search = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+
+        self.efc_D = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_))
+        self.efc_force = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_))
+        self.active = ti.field(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_))
+        self.prev_active = ti.field(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_))
+        self.qfrc_constraint = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.qacc = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.qacc_ws = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.qacc_prev = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+
+        self.cost_ws = ti.field(gs.ti_float, shape=solver._batch_shape())
+
+        self.gauss = ti.field(gs.ti_float, shape=solver._batch_shape())
+        self.cost = ti.field(gs.ti_float, shape=solver._batch_shape())
+        self.prev_cost = ti.field(gs.ti_float, shape=solver._batch_shape())
+
+        ## line search
+        self.gtol = ti.field(gs.ti_float, shape=solver._batch_shape())
+
+        self.mv = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+        self.jv = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_))
+        self.quad_gauss = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(3))
+        self.quad = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, 3)))
+
+        self.candidates = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(12))
+        self.ls_its = ti.field(gs.ti_float, shape=solver._batch_shape())
+        self.ls_result = ti.field(gs.ti_int, shape=solver._batch_shape())
+
+        if constraint_solver._solver_type == gs.constraint_solver.CG:
+            self.cg_prev_grad = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+            self.cg_prev_Mgrad = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
+            self.cg_beta = ti.field(gs.ti_float, shape=solver._batch_shape())
+            self.cg_pg_dot_pMg = ti.field(gs.ti_float, shape=solver._batch_shape())
+
+        if constraint_solver._solver_type == gs.constraint_solver.Newton:
+            self.nt_H = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+            self.nt_vec = ti.field(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_))
 
 
 # =========================================== Collider ===========================================
@@ -382,3 +551,343 @@ class SupportFieldInfo:
         self.support_cell_start = ti.field(dtype=gs.ti_int, shape=n_geoms)
         self.support_v = ti.Vector.field(3, dtype=gs.ti_float, shape=max(1, n_support_cells))
         self.support_vid = ti.field(dtype=gs.ti_int, shape=max(1, n_support_cells))
+
+
+@ti.data_oriented
+class StructDofsInfo:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_dofs_) if solver._options.batch_dofs_info else solver.n_dofs_
+        self.stiffness = V(dtype=gs.ti_float, shape=shape)
+        self.invweight = V(dtype=gs.ti_float, shape=shape)
+        self.armature = V(dtype=gs.ti_float, shape=shape)
+        self.damping = V(dtype=gs.ti_float, shape=shape)
+        self.motion_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.motion_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.limit = V(dtype=gs.ti_vec2, shape=shape)
+        self.dof_start = V(dtype=gs.ti_int, shape=shape)
+        self.kp = V(dtype=gs.ti_float, shape=shape)
+        self.kv = V(dtype=gs.ti_float, shape=shape)
+        self.force_range = V(dtype=gs.ti_vec2, shape=shape)
+
+
+@ti.data_oriented
+class StructDofsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_dofs_)
+        self.force = V(dtype=gs.ti_float, shape=shape)
+        self.qf_bias = V(dtype=gs.ti_float, shape=shape)
+        self.qf_passive = V(dtype=gs.ti_float, shape=shape)
+        self.qf_actuator = V(dtype=gs.ti_float, shape=shape)
+        self.qf_applied = V(dtype=gs.ti_float, shape=shape)
+        self.act_length = V(dtype=gs.ti_float, shape=shape)
+        self.pos = V(dtype=gs.ti_float, shape=shape)
+        self.vel = V(dtype=gs.ti_float, shape=shape)
+        self.acc = V(dtype=gs.ti_float, shape=shape)
+        self.acc_smooth = V(dtype=gs.ti_float, shape=shape)
+        self.qf_smooth = V(dtype=gs.ti_float, shape=shape)
+        self.qf_constraint = V(dtype=gs.ti_float, shape=shape)
+        self.cdof_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdof_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofvel_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofvel_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofd_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdofd_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.f_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.f_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.ctrl_force = V(dtype=gs.ti_float, shape=shape)
+        self.ctrl_pos = V(dtype=gs.ti_float, shape=shape)
+        self.ctrl_vel = V(dtype=gs.ti_float, shape=shape)
+        self.ctrl_mode = V(dtype=gs.ti_int, shape=shape)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructLinksState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_links_)
+        self.cinr_inertial = V(dtype=gs.ti_mat3, shape=shape)
+        self.cinr_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.cinr_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.cinr_mass = V(dtype=gs.ti_float, shape=shape)
+        self.crb_inertial = V(dtype=gs.ti_mat3, shape=shape)
+        self.crb_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.crb_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.crb_mass = V(dtype=gs.ti_float, shape=shape)
+        self.cdd_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cdd_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.i_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.i_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.j_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.j_quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.j_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.j_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cd_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cd_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.mass_sum = V(dtype=gs.ti_float, shape=shape)
+        self.COM = V(dtype=gs.ti_vec3, shape=shape)
+        self.mass_shift = V(dtype=gs.ti_float, shape=shape)
+        self.i_pos_shift = V(dtype=gs.ti_vec3, shape=shape)
+        self.cacc_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cacc_lin = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_applied_ang = V(dtype=gs.ti_vec3, shape=shape)
+        self.cfrc_applied_vel = V(dtype=gs.ti_vec3, shape=shape)
+        self.contact_force = V(dtype=gs.ti_vec3, shape=shape)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructLinksInfo:
+    def __init__(self, solver):
+        links_info_shape = solver._batch_shape(solver.n_links_) if solver._options.batch_links_info else solver.n_links_
+        self.parent_idx = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.root_idx = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.q_start = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.dof_start = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.joint_start = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.q_end = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.dof_end = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.joint_end = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.n_dofs = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.pos = V(dtype=gs.ti_vec3, shape=links_info_shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=links_info_shape)
+        self.invweight = V(dtype=gs.ti_vec2, shape=links_info_shape)
+        self.is_fixed = V(dtype=gs.ti_int, shape=links_info_shape)
+        self.inertial_pos = V(dtype=gs.ti_vec3, shape=links_info_shape)
+        self.inertial_quat = V(dtype=gs.ti_vec4, shape=links_info_shape)
+        self.inertial_i = V(dtype=gs.ti_mat3, shape=links_info_shape)
+        self.inertial_mass = V(dtype=gs.ti_float, shape=links_info_shape)
+        self.entity_idx = V(dtype=gs.ti_int, shape=links_info_shape)
+
+
+@ti.data_oriented
+class StructJointsInfo:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_joints_) if solver._options.batch_joints_info else solver.n_joints_
+        self.type = V(dtype=gs.ti_int, shape=shape)
+        self.sol_params = V(dtype=gs.ti_vec7, shape=shape)
+        self.q_start = V(dtype=gs.ti_int, shape=shape)
+        self.dof_start = V(dtype=gs.ti_int, shape=shape)
+        self.q_end = V(dtype=gs.ti_int, shape=shape)
+        self.dof_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_dofs = V(dtype=gs.ti_int, shape=shape)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructJointsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_joints_)
+        self.xanchor = V(dtype=gs.ti_vec3, shape=shape)
+        self.xaxis = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructGeomsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_geoms_,)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.center = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.data = V(dtype=gs.ti_vec7, shape=shape)
+        self.link_idx = V(dtype=gs.ti_int, shape=shape)
+        self.type = V(dtype=gs.ti_int, shape=shape)
+        self.friction = V(dtype=gs.ti_float, shape=shape)
+        self.sol_params = V(dtype=gs.ti_vec7, shape=shape)
+        self.vert_num = V(dtype=gs.ti_int, shape=shape)
+        self.vert_start = V(dtype=gs.ti_int, shape=shape)
+        self.vert_end = V(dtype=gs.ti_int, shape=shape)
+        self.verts_state_start = V(dtype=gs.ti_int, shape=shape)
+        self.verts_state_end = V(dtype=gs.ti_int, shape=shape)
+        self.face_num = V(dtype=gs.ti_int, shape=shape)
+        self.face_start = V(dtype=gs.ti_int, shape=shape)
+        self.face_end = V(dtype=gs.ti_int, shape=shape)
+        self.edge_num = V(dtype=gs.ti_int, shape=shape)
+        self.edge_start = V(dtype=gs.ti_int, shape=shape)
+        self.edge_end = V(dtype=gs.ti_int, shape=shape)
+        self.is_convex = V(dtype=gs.ti_int, shape=shape)
+        self.contype = V(dtype=gs.ti_int, shape=shape)
+        self.conaffinity = V(dtype=gs.ti_int, shape=shape)
+        self.is_free = V(dtype=gs.ti_int, shape=shape)
+        self.is_decomposed = V(dtype=gs.ti_int, shape=shape)
+        self.needs_coup = V(dtype=gs.ti_int, shape=shape)
+        self.coup_friction = V(dtype=gs.ti_float, shape=shape)
+        self.coup_softness = V(dtype=gs.ti_float, shape=shape)
+        self.coup_restitution = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructGeomsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_geoms_)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.aabb_min = V(dtype=gs.ti_vec3, shape=shape)
+        self.aabb_max = V(dtype=gs.ti_vec3, shape=shape)
+        self.verts_updated = V(dtype=gs.ti_int, shape=shape)
+        self.min_buffer_idx = V(dtype=gs.ti_int, shape=shape)
+        self.max_buffer_idx = V(dtype=gs.ti_int, shape=shape)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+        self.friction_ratio = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructVertsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_verts_,)
+        self.init_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.init_normal = V(dtype=gs.ti_vec3, shape=shape)
+        self.geom_idx = V(dtype=gs.ti_int, shape=shape)
+        self.init_center_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.verts_state_idx = V(dtype=gs.ti_int, shape=shape)
+        self.is_free = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructFacesInfo:
+    def __init__(self, solver):
+        shape = (solver.n_faces_,)
+        self.verts_idx = V(dtype=gs.ti_ivec3, shape=shape)
+        self.geom_idx = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructEdgesInfo:
+    def __init__(self, solver):
+        shape = (solver.n_edges_,)
+        self.v0 = V(dtype=gs.ti_int, shape=shape)
+        self.v1 = V(dtype=gs.ti_int, shape=shape)
+        self.length = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructFreeVertsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_free_verts_)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructFixedVertsState:
+    def __init__(self, solver):
+        shape = solver.n_fixed_verts_
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+
+
+@ti.data_oriented
+class StructVvertsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_vverts_,)
+        self.init_pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.init_vnormal = V(dtype=gs.ti_vec3, shape=shape)
+        self.vgeom_idx = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructVfacesInfo:
+    def __init__(self, solver):
+        shape = (solver.n_vfaces_,)
+        self.vverts_idx = V(dtype=gs.ti_ivec3, shape=shape)
+        self.vgeom_idx = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructVgeomsInfo:
+    def __init__(self, solver):
+        shape = (solver.n_vgeoms_,)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+        self.link_idx = V(dtype=gs.ti_int, shape=shape)
+        self.vvert_num = V(dtype=gs.ti_int, shape=shape)
+        self.vvert_start = V(dtype=gs.ti_int, shape=shape)
+        self.vvert_end = V(dtype=gs.ti_int, shape=shape)
+        self.vface_num = V(dtype=gs.ti_int, shape=shape)
+        self.vface_start = V(dtype=gs.ti_int, shape=shape)
+        self.vface_end = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class StructVgeomsState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_vgeoms_)
+        self.pos = V(dtype=gs.ti_vec3, shape=shape)
+        self.quat = V(dtype=gs.ti_vec4, shape=shape)
+
+
+@ti.data_oriented
+class StructEqualitiesInfo:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_equalities_candidate)
+        self.eq_obj1id = V(dtype=gs.ti_int, shape=shape)
+        self.eq_obj2id = V(dtype=gs.ti_int, shape=shape)
+        self.eq_data = V(dtype=gs.ti_vec11, shape=shape)
+        self.eq_type = V(dtype=gs.ti_int, shape=shape)
+        self.sol_params = V(dtype=gs.ti_vec7, shape=shape)
+
+
+@ti.data_oriented
+class StructEntitiesInfo:
+    def __init__(self, solver):
+        shape = solver.n_entities_
+        self.dof_start = V(dtype=gs.ti_int, shape=shape)
+        self.dof_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_dofs = V(dtype=gs.ti_int, shape=shape)
+        self.link_start = V(dtype=gs.ti_int, shape=shape)
+        self.link_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_links = V(dtype=gs.ti_int, shape=shape)
+        self.geom_start = V(dtype=gs.ti_int, shape=shape)
+        self.geom_end = V(dtype=gs.ti_int, shape=shape)
+        self.n_geoms = V(dtype=gs.ti_int, shape=shape)
+        self.gravity_compensation = V(dtype=gs.ti_float, shape=shape)
+
+
+@ti.data_oriented
+class StructEntitiesState:
+    def __init__(self, solver):
+        shape = solver._batch_shape(solver.n_entities_)
+        self.hibernated = V(dtype=gs.ti_int, shape=shape)
+
+
+@ti.data_oriented
+class DataManager:
+    def __init__(self, solver):
+        # self.doughs = {}
+        self.rigid_global_info = RigidGlobalInfo(solver)
+        self.dofs_info = StructDofsInfo(solver)
+        self.dofs_state = StructDofsState(solver)
+        self.links_info = StructLinksInfo(solver)
+        self.links_state = StructLinksState(solver)
+        self.joints_info = StructJointsInfo(solver)
+        self.joints_state = StructJointsState(solver)
+        self.geoms_info = StructGeomsInfo(solver)
+        self.geoms_state = StructGeomsState(solver)
+
+        self.verts_info = StructVertsInfo(solver)
+        self.faces_info = StructFacesInfo(solver)
+        self.edges_info = StructEdgesInfo(solver)
+
+        self.free_verts_state = StructFreeVertsState(solver)
+        self.fixed_verts_state = StructFixedVertsState(solver)
+
+        self.vverts_info = StructVvertsInfo(solver)
+        self.vfaces_info = StructVfacesInfo(solver)
+
+        self.vgeoms_info = StructVgeomsInfo(solver)
+        self.vgeoms_state = StructVgeomsState(solver)
+
+        self.equalities_info = StructEqualitiesInfo(solver)
+
+        self.entities_info = StructEntitiesInfo(solver)
+        self.entities_state = StructEntitiesState(solver)
+
+    def init_mass_mat(self, solver):
+        self.mass_mat = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_L = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_)))
+        self.mass_mat_D_inv = ti.field(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,)))
+        self._mass_mat_mask = ti.field(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_))
+        self.meaninertia = ti.field(dtype=gs.ti_float, shape=solver._batch_shape())
+        self.mass_parent_mask = ti.field(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_))
+        self._gravity = solver._gravity

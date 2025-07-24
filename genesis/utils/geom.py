@@ -536,7 +536,7 @@ def xyz_to_quat(xyz, rpy=False, degrees=False):
     elif isinstance(xyz, np.ndarray):
         return _np_xyz_to_quat(xyz, rpy)
     else:
-        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(euler_xyz)=}")
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(xyz)=}")
 
 
 @nb.jit(nopython=True, cache=True)
@@ -861,7 +861,9 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
         if T is None:
             T = np.zeros((*B, 4, 4), dtype=trans.dtype)
     else:
-        gs.raise_exception(f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(trans)=} and {type(R)=}")
+        gs.raise_exception(
+            f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(trans)=} and {type(quat)=}"
+        )
     if B:
         assert T.shape == (*B, 4, 4)
 
@@ -1072,9 +1074,7 @@ def transform_by_R(pos, R):
     elif all(isinstance(e, np.ndarray) for e in (pos, R) if e is not None):
         new_pos = np.matmul(R, pos_.swapaxes(1, 2)).swapaxes(1, 2)
     else:
-        gs.raise_exception(
-            f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(angle)=} and {type(axis)=}"
-        )
+        gs.raise_exception(f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(pos)=} and {type(R)=}")
 
     new_pos = new_pos.reshape(pos.shape)
 
@@ -1249,7 +1249,7 @@ def quat_to_rotvec(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarra
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3), dtype=u.dtype)
+        out_ = np.empty((*quat.shape[:-1], 3), dtype=quat.dtype)
     else:
         assert out.shape == (*quat.shape[:-1], 3)
         out_ = out
@@ -1280,7 +1280,7 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
     """
     assert rotvec.ndim >= 1
     if out is None:
-        out_ = np.empty((*rotvec.shape[:-1], 4), dtype=u.dtype)
+        out_ = np.empty((*rotvec.shape[:-1], 4), dtype=rotvec.dtype)
     else:
         assert out.shape == (*rotvec.shape[:-1], 4)
         out_ = out

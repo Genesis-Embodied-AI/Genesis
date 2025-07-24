@@ -40,20 +40,20 @@ class MPR:
 
     @ti.func
     def func_point_in_geom_aabb(self_unused, geoms_state: array_class.GeomsState, point, i_g, i_b):
-        return (point < geoms_state[i_g, i_b].aabb_max).all() and (point > geoms_state[i_g, i_b].aabb_min).all()
+        return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
 
     @ti.func
     def func_is_geom_aabbs_overlap(self_unused, geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
         return not (
-            (geoms_state[i_ga, i_b].aabb_max <= geoms_state[i_gb, i_b].aabb_min).any()
-            or (geoms_state[i_ga, i_b].aabb_min >= geoms_state[i_gb, i_b].aabb_max).any()
+            (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
+            or (geoms_state.aabb_min[i_ga, i_b] >= geoms_state.aabb_max[i_gb, i_b]).any()
         )
 
     @ti.func
     def func_find_intersect_midpoint(self_unused, geoms_state: array_class.GeomsState, i_ga, i_gb):
         # return the center of the intersecting AABB of AABBs of two geoms
-        intersect_lower = ti.max(geoms_state[i_ga].aabb_min, geoms_state[i_gb].aabb_min)
-        intersect_upper = ti.min(geoms_state[i_ga].aabb_max, geoms_state[i_gb].aabb_max)
+        intersect_lower = ti.max(geoms_state.aabb_min[i_ga, i_b], geoms_state.aabb_min[i_gb, i_b])
+        intersect_upper = ti.min(geoms_state.aabb_max[i_ga, i_b], geoms_state.aabb_max[i_gb, i_b])
         return 0.5 * (intersect_lower + intersect_upper)
 
     @ti.func
@@ -179,7 +179,7 @@ class MPR:
         i_b,
     ):
         v = ti.Vector.zero(gs.ti_float, 3)
-        geom_type = geoms_info[i_g].type
+        geom_type = geoms_info.type[i_g]
         if geom_type == gs.GEOM_TYPE.SPHERE:
             v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, False)
         elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
@@ -253,23 +253,22 @@ class MPR:
         i_g,
         i_b,
     ):
-        g_state = geoms_state[i_g, i_b]
-        direction_in_init_frame = gu.ti_inv_transform_by_quat(direction, g_state.quat)
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
+        direction_in_init_frame = gu.ti_inv_transform_by_quat(direction, g_quat)
 
         dot_max = gs.ti_float(-1e10)
         v = ti.Vector.zero(gs.ti_float, 3)
         vid = 0
 
-        g_info = geoms_info[i_g]
-
-        for i_v in range(g_info.vert_start, g_info.vert_end):
-            pos = verts_info[i_v].init_pos
+        for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+            pos = verts_info.init_pos[i_v]
             dot = pos.dot(direction_in_init_frame)
             if dot > dot_max:
                 v = pos
                 dot_max = dot
                 vid = i_v
-        v_ = gu.ti_transform_by_trans_quat(v, g_state.pos, g_state.quat)
+        v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
 
         return v_, vid
 
@@ -679,21 +678,21 @@ class MPR:
         # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
         # signed distance is computed once again until to find a valid point. This procedure should be cheap.
 
-        g_state_a = geoms_state[i_ga, i_b]
-        g_state_b = geoms_state[i_gb, i_b]
-        g_info = geoms_info[i_ga]
-        center_a = gu.ti_transform_by_trans_quat(g_info.center, g_state_a.pos, g_state_a.quat)
-        g_info = geoms_info[i_gb]
-        center_b = gu.ti_transform_by_trans_quat(g_info.center, g_state_b.pos, g_state_b.quat)
+        g_pos_a = geoms_state.pos[i_ga, i_b]
+        g_pos_b = geoms_state.pos[i_gb, i_b]
+        g_quat_a = geoms_state.quat[i_ga, i_b]
+        g_quat_b = geoms_state.quat[i_gb, i_b]
+        center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], g_pos_a, g_quat_a)
+        center_b = gu.ti_transform_by_trans_quat(geoms_info.center[i_gb], g_pos_b, g_quat_b)
 
         # Completely different center logics if a normal guess is provided
         if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
             if (ti.abs(normal_ws) > mpr_static_config.CCD_EPS).any():
                 # Must start from the center of each bounding box
                 center_a_local = 0.5 * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
-                center_a = gu.ti_transform_by_trans_quat(center_a_local, g_state_a.pos, g_state_a.quat)
+                center_a = gu.ti_transform_by_trans_quat(center_a_local, g_pos_a, g_quat_a)
                 center_b_local = 0.5 * (geoms_init_AABB[i_gb, 7] + geoms_init_AABB[i_gb, 0])
-                center_b = gu.ti_transform_by_trans_quat(center_b_local, g_state_b.pos, g_state_b.quat)
+                center_b = gu.ti_transform_by_trans_quat(center_b_local, g_pos_b, g_quat_b)
                 delta = center_a - center_b
 
                 # Skip offset if normal is roughly pointing in the same direction already.
@@ -709,8 +708,8 @@ class MPR:
                         # Compute the size of the bounding boxes along the target offset direction.
                         # First, move the direction in local box frame
                         dir_offset = offset / offset_norm
-                        dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_state_a.quat)
-                        dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_state_b.quat)
+                        dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_quat_a)
+                        dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_quat_b)
                         box_size_a = geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]
                         box_size_b = geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]
                         length_a = box_size_a.dot(ti.abs(dir_offset_local_a))

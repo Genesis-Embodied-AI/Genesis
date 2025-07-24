@@ -7,6 +7,7 @@ import genesis as gs
 from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 
 from .aabb import AABB
+from .mouse_spring import MouseSpring
 from .ray import Plane, Ray, RayHit
 from .vec3 import Pose, Quat, Vec3, Color
 from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
@@ -38,12 +39,14 @@ class ViewerInteraction(ViewerInteractionBase):
         self.camera_yfov: float = camera_yfov
 
         self.tan_half_fov: float = np.tan(0.5 * self.camera_yfov)
-        self.prev_mouse_pos: tuple[int, int] = (0.5 * viewport_size[0], 0.5 * viewport_size[1])
+        self.prev_mouse_pos: tuple[int, int] = (viewport_size[0] // 2, viewport_size[1] // 2)
 
         self.picked_entity: RigidEntity | None = None
         self.picked_point_in_local: Vec3 | None = None
         self.mouse_drag_plane: Plane | None = None
         self.prev_mouse_3d_pos: Vec3 | None = None
+
+        self.mouse_spring: MouseSpring = MouseSpring()
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -55,23 +58,7 @@ class ViewerInteraction(ViewerInteractionBase):
         super().on_mouse_drag(x, y, dx, dy, buttons, modifiers)
         self.prev_mouse_pos = (x, y)
         if self.picked_entity:
-            mouse_ray: Ray = self.screen_position_to_ray(x, y)
-            ray_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
-            assert ray_hit.is_hit
-            if ray_hit.is_hit:
-                new_mouse_3d_pos: Vec3 = ray_hit.position
-                delta_3d_pos: Vec3 = new_mouse_3d_pos - self.prev_mouse_3d_pos
-                self.prev_mouse_3d_pos = new_mouse_3d_pos
-
-                use_force: bool = False
-                if use_force:
-                    # apply force
-                    pass
-                else:
-                    #apply displacement
-                    pos = Vec3.from_tensor(self.picked_entity.get_pos())
-                    pos = pos + delta_3d_pos
-                    self.picked_entity.set_pos(pos.as_tensor())
+            # actual processing done in update_on_sim_step()
 
             return EVENT_HANDLED
 
@@ -90,12 +77,43 @@ class ViewerInteraction(ViewerInteractionBase):
                 pose: Pose = self.get_pose_of_first_geom(self.picked_entity)
                 self.picked_point_in_local = pose.inverse_transform_point(ray_hit.position)
 
+                self.mouse_spring.attach(self.picked_entity, ray_hit.position)
+
     @override
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_release(x, y, button, modifiers)
         if button == 1: # left mouse button
             self.picked_entity = None
             self.picked_point_in_local = None
+
+            self.mouse_spring.detach()
+
+    @override
+    def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
+        super().on_resize(width, height)
+        self.viewport_size = (width, height)
+        self.tan_half_fov = np.tan(0.5 * self.camera_yfov)
+
+    @override
+    def update_on_sim_step(self) -> None:
+        if self.picked_entity:
+            mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
+            ray_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
+            assert ray_hit.is_hit
+            if ray_hit.is_hit:
+                new_mouse_3d_pos: Vec3 = ray_hit.position
+                delta_3d_pos: Vec3 = new_mouse_3d_pos - self.prev_mouse_3d_pos
+                self.prev_mouse_3d_pos = new_mouse_3d_pos
+
+                use_force: bool = True
+                if use_force:
+                    # apply force
+                    self.mouse_spring.apply_force(new_mouse_3d_pos, self.scene.sim.dt)
+                else:
+                    #apply displacement
+                    pos = Vec3.from_tensor(self.picked_entity.get_pos())
+                    pos = pos + delta_3d_pos
+                    self.picked_entity.set_pos(pos.as_tensor())
 
     @override
     def on_draw(self) -> None:
@@ -202,11 +220,7 @@ class ViewerInteraction(ViewerInteractionBase):
         return self.scene.sim.rigid_solver.entities
 
     def get_pose_of_first_geom(self, entity: RigidEntity) -> 'Pose':
-        geom: RigidGeom = entity.geoms[0]
-        assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
-        gpos = geom.get_pos()  # squeezed if n_envs == 0
-        gquat = geom.get_quat()  # squeezed if n_envs == 0
-        return Pose(Vec3(gpos.cpu().numpy()), Quat(gquat.cpu().numpy()))
+        return Pose.from_geom(entity.geoms[0])
 
     def _draw_arrow(
         self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
@@ -215,6 +229,9 @@ class ViewerInteraction(ViewerInteractionBase):
         self.scene.draw_debug_line(pos.v, pos.v + dir.v, color=color)
 
     def _draw_entity_unrotated_obb(self, entity: RigidEntity) -> None:
+        if self.picked_entity:
+            return
+        
         if isinstance(entity.morph, gs.morphs.Plane):
             plane: gs.morphs.Plane = entity.morph
             pass

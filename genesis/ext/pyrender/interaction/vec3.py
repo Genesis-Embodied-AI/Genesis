@@ -1,10 +1,13 @@
 from dataclasses import dataclass
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
 from genesis.utils.misc import tensor_to_array
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
 
 # If not needing runtime checks, we can just use annotated types:
 # Vec3 = Annotated[npt.NDArray[np.float32], (3,)]
@@ -208,6 +211,14 @@ class Pose:
         inv_pos = inv_rot * pos_quat * self.rot
         inv_pos = Vec3(-inv_pos.v[1:])
         return Pose(inv_pos, inv_rot)
+
+    @classmethod
+    def from_geom(cls, geom: 'RigidGeom') -> 'Pose':
+        assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
+        # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
+        pos = Vec3.from_tensor(geom.get_pos())
+        quat = Quat.from_tensor(geom.get_quat())
+        return Pose(pos, quat)
 
 
 @dataclass

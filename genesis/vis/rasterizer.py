@@ -134,8 +134,11 @@ class Rasterizer(RBC):
         for node in self._camera_nodes.values():
             self._context.remove_node(node)
         self._camera_nodes.clear()
-        for target in self._camera_targets.values():
-            target.delete()
+        for renderer in self._camera_targets.values():
+            try:
+                renderer.delete()
+            except OSError:
+                pass
         self._camera_targets.clear()
 
         if self._offscreen and self._renderer is not None:

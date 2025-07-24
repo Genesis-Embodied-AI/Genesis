@@ -54,12 +54,6 @@ def build_scene():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.5, 0.0, 0.7),
-            camera_lookat=(0.2, 0.0, 0.1),
-            camera_fov=50,
-            max_FPS=60,
-        ),
         sim_options=gs.options.SimOptions(
             substeps=4,
         ),
@@ -69,6 +63,12 @@ def build_scene():
             gravity=(0, 0, -9.8),
             box_box_detection=True,
             constraint_timeconst=0.02,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 0.0, 0.7),
+            camera_lookat=(0.2, 0.0, 0.1),
+            camera_fov=50,
+            max_FPS=60,
         ),
         show_viewer=True,
         show_FPS=False,

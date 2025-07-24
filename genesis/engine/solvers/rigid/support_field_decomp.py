@@ -126,10 +126,11 @@ class SupportField:
         support position for a world direction
         """
 
-        g_state = geoms_state[i_g, i_b]
-        d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_state.quat))
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
+        d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
         v, vid = self_unused._func_support_mesh(support_field_info, support_field_static_config, d_mesh, i_g)
-        v_ = gu.ti_transform_by_trans_quat(v, g_state.pos, g_state.quat)
+        v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
         return v_, vid
 
     @ti.func
@@ -182,8 +183,8 @@ class SupportField:
     def _func_support_sphere(
         self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, d, i_g, i_b, shrink
     ):
-        sphere_center = geoms_state[i_g, i_b].pos
-        sphere_radius = geoms_info[i_g].data[0]
+        sphere_center = geoms_state.pos[i_g, i_b]
+        sphere_radius = geoms_info.data[i_g][0]
 
         # Shrink the sphere to a point
         res = sphere_center
@@ -195,17 +196,16 @@ class SupportField:
     def _func_support_ellipsoid(
         self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, d, i_g, i_b
     ):
-        g_state = geoms_state[i_g, i_b]
-        ellipsoid_center = g_state.pos
+        ellipsoid_center = geoms_state.pos[i_g, i_b]
         ellipsoid_scaled_axis = ti.Vector(
             [
-                geoms_info[i_g].data[0] ** 2,
-                geoms_info[i_g].data[1] ** 2,
-                geoms_info[i_g].data[2] ** 2,
+                geoms_info.data[i_g][0] ** 2,
+                geoms_info.data[i_g][1] ** 2,
+                geoms_info.data[i_g][2] ** 2,
             ],
             dt=gs.ti_float,
         )
-        ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, g_state.quat)
+        ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, geoms_state.quat[i_g, i_b])
         dist = ellipsoid_scaled_axis / ti.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
         return ellipsoid_center + d * dist
 
@@ -214,17 +214,18 @@ class SupportField:
         self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, d, i_g, i_b, shrink
     ):
         res = gs.ti_vec3(0, 0, 0)
-        g_state = geoms_state[i_g, i_b]
-        capsule_center = g_state.pos
-        capsule_radius = geoms_info[i_g].data[0]
-        capsule_halflength = 0.5 * geoms_info[i_g].data[1]
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
+        capsule_center = g_pos
+        capsule_radius = geoms_info.data[i_g][0]
+        capsule_halflength = 0.5 * geoms_info.data[i_g][1]
 
         if shrink:
-            local_dir = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_state.quat))
+            local_dir = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
             res[2] = capsule_halflength if local_dir[2] >= 0.0 else -capsule_halflength
-            res = gu.ti_transform_by_trans_quat(res, capsule_center, g_state.quat)
+            res = gu.ti_transform_by_trans_quat(res, capsule_center, g_quat)
         else:
-            capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_state.quat)
+            capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_quat)
             capsule_endpoint_side = -1.0 if d.dot(capsule_axis) < 0.0 else 1.0
             capsule_endpoint = capsule_center + capsule_halflength * capsule_endpoint_side * capsule_axis
             res = capsule_endpoint + d * capsule_radius
@@ -250,20 +251,21 @@ class SupportField:
     def _func_support_box(
         self_unused, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo, d, i_g, i_b
     ):
-        g_state = geoms_state[i_g, i_b]
-        d_box = gu.ti_inv_transform_by_quat(d, g_state.quat)
+        g_pos = geoms_state.pos[i_g, i_b]
+        g_quat = geoms_state.quat[i_g, i_b]
+        d_box = gu.ti_inv_transform_by_quat(d, g_quat)
 
         v_ = ti.Vector(
             [
-                (-1.0 if d_box[0] < 0.0 else 1.0) * geoms_info[i_g].data[0] * 0.5,
-                (-1.0 if d_box[1] < 0.0 else 1.0) * geoms_info[i_g].data[1] * 0.5,
-                (-1.0 if d_box[2] < 0.0 else 1.0) * geoms_info[i_g].data[2] * 0.5,
+                (-1.0 if d_box[0] < 0.0 else 1.0) * geoms_info.data[i_g][0] * 0.5,
+                (-1.0 if d_box[1] < 0.0 else 1.0) * geoms_info.data[i_g][1] * 0.5,
+                (-1.0 if d_box[2] < 0.0 else 1.0) * geoms_info.data[i_g][2] * 0.5,
             ],
             dt=gs.ti_float,
         )
         vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
-        vid += geoms_info[i_g].vert_start
-        v = gu.ti_transform_by_trans_quat(v_, g_state.pos, g_state.quat)
+        vid += geoms_info.vert_start[i_g]
+        v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
         return v, vid
 
     @ti.func
@@ -280,8 +282,7 @@ class SupportField:
         """
         Count the number of valid support points for the given world direction.
         """
-        g_state = geoms_state[i_g, i_b]
-        d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_state.quat))
+        d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(geoms_state.quat[i_g, i_b]))
         return self_unused._func_count_supports_mesh(
             geoms_state, geoms_info, support_field_info, support_field_static_config, d_mesh, i_g
         )
@@ -347,7 +348,7 @@ class SupportField:
         If the direction has 1 zero component, there are 2 possible support points. If the direction has 2 zero
         components, there are 4 possible support points.
         """
-        g_state = geoms_state[i_g, i_b]
-        d_box = gu.ti_inv_transform_by_quat(d, g_state.quat)
+        g_quat = geoms_state.quat[i_g, i_b]
+        d_box = gu.ti_inv_transform_by_quat(d, g_quat)
 
         return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()

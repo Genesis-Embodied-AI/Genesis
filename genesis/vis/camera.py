@@ -7,14 +7,14 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.repr_base import RBC
+from genesis.sensors import Sensor
 from genesis.utils.misc import tensor_to_array
 
 
-class Camera(RBC):
+class Camera(Sensor):
     """
-    Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
-    The camera also comes with handy tools such as video recording.
+    A camera which can be used to render RGB, depth, and segmentation images.
+    Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
 
     Parameters
     ----------
@@ -43,7 +43,9 @@ class Camera(RBC):
     spp : int, optional
         Samples per pixel. Only available when using the RayTracer renderer. Defaults to 256.
     denoise : bool
-        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option when building RayTracer.
+        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer.
+        Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
+        option when building RayTracer.
     near : float
         The near plane of the camera.
     far : float
@@ -192,6 +194,15 @@ class Camera(RBC):
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = link_T @ self._attached_offset_T
         self.set_pose(transform=transform)
+
+    @gs.assert_built
+    def read(self):
+        """
+        Obtain the RGB camera view.
+        This is a temporary implementation to make Camera a Sensor.
+        """
+        rgb, _, _, _ = self.render()
+        return rgb
 
     @gs.assert_built
     def render(self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False):
@@ -378,9 +389,7 @@ class Camera(RBC):
                 mask = np.where((depth > znear) & (depth < zfar * 0.99))
                 # zfar * 0.99 for filtering out precision error of float
                 height, width = depth.shape
-                y, x = np.meshgrid(
-                    np.arange(height, dtype=np.float32), np.arange(width, dtype=np.float32), indexing="ij"
-                )
+                y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
                 x = x.reshape((-1,))
                 y = y.reshape((-1,))
 
@@ -389,9 +398,10 @@ class Camera(RBC):
                 normalized_y = y - _cy
 
                 # Convert to world coordinates
-                world_x = normalized_x * depth[y, x] / _fx
-                world_y = normalized_y * depth[y, x] / _fy
-                world_z = depth[y, x]
+                depth_grid = depth[y, x]
+                world_x = normalized_x * depth_grid / _fx
+                world_y = normalized_y * depth_grid / _fy
+                world_z = depth_grid
 
                 pc = np.stack((world_x, world_y, world_z), axis=1)
 
