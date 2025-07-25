@@ -80,6 +80,8 @@ def get_cfgs():
         "box_size": [0.04, 0.04, 0.06],
         "box_collision": False,
         "box_fixed": True,
+        #
+        "visualize_camera": False,
     }
     reward_scales = {
         "keypoints": 1.0,

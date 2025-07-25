@@ -74,8 +74,20 @@ class GraspEnv:
             ),
         )
 
+        # == add camera ==
+        if self.env_cfg["visualize_camera"]:
+            self.cam = self.scene.add_camera(
+                res=(1280, 720),
+                pos=(1.5, 0.0, 0.2),
+                lookat=(0, 0, 0.2),
+                fov=50,
+                GUI=True,
+            )
+
         # build
-        self.scene.build(n_envs=num_envs, env_spacing=(1.0, 1.0))
+        self.scene.build(n_envs=num_envs)
+        # set pd gains (must be called after scene.build)
+        self.robot.set_pd_gains()
 
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
@@ -281,16 +293,33 @@ class GraspEnv:
         )
         return keypoint_offsets.unsqueeze(0).repeat(batch_size, 1, 1)
 
-    def grasp_and_lift_demo(self, total_steps: int):
-        goal_pose = self.robot.ee_pose
-        lift_height = 0.1
+    def grasp_and_lift_demo(self, render: bool = False):
+        total_steps = 500
+        goal_pose = self.robot.ee_pose.clone()
+
+        #
+        lift_height = 0.3
         lift_pose = goal_pose.clone()
         lift_pose[:, 2] += lift_height
+
+        #
+        final_pose = goal_pose.clone()
+        final_pose[:, 0] = 0.3
+        final_pose[:, 1] = 0.0
+        final_pose[:, 2] = 0.4
+        #
+        reset_pose = torch.tensor([0.2, 0.0, 0.4, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         for i in range(total_steps):
-            if i < total_steps / 2:  # grasping
+            if render:
+                self.cam.render()
+            if i < total_steps / 4:  # grasping
                 self.robot.go_to_goal(goal_pose, open_gripper=False)
-            else:  # lifting
+            elif i < total_steps / 2:  # lifting
                 self.robot.go_to_goal(lift_pose, open_gripper=False)
+            elif i < total_steps * 3 / 4:  # final
+                self.robot.go_to_goal(final_pose, open_gripper=False)
+            else:  # reset
+                self.robot.go_to_goal(reset_pose, open_gripper=True)
             self.scene.step()
 
 
@@ -316,6 +345,22 @@ class Manipulator:
 
         # == some buffer initialization ==
         self._init()
+
+    def set_pd_gains(self):
+        # set control gains
+        # Note: the following values are tuned for achieving best behavior with Franka
+        # Typically, each new robot would have a different set of parameters.
+        # Sometimes high-quality URDF or XML file would also provide this and will be parsed.
+        self._robot_entity.set_dofs_kp(
+            torch.tensor([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
+        )
+        self._robot_entity.set_dofs_kv(
+            torch.tensor([450, 450, 350, 350, 200, 200, 200, 10, 10]),
+        )
+        self._robot_entity.set_dofs_force_range(
+            torch.tensor([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
+            torch.tensor([87, 87, 87, 87, 12, 12, 12, 100, 100]),
+        )
 
     def _init(self):
         self._arm_dof_dim = self._robot_entity.n_dofs - 2  # total number of arm: joints

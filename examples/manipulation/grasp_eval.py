@@ -69,13 +69,13 @@ def main():
                 actions = policy(obs)
                 obs, rews, dones, infos = env.step(actions)
                 env.cam.render()
-            env.grasp_and_lift_demo(max_sim_step * 4)
+            env.grasp_and_lift_demo(render=True)
             env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
         else:
             for _ in range(max_sim_step):
                 actions = policy(obs)
                 obs, rews, dones, infos = env.step(actions)
-            env.grasp_and_lift_demo(max_sim_step * 4)
+            env.grasp_and_lift_demo(render=False)
 
 
 if __name__ == "__main__":
