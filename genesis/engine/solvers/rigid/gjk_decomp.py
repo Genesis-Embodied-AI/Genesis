@@ -228,13 +228,13 @@ def func_gjk_contact(
                     if is_sphere_swept_geom_b:
                         radius_b = geoms_info.data[i_gb][0]
 
-                    wa = gjk_state.witness[i_b, 0].point_obj1
-                    wb = gjk_state.witness[i_b, 0].point_obj2
+                    wa = gjk_state.witness.point_obj1[i_b, 0]
+                    wb = gjk_state.witness.point_obj2[i_b, 0]
                     n = func_safe_normalize(gjk_static_config, wb - wa)
 
                     gjk_state.distance[i_b] = distance - (radius_a + radius_b)
-                    gjk_state.witness[i_b, 0].point_obj1 = wa + (radius_a * n)
-                    gjk_state.witness[i_b, 0].point_obj2 = wb - (radius_b * n)
+                    gjk_state.witness.point_obj1[i_b, 0] = wa + (radius_a * n)
+                    gjk_state.witness.point_obj2[i_b, 0] = wb - (radius_b * n)
 
                     break
 
@@ -256,10 +256,10 @@ def func_gjk_contact(
                 gjk_state.distance[i_b] = 0
 
                 # Initialize polytope
-                gjk_state.polytope[i_b].nverts = 0
-                gjk_state.polytope[i_b].nfaces = 0
-                gjk_state.polytope[i_b].nfaces_map = 0
-                gjk_state.polytope[i_b].horizon_nedges = 0
+                gjk_state.polytope.nverts[i_b] = 0
+                gjk_state.polytope.nfaces[i_b] = 0
+                gjk_state.polytope.nfaces_map[i_b] = 0
+                gjk_state.polytope.horizon_nedges[i_b] = 0
 
                 # Construct the initial polytope from the GJK simplex
                 polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
@@ -506,11 +506,11 @@ def func_gjk(
         dir = -support_vector * (1.0 / support_vector_norm)
 
         (
-            gjk_state.simplex_vertex[i_b, n].obj1,
-            gjk_state.simplex_vertex[i_b, n].obj2,
-            gjk_state.simplex_vertex[i_b, n].id1,
-            gjk_state.simplex_vertex[i_b, n].id2,
-            gjk_state.simplex_vertex[i_b, n].mink,
+            gjk_state.simplex_vertex.obj1[i_b, n],
+            gjk_state.simplex_vertex.obj2[i_b, n],
+            gjk_state.simplex_vertex.id1[i_b, n],
+            gjk_state.simplex_vertex.id2[i_b, n],
+            gjk_state.simplex_vertex.mink[i_b, n],
         ) = func_support(
             geoms_state,
             geoms_info,
@@ -536,7 +536,7 @@ def func_gjk(
         # where s is the vertex of the Minkowski difference found by x. Here < 2x, x - s > is guaranteed to be
         # non-negative, and 2 is cancelled out in the definition of the epsilon.
         x_k = support_vector
-        s_k = gjk_state.simplex_vertex[i_b, n].mink
+        s_k = gjk_state.simplex_vertex.mink[i_b, n]
         diff = x_k - s_k
         if diff.dot(x_k) < epsilon:
             # Convergence condition is met, we can stop.
@@ -596,7 +596,11 @@ def func_gjk(
         n = 0
         for j in ti.static(range(4)):
             if _lambda[j] > 0:
-                gjk_state.simplex_vertex[i_b, n] = gjk_state.simplex_vertex[i_b, j]
+                gjk_state.simplex_vertex.obj1[i_b, n] = gjk_state.simplex_vertex.obj1[i_b, j]
+                gjk_state.simplex_vertex.obj2[i_b, n] = gjk_state.simplex_vertex.obj2[i_b, j]
+                gjk_state.simplex_vertex.id1[i_b, n] = gjk_state.simplex_vertex.id1[i_b, j]
+                gjk_state.simplex_vertex.id2[i_b, n] = gjk_state.simplex_vertex.id2[i_b, j]
+                gjk_state.simplex_vertex.mink[i_b, n] = gjk_state.simplex_vertex.mink[i_b, j]
                 _lambda[n] = _lambda[j]
                 n += 1
 
@@ -634,9 +638,9 @@ def func_gjk(
         for i in range(2):
             witness_point = func_simplex_vertex_linear_comb(gjk_state, i_b, i, 0, 1, 2, 3, _lambda, nsimplex)
             if i == 0:
-                gjk_state.witness[i_b, 0].point_obj1 = witness_point
+                gjk_state.witness.point_obj1[i_b, 0] = witness_point
             else:
-                gjk_state.witness[i_b, 0].point_obj2 = witness_point
+                gjk_state.witness.point_obj2[i_b, 0] = witness_point
 
     gjk_state.n_witness[i_b] = nx
     gjk_state.distance[i_b] = dist
@@ -669,7 +673,11 @@ def func_gjk_intersect(
     """
     # Copy simplex to temporary storage
     for i in ti.static(range(4)):
-        gjk_state.simplex_vertex_intersect[i_b, i] = gjk_state.simplex_vertex[i_b, i]
+        gjk_state.simplex_vertex_intersect.obj1[i_b, i] = gjk_state.simplex_vertex.obj1[i_b, i]
+        gjk_state.simplex_vertex_intersect.obj2[i_b, i] = gjk_state.simplex_vertex.obj2[i_b, i]
+        gjk_state.simplex_vertex_intersect.id1[i_b, i] = gjk_state.simplex_vertex.id1[i_b, i]
+        gjk_state.simplex_vertex_intersect.id2[i_b, i] = gjk_state.simplex_vertex.id2[i_b, i]
+        gjk_state.simplex_vertex_intersect.mink[i_b, i] = gjk_state.simplex_vertex.mink[i_b, i]
 
     # Simplex index
     si = ti.Vector([0, 1, 2, 3], dt=gs.ti_int)
@@ -691,8 +699,8 @@ def func_gjk_intersect(
 
             n, s = func_gjk_triangle_info(gjk_state, gjk_static_config, i_b, s0, s1, s2)
 
-            gjk_state.simplex_buffer_intersect[i_b, j].normal = n
-            gjk_state.simplex_buffer_intersect[i_b, j].sdist = s
+            gjk_state.simplex_buffer_intersect.normal[i_b, j] = n
+            gjk_state.simplex_buffer_intersect.sdist[i_b, j] = s
 
             if ti.abs(s) > gjk_static_config.FLOAT_MIN:
                 is_sdist_all_zero = False
@@ -704,12 +712,12 @@ def func_gjk_intersect(
         # Find the face with the smallest signed distance. We need to find [min_i] for the next iteration.
         min_i = 0
         for j in ti.static(range(1, 4)):
-            if gjk_state.simplex_buffer_intersect[i_b, j].sdist < gjk_state.simplex_buffer_intersect[i_b, min_i].sdist:
+            if gjk_state.simplex_buffer_intersect.sdist[i_b, j] < gjk_state.simplex_buffer_intersect.sdist[i_b, min_i]:
                 min_i = j
 
         min_si = si[min_i]
-        min_normal = gjk_state.simplex_buffer_intersect[i_b, min_i].normal
-        min_sdist = gjk_state.simplex_buffer_intersect[i_b, min_i].sdist
+        min_normal = gjk_state.simplex_buffer_intersect.normal[i_b, min_i]
+        min_sdist = gjk_state.simplex_buffer_intersect.sdist[i_b, min_i]
 
         # If origin is inside the simplex, the signed distances will all be positive
         if min_sdist >= 0:
@@ -718,16 +726,20 @@ def func_gjk_intersect(
 
             # Copy the temporary simplex to the main simplex
             for j in ti.static(range(4)):
-                gjk_state.simplex_vertex[i_b, j] = gjk_state.simplex_vertex_intersect[i_b, si[j]]
+                gjk_state.simplex_vertex.obj1[i_b, j] = gjk_state.simplex_vertex_intersect.obj1[i_b, si[j]]
+                gjk_state.simplex_vertex.obj2[i_b, j] = gjk_state.simplex_vertex_intersect.obj2[i_b, si[j]]
+                gjk_state.simplex_vertex.id1[i_b, j] = gjk_state.simplex_vertex_intersect.id1[i_b, si[j]]
+                gjk_state.simplex_vertex.id2[i_b, j] = gjk_state.simplex_vertex_intersect.id2[i_b, si[j]]
+                gjk_state.simplex_vertex.mink[i_b, j] = gjk_state.simplex_vertex_intersect.mink[i_b, si[j]]
             break
 
         # Replace the worst vertex (which has the smallest signed distance) with new candidate
         (
-            gjk_state.simplex_vertex_intersect[i_b, min_si].obj1,
-            gjk_state.simplex_vertex_intersect[i_b, min_si].obj2,
-            gjk_state.simplex_vertex_intersect[i_b, min_si].id1,
-            gjk_state.simplex_vertex_intersect[i_b, min_si].id2,
-            gjk_state.simplex_vertex_intersect[i_b, min_si].mink,
+            gjk_state.simplex_vertex_intersect.obj1[i_b, min_si],
+            gjk_state.simplex_vertex_intersect.obj2[i_b, min_si],
+            gjk_state.simplex_vertex_intersect.id1[i_b, min_si],
+            gjk_state.simplex_vertex_intersect.id2[i_b, min_si],
+            gjk_state.simplex_vertex_intersect.mink[i_b, min_si],
         ) = func_support(
             geoms_state,
             geoms_info,
@@ -747,7 +759,7 @@ def func_gjk_intersect(
         )
 
         # Check if the origin is strictly outside of the Minkowski difference (which means there is no collision)
-        new_minkowski = gjk_state.simplex_vertex_intersect[i_b, min_si].mink
+        new_minkowski = gjk_state.simplex_vertex_intersect.mink[i_b, min_si]
 
         is_no_collision = new_minkowski.dot(min_normal) < 0
         if is_no_collision:
@@ -776,9 +788,9 @@ def func_gjk_triangle_info(
     """
     Compute normal and signed distance of the triangle face on the simplex from the origin.
     """
-    vertex_1 = gjk_state.simplex_vertex_intersect[i_b, i_va].mink
-    vertex_2 = gjk_state.simplex_vertex_intersect[i_b, i_vb].mink
-    vertex_3 = gjk_state.simplex_vertex_intersect[i_b, i_vc].mink
+    vertex_1 = gjk_state.simplex_vertex_intersect.mink[i_b, i_va]
+    vertex_2 = gjk_state.simplex_vertex_intersect.mink[i_b, i_vb]
+    vertex_3 = gjk_state.simplex_vertex_intersect.mink[i_b, i_vc]
 
     normal = (vertex_3 - vertex_1).cross(vertex_2 - vertex_1)
     normal_length = normal.norm()
@@ -895,10 +907,10 @@ def func_gjk_subdistance_3d(
     _lambda = gs.ti_vec4(0, 0, 0, 0)
 
     # Simplex vertices
-    s1 = gjk_state.simplex_vertex[i_b, i_s1].mink
-    s2 = gjk_state.simplex_vertex[i_b, i_s2].mink
-    s3 = gjk_state.simplex_vertex[i_b, i_s3].mink
-    s4 = gjk_state.simplex_vertex[i_b, i_s4].mink
+    s1 = gjk_state.simplex_vertex.mink[i_b, i_s1]
+    s2 = gjk_state.simplex_vertex.mink[i_b, i_s2]
+    s3 = gjk_state.simplex_vertex.mink[i_b, i_s3]
+    s4 = gjk_state.simplex_vertex.mink[i_b, i_s4]
 
     # Compute the cofactors to find det(M), which corresponds to the signed volume of the tetrahedron
     Cs = ti.math.vec4(0.0, 0.0, 0.0, 0.0)
@@ -945,9 +957,9 @@ def func_gjk_subdistance_2d(
     # Project origin onto affine hull of the simplex (triangle)
     proj_orig, proj_flag = func_project_origin_to_plane(
         gjk_static_config,
-        gjk_state.simplex_vertex[i_b, i_s1].mink,
-        gjk_state.simplex_vertex[i_b, i_s2].mink,
-        gjk_state.simplex_vertex[i_b, i_s3].mink,
+        gjk_state.simplex_vertex.mink[i_b, i_s1],
+        gjk_state.simplex_vertex.mink[i_b, i_s2],
+        gjk_state.simplex_vertex.mink[i_b, i_s3],
     )
 
     if proj_flag == RETURN_CODE.SUCCESS:
@@ -958,9 +970,9 @@ def func_gjk_subdistance_2d(
         # [ 1,    1,    1,   ] [ ?  ] = [ 1.0 ]
         # So we remove one row before solving the system. We exclude the axis with the largest projection of the
         # simplex using the minors of the above linear system.
-        s1 = gjk_state.simplex_vertex[i_b, i_s1].mink
-        s2 = gjk_state.simplex_vertex[i_b, i_s2].mink
-        s3 = gjk_state.simplex_vertex[i_b, i_s3].mink
+        s1 = gjk_state.simplex_vertex.mink[i_b, i_s1]
+        s2 = gjk_state.simplex_vertex.mink[i_b, i_s2]
+        s3 = gjk_state.simplex_vertex.mink[i_b, i_s3]
 
         ms = gs.ti_vec3(
             s2[1] * s3[2] - s2[2] * s3[1] - s1[1] * s3[2] + s1[2] * s3[1] + s1[1] * s2[2] - s1[2] * s2[1],
@@ -1036,8 +1048,8 @@ def func_gjk_subdistance_1d(
     """
     _lambda = gs.ti_vec4(0, 0, 0, 0)
 
-    s1 = gjk_state.simplex_vertex[i_b, i_s1].mink
-    s2 = gjk_state.simplex_vertex[i_b, i_s2].mink
+    s1 = gjk_state.simplex_vertex.mink[i_b, i_s1]
+    s2 = gjk_state.simplex_vertex.mink[i_b, i_s2]
     p_o = func_project_origin_to_line(s1, s2)
 
     mu_max = 0.0
@@ -1106,9 +1118,9 @@ def func_epa(
         # Find the polytope face with the smallest distance to the origin
         lower2 = gjk_static_config.FLOAT_MAX_SQ
 
-        for i in range(gjk_state.polytope[i_b].nfaces_map):
-            i_f = gjk_state.polytope_faces_map[i_b][i]
-            face_dist2 = gjk_state.polytope_faces[i_b, i_f].dist2
+        for i in range(gjk_state.polytope.nfaces_map[i_b]):
+            i_f = gjk_state.polytope_faces_map[i_b, i]
+            face_dist2 = gjk_state.polytope_faces.dist2[i_b, i_f]
 
             if face_dist2 < lower2:
                 lower2 = face_dist2
@@ -1125,7 +1137,7 @@ def func_epa(
 
         # Find a new support point w from the nearest face's normal
         lower = ti.sqrt(lower2)
-        dir = gjk_state.polytope_faces[i_b, nearest_i_f].normal
+        dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
             geoms_state,
             geoms_info,
@@ -1143,7 +1155,7 @@ def func_epa(
             dir,
             lower,
         )
-        w = gjk_state.polytope_verts[i_b, wi].mink
+        w = gjk_state.polytope_verts.mink[i_b, wi]
 
         # The upper bound of depth at k-th iteration
         upper_k = w.dot(dir) / lower
@@ -1157,10 +1169,10 @@ def func_epa(
 
         if discrete:
             repeated = False
-            for i in range(gjk_state.polytope[i_b].nverts - 1):
+            for i in range(gjk_state.polytope.nverts[i_b] - 1):
                 if (
-                    gjk_state.polytope_verts[i_b, i].id1 == gjk_state.polytope_verts[i_b, wi].id1
-                    and gjk_state.polytope_verts[i_b, i].id2 == gjk_state.polytope_verts[i_b, wi].id2
+                    gjk_state.polytope_verts.id1[i_b, i] == gjk_state.polytope_verts.id1[i_b, wi]
+                    and gjk_state.polytope_verts.id2[i_b, i] == gjk_state.polytope_verts.id2[i_b, wi]
                 ):
                     # The vertex w is already in the polytope,
                     # so we do not need to add it again.
@@ -1169,7 +1181,7 @@ def func_epa(
             if repeated:
                 break
 
-        gjk_state.polytope[i_b].horizon_w = w
+        gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
         horizon_flag = func_epa_horizon(gjk_state, gjk_static_config, i_b, nearest_i_f)
@@ -1179,14 +1191,14 @@ def func_epa(
             nearest_i_f = -1
             break
 
-        if gjk_state.polytope[i_b].horizon_nedges < 3:
+        if gjk_state.polytope.horizon_nedges[i_b] < 3:
             # Should not happen, because at least three edges should be in the horizon from one deleted face.
             nearest_i_f = -1
             break
 
         # Check if the memory space is enough for attaching new faces
-        nfaces = gjk_state.polytope[i_b].nfaces
-        nedges = gjk_state.polytope[i_b].horizon_nedges
+        nfaces = gjk_state.polytope.nfaces[i_b]
+        nedges = gjk_state.polytope.horizon_nedges[i_b]
         if nfaces + nedges >= gjk_static_config.polytope_max_faces:
             # If the polytope is full, we cannot insert new faces
             break
@@ -1198,14 +1210,14 @@ def func_epa(
             # Face id of the next face to attach
             i_f1 = nfaces + (i + 1) % nedges
 
-            horizon_i_f = gjk_state.polytope_horizon_data[i_b, i].face_idx
-            horizon_i_e = gjk_state.polytope_horizon_data[i_b, i].edge_idx
-            horizon_face = gjk_state.polytope_faces[i_b, horizon_i_f]
-            horizon_v1 = horizon_face.verts_idx[horizon_i_e]
-            horizon_v2 = horizon_face.verts_idx[(horizon_i_e + 1) % 3]
+            horizon_i_f = gjk_state.polytope_horizon_data.face_idx[i_b, i]
+            horizon_i_e = gjk_state.polytope_horizon_data.edge_idx[i_b, i]
+
+            horizon_v1 = gjk_state.polytope_faces.verts_idx[i_b, horizon_i_f][horizon_i_e]
+            horizon_v2 = gjk_state.polytope_faces.verts_idx[i_b, horizon_i_f][(horizon_i_e + 1) % 3]
 
             # Change the adjacent face index of the existing face
-            gjk_state.polytope_faces[i_b, horizon_i_f].adj_idx[horizon_i_e] = i_f0
+            gjk_state.polytope_faces.adj_idx[i_b, horizon_i_f][horizon_i_e] = i_f0
 
             # Attach the new face.
             # If this if the first face, will be adjacent to the face that will be attached last.
@@ -1231,21 +1243,21 @@ def func_epa(
 
             if (dist2 >= lower2) and (dist2 <= upper2):
                 # Store face in the map
-                nfaces_map = gjk_state.polytope[i_b].nfaces_map
-                gjk_state.polytope_faces_map[i_b][nfaces_map] = i_f0
-                gjk_state.polytope_faces[i_b, i_f0].map_idx = nfaces_map
-                gjk_state.polytope[i_b].nfaces_map += 1
+                nfaces_map = gjk_state.polytope.nfaces_map[i_b]
+                gjk_state.polytope_faces_map[i_b, nfaces_map] = i_f0
+                gjk_state.polytope_faces.map_idx[i_b, i_f0] = nfaces_map
+                gjk_state.polytope.nfaces_map[i_b] += 1
 
         # Clear the horizon data for the next iteration
-        gjk_state.polytope[i_b].horizon_nedges = 0
+        gjk_state.polytope.horizon_nedges[i_b] = 0
 
-        if (gjk_state.polytope[i_b].nfaces_map == 0) or (nearest_i_f == -1):
+        if (gjk_state.polytope.nfaces_map[i_b] == 0) or (nearest_i_f == -1):
             # No face candidate left
             break
 
     if nearest_i_f != -1:
         # Nearest face found
-        dist2 = gjk_state.polytope_faces[i_b, nearest_i_f].dist2
+        dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
         func_epa_witness(gjk_state, i_ga, i_gb, i_b, nearest_i_f)
         gjk_state.n_witness[i_b] = 1
         gjk_state.distance[i_b] = -ti.sqrt(dist2)
@@ -1269,11 +1281,13 @@ def func_epa_witness(
     Compute the witness points from the geometries for the face i_f of the polytope.
     """
     # Find the affine coordinates of the origin's projection on the face i_f
-    face = gjk_state.polytope_faces[i_b, i_f]
-    face_v1 = gjk_state.polytope_verts[i_b, face.verts_idx[0]].mink
-    face_v2 = gjk_state.polytope_verts[i_b, face.verts_idx[1]].mink
-    face_v3 = gjk_state.polytope_verts[i_b, face.verts_idx[2]].mink
-    face_normal = face.normal
+    face_iv1 = gjk_state.polytope_faces.verts_idx[i_b, i_f][0]
+    face_iv2 = gjk_state.polytope_faces.verts_idx[i_b, i_f][1]
+    face_iv3 = gjk_state.polytope_faces.verts_idx[i_b, i_f][2]
+    face_v1 = gjk_state.polytope_verts.mink[i_b, face_iv1]
+    face_v2 = gjk_state.polytope_verts.mink[i_b, face_iv2]
+    face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
+    face_normal = gjk_state.polytope_faces.normal[i_b, i_f]
 
     _lambda = func_triangle_affine_coords(
         face_normal,
@@ -1283,19 +1297,19 @@ def func_epa_witness(
     )
 
     # Point on geom 1
-    v1 = gjk_state.polytope_verts[i_b, face.verts_idx[0]].obj1
-    v2 = gjk_state.polytope_verts[i_b, face.verts_idx[1]].obj1
-    v3 = gjk_state.polytope_verts[i_b, face.verts_idx[2]].obj1
+    v1 = gjk_state.polytope_verts.obj1[i_b, face_iv1]
+    v2 = gjk_state.polytope_verts.obj1[i_b, face_iv2]
+    v3 = gjk_state.polytope_verts.obj1[i_b, face_iv3]
     witness1 = v1 * _lambda[0] + v2 * _lambda[1] + v3 * _lambda[2]
 
     # Point on geom 2
-    v1 = gjk_state.polytope_verts[i_b, face.verts_idx[0]].obj2
-    v2 = gjk_state.polytope_verts[i_b, face.verts_idx[1]].obj2
-    v3 = gjk_state.polytope_verts[i_b, face.verts_idx[2]].obj2
+    v1 = gjk_state.polytope_verts.obj2[i_b, face_iv1]
+    v2 = gjk_state.polytope_verts.obj2[i_b, face_iv2]
+    v3 = gjk_state.polytope_verts.obj2[i_b, face_iv3]
     witness2 = v1 * _lambda[0] + v2 * _lambda[1] + v3 * _lambda[2]
 
-    gjk_state.witness[i_b, 0].point_obj1 = witness1
-    gjk_state.witness[i_b, 0].point_obj2 = witness2
+    gjk_state.witness.point_obj1[i_b, 0] = witness1
+    gjk_state.witness.point_obj2[i_b, 0] = witness2
 
 
 @ti.func
@@ -1482,8 +1496,8 @@ def func_epa_init_polytope_2d(
     flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
-    v1 = gjk_state.simplex_vertex[i_b, 0].mink
-    v2 = gjk_state.simplex_vertex[i_b, 1].mink
+    v1 = gjk_state.simplex_vertex.mink[i_b, 0]
+    v2 = gjk_state.simplex_vertex.mink[i_b, 1]
     diff = v2 - v1
 
     # Find the element in [diff] with the smallest magnitude, because it will give us the largest cross product
@@ -1511,11 +1525,11 @@ def func_epa_init_polytope_2d(
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
             i_b,
-            gjk_state.simplex_vertex[i_b, i].obj1,
-            gjk_state.simplex_vertex[i_b, i].obj2,
-            gjk_state.simplex_vertex[i_b, i].id1,
-            gjk_state.simplex_vertex[i_b, i].id2,
-            gjk_state.simplex_vertex[i_b, i].mink,
+            gjk_state.simplex_vertex.obj1[i_b, i],
+            gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
+            gjk_state.simplex_vertex.mink[i_b, i],
         )
 
     # Find three more vertices using [d1, d2, d3] as support vectors, and insert them into the polytope
@@ -1544,9 +1558,9 @@ def func_epa_init_polytope_2d(
             di_norm,
         )
 
-    v3 = gjk_state.polytope_verts[i_b, vi[2]].mink
-    v4 = gjk_state.polytope_verts[i_b, vi[3]].mink
-    v5 = gjk_state.polytope_verts[i_b, vi[4]].mink
+    v3 = gjk_state.polytope_verts.mink[i_b, vi[2]]
+    v4 = gjk_state.polytope_verts.mink[i_b, vi[3]]
+    v5 = gjk_state.polytope_verts.mink[i_b, vi[4]]
 
     # Build hexahedron (6 faces) from the five vertices.
     # * This hexahedron would have line [v1, v2] as the central axis, and the other three vertices would be on the
@@ -1591,9 +1605,9 @@ def func_epa_init_polytope_2d(
     if flag == RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(6)):
-            gjk_state.polytope_faces_map[i_b][i] = i
-            gjk_state.polytope_faces[i_b, i].map_idx = i
-        gjk_state.polytope[i_b].nfaces_map = 6
+            gjk_state.polytope_faces_map[i_b, i] = i
+            gjk_state.polytope_faces.map_idx[i_b, i] = i
+        gjk_state.polytope.nfaces_map[i_b] = 6
 
     return flag
 
@@ -1625,9 +1639,9 @@ def func_epa_init_polytope_3d(
     flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
-    v1 = gjk_state.simplex_vertex[i_b, 0].mink
-    v2 = gjk_state.simplex_vertex[i_b, 1].mink
-    v3 = gjk_state.simplex_vertex[i_b, 2].mink
+    v1 = gjk_state.simplex_vertex.mink[i_b, 0]
+    v2 = gjk_state.simplex_vertex.mink[i_b, 1]
+    v3 = gjk_state.simplex_vertex.mink[i_b, 2]
 
     # Get normal; if it is zero, we cannot proceed
     n = (v2 - v1).cross(v3 - v1)
@@ -1642,11 +1656,11 @@ def func_epa_init_polytope_3d(
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
             i_b,
-            gjk_state.simplex_vertex[i_b, i].obj1,
-            gjk_state.simplex_vertex[i_b, i].obj2,
-            gjk_state.simplex_vertex[i_b, i].id1,
-            gjk_state.simplex_vertex[i_b, i].id2,
-            gjk_state.simplex_vertex[i_b, i].mink,
+            gjk_state.simplex_vertex.obj1[i_b, i],
+            gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
+            gjk_state.simplex_vertex.mink[i_b, i],
         )
 
     # Find the fourth and fifth vertices using the normal
@@ -1671,8 +1685,8 @@ def func_epa_init_polytope_3d(
             dir,
             n_norm,
         )
-    v4 = gjk_state.polytope_verts[i_b, vi[3]].mink
-    v5 = gjk_state.polytope_verts[i_b, vi[4]].mink
+    v4 = gjk_state.polytope_verts.mink[i_b, vi[3]]
+    v5 = gjk_state.polytope_verts.mink[i_b, vi[4]]
 
     # Check if v4 or v5 located inside the triangle.
     # If so, we do not proceed anymore.
@@ -1695,7 +1709,7 @@ def func_epa_init_polytope_3d(
         # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but
         # there is penetration depth.
         if (
-            gjk_state.simplex[i_b].dist > 10 * gjk_static_config.FLOAT_MIN
+            gjk_state.simplex.dist[i_b] > 10 * gjk_static_config.FLOAT_MIN
             and (not tets_has_origin[0])
             and (not tets_has_origin[1])
         ):
@@ -1733,9 +1747,9 @@ def func_epa_init_polytope_3d(
     if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(6)):
-            gjk_state.polytope_faces_map[i_b][i] = i
-            gjk_state.polytope_faces[i_b, i].map_idx = i
-        gjk_state.polytope[i_b].nfaces_map = 6
+            gjk_state.polytope_faces_map[i_b, i] = i
+            gjk_state.polytope_faces.map_idx[i_b, i] = i
+        gjk_state.polytope.nfaces_map[i_b] = 6
 
     return flag
 
@@ -1764,11 +1778,11 @@ def func_epa_init_polytope_4d(
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
             i_b,
-            gjk_state.simplex_vertex[i_b, i].obj1,
-            gjk_state.simplex_vertex[i_b, i].obj2,
-            gjk_state.simplex_vertex[i_b, i].id1,
-            gjk_state.simplex_vertex[i_b, i].id2,
-            gjk_state.simplex_vertex[i_b, i].mink,
+            gjk_state.simplex_vertex.obj1[i_b, i],
+            gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
+            gjk_state.simplex_vertex.mink[i_b, i],
         )
 
     # If origin is on any face of the tetrahedron, replace the simplex with a 2-simplex (triangle)
@@ -1798,10 +1812,10 @@ def func_epa_init_polytope_4d(
         # If the tetrahedron does not contain the origin, we do not proceed anymore.
         if (
             func_origin_tetra_intersection(
-                gjk_state.polytope_verts[i_b, vi[0]].mink,
-                gjk_state.polytope_verts[i_b, vi[1]].mink,
-                gjk_state.polytope_verts[i_b, vi[2]].mink,
-                gjk_state.polytope_verts[i_b, vi[3]].mink,
+                gjk_state.polytope_verts.mink[i_b, vi[0]],
+                gjk_state.polytope_verts.mink[i_b, vi[1]],
+                gjk_state.polytope_verts.mink[i_b, vi[2]],
+                gjk_state.polytope_verts.mink[i_b, vi[3]],
             )
             == RETURN_CODE.FAIL
         ):
@@ -1810,9 +1824,9 @@ def func_epa_init_polytope_4d(
     if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(4)):
-            gjk_state.polytope_faces_map[i_b][i] = i
-            gjk_state.polytope_faces[i_b, i].map_idx = i
-        gjk_state.polytope[i_b].nfaces_map = 4
+            gjk_state.polytope_faces_map[i_b, i] = i
+            gjk_state.polytope_faces.map_idx[i_b, i] = i
+        gjk_state.polytope.nfaces_map[i_b] = 4
 
     return flag
 
@@ -1897,14 +1911,14 @@ def func_attach_face_to_polytope(
     """
     dist2 = 0.0
 
-    n = gjk_state.polytope[i_b].nfaces
+    n = gjk_state.polytope.nfaces[i_b]
     gjk_state.polytope_faces.verts_idx[i_b, n][0] = i_v1
     gjk_state.polytope_faces.verts_idx[i_b, n][1] = i_v2
     gjk_state.polytope_faces.verts_idx[i_b, n][2] = i_v3
     gjk_state.polytope_faces.adj_idx[i_b, n][0] = i_a1
     gjk_state.polytope_faces.adj_idx[i_b, n][1] = i_a2
     gjk_state.polytope_faces.adj_idx[i_b, n][2] = i_a3
-    gjk_state.polytope[i_b].nfaces += 1
+    gjk_state.polytope.nfaces[i_b] += 1
 
     # Compute the squared distance of the face to the origin
     gjk_state.polytope_faces.normal[i_b, n], ret = func_project_origin_to_plane(
@@ -1938,15 +1952,23 @@ def func_replace_simplex_3(
     i_v1, i_v2, i_v3: int
         Indices of the vertices in the polytope that will be used to form the triangle.
     """
-    gjk_state.simplex[i_b].nverts = 3
-    gjk_state.simplex_vertex[i_b, 0] = gjk_state.polytope_verts[i_b, i_v1]
-    gjk_state.simplex_vertex[i_b, 1] = gjk_state.polytope_verts[i_b, i_v2]
-    gjk_state.simplex_vertex[i_b, 2] = gjk_state.polytope_verts[i_b, i_v3]
+    gjk_state.simplex.nverts[i_b] = 3
+    for i in ti.static(range(3)):
+        i_v = i_v1
+        if i == 1:
+            i_v = i_v2
+        elif i == 2:
+            i_v = i_v3
+        gjk_state.simplex_vertex.obj1[i_b, i] = gjk_state.polytope_verts.obj1[i_b, i_v]
+        gjk_state.simplex_vertex.obj2[i_b, i] = gjk_state.polytope_verts.obj2[i_b, i_v]
+        gjk_state.simplex_vertex.id1[i_b, i] = gjk_state.polytope_verts.id1[i_b, i_v]
+        gjk_state.simplex_vertex.id2[i_b, i] = gjk_state.polytope_verts.id2[i_b, i_v]
+        gjk_state.simplex_vertex.mink[i_b, i] = gjk_state.polytope_verts.mink[i_b, i_v]
 
     # Reset polytope
-    gjk_state.polytope[i_b].nverts = 0
-    gjk_state.polytope[i_b].nfaces = 0
-    gjk_state.polytope[i_b].nfaces_map = 0
+    gjk_state.polytope.nverts[i_b] = 0
+    gjk_state.polytope.nfaces[i_b] = 0
+    gjk_state.polytope.nfaces_map[i_b] = 0
 
 
 @ti.func
@@ -3475,20 +3497,20 @@ def func_simplex_vertex_linear_comb(
     """
     res = gs.ti_vec3(0, 0, 0)
 
-    s1 = gjk_state.simplex_vertex[i_b, i_s1].obj1
-    s2 = gjk_state.simplex_vertex[i_b, i_s2].obj1
-    s3 = gjk_state.simplex_vertex[i_b, i_s3].obj1
-    s4 = gjk_state.simplex_vertex[i_b, i_s4].obj1
+    s1 = gjk_state.simplex_vertex.obj1[i_b, i_s1]
+    s2 = gjk_state.simplex_vertex.obj1[i_b, i_s2]
+    s3 = gjk_state.simplex_vertex.obj1[i_b, i_s3]
+    s4 = gjk_state.simplex_vertex.obj1[i_b, i_s4]
     if i_v == 1:
-        s1 = gjk_state.simplex_vertex[i_b, i_s1].obj2
-        s2 = gjk_state.simplex_vertex[i_b, i_s2].obj2
-        s3 = gjk_state.simplex_vertex[i_b, i_s3].obj2
-        s4 = gjk_state.simplex_vertex[i_b, i_s4].obj2
+        s1 = gjk_state.simplex_vertex.obj2[i_b, i_s1]
+        s2 = gjk_state.simplex_vertex.obj2[i_b, i_s2]
+        s3 = gjk_state.simplex_vertex.obj2[i_b, i_s3]
+        s4 = gjk_state.simplex_vertex.obj2[i_b, i_s4]
     elif i_v == 2:
-        s1 = gjk_state.simplex_vertex[i_b, i_s1].mink
-        s2 = gjk_state.simplex_vertex[i_b, i_s2].mink
-        s3 = gjk_state.simplex_vertex[i_b, i_s3].mink
-        s4 = gjk_state.simplex_vertex[i_b, i_s4].mink
+        s1 = gjk_state.simplex_vertex.mink[i_b, i_s1]
+        s2 = gjk_state.simplex_vertex.mink[i_b, i_s2]
+        s3 = gjk_state.simplex_vertex.mink[i_b, i_s3]
+        s4 = gjk_state.simplex_vertex.mink[i_b, i_s4]
 
     c1 = _lambda[0]
     c2 = _lambda[1]

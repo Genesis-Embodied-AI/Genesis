@@ -6,6 +6,7 @@ import numpy.typing as npt
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
@@ -1735,7 +1736,7 @@ def func_update_gradient(
         )
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-        self_unused._solver._func_solve_mass_batched(
+        rigid_solver.func_solve_mass_batched(
             constraint_state.grad,
             constraint_state.Mgrad,
             i_b,
