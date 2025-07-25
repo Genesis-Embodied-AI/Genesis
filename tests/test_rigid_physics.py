@@ -5,24 +5,24 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import pytest
-import trimesh
-import torch
-import numpy as np
 import mujoco
+import numpy as np
+import pytest
+import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array, get_assets_dir
+from genesis.utils.misc import get_assets_dir, tensor_to_array
 
 from .utils import (
-    get_hf_assets,
     assert_allclose,
-    build_mujoco_sim,
     build_genesis_sim,
-    init_simulators,
-    check_mujoco_model_consistency,
+    build_mujoco_sim,
     check_mujoco_data_consistency,
+    check_mujoco_model_consistency,
+    get_hf_assets,
+    init_simulators,
     simulate_and_check_mujoco_consistency,
 )
 
@@ -2673,3 +2673,26 @@ def test_get_cartesian_space_variables(show_viewer, tol):
             link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
 
         scene.step()
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_geom_pos_quat(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 2.0),
+        )
+    )
+    scene.build()
+
+    for link in box.links:
+        for vgeom, geom in zip(link.vgeoms, link.geoms):
+            assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=tol)
+            assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
