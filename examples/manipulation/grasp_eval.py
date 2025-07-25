@@ -32,7 +32,6 @@ def main():
     log_dir = f"logs/{args.exp_name}"
     last_folder = sorted(os.listdir(log_dir))[-1]
     env_cfg, reward_cfg, robot_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/{last_folder}/cfgs.pkl", "rb"))
-    reward_cfg["reward_scales"] = {}
 
     # visualize the target
     env_cfg["visualize_target"] = True
@@ -40,9 +39,13 @@ def main():
     env_cfg["visualize_camera"] = args.record
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
+    # set the box collision
+    env_cfg["box_collision"] = True
+    # set the box fixed
+    env_cfg["box_fixed"] = False
 
     env = GraspEnv(
-        num_envs=1,
+        num_envs=10,
         env_cfg=env_cfg,
         reward_cfg=reward_cfg,
         robot_cfg=robot_cfg,
@@ -58,7 +61,7 @@ def main():
 
     obs, _ = env.reset()
 
-    max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"]) * 10
+    max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
     with torch.no_grad():
         if args.record:
             env.cam.start_recording()
@@ -66,11 +69,13 @@ def main():
                 actions = policy(obs)
                 obs, rews, dones, infos = env.step(actions)
                 env.cam.render()
+            env.grasp_and_lift_demo(max_sim_step * 4)
             env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
         else:
             for _ in range(max_sim_step):
                 actions = policy(obs)
                 obs, rews, dones, infos = env.step(actions)
+            env.grasp_and_lift_demo(max_sim_step * 4)
 
 
 if __name__ == "__main__":

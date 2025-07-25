@@ -20,15 +20,13 @@ class GraspEnv:
         self.num_actions = env_cfg["num_actions"]
         self.device = gs.device
 
-        self.ctrl_dt = 0.01  # control frequency on real robot is 50hz
+        self.ctrl_dt = env_cfg["ctrl_dt"]
         self.max_episode_length = math.ceil(env_cfg["episode_length_s"] / self.ctrl_dt)
 
         # configs
         self.env_cfg = env_cfg
-        self.reward_cfg = reward_cfg
-
+        self.reward_scales = reward_cfg
         self.action_scales = torch.tensor(env_cfg["action_scales"], device=self.device)
-        self.reward_scales = reward_cfg["reward_scales"]
 
         # == setup scene ==
         self.scene = gs.Scene(
@@ -39,7 +37,7 @@ class GraspEnv:
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=40,
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(1))),
+            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
             rigid_options=gs.options.RigidOptions(
                 dt=self.ctrl_dt,
                 constraint_solver=gs.constraint_solver.Newton,
@@ -63,8 +61,17 @@ class GraspEnv:
 
         # == add object ==
         self.object = self.scene.add_entity(
-            gs.morphs.Box(size=(0.05, 0.05, 0.05), collision=False),
-            material=gs.materials.Rigid(gravity_compensation=1),
+            gs.morphs.Box(
+                size=env_cfg["box_size"],
+                fixed=env_cfg["box_fixed"],
+                collision=env_cfg["box_collision"],
+            ),
+            # material=gs.materials.Rigid(gravity_compensation=1),
+            surface=gs.surfaces.Rough(
+                diffuse_texture=gs.textures.ColorTexture(
+                    color=(1.0, 0.0, 0.0),
+                ),
+            ),
         )
 
         # build
@@ -84,11 +91,7 @@ class GraspEnv:
     def _init_buffers(self):
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=gs.device)
-        #
-        self.action_buf = torch.zeros((self.num_envs, self.num_actions), device=self.device)
-        #
-        self.hand_z_offset = 0.15
-
+        self.goal_pose = torch.zeros(self.num_envs, 7, device=gs.device)
         #
         self.extras = dict()
         self.extras["observations"] = dict()
@@ -96,23 +99,37 @@ class GraspEnv:
     def reset_idx(self, envs_idx):
         if len(envs_idx) == 0:
             return
-
         self.episode_length_buf[envs_idx] = 0
 
         # reset robot
         self.robot.reset(envs_idx)
+
         # reset object
         num_reset = len(envs_idx)
         random_x = torch.rand(num_reset, device=self.device) * 0.4 + 0.2  # 0.2 ~ 0.6
         random_y = (torch.rand(num_reset, device=self.device) - 0.5) * 0.5  # -0.25 ~ 0.25
         random_z = torch.ones(num_reset, device=self.device) * 0.025  # 0.15 ~ 0.15
+        random_pos = torch.stack([random_x, random_y, random_z], dim=-1)
 
         #
-        self.object.set_pos(torch.stack([random_x, random_y, random_z], dim=-1), envs_idx=envs_idx)
-        self.object.set_quat(
-            torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(num_reset, 1),
-            envs_idx=envs_idx,
+        q_downward = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(num_reset, 1)
+        PI = 3.1415926
+        random_yaw = (torch.rand(num_reset, device=self.device) * 2 * PI - PI) * 0.25
+        q_yaw = torch.stack(
+            [
+                torch.cos(random_yaw / 2),
+                torch.zeros(num_reset, device=self.device),
+                torch.zeros(num_reset, device=self.device),
+                torch.sin(random_yaw / 2),
+            ],
+            dim=-1,
         )
+        goal_yaw = transform_quat_by_quat(q_yaw, q_downward)
+
+        self.goal_pose[envs_idx] = torch.cat([random_pos, goal_yaw], dim=-1)
+        #
+        self.object.set_pos(random_pos, envs_idx=envs_idx)
+        self.object.set_quat(goal_yaw, envs_idx=envs_idx)
 
         # fill extras
         self.extras["episode"] = {}
@@ -133,10 +150,10 @@ class GraspEnv:
         # update time
         self.episode_length_buf += 1
 
-        # apply action
+        # apply action based on task
         actions = self.rescale_action(actions)
-        self.action_buf = actions
-        self.robot.apply_action(actions)
+
+        self.robot.apply_action(actions, open_gripper=True)
         self.scene.step()
 
         # check termination
@@ -144,8 +161,8 @@ class GraspEnv:
         if len(env_reset_idx) > 0:
             self.reset_idx(env_reset_idx)
 
-        # compute reward
-        reward = torch.zeros((self.num_envs,), device=gs.device, dtype=torch.float32)
+        # compute reward based on task
+        reward = torch.zeros_like(self.reset_buf, device=gs.device, dtype=gs.tc_float)
         for name, reward_func in self.reward_functions.items():
             rew = reward_func() * self.reward_scales[name]
             reward += rew
@@ -173,13 +190,15 @@ class GraspEnv:
 
     def get_observations(self):
         # Current end-effector pose
-        ee_pos, ee_quat = self.robot.ee_pose[:, :3], self.robot.ee_pose[:, 3:7]
+        finger_pos, finger_quat = (
+            self.robot.center_finger_pose[:, :3],
+            self.robot.center_finger_pose[:, 3:7],
+        )
         obj_pos, obj_quat = self.object.get_pos(), self.object.get_quat()
         #
-        pos_diff = ee_pos - obj_pos
         obs_components = [
-            pos_diff,  # 3D position difference
-            ee_quat,  # current orientation (4D quaternion)
+            finger_pos - obj_pos,  # 3D position difference
+            finger_quat,  # current orientation (4D quaternion)
             obj_pos,  # goal pose (7D: pos + quat)
             obj_quat,  # goal pose (7D: pos + quat)
         ]
@@ -188,28 +207,45 @@ class GraspEnv:
         return obs_tensor, self.extras
 
     def rescale_action(self, action: torch.Tensor) -> torch.Tensor:
-        return action * self.action_scales
+        rescaled_action = action * self.action_scales
+        return rescaled_action
 
-    # ------------ reward functions----------------
+    # ------------ begin reward functions----------------
     def _reward_keypoints(self):
         keypoints_offset = self.keypoints_offset
-
-        #
-        hand_pos_keypoints = self._to_world_frame(
-            self.robot.ee_pose[:, :3], self.robot.ee_pose[:, 3:7], keypoints_offset
+        # there is a offset between the finger tip and the finger base frame
+        finger_tip_z_offset = torch.tensor(
+            [0.0, 0.0, -0.06],
+            device=self.device,
+            dtype=gs.tc_float,
+        ).repeat(self.num_envs, 1)
+        finger_pos_keypoints = self._to_world_frame(
+            self.robot.center_finger_pose[:, :3] + finger_tip_z_offset,
+            self.robot.center_finger_pose[:, 3:7],
+            keypoints_offset,
         )
-
-        #
-        facing_down_quaternion = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-        goal_pos = self.object.get_pos()
-        goal_pos[:, 2] += self.hand_z_offset
-        object_pos_keypoints = self._to_world_frame(goal_pos, facing_down_quaternion, keypoints_offset)
-        #
-        dist = torch.norm(hand_pos_keypoints - object_pos_keypoints, p=2, dim=-1).sum(-1)
+        object_pos_keypoints = self._to_world_frame(self.object.get_pos(), self.object.get_quat(), keypoints_offset)
+        dist = torch.norm(finger_pos_keypoints - object_pos_keypoints, p=2, dim=-1).sum(-1)
         return torch.exp(-dist)
 
-    def _reward_action(self):
-        return -torch.norm(self.action_buf, dim=-1).sum(-1)
+    def _reward_table_contact(self):
+        # Get current gripper DOF positions
+        gripper_dofs = self.robot._robot_entity.get_qpos()[:, self.robot._fingers_dof]
+
+        # Expected gripper positions when not in contact (open gripper)
+        expected_open_pos = torch.tensor([0.04, 0.04], device=self.device).repeat(self.num_envs, 1)
+
+        # Penalize when gripper DOFs are significantly different from expected open position
+        # This indicates contact with table or other obstacles
+        dof_error = torch.norm(gripper_dofs - expected_open_pos, dim=-1)
+
+        # Apply penalty when error is above threshold (indicating contact)
+        contact_threshold = 0.001  # 1cm tolerance
+        contact_penalty = torch.where(dof_error > contact_threshold, -dof_error, torch.zeros_like(dof_error))
+
+        return contact_penalty
+
+    # ------------ end reward functions----------------
 
     def _to_world_frame(
         self,
@@ -245,6 +281,18 @@ class GraspEnv:
         )
         return keypoint_offsets.unsqueeze(0).repeat(batch_size, 1, 1)
 
+    def grasp_and_lift_demo(self, total_steps: int):
+        goal_pose = self.robot.ee_pose
+        lift_height = 0.1
+        lift_pose = goal_pose.clone()
+        lift_pose[:, 2] += lift_height
+        for i in range(total_steps):
+            if i < total_steps / 2:  # grasping
+                self.robot.go_to_goal(goal_pose, open_gripper=False)
+            else:  # lifting
+                self.robot.go_to_goal(lift_pose, open_gripper=False)
+            self.scene.step()
+
 
 ## ------------ robot ----------------
 class Manipulator:
@@ -264,14 +312,14 @@ class Manipulator:
         )
         self._robot_entity: gs.Entity = scene.add_entity(material=material, morph=morph)
 
-        self._ctrl_mode: Literal["pose", "rel_pose", "dls"] = args["ctrl_mode"]
+        self._ik_method: Literal["rel_pose", "dls"] = args["ik_method"]
 
         # == some buffer initialization ==
         self._init()
 
     def _init(self):
-        self._arm_dof_dim = self._robot_entity.n_dofs - 1  # total number of arm: joints
-        self._gripper_dim = 1  # number of gripper joints
+        self._arm_dof_dim = self._robot_entity.n_dofs - 2  # total number of arm: joints
+        self._gripper_dim = 2  # number of gripper joints
 
         #
         self._arm_dof_idx = torch.arange(self._arm_dof_dim, device=self._device)
@@ -280,6 +328,8 @@ class Manipulator:
             self._arm_dof_dim + self._gripper_dim,
             device=self._device,
         )
+        self._left_finger_dof = self._fingers_dof[0]
+        self._right_finger_dof = self._fingers_dof[1]
         #
         self._ee_link = self._robot_entity.get_link(self._args["ee_link_name"])
         self._left_finger_link = self._robot_entity.get_link(self._args["gripper_link_names"][0])
@@ -302,43 +352,27 @@ class Manipulator:
         ).repeat(len(envs_idx), 1)
         self._robot_entity.set_qpos(default_joint_angles, envs_idx=envs_idx)
 
-    def apply_action(self, action: torch.Tensor) -> None:
+    def apply_action(self, action: torch.Tensor, open_gripper: bool) -> None:
         """
         Apply the action to the robot.
         """
-        if self._ctrl_mode == "pose":
-            assert action.shape == (self._num_envs, 7)
-            self._apply_pose_action(action)
-        elif self._ctrl_mode == "rel_pose":
-            assert action.shape == (self._num_envs, 6)
-            self._apply_rel_pose_action(action)
-        elif self._ctrl_mode == "dls":
-            assert action.shape == (self._num_envs, 6)
-            self._apply_dls_ctrl(action)
+        q_pos = self._robot_entity.get_qpos()
+        if self._ik_method == "gs_ik":
+            q_pos = self._gs_ik(action)
+        elif self._ik_method == "dls_ik":
+            q_pos = self._dls_ik(action)
         else:
-            raise ValueError(f"Invalid control mode: {self._ctrl_mode}")
-
-    def _apply_pose_action(self, action: torch.Tensor) -> None:
-        """
-        action: (num_envs, 7): [x, y, z, qw, qx, qy, qz]
-        """
-        target_position = action[:, :3]
-        target_orientation = action[:, 3:7]
-        #
-        q_pos = self._robot_entity.inverse_kinematics(
-            link=self._ee_link,
-            pos=target_position,
-            quat=target_orientation,
-            dofs_idx_local=self._arm_dof_idx,
-        )
-
+            raise ValueError(f"Invalid control mode: {self._ik_method}")
         # set gripper to open
-        q_pos[:, self._fingers_dof] = torch.tensor([0.04], device=self._device)
+        if open_gripper:
+            q_pos[:, self._fingers_dof] = +0.04
+        else:
+            q_pos[:, self._fingers_dof] = +0.02
         self._robot_entity.control_dofs_position(position=q_pos)
 
-    def _apply_rel_pose_action(self, action: torch.Tensor) -> None:
+    def _gs_ik(self, action: torch.Tensor) -> torch.Tensor:
         """
-        action: (num_envs, 6): [dx, dy, dz, delta_roll, delta_pitch, delta_yaw]
+        Genesis inverse kinematics
         """
         delta_position = action[:, :3]
         delta_orientation = action[:, 3:6]
@@ -347,11 +381,20 @@ class Manipulator:
         target_position = delta_position + self._ee_link.get_pos()
         quat_rel = xyz_to_quat(delta_orientation, rpy=True, degrees=False)
         target_orientation = transform_quat_by_quat(quat_rel, self._ee_link.get_quat())
-
         #
-        self._apply_pose_action(torch.cat([target_position, target_orientation], dim=-1))
+        q_pos = self._robot_entity.inverse_kinematics(
+            link=self._ee_link,
+            pos=target_position,
+            quat=target_orientation,
+            dofs_idx_local=self._arm_dof_idx,
+        )
+        return q_pos
 
-    def _apply_dls_ctrl(self, delta_pose: torch.Tensor) -> None:
+    def _dls_ik(self, action: torch.Tensor) -> torch.Tensor:
+        """
+        Damped least squares inverse kinematics
+        """
+        delta_pose = action[:, :6]
         #
         lambda_val = 0.01
         jacobian = self._robot_entity.get_jacobian(link=self._ee_link)
@@ -360,10 +403,30 @@ class Manipulator:
         delta_joint_pos = (
             jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
         ).squeeze(-1)
+        return self._robot_entity.get_qpos() + delta_joint_pos
 
-        q_pos = self._robot_entity.get_qpos() + delta_joint_pos
-        q_pos[:, self._fingers_dof] = torch.tensor([0.04], device=self._device)
+    def go_to_goal(self, goal_pose: torch.Tensor, open_gripper: bool = True):
+        q_pos = self._robot_entity.inverse_kinematics(
+            link=self._ee_link,
+            pos=goal_pose[:, :3],
+            quat=goal_pose[:, 3:7],
+            dofs_idx_local=self._arm_dof_idx,
+        )
+        if open_gripper:
+            q_pos[:, self._fingers_dof] = 0.04
+        else:
+            q_pos[:, self._fingers_dof] = +0.00
         self._robot_entity.control_dofs_position(position=q_pos)
+
+    def open_gripper(self):
+        q_pos = self._robot_entity.get_qpos()
+        q_pos[:, self._fingers_dof] = 0.04
+        self._robot_entity.set_qpos(q_pos)
+
+    def close_gripper(self):
+        q_pos = self._robot_entity.get_qpos()
+        q_pos[:, self._fingers_dof] = +0.00
+        self._robot_entity.set_qpos(q_pos)
 
     @property
     def base_pos(self):
@@ -371,6 +434,9 @@ class Manipulator:
 
     @property
     def ee_pose(self) -> torch.Tensor:
+        """
+        The end-effector pose (the hand pose)
+        """
         pos, quat = self._ee_link.get_pos(), self._ee_link.get_quat()
         return torch.cat([pos, quat], dim=-1)
 
@@ -386,3 +452,14 @@ class Manipulator:
             self._right_finger_link.get_quat(),
         )
         return torch.cat([pos, quat], dim=-1)
+
+    @property
+    def center_finger_pose(self) -> torch.Tensor:
+        """
+        The center finger pose is the average of the left and right finger poses.
+        """
+        left_finger_pose = self.left_finger_pose
+        right_finger_pose = self.right_finger_pose
+        center_finger_pos = (left_finger_pose[:, :3] + right_finger_pose[:, :3]) / 2
+        center_finger_quat = left_finger_pose[:, 3:7]
+        return torch.cat([center_finger_pos, center_finger_quat], dim=-1)
