@@ -1311,15 +1311,6 @@ class RigidEntity(Entity):
                     self._solver._func_forward_kinematics_entity(
                         self._idx_in_solver,
                         i_b,
-                        self._solver.links_state,
-                        self._solver.links_info,
-                        self._solver.joints_state,
-                        self._solver.joints_info,
-                        self._solver.dofs_state,
-                        self._solver.dofs_info,
-                        self._solver.entities_info,
-                        self._solver._rigid_global_info,
-                        self._solver._static_rigid_sim_config,
                     )
                     # compute error
                     solved = True
@@ -1405,19 +1396,7 @@ class RigidEntity(Entity):
 
                 if not solved:
                     # re-compute final error if exited not due to solved
-                    self._solver._func_forward_kinematics_entity(
-                        self._idx_in_solver,
-                        i_b,
-                        self._solver.links_state,
-                        self._solver.links_info,
-                        self._solver.joints_state,
-                        self._solver.joints_info,
-                        self._solver.dofs_state,
-                        self._solver.dofs_info,
-                        self._solver.entities_info,
-                        self._solver._rigid_global_info,
-                        self._solver._static_rigid_sim_config,
-                    )
+                    self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
                     solved = True
                     for i_ee in range(n_links):
                         i_l_ee = links_idx[i_ee]
@@ -1514,19 +1493,7 @@ class RigidEntity(Entity):
             # restore original qpos and link state
             for i_q in range(self.n_qs):
                 self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
-            self._solver._func_forward_kinematics_entity(
-                self._idx_in_solver,
-                i_b,
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.joints_state,
-                self._solver.joints_info,
-                self._solver.dofs_state,
-                self._solver.dofs_info,
-                self._solver.entities_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
+            self._solver._func_forward_kinematics_entity(self._idx_in_solver, i_b)
 
     @gs.assert_built
     def forward_kinematics(self, qpos, qs_idx_local=None, links_idx_local=None, envs_idx=None):

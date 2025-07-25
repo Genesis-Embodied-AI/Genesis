@@ -941,8 +941,6 @@ class RigidSolver(Solver):
         self.collider.clear()
         self.collider.detection()
 
-    # @@@@@@@@@ Composer ends here
-
     def detect_collision(self, env_idx=0):
         # TODO: support batching
         self._kernel_detect_collision()
@@ -974,6 +972,68 @@ class RigidSolver(Solver):
         self.constraint_solver.constraint_state.n_constraints.fill(0)
         self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
         self.collider._collider_state.n_contacts.fill(0)
+
+    def _func_forward_dynamics(self):
+        kernel_forward_dynamics(
+            links_state=self.links_state,
+            links_info=self.links_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            joints_info=self.joints_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+
+    def _func_update_acc(self):
+        kernel_update_acc(
+            dofs_state=self.dofs_state,
+            links_info=self.links_info,
+            links_state=self.links_state,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+
+    def _func_forward_kinematics_entity(self, i_e, i_b):
+        func_forward_kinematics_entity(
+            i_e,
+            i_b,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+
+    def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
+        func_integrate_dq_entity(
+            dq,
+            i_e,
+            i_b,
+            respect_joint_limit,
+            links_info=self.links_info,
+            joints_info=self.joints_info,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+
+    def _func_update_geoms(self, i_b):
+        func_update_geoms(
+            i_b,
+            entities_info=self.entities_info,
+            geoms_info=self.geoms_info,
+            geoms_state=self.geoms_state,
+            links_state=self.links_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
     # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
     # right now, a python-scope function is more convenient since .fill(0) only works on python scope for ndarray
@@ -2132,6 +2192,20 @@ class RigidSolver(Solver):
 
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
+
+    @gs.assert_built
+    def set_gravity(self, gravity, envs_idx=None):
+        if not hasattr(self, "_rigid_global_info"):
+            super().set_gravity(gravity, envs_idx)
+            return
+        g = np.asarray(gravity, dtype=gs.np_float)
+        if envs_idx is None:
+            if g.ndim == 1:
+                _B = self._rigid_global_info.gravity.shape[0]
+                g = np.repeat(g[None], _B, axis=0)
+            self._rigid_global_info.gravity.from_numpy(g)
+        else:
+            self._rigid_global_info.gravity[envs_idx] = g
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -5201,31 +5275,48 @@ def func_integrate(
 
 
 @ti.func
-def func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
-    for i_l in range(self.entities_info.link_start[i_e], self.entities_info.link_end[i_e]):
-        I_l = [i_l, i_b] if ti.static(self._options.batch_links_info) else i_l
-        if self.links_info.n_dofs[I_l] == 0:
+def func_integrate_dq_entity(
+    dq,
+    i_e,
+    i_b,
+    respect_joint_limit,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+        if links_info.n_dofs[I_l] == 0:
             continue
 
-        i_j = self.links_info.joint_start[I_l]
-        I_j = [i_j, i_b] if ti.static(self._options.batch_joints_info) else i_j
-        joint_type = self.joints_info.type[I_j]
+        i_j = links_info.joint_start[I_l]
+        I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+        joint_type = joints_info.type[I_j]
 
-        q_start = self.links_info.q_start[I_l]
-        dof_start = self.links_info.dof_start[I_l]
-        dq_start = self.links_info.dof_start[I_l] - self.entities_info.dof_start[i_e]
+        q_start = links_info.q_start[I_l]
+        dof_start = links_info.dof_start[I_l]
+        dq_start = links_info.dof_start[I_l] - entities_info.dof_start[i_e]
 
         if joint_type == gs.JOINT_TYPE.FREE:
-            pos = ti.Vector([self.qpos[q_start, i_b], self.qpos[q_start + 1, i_b], self.qpos[q_start + 2, i_b]])
+            pos = ti.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                ]
+            )
             dpos = ti.Vector([dq[dq_start, i_b], dq[dq_start + 1, i_b], dq[dq_start + 2, i_b]])
             pos = pos + dpos
 
             quat = ti.Vector(
                 [
-                    self.qpos[q_start + 3, i_b],
-                    self.qpos[q_start + 4, i_b],
-                    self.qpos[q_start + 5, i_b],
-                    self.qpos[q_start + 6, i_b],
+                    rigid_global_info.qpos[q_start + 3, i_b],
+                    rigid_global_info.qpos[q_start + 4, i_b],
+                    rigid_global_info.qpos[q_start + 5, i_b],
+                    rigid_global_info.qpos[q_start + 6, i_b],
                 ]
             )
             dquat = gu.ti_rotvec_to_quat(
@@ -5236,24 +5327,30 @@ def func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
             )  # Note that this order is different from integrateing vel. Here dq is w.r.t to world.
 
             for j in ti.static(range(3)):
-                self.qpos[q_start + j, i_b] = pos[j]
+                rigid_global_info.qpos[q_start + j, i_b] = pos[j]
 
             for j in ti.static(range(4)):
-                self.qpos[q_start + j + 3, i_b] = quat[j]
+                rigid_global_info.qpos[q_start + j + 3, i_b] = quat[j]
 
         elif joint_type == gs.JOINT_TYPE.FIXED:
             pass
 
         else:
-            for i_d_ in range(self.links_info.n_dofs[I_l]):
-                self.qpos[q_start + i_d_, i_b] = self.qpos[q_start + i_d_, i_b] + dq[dq_start + i_d_, i_b]
+            for i_d_ in range(links_info.n_dofs[I_l]):
+                rigid_global_info.qpos[q_start + i_d_, i_b] = (
+                    rigid_global_info.qpos[q_start + i_d_, i_b] + dq[dq_start + i_d_, i_b]
+                )
 
                 if respect_joint_limit:
-                    I_d = [dof_start + i_d_, i_b] if ti.static(self._options.batch_dofs_info) else dof_start + i_d_
-                    self.qpos[q_start + i_d_, i_b] = ti.math.clamp(
-                        self.qpos[q_start + i_d_, i_b],
-                        self.dofs_info.limit[I_d][0],
-                        self.dofs_info.limit[I_d][1],
+                    I_d = (
+                        [dof_start + i_d_, i_b]
+                        if ti.static(static_rigid_sim_config.batch_dofs_info)
+                        else dof_start + i_d_
+                    )
+                    rigid_global_info.qpos[q_start + i_d_, i_b] = ti.math.clamp(
+                        rigid_global_info.qpos[q_start + i_d_, i_b],
+                        dofs_info.limit[I_d][0],
+                        dofs_info.limit[I_d][1],
                     )
 
 
