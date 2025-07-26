@@ -2,7 +2,12 @@ import torch
 import math
 import copy
 import genesis as gs
-from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
+from genesis.utils.geom import (
+    quat_to_xyz,
+    transform_by_quat,
+    inv_quat,
+    transform_quat_by_quat,
+)
 
 
 def gs_rand_float(lower, upper, shape, device):
@@ -75,7 +80,7 @@ class HoverEnv:
         if self.env_cfg["visualize_camera"]:
             self.cam = self.scene.add_camera(
                 res=(640, 480),
-                pos=(3.5, 0.0, 2.5),
+                pos=(3.5, 0.0, 0.5),
                 lookat=(0, 0, 0.5),
                 fov=30,
                 GUI=True,
@@ -89,6 +94,9 @@ class HoverEnv:
 
         # build scene
         self.scene.build(n_envs=num_envs)
+
+        # add the following line
+        self.drone.set_dofs_damping(torch.tensor([0.0, 0.0, 0.0, 1e-4, 1e-4, 1e-4]))  # Set d
 
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
@@ -147,7 +155,10 @@ class HoverEnv:
         self.last_rel_pos = self.commands - self.last_base_pos
         self.base_quat[:] = self.drone.get_quat()
         self.base_euler = quat_to_xyz(
-            transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat),
+            transform_quat_by_quat(
+                torch.ones_like(self.base_quat) * self.inv_base_init_quat,
+                self.base_quat,
+            ),
             rpy=True,
             degrees=True,
         )
