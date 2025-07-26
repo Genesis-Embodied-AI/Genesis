@@ -1,4 +1,6 @@
 import os
+import shutil
+import sys
 from pathlib import Path
 import numpy as np
 import pytest
@@ -144,10 +146,11 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_assets(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
@@ -171,10 +174,11 @@ def test_glb_parse_geometry(glb_file):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/chopper.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/chopper.glb"])
 def test_glb_parse_material(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_assets(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
@@ -292,6 +296,27 @@ def test_usd_parse(usd_filename):
         check_gs_textures(
             gs_glb_material.emissive_texture, gs_usd_material.emissive_texture, 0.0, material_name, "emissive"
         )
+
+
+@pytest.mark.skipif(
+    sys.version_info[:2] != (3, 10) or sys.platform not in ("Linux", "Windows"),
+    reason="omniverse-kit used by USD Baking cannot be correctly installed on this platform now.",
+)
+@pytest.mark.parametrize(
+    "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
+)
+def test_usd_bake(usd_file):
+    asset_path = get_hf_assets(
+        pattern=os.path.join(os.path.dirname(usd_file), "*"),
+    )
+    usd_file = os.path.join(asset_path, usd_file)
+    gs_usd_meshes = usda_utils.parse_mesh_usd(
+        usd_file, group_by_material=True, scale=1.0, surface=gs.surfaces.Default(), bake_cache=False
+    )
+    for gs_usd_mesh in gs_usd_meshes:
+        require_bake = gs_usd_mesh.metadata["require_bake"]
+        bake_success = gs_usd_mesh.metadata["bake_success"]
+        assert not require_bake or require_bake and bake_success
 
 
 @pytest.mark.required
