@@ -641,6 +641,7 @@ class RRTConnect(PathPlanner):
             self._rrt_is_active = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
             self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
             self._is_rrt_connect_init = True
+            self._rrt_need_forward_kinematics = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
 
     def _reset_rrt_connect_fields(self):
         self._rrt_start_configuration.fill(0.0)
@@ -687,6 +688,7 @@ class RRTConnect(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
+        self._rrt_need_forward_kinematics.fill(0)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
@@ -745,8 +747,7 @@ class RRTConnect(PathPlanner):
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
 
-                    self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, i_b)
-                    self._solver._func_update_geoms(i_b)
+                    self._rrt_need_forward_kinematics[i_b] = 1
 
     @ti.kernel
     def _kernel_rrt_connect_step2(
@@ -861,6 +862,11 @@ class RRTConnect(PathPlanner):
                     q_limit_upper=self._entity.q_limit[1],
                     envs_idx=envs_idx,
                 )
+                # Run forward kinematics for the environments that need to run forward kinematics
+                kinematic_envs_idx = envs_idx[self._rrt_need_forward_kinematics.to_torch().bool()]
+                self._solver._func_forward_kinematics_entity(self._entity._idx_in_solver, kinematic_envs_idx)
+                self._solver._func_update_geoms(kinematic_envs_idx)
+
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
                 self._solver._kernel_detect_collision()
