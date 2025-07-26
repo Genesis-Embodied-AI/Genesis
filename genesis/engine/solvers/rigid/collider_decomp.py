@@ -1014,7 +1014,7 @@ def func_contact_mpr_terrain(
                                     i_c = collider_state.n_contacts[i_b]
                                     for j in range(n_con):
                                         if (
-                                            contact_pos - collider_state.contact_data[i_c - j - 1, i_b].pos
+                                            contact_pos - collider_state.contact_data.pos[i_c - j - 1, i_b]
                                         ).norm() < tolerance:
                                             valid = False
                                             break

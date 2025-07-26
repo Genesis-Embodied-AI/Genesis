@@ -12,8 +12,7 @@ class SDF:
         self.solver = rigid_solver
 
         n_geoms, n_cells = self.solver.n_geoms, self.solver.n_cells
-        assert n_geoms > 0 and n_cells > 0, "SDF requires at least one geom and one cell"
-        self._sdf_info = array_class.get_sdf_info(self.solver.n_geoms, self.solver.n_cells)
+        self._sdf_info = array_class.get_sdf_info(n_geoms, n_cells)
 
         if self.solver.n_geoms > 0:
             geoms = self.solver.geoms

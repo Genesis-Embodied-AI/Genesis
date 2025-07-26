@@ -2270,6 +2270,38 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
+    def update_drone_propeller_vgeoms(self, n_propellers, propellers_vgeom_idxs, propellers_revs, propellers_spin):
+        kernel_update_drone_propeller_vgeoms(
+            n_propellers,
+            propellers_vgeom_idxs,
+            propellers_revs,
+            propellers_spin,
+            self.vgeoms_state,
+            self._static_rigid_sim_config,
+        )
+
+    def set_drone_rpm(self, n_propellers, propellers_link_idxs, propellers_rpm, propellers_spin, KF, KM, invert):
+        kernel_set_drone_rpm(
+            n_propellers,
+            propellers_link_idxs,
+            propellers_rpm,
+            propellers_spin,
+            KF,
+            KM,
+            invert,
+            self.links_state,
+        )
+
+    def update_verts_for_geom(self, i_g):
+        kernel_update_verts_for_geom(
+            i_g,
+            self.geoms_state,
+            self.geoms_info,
+            self.verts_info,
+            self.free_verts_state,
+            self.fixed_verts_state,
+        )
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -4739,23 +4771,32 @@ def func_update_geoms(
             geoms_state.verts_updated[i_g, i_b] = 0
 
 
-@ti.func
-def func_update_verts_for_geom(self, i_g, i_b):
-    if not self.geoms_state.verts_updated[i_g, i_b]:
-        if self.geoms_info.is_free[i_g]:
-            for i_v in range(self.geoms_info.vert_start[i_g], self.geoms_info.vert_end[i_g]):
-                verts_state_idx = self.verts_info.verts_state_idx[i_v]
-                self.free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                    self.verts_info.init_pos[i_v], self.geoms_state.pos[i_g, i_b], self.geoms_state.quat[i_g, i_b]
-                )
-            self.geoms_state.verts_updated[i_g, i_b] = 1
-        elif i_b == 0:
-            for i_v in range(self.geoms_info.vert_start[i_g], self.geoms_info.vert_end[i_g]):
-                verts_state_idx = self.verts_info.verts_state_idx[i_v]
-                self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                    self.verts_info.init_pos[i_v], self.geoms_state.pos[i_g, i_b], self.geoms_state.quat[i_g, i_b]
-                )
-            self.geoms_state.verts_updated[i_g, 0] = 1
+@ti.kernel
+def kernel_update_verts_for_geom(
+    i_g: ti.i32,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.FreeVertsState,
+    fixed_verts_state: array_class.FixedVertsState,
+):
+    _B = geoms_state.verts_updated.shape[1]
+    for i_b in range(_B):
+        if not geoms_state.verts_updated[i_g, i_b]:
+            if geoms_info.is_free[i_g]:
+                for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+                    verts_state_idx = verts_info.verts_state_idx[i_v]
+                    free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                        verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
+                    )
+                geoms_state.verts_updated[i_g, i_b] = 1
+            elif i_b == 0:
+                for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+                    verts_state_idx = verts_info.verts_state_idx[i_v]
+                    fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+                        verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
+                    )
+                geoms_state.verts_updated[i_g, 0] = 1
 
 
 @ti.func
@@ -6082,23 +6123,23 @@ def kernel_set_global_sol_params(
     equalities_info: array_class.EqualitiesInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    ti.loop_config(serialize=static_rigid_sim_config._para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     n_geoms = geoms_info.sol_params.shape[0]
     n_joints = joints_info.sol_params.shape[0]
     n_equalities = equalities_info.sol_params.shape[0]
-    _B = joints_info.sol_params.shape[1]
+    _B = equalities_info.sol_params.shape[1]
 
     for i_g in range(n_geoms):
         for i in ti.static(range(7)):
             geoms_info.sol_params[i_g][i] = sol_params[i]
 
-    ti.loop_config(serialize=static_rigid_sim_config._para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_j, i_b in ti.ndrange(n_joints, _B):
         I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
         for i in ti.static(range(7)):
             joints_info.sol_params[I_j][i] = sol_params[i]
 
-    ti.loop_config(serialize=static_rigid_sim_config._para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_eq, i_b in ti.ndrange(n_equalities, _B):
         for i in ti.static(range(7)):
             equalities_info.sol_params[i_eq, i_b][i] = sol_params[i]
@@ -6546,7 +6587,7 @@ def kernel_set_drone_rpm(
 
 
 @ti.kernel
-def update_drone_propeller_vgeoms(
+def kernel_update_drone_propeller_vgeoms(
     n_propellers: ti.i32,
     propellers_vgeom_idxs: ti.types.ndarray(),
     propellers_revs: ti.types.ndarray(),
