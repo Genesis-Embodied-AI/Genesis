@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import pickle
 from importlib import metadata
 
@@ -24,17 +25,15 @@ from grasp_env import GraspEnv
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
+    parser.add_argument("--stage", type=str, default="rl")
     parser.add_argument("--record", action="store_true", default=False)
     args = parser.parse_args()
 
     gs.init()
 
-    log_dir = f"logs/{args.exp_name}"
-    last_folder = sorted(os.listdir(log_dir))[-1]
-    env_cfg, reward_cfg, robot_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/{last_folder}/cfgs.pkl", "rb"))
+    log_dir = f"logs/{args.exp_name + '_' + args.stage}"
+    env_cfg, reward_cfg, robot_cfg, train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
 
-    # visualize the target
-    env_cfg["visualize_target"] = True
     # for video recording
     env_cfg["visualize_camera"] = args.record
     # set the max FPS for visualization
@@ -53,10 +52,12 @@ def main():
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
-    last_ckpt = sorted(os.listdir(os.path.join(log_dir, last_folder)))[-1]
-    resume_path = os.path.join(log_dir, last_folder, last_ckpt)
-    print(f"Loading from {resume_path}")
-    runner.load(resume_path)
+
+    #
+    checkpoint_files = [f for f in os.listdir(log_dir) if re.match(r"model_\d+\.pt", f)]
+    last_ckpt = sorted(checkpoint_files)[-1]
+    runner.load(os.path.join(log_dir, last_ckpt))
+    print(f"Loaded checkpoint from {last_ckpt}")
     policy = runner.get_inference_policy(device=gs.device)
 
     obs, _ = env.reset()

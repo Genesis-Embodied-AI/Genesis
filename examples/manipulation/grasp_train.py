@@ -1,10 +1,8 @@
 import argparse
 import os
+import re
 import pickle
-import shutil
 from importlib import metadata
-
-import datetime
 
 try:
     try:
@@ -15,16 +13,18 @@ try:
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
     raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
-from rsl_rl.runners import OnPolicyRunner
 
+from rsl_rl.runners import OnPolicyRunner
+from behavior_cloning import BehaviorCloning
 
 import genesis as gs
 
 from grasp_env import GraspEnv
 
 
-def get_train_cfg(exp_name, max_iterations):
-    train_cfg_dict = {
+def get_train_cfg(exp_name, max_iterations, stage="rl"):
+    # stage 1: privileged reinforcement learning
+    rl_cfg_dict = {
         "algorithm": {
             "class_name": "PPO",
             "clip_param": 0.2,
@@ -66,10 +66,56 @@ def get_train_cfg(exp_name, max_iterations):
         "seed": 1,
     }
 
+    # stage 2: vision-based behavior cloning
+    bc_cfg_dict = {
+        # Basic training parameters
+        "learning_rate": 0.001,
+        "batch_size": 32,
+        "num_epochs": 5,
+        # Network architecture
+        "policy": {
+            "vision_encoder": {
+                "conv_layers": [
+                    {
+                        "in_channels": 1,  # 1 channel for depth image
+                        "out_channels": 32,
+                        "kernel_size": 3,
+                        "stride": 1,
+                        "padding": 1,
+                    },
+                    {
+                        "in_channels": 32,
+                        "out_channels": 64,
+                        "kernel_size": 3,
+                        "stride": 2,
+                        "padding": 1,
+                    },
+                    {
+                        "in_channels": 64,
+                        "out_channels": 128,  # vision feature dim
+                        "kernel_size": 3,
+                        "stride": 2,
+                        "padding": 1,
+                    },
+                ],
+                "pooling": "adaptive_avg",
+            },
+            "mlp_head": {
+                "hidden_dims": [256, 256, 128],
+            },
+        },
+        # Training settings
+        "buffer_size": 5000,
+        "save_freq": 100,
+        "eval_freq": 50,
+    }
+
+    #
+    train_cfg_dict = rl_cfg_dict if stage == "rl" else bc_cfg_dict
     return train_cfg_dict
 
 
-def get_cfgs():
+def get_task_cfgs():
     env_cfg = {
         "num_obs": 14,
         "num_actions": 6,
@@ -80,8 +126,9 @@ def get_cfgs():
         "box_size": [0.04, 0.04, 0.06],
         "box_collision": False,
         "box_fixed": True,
-        #
-        "visualize_camera": False,
+        # for depth image
+        "depth_image_shape": (128, 128),
+        "use_rasterizer": True,
     }
     reward_scales = {
         "keypoints": 1.0,
@@ -98,32 +145,59 @@ def get_cfgs():
     return env_cfg, reward_scales, robot_cfg
 
 
+def load_teacher_policy(env, train_cfg, exp_name):
+    # load teacher policy
+    log_dir = f"logs/{exp_name + '_' + 'rl'}"
+    assert os.path.exists(log_dir), f"Log directory {log_dir} does not exist"
+    checkpoint_files = [f for f in os.listdir(log_dir) if re.match(r"model_\d+\.pt", f)]
+    last_ckpt = sorted(checkpoint_files)[-1]
+    assert last_ckpt is not None, "No checkpoint found in {log_dir}"
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+    runner.load(os.path.join(log_dir, last_ckpt))
+    teacher_policy = runner.get_inference_policy(device=gs.device)
+    return teacher_policy
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-B", "--num_envs", type=int, default=200)
     parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("--stage", type=str, default="rl")
     args = parser.parse_args()
 
+    # === init ===
     gs.init(logging_level="warning", precision="32")
 
-    log_dir = f"logs/{args.exp_name}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    env_cfg, reward_scales, robot_cfg = get_cfgs()
-    train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
-
-    if os.path.exists(log_dir):
-        shutil.rmtree(log_dir)
-    os.makedirs(log_dir, exist_ok=True)
+    # === task cfgs and trainning algos cfgs ===
+    env_cfg, reward_scales, robot_cfg = get_task_cfgs()
 
     if args.vis:
         env_cfg["visualize_target"] = True
 
-    pickle.dump(
-        [env_cfg, reward_scales, robot_cfg, train_cfg],
-        open(f"{log_dir}/cfgs.pkl", "wb"),
-    )
+    train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
+    if args.stage == "rl":
+        # fix box and disable collision to make RL training easier
+        env_cfg["box_fixed"] = True
+        env_cfg["box_collision"] = False
+    elif args.stage == "bc":
+        # enable box collision and disable box fixed for BC training
+        env_cfg["box_fixed"] = False
+        env_cfg["box_collision"] = True
+        env_cfg["num_envs"] = 100  # normally you don't need thousands of envs for BC
+    else:
+        raise ValueError(f"Invalid stage: {args.stage}")
+
+    # === log dir ===
+    log_dir = f"logs/{args.exp_name + '_' + args.stage}"
+    os.makedirs(log_dir, exist_ok=True)
+
+    with open(f"{log_dir}/cfgs.pkl", "wb") as f:
+        pickle.dump((env_cfg, reward_scales, robot_cfg, train_cfg), f)
+
+    # === env ===
     env = GraspEnv(
         num_envs=args.num_envs,
         env_cfg=env_cfg,
@@ -132,8 +206,15 @@ def main():
         show_viewer=args.vis,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+    # === runner ===
+    if args.stage == "bc":
+        teacher_policy = load_teacher_policy(env, train_cfg, args.exp_name)
+        train_cfg["teacher_policy"] = teacher_policy
+        runner = BehaviorCloning(env, train_cfg, teacher_policy, device=gs.device)
+    else:
+        runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
+    # === train ===
     runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
 
 
