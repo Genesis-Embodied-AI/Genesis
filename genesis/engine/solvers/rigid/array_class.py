@@ -975,7 +975,7 @@ class StructSupportFieldInfo:
 
 def get_support_field_info(n_geoms, n_support_cells):
     kwargs = {
-        "support_cell_start": V(dtype=gs.ti_int, shape=n_geoms),
+        "support_cell_start": V(dtype=gs.ti_int, shape=max(1, n_geoms)),
         "support_v": V_VEC(3, dtype=gs.ti_float, shape=max(1, n_support_cells)),
         "support_vid": V(dtype=gs.ti_int, shape=max(1, n_support_cells)),
     }
@@ -1007,11 +1007,11 @@ class StructSDFGeomInfo:
 
 def get_sdf_geom_info(n_geoms):
     kwargs = {
-        "T_mesh_to_sdf": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=(n_geoms,)),
-        "sdf_res": V_VEC(3, dtype=gs.ti_int, shape=(n_geoms,)),
-        "sdf_max": V(dtype=gs.ti_float, shape=(n_geoms,)),
-        "sdf_cell_size": V(dtype=gs.ti_float, shape=(n_geoms,)),
-        "sdf_cell_start": V(dtype=gs.ti_int, shape=(n_geoms,)),
+        "T_mesh_to_sdf": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=(max(1, n_geoms),)),
+        "sdf_res": V_VEC(3, dtype=gs.ti_int, shape=(max(1, n_geoms),)),
+        "sdf_max": V(dtype=gs.ti_float, shape=(max(1, n_geoms),)),
+        "sdf_cell_size": V(dtype=gs.ti_float, shape=(max(1, n_geoms),)),
+        "sdf_cell_start": V(dtype=gs.ti_int, shape=(max(1, n_geoms),)),
     }
 
     if use_ndarray:
@@ -1038,11 +1038,11 @@ class StructSDFInfo:
 
 def get_sdf_info(n_geoms, n_cells):
     kwargs = {
-        "geoms_info": get_sdf_geom_info(n_geoms),
-        "geoms_sdf_start": V(dtype=gs.ti_int, shape=(n_geoms,)),
-        "geoms_sdf_val": V(dtype=gs.ti_float, shape=(n_cells,)),
-        "geoms_sdf_grad": V_VEC(3, dtype=gs.ti_float, shape=(n_cells,)),
-        "geoms_sdf_closest_vert": V(dtype=gs.ti_int, shape=(n_cells,)),
+        "geoms_info": get_sdf_geom_info(max(1, n_geoms)),
+        "geoms_sdf_start": V(dtype=gs.ti_int, shape=(max(1, n_geoms),)),
+        "geoms_sdf_val": V(dtype=gs.ti_float, shape=(max(1, n_cells),)),
+        "geoms_sdf_grad": V_VEC(3, dtype=gs.ti_float, shape=(max(1, n_cells),)),
+        "geoms_sdf_closest_vert": V(dtype=gs.ti_int, shape=(max(1, n_cells),)),
     }
 
     if use_ndarray:

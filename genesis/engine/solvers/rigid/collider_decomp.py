@@ -1014,7 +1014,7 @@ def func_contact_mpr_terrain(
                                     i_c = collider_state.n_contacts[i_b]
                                     for j in range(n_con):
                                         if (
-                                            contact_pos - collider_state.contact_data[i_c - j - 1, i_b].pos
+                                            contact_pos - collider_state.contact_data.pos[i_c - j - 1, i_b]
                                         ).norm() < tolerance:
                                             valid = False
                                             break
@@ -1677,7 +1677,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                         for i_c in range(n_con):
                                             if not repeated:
                                                 idx_prev = collider_state.n_contacts[i_b] - 1 - i_c
-                                                prev_contact = collider_state.contact_data[idx_prev, i_b].pos
+                                                prev_contact = collider_state.contact_data.pos[idx_prev, i_b]
                                                 if (contact_pos - prev_contact).norm() < tolerance:
                                                     repeated = True
 
@@ -1710,7 +1710,8 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             geoms_info,
                             verts_info,
                             edges_info,
-                            sdf,
+                            collider_static_config,
+                            sdf_info,
                         )
                         if is_col:
                             func_add_contact(
