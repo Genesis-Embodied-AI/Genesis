@@ -17,7 +17,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, tensor_to_array, ti_field_to_torch
 from genesis.utils.path_planing import RRT, RRTConnect
 
 from ..base_entity import Entity
@@ -169,8 +169,8 @@ class RigidEntity(Entity):
         if morph.collision:
             g_infos.append(
                 dict(
-                    contype=1,
-                    conaffinity=1,
+                    contype=morph.contype,
+                    conaffinity=morph.conaffinity,
                     mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
@@ -240,8 +240,8 @@ class RigidEntity(Entity):
             for mesh in meshes:
                 g_infos.append(
                     dict(
-                        contype=1,
-                        conaffinity=1,
+                        contype=morph.contype,
+                        conaffinity=morph.conaffinity,
                         mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
                         sol_params=gu.default_solver_params(),
