@@ -582,6 +582,7 @@ class StructDofsState:
         self.act_length = V(dtype=gs.ti_float, shape=shape)
         self.pos = V(dtype=gs.ti_float, shape=shape)
         self.vel = V(dtype=gs.ti_float, shape=shape)
+        self.vel_prev = V(dtype=gs.ti_float, shape=shape)
         self.acc = V(dtype=gs.ti_float, shape=shape)
         self.acc_smooth = V(dtype=gs.ti_float, shape=shape)
         self.qf_smooth = V(dtype=gs.ti_float, shape=shape)
