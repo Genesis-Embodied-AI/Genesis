@@ -127,7 +127,7 @@ class BatchRenderer(RBC):
     def update_scene(self):
         self._visualizer._context.update()
 
-    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False, aliasing=False):
+    def render(self, rgb=True, depth=False, normal=False, segmentation=False, force_render=False, aliasing=False):
         """
         Render all cameras in the batch.
 
