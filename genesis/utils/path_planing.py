@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
 
 
 class PathPlanner(ABC):
@@ -394,7 +395,7 @@ class RRT(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    self._solver._func_forward_kinematics_entity(
+                    rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         self._solver.links_state,
@@ -407,7 +408,7 @@ class RRT(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    self._solver._func_update_geoms(
+                    rigid_solver_decomp.func_update_geoms(
                         i_b,
                         self._solver.entities_info,
                         self._solver.geoms_info,
@@ -633,7 +634,6 @@ class RRTConnect(PathPlanner):
             self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=self._solver._batch_shape())
             self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
             self._is_rrt_connect_init = True
-            self._rrt_need_forward_kinematics = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
 
     def _reset_rrt_connect_fields(self):
         self._rrt_start_configuration.fill(0.0)
@@ -680,7 +680,6 @@ class RRTConnect(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        self._rrt_need_forward_kinematics.fill(0)
         for i_b in envs_idx:
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
@@ -738,8 +737,28 @@ class RRTConnect(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-
-                    self._rrt_need_forward_kinematics[i_b] = 1
+                    rigid_solver_decomp.func_forward_kinematics_entity(
+                        self._entity._idx_in_solver,
+                        i_b,
+                        self._solver.links_state,
+                        self._solver.links_info,
+                        self._solver.joints_state,
+                        self._solver.joints_info,
+                        self._solver.dofs_state,
+                        self._solver.dofs_info,
+                        self._solver.entities_info,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
+                    rigid_solver_decomp.func_update_geoms(
+                        i_b,
+                        self._solver.entities_info,
+                        self._solver.geoms_info,
+                        self._solver.geoms_state,
+                        self._solver.links_state,
+                        self._solver._rigid_global_info,
+                        self._solver._static_rigid_sim_config,
+                    )
 
     @ti.kernel
     def _kernel_rrt_connect_step2(

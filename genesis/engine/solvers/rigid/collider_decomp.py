@@ -264,7 +264,6 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
         )
-        print("reset")
         self._contacts_info_cache = {}
 
     def clear(self, envs_idx=None):

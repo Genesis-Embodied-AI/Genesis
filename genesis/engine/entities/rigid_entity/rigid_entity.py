@@ -18,7 +18,6 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, tensor_to_array, ti_field_to_torch
-from genesis.utils.path_planing import RRT, RRTConnect
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -1453,6 +1452,9 @@ class RigidEntity(Entity):
         if with_entity is not None:
             assert ee_link_name is not None, "reference link of the robot must be specified."
             assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
+
+        # import here to avoid circular import
+        from genesis.utils.path_planing import RRT, RRTConnect
 
         match planner:
             case "RRT":

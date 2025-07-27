@@ -3911,7 +3911,9 @@ def func_implicit_damping(
         not static_rigid_sim_config.enable_mujoco_compatibility
         or static_rigid_sim_config.integrator == gs.integrator.Euler
     ):
-        rigid_global_info._mass_mat_mask.fill(0)
+        for i_e, i_b in ti.ndrange(n_entities, _B):
+            rigid_global_info._mass_mat_mask[i_e, i_b] = 0
+
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
             entity_dof_start = entities_info.dof_start[i_e]
@@ -3948,7 +3950,8 @@ def func_implicit_damping(
         not static_rigid_sim_config.enable_mujoco_compatibility
         or static_rigid_sim_config.integrator == gs.integrator.Euler
     ):
-        rigid_global_info._mass_mat_mask.fill(1)
+        for i_e, i_b in ti.ndrange(n_entities, _B):
+            rigid_global_info._mass_mat_mask[i_e, i_b] = 1
 
 
 @ti.kernel
