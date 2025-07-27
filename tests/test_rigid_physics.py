@@ -2066,6 +2066,10 @@ def test_urdf_parsing(show_viewer, tol):
         entities[(fixed, merge_fixed_links)] = entity
     scene.build()
 
+    # four microwaves have four different root_idx
+    root_idx_all = [link.root_idx for link in scene.rigid_solver.links]
+    assert len(set(root_idx_all)) == 4
+
     def _check_entity_positions(relative, tol):
         nonlocal entities
         AABB_all = []

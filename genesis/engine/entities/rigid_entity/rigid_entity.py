@@ -444,6 +444,11 @@ class RigidEntity(Entity):
                 if "root_idx" in l_info:
                     l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
 
+        # URDF is a robot description file so all links have same root_idx
+        if isinstance(morph, gs.morphs.URDF):
+            for l_info in l_infos:
+                l_info["root_idx"] = 0
+
         # Genesis requires links associated with free joints to be attached to the world directly
         for l_info, link_j_infos in zip(l_infos, links_j_infos):
             if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
