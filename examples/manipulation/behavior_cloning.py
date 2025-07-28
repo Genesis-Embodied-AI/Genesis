@@ -2,6 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pathlib import Path
 
 
 class BehaviorCloning:
@@ -14,8 +15,7 @@ class BehaviorCloning:
         self._teacher = teacher
 
         # Initialize policy
-        depth_shape = env.depth_image_shape
-        state_dim = env.num_obs
+        rgb_shape = env.rgb_image_shape
         action_dim = env.num_actions
 
         #
@@ -26,43 +26,42 @@ class BehaviorCloning:
 
         # Initialize buffer
         self._buffer = ExperienceBuffer(
+            num_envs=env.num_envs,
             max_size=self._cfg["buffer_size"],
-            img_shape=depth_shape,
-            state_dim=state_dim,
+            img_shape=rgb_shape,
+            state_dim=self._cfg["policy"]["mlp_head"]["state_obs_dim"],
             action_dim=action_dim,
             device=self._device,
         )
 
         # Training state
-        self.current_iter = 0
+        self._current_iter = 0
 
-    def train(self, num_iters: int, log_dir: str) -> None:
+    def learn(self, num_learning_iterations: int, log_dir: str) -> None:
         """Main training loop."""
-        # Get initial observations
-        obs, _ = self._env.get_observations()
-
-        for it in range(self.current_iter, self.current_iter + num_iters):
+        for it in range(self._current_iter, self._current_iter + num_learning_iterations):
             # Collect experience
-            self._collect_experience(obs)
+            self._collect_experience(it)
 
             # Training steps
             total_loss = 0.0
             num_batches = 0
 
-            for _ in range(self._cfg["num_epochs"]):
-                for batch in self._buffer.get_batches(self._cfg.get("batch_size", 32)):
-                    # Forward pass
-                    student_actions = self._policy(batch["depth_obs"], batch["state_obs"])
+            generator = self._buffer.get_batches(self._cfg.get("num_mini_batches", 32), self._cfg["num_epochs"])
+            for batch in generator:
+                # Forward pass
+                student_actions = self._policy(batch["depth_obs"], batch["state_obs"])
 
-                    # Compute loss
-                    loss = F.mse_loss(student_actions, batch["actions"])
+                # Compute loss
+                loss = F.mse_loss(student_actions, batch["actions"])
 
-                    # Backward pass
-                    self._optimizer.zero_grad()
-                    loss.backward()
-                    self._optimizer.step()
-                    total_loss += loss
-                    num_batches += 1
+                # Backward pass
+                self._optimizer.zero_grad()
+                loss.backward()
+                self._optimizer.step()
+                torch.nn.utils.clip_grad_norm_(self._policy.parameters(), self._cfg["max_grad_norm"])
+                total_loss += loss
+                num_batches += 1
 
             # Compute average loss
             avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
@@ -70,6 +69,7 @@ class BehaviorCloning:
             # Logging
             if it % 10 == 0:
                 print(f"Iteration {it}, Average Loss: {avg_loss:.6f}")
+                print(f"Buffer size: {self._buffer.size}")
 
             # Save checkpoints
             if it % self._cfg["save_freq"] == 0:
@@ -77,32 +77,46 @@ class BehaviorCloning:
 
             self.current_iter = it
 
-    def _collect_experience(self, obs):
+    def _collect_experience(self, it: int) -> None:
         """Collect experience from environment."""
+        log_dir = "./depth_images"
+        folder = Path(log_dir) / "experience" / f"iter_{it}"
+        folder.mkdir(parents=True, exist_ok=True)
+
+        # Get state observation
+        obs, _ = self._env.get_observations()
         with torch.inference_mode():
-            for step in range(self._cfg.get("batch_size", 32)):
-                # Get depth observation
-                depth_obs = self._env.get_depth_image(normalize=True)
+            for i in range(self._cfg.get("num_steps", 32)):
+                # save depth image
+                rgb_obs = self._env.get_rgb_image(normalize=True)
 
                 # Get teacher action
-                teacher_action = self._teacher.act(obs).detach()
+                teacher_action = self._teacher(obs).detach()
 
-                # Get state observation
-                state_obs = self._env.get_privileged_observations()
+                # Get end-effector position
+                ee_pose = self._env.robot.ee_pose
 
                 # Store in buffer
-                self._buffer.add(depth_obs, state_obs, teacher_action)
+                self._buffer.add(rgb_obs, ee_pose, teacher_action)
 
                 # Step environment with student action
-                student_action = self._policy(depth_obs, state_obs).detach()
-                obs, reward, done, _ = self._env.step(student_action)
+                student_action = self._policy(rgb_obs, ee_pose).detach()
+
+                # Simple Dagger: use student action if its difference with teacher action is less than 0.1
+                action_diff = torch.norm(student_action - teacher_action, dim=-1)
+                condition = (action_diff < 0.1).unsqueeze(-1).expand_as(student_action)
+                action = torch.where(condition, student_action, teacher_action)
+
+                next_obs, reward, done, _ = self._env.step(action)
+
+                obs = next_obs
 
     def save(self, path: str) -> None:
         """Save model checkpoint."""
         checkpoint = {
             "model_state_dict": self._policy.state_dict(),
             "optimizer_state_dict": self._optimizer.state_dict(),
-            "current_iter": self.current_iter,
+            "current_iter": self._current_iter,
             "config": self._cfg,
         }
         torch.save(checkpoint, path)
@@ -122,48 +136,61 @@ class ExperienceBuffer:
 
     def __init__(
         self,
+        num_envs: int,
         max_size: int,
         img_shape: tuple[int, int, int],
         state_dim: int,
         action_dim: int,
         device: str = "cpu",
     ):
-        self.max_size = max_size
-        self.device = device
-        self.size = 0
-        self.ptr = 0
+        self._img_shape = img_shape
+        self._state_dim = state_dim
+        self._action_dim = action_dim
+        self._num_envs = num_envs
+        self._max_size = max_size
+        self._device = device
+        self._size = 0
+        self._ptr = 0  # pointer to the next free slot in the buffer
 
         # Initialize buffers
-        self.depth_obs = torch.zeros(max_size, *img_shape, device=device)
-        self.state_obs = torch.zeros(max_size, state_dim, device=device)
-        self.actions = torch.zeros(max_size, action_dim, device=device)
+        self._depth_obs = torch.zeros(max_size, num_envs, *img_shape, device=device)
+        self._state_obs = torch.zeros(max_size, num_envs, state_dim, device=device)
+        self._actions = torch.zeros(max_size, num_envs, action_dim, device=device)
 
-    def add(self, depth_obs: torch.Tensor, state_obs: torch.Tensor, actions: torch.Tensor):
+    def add(self, depth_obs: torch.Tensor, state_obs: torch.Tensor, actions: torch.Tensor) -> None:
         """Add experience to buffer."""
-        batch_size = depth_obs.shape[0]
-        #
-        self.depth_obs[self.ptr : self.ptr + batch_size] = depth_obs
-        self.state_obs[self.ptr : self.ptr + batch_size] = state_obs
-        self.actions[self.ptr : self.ptr + batch_size] = actions
+        ptr = self._ptr % self._max_size
+        self._depth_obs[ptr].copy_(depth_obs)
+        self._state_obs[ptr].copy_(state_obs)
+        self._actions[ptr].copy_(actions)
+        self._ptr = self._ptr + 1
+        self._size = min(self._size + 1, self._max_size)
 
-        self.ptr = (self.ptr + batch_size) % self.max_size
-        self.size = min(self.size + batch_size, self.max_size)
-
-    def get_batches(self, batch_size: int):
+    def get_batches(self, num_mini_batches: int, num_epochs: int):
         """Generate batches for training."""
-        if self.size < 2:
-            return
+        buffer_size = self._size * self._num_envs
+        indices = torch.randperm(buffer_size, device=self._device)
+        # calculate the size of each mini-batch
+        batch_size = buffer_size // num_mini_batches
 
-        indices = torch.randperm(self.size, device=self.device)
+        for _ in range(num_epochs):
+            for start in range(0, len(indices), batch_size):
+                end = start + batch_size
+                mb_indices = indices[start:end]
+                # Yield a mini-batch of data
+                batch = {
+                    "depth_obs": self._depth_obs.view(-1, *self._img_shape)[mb_indices],
+                    "state_obs": self._state_obs.view(-1, self._state_dim)[mb_indices],
+                    "actions": self._actions.view(-1, self._action_dim)[mb_indices],
+                }
+                yield batch
 
-        for i in range(0, self.size, batch_size):
-            batch_indices = indices[i : i + batch_size]
+    def is_full(self) -> bool:
+        return self._size >= self._max_size
 
-            yield {
-                "depth_obs": self.depth_obs[batch_indices],
-                "state_obs": self.state_obs[batch_indices],
-                "actions": self.actions[batch_indices],
-            }
+    @property
+    def size(self) -> int:
+        return self._size
 
 
 class Policy(nn.Module):
@@ -177,7 +204,14 @@ class Policy(nn.Module):
 
         # MLP
         mlp_cfg = config["mlp_head"]
-        mlp_cfg["input_dim"] = config["vision_encoder"]["conv_layers"][-1]["out_channels"]
+        vision_encoder_conv_out_channels = config["vision_encoder"]["conv_layers"][-1]["out_channels"]
+        vision_encoder_output_dim = vision_encoder_conv_out_channels * 4 * 4
+
+        self.state_obs_dim = config["mlp_head"]["state_obs_dim"]
+        if self.state_obs_dim is not None:
+            mlp_cfg["input_dim"] = vision_encoder_output_dim + self.state_obs_dim
+        else:
+            mlp_cfg["input_dim"] = vision_encoder_output_dim
         mlp_cfg["output_dim"] = action_dim
         self.mlp = self._build_mlp(mlp_cfg)
 
@@ -196,6 +230,8 @@ class Policy(nn.Module):
                     nn.ReLU(),
                 ]
             )
+        # add adaptive avg pooling
+        layers.append(nn.AdaptiveAvgPool2d((4, 4)))
         return nn.Sequential(*layers)
 
     def _build_mlp(self, config: dict):
@@ -207,13 +243,16 @@ class Policy(nn.Module):
         layers.append(nn.Linear(mlp_input_dim, config["output_dim"]))
         return nn.Sequential(*layers)
 
-    def forward(self, depth_obs: torch.Tensor, state_obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, depth_obs: torch.Tensor, state_obs: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass through the policy."""
         # Encode vision
-        vision_features = self.vision_encoder(depth_obs)
+        vision_features = self.vision_encoder(depth_obs).flatten(start_dim=1)
 
-        # Concatenate vision and state features
-        combined_features = torch.cat([vision_features, state_obs], dim=-1)
+        if state_obs is not None and self.state_obs_dim is not None:
+            # Concatenate vision and state features
+            combined_features = torch.cat([vision_features, state_obs], dim=-1)
+        else:
+            combined_features = vision_features
 
         # Predict actions
         actions = self.mlp(combined_features)

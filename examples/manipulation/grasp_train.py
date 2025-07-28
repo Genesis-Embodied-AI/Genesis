@@ -22,7 +22,7 @@ import genesis as gs
 from grasp_env import GraspEnv
 
 
-def get_train_cfg(exp_name, max_iterations, stage="rl"):
+def get_train_cfg(exp_name, max_iterations):
     # stage 1: privileged reinforcement learning
     rl_cfg_dict = {
         "algorithm": {
@@ -69,15 +69,16 @@ def get_train_cfg(exp_name, max_iterations, stage="rl"):
     # stage 2: vision-based behavior cloning
     bc_cfg_dict = {
         # Basic training parameters
-        "learning_rate": 0.001,
-        "batch_size": 32,
-        "num_epochs": 5,
+        "learning_rate": 0.0005,
+        "num_epochs": 10,
+        "num_mini_batches": 4,
+        "max_grad_norm": 1.0,
         # Network architecture
         "policy": {
             "vision_encoder": {
                 "conv_layers": [
                     {
-                        "in_channels": 1,  # 1 channel for depth image
+                        "in_channels": 3,  # 1 channel for rgb image
                         "out_channels": 32,
                         "kernel_size": 3,
                         "stride": 1,
@@ -101,18 +102,17 @@ def get_train_cfg(exp_name, max_iterations, stage="rl"):
                 "pooling": "adaptive_avg",
             },
             "mlp_head": {
+                "state_obs_dim": 7,  # end-effector pose
                 "hidden_dims": [256, 256, 128],
             },
         },
         # Training settings
-        "buffer_size": 5000,
+        "buffer_size": 100,
         "save_freq": 100,
         "eval_freq": 50,
     }
 
-    #
-    train_cfg_dict = rl_cfg_dict if stage == "rl" else bc_cfg_dict
-    return train_cfg_dict
+    return rl_cfg_dict, bc_cfg_dict
 
 
 def get_task_cfgs():
@@ -127,7 +127,7 @@ def get_task_cfgs():
         "box_collision": False,
         "box_fixed": True,
         # for depth image
-        "depth_image_shape": (128, 128),
+        "depth_image_resolution": (64, 64),
         "use_rasterizer": True,
     }
     reward_scales = {
@@ -145,15 +145,16 @@ def get_task_cfgs():
     return env_cfg, reward_scales, robot_cfg
 
 
-def load_teacher_policy(env, train_cfg, exp_name):
+def load_teacher_policy(env, rl_train_cfg, exp_name):
     # load teacher policy
     log_dir = f"logs/{exp_name + '_' + 'rl'}"
     assert os.path.exists(log_dir), f"Log directory {log_dir} does not exist"
     checkpoint_files = [f for f in os.listdir(log_dir) if re.match(r"model_\d+\.pt", f)]
     last_ckpt = sorted(checkpoint_files)[-1]
     assert last_ckpt is not None, "No checkpoint found in {log_dir}"
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+    runner = OnPolicyRunner(env, rl_train_cfg, log_dir, device=gs.device)
     runner.load(os.path.join(log_dir, last_ckpt))
+    print(f"Loaded teacher policy from checkpoint {last_ckpt} from {log_dir}")
     teacher_policy = runner.get_inference_policy(device=gs.device)
     return teacher_policy
 
@@ -162,7 +163,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-B", "--num_envs", type=int, default=200)
+    parser.add_argument("-B", "--num_envs", type=int, default=100)
     parser.add_argument("--max_iterations", type=int, default=500)
     parser.add_argument("--stage", type=str, default="rl")
     args = parser.parse_args()
@@ -176,7 +177,7 @@ def main():
     if args.vis:
         env_cfg["visualize_target"] = True
 
-    train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
+    rl_train_cfg, bc_train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     if args.stage == "rl":
         # fix box and disable collision to make RL training easier
@@ -184,9 +185,9 @@ def main():
         env_cfg["box_collision"] = False
     elif args.stage == "bc":
         # enable box collision and disable box fixed for BC training
-        env_cfg["box_fixed"] = False
-        env_cfg["box_collision"] = True
-        env_cfg["num_envs"] = 100  # normally you don't need thousands of envs for BC
+        env_cfg["box_fixed"] = True
+        env_cfg["box_collision"] = False
+        env_cfg["num_envs"] = 10  # normally you don't need thousands of envs for BC
     else:
         raise ValueError(f"Invalid stage: {args.stage}")
 
@@ -195,7 +196,7 @@ def main():
     os.makedirs(log_dir, exist_ok=True)
 
     with open(f"{log_dir}/cfgs.pkl", "wb") as f:
-        pickle.dump((env_cfg, reward_scales, robot_cfg, train_cfg), f)
+        pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
 
     # === env ===
     env = GraspEnv(
@@ -208,14 +209,13 @@ def main():
 
     # === runner ===
     if args.stage == "bc":
-        teacher_policy = load_teacher_policy(env, train_cfg, args.exp_name)
-        train_cfg["teacher_policy"] = teacher_policy
-        runner = BehaviorCloning(env, train_cfg, teacher_policy, device=gs.device)
+        teacher_policy = load_teacher_policy(env, rl_train_cfg, args.exp_name)
+        bc_train_cfg["teacher_policy"] = teacher_policy
+        runner = BehaviorCloning(env, bc_train_cfg, teacher_policy, device=gs.device)
+        runner.learn(num_learning_iterations=args.max_iterations, log_dir=log_dir)
     else:
-        runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
-
-    # === train ===
-    runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
+        runner = OnPolicyRunner(env, rl_train_cfg, log_dir, device=gs.device)
+        runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
 
 
 if __name__ == "__main__":
