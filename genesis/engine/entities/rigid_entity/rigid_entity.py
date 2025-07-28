@@ -17,8 +17,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import tensor_to_array, ti_field_to_torch, ALLOCATE_TENSOR_WARNING
-from genesis.utils.path_planing import RRT, RRTConnect
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, tensor_to_array, ti_field_to_torch
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -169,8 +168,8 @@ class RigidEntity(Entity):
         if morph.collision:
             g_infos.append(
                 dict(
-                    contype=1,
-                    conaffinity=1,
+                    contype=morph.contype,
+                    conaffinity=morph.conaffinity,
                     mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
@@ -240,8 +239,8 @@ class RigidEntity(Entity):
             for mesh in meshes:
                 g_infos.append(
                     dict(
-                        contype=1,
-                        conaffinity=1,
+                        contype=morph.contype,
+                        conaffinity=morph.conaffinity,
                         mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
                         sol_params=gu.default_solver_params(),
@@ -444,6 +443,11 @@ class RigidEntity(Entity):
                 l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
                 if "root_idx" in l_info:
                     l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+
+        # URDF is a robot description file so all links have same root_idx
+        if isinstance(morph, gs.morphs.URDF) and not morph._enable_mujoco_compatibility:
+            for l_info in l_infos:
+                l_info["root_idx"] = 0
 
         # Genesis requires links associated with free joints to be attached to the world directly
         for l_info, link_j_infos in zip(l_infos, links_j_infos):
@@ -870,28 +874,28 @@ class RigidEntity(Entity):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
-        tgt_link_state = self._solver.links_state[tgt_link_idx, i_b]
-        tgt_link_pos = tgt_link_state.pos + gu.ti_transform_by_quat(p_local, tgt_link_state.quat)
+        tgt_link_pos = self._solver.links_state.pos[tgt_link_idx, i_b] + gu.ti_transform_by_quat(
+            p_local, self._solver.links_state.quat[tgt_link_idx, i_b]
+        )
         i_l = tgt_link_idx
         while i_l > -1:
             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
-            l_info = self._solver.links_info[I_l]
-            l_state = self._solver.links_state[i_l, i_b]
 
             dof_offset = 0
-            for i_j in range(l_info.joint_start, l_info.joint_end):
+            for i_j in range(self._solver.links_info.joint_start[I_l], self._solver.links_info.joint_end[I_l]):
                 I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
-                j_info = self._solver.joints_info[I_j]
 
-                if j_info.type == gs.JOINT_TYPE.FIXED:
+                if self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.FIXED:
                     pass
 
-                elif j_info.type == gs.JOINT_TYPE.REVOLUTE:
-                    i_d = j_info.dof_start
+                elif self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
+                    i_d = self._solver.joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    rotation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_ang, l_state.quat)
-                    translation = rotation.cross(tgt_link_pos - l_state.pos)
+                    rotation = gu.ti_transform_by_quat(
+                        self._solver.dofs_info.motion_ang[I_d], self._solver.links_state.quat[i_l, i_b]
+                    )
+                    translation = rotation.cross(tgt_link_pos - self._solver.links_state.pos[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -900,31 +904,33 @@ class RigidEntity(Entity):
                     self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
                     self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
 
-                elif j_info.type == gs.JOINT_TYPE.PRISMATIC:
-                    i_d = j_info.dof_start
+                elif self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
+                    i_d = self._solver.joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    translation = gu.ti_transform_by_quat(self._solver.dofs_info[I_d].motion_vel, l_state.quat)
+                    translation = gu.ti_transform_by_quat(
+                        self._solver.dofs_info.motion_vel[I_d], self._solver.links_state.quat[i_l, i_b]
+                    )
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
                     self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
 
-                elif j_info.type == gs.JOINT_TYPE.FREE:
+                elif self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.FREE:
                     # translation
                     for i_d_ in ti.static(range(3)):
-                        i_d = j_info.dof_start + i_d_
+                        i_d = self._solver.joints_info.dof_start[I_j] + i_d_
                         i_d_jac = i_d + dof_offset - self._dof_start
 
                         self._jacobian[i_d_, i_d_jac, i_b] = 1.0 * pos_mask[i_d_]
 
                     # rotation
                     for i_d_ in ti.static(range(3)):
-                        i_d = j_info.dof_start + i_d_ + 3
+                        i_d = self._solver.joints_info.dof_start[I_j] + i_d_ + 3
                         i_d_jac = i_d + dof_offset - self._dof_start
                         I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
-                        rotation = self._solver.dofs_info[I_d].motion_ang
-                        translation = rotation.cross(tgt_link_pos - l_state.pos)
+                        rotation = self._solver.dofs_info.motion_ang[I_d]
+                        translation = rotation.cross(tgt_link_pos - self._solver.links_state.pos[i_l, i_b])
 
                         self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                         self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -933,9 +939,9 @@ class RigidEntity(Entity):
                         self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
                         self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
 
-                dof_offset = dof_offset + j_info.n_dofs
+                dof_offset = dof_offset + self._solver.joints_info.n_dofs[I_j]
 
-            i_l = l_info.parent_idx
+            i_l = self._solver.links_info.parent_idx[I_l]
 
     @gs.assert_built
     def inverse_kinematics(
@@ -1220,7 +1226,7 @@ class RigidEntity(Entity):
         if envs_idx is None:
             envs_idx = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
 
-        self._kernel_inverse_kinematics(
+        self._solver.rigid_entity_inverse_kinematics(
             links_idx,
             poss,
             quats,
@@ -1243,7 +1249,9 @@ class RigidEntity(Entity):
             max_step_size,
             respect_joint_limit,
             envs_idx,
+            self,
         )
+
         qpos = self._IK_qpos_best.to_torch(gs.device).transpose(1, 0)
         if self._solver.n_envs > 0:
             qpos = qpos[envs_idx]
@@ -1258,270 +1266,6 @@ class RigidEntity(Entity):
                 error_pose = error_pose.squeeze(0)
             return qpos, error_pose
         return qpos
-
-    @ti.kernel
-    def _kernel_inverse_kinematics(
-        self,
-        links_idx: ti.types.ndarray(),
-        poss: ti.types.ndarray(),
-        quats: ti.types.ndarray(),
-        n_links: ti.i32,
-        dofs_idx: ti.types.ndarray(),
-        n_dofs: ti.i32,
-        links_idx_by_dofs: ti.types.ndarray(),
-        n_links_by_dofs: ti.i32,
-        custom_init_qpos: ti.i32,
-        init_qpos: ti.types.ndarray(),
-        max_samples: ti.i32,
-        max_solver_iters: ti.i32,
-        damping: ti.f32,
-        pos_tol: ti.f32,
-        rot_tol: ti.f32,
-        pos_mask_: ti.types.ndarray(),
-        rot_mask_: ti.types.ndarray(),
-        link_pos_mask: ti.types.ndarray(),
-        link_rot_mask: ti.types.ndarray(),
-        max_step_size: ti.f32,
-        respect_joint_limit: ti.i32,
-        envs_idx: ti.types.ndarray(),
-    ):
-        # convert to ti Vector
-        pos_mask = ti.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.ti_float)
-        rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
-        n_error_dims = 6 * n_links
-
-        for i_b in envs_idx:
-            # save original qpos
-            for i_q in range(self.n_qs):
-                self._IK_qpos_orig[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
-
-            if custom_init_qpos:
-                for i_q in range(self.n_qs):
-                    self._solver.qpos[i_q + self._q_start, i_b] = init_qpos[i_b, i_q]
-
-            for i_error in range(n_error_dims):
-                self._IK_err_pose_best[i_error, i_b] = 1e4
-
-            solved = False
-            for i_sample in range(max_samples):
-                for _ in range(max_solver_iters):
-                    # run FK to update link states using current q
-                    self._solver._func_forward_kinematics_entity(
-                        self._idx_in_solver,
-                        i_b,
-                        self._solver.links_state,
-                        self._solver.links_info,
-                        self._solver.joints_state,
-                        self._solver.joints_info,
-                        self._solver.dofs_state,
-                        self._solver.dofs_info,
-                        self._solver.entities_info,
-                        self._solver._rigid_global_info,
-                        self._solver._static_rigid_sim_config,
-                    )
-                    # compute error
-                    solved = True
-                    for i_ee in range(n_links):
-                        i_l_ee = links_idx[i_ee]
-
-                        tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
-                        err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
-                        for k in range(3):
-                            err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
-                        if err_pos_i.norm() > pos_tol:
-                            solved = False
-
-                        tgt_quat_i = ti.Vector(
-                            [quats[i_ee, i_b, 0], quats[i_ee, i_b, 1], quats[i_ee, i_b, 2], quats[i_ee, i_b, 3]]
-                        )
-                        err_rot_i = gu.ti_quat_to_rotvec(
-                            gu.ti_transform_quat_by_quat(
-                                gu.ti_inv_quat(self._solver.links_state[i_l_ee, i_b].quat), tgt_quat_i
-                            )
-                        )
-                        for k in range(3):
-                            err_rot_i[k] *= rot_mask[k] * link_rot_mask[i_ee]
-                        if err_rot_i.norm() > rot_tol:
-                            solved = False
-
-                        # put into multi-link error array
-                        for k in range(3):
-                            self._IK_err_pose[i_ee * 6 + k, i_b] = err_pos_i[k]
-                            self._IK_err_pose[i_ee * 6 + k + 3, i_b] = err_rot_i[k]
-
-                    if solved:
-                        break
-
-                    # compute multi-link jacobian
-                    for i_ee in range(n_links):
-                        # update jacobian for ee link
-                        i_l_ee = links_idx[i_ee]
-                        self._func_get_jacobian(
-                            i_l_ee, i_b, ti.Vector.zero(gs.ti_float, 3), pos_mask, rot_mask
-                        )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
-
-                        # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
-                        for i_dof in range(n_dofs):
-                            for i_error in ti.static(range(6)):
-                                i_row = i_ee * 6 + i_error
-                                i_dof_ = dofs_idx[i_dof]
-                                self._IK_jacobian[i_row, i_dof, i_b] = self._jacobian[i_error, i_dof_, i_b]
-
-                    # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
-                    lu.mat_transpose(self._IK_jacobian, self._IK_jacobian_T, n_error_dims, n_dofs, i_b)
-                    lu.mat_mul(
-                        self._IK_jacobian,
-                        self._IK_jacobian_T,
-                        self._IK_mat,
-                        n_error_dims,
-                        n_dofs,
-                        n_error_dims,
-                        i_b,
-                    )
-                    lu.mat_add_eye(self._IK_mat, damping**2, n_error_dims, i_b)
-                    lu.mat_inverse(self._IK_mat, self._IK_L, self._IK_U, self._IK_y, self._IK_inv, n_error_dims, i_b)
-                    lu.mat_mul_vec(self._IK_inv, self._IK_err_pose, self._IK_vec, n_error_dims, n_error_dims, i_b)
-
-                    for i in range(self.n_dofs):  # IK_delta_qpos = IK_jacobian_T @ IK_vec
-                        self._IK_delta_qpos[i, i_b] = 0
-                    for i in range(n_dofs):
-                        for j in range(n_error_dims):
-                            i_ = dofs_idx[
-                                i
-                            ]  # NOTE: IK_delta_qpos uses the original indexing instead of the effective n_dofs
-                            self._IK_delta_qpos[i_, i_b] += self._IK_jacobian_T[i, j, i_b] * self._IK_vec[j, i_b]
-
-                    for i in range(self.n_dofs):
-                        self._IK_delta_qpos[i, i_b] = ti.math.clamp(
-                            self._IK_delta_qpos[i, i_b], -max_step_size, max_step_size
-                        )
-
-                    # update q
-                    self._solver._func_integrate_dq_entity(
-                        self._IK_delta_qpos, self._idx_in_solver, i_b, respect_joint_limit
-                    )
-
-                if not solved:
-                    # re-compute final error if exited not due to solved
-                    self._solver._func_forward_kinematics_entity(
-                        self._idx_in_solver,
-                        i_b,
-                        self._solver.links_state,
-                        self._solver.links_info,
-                        self._solver.joints_state,
-                        self._solver.joints_info,
-                        self._solver.dofs_state,
-                        self._solver.dofs_info,
-                        self._solver.entities_info,
-                        self._solver._rigid_global_info,
-                        self._solver._static_rigid_sim_config,
-                    )
-                    solved = True
-                    for i_ee in range(n_links):
-                        i_l_ee = links_idx[i_ee]
-
-                        tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
-                        err_pos_i = tgt_pos_i - self._solver.links_state[i_l_ee, i_b].pos
-                        for k in range(3):
-                            err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
-                        if err_pos_i.norm() > pos_tol:
-                            solved = False
-
-                        tgt_quat_i = ti.Vector(
-                            [quats[i_ee, i_b, 0], quats[i_ee, i_b, 1], quats[i_ee, i_b, 2], quats[i_ee, i_b, 3]]
-                        )
-                        err_rot_i = gu.ti_quat_to_rotvec(
-                            gu.ti_transform_quat_by_quat(
-                                gu.ti_inv_quat(self._solver.links_state[i_l_ee, i_b].quat), tgt_quat_i
-                            )
-                        )
-                        for k in range(3):
-                            err_rot_i[k] *= rot_mask[k] * link_rot_mask[i_ee]
-                        if err_rot_i.norm() > rot_tol:
-                            solved = False
-
-                        # put into multi-link error array
-                        for k in range(3):
-                            self._IK_err_pose[i_ee * 6 + k, i_b] = err_pos_i[k]
-                            self._IK_err_pose[i_ee * 6 + k + 3, i_b] = err_rot_i[k]
-
-                if solved:
-                    for i_q in range(self.n_qs):
-                        self._IK_qpos_best[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
-                    for i_error in range(n_error_dims):
-                        self._IK_err_pose_best[i_error, i_b] = self._IK_err_pose[i_error, i_b]
-                    break
-
-                else:
-                    # copy to _IK_qpos if this sample is better
-                    improved = True
-                    for i_ee in range(n_links):
-                        error_pos_i = ti.Vector([self._IK_err_pose[i_ee * 6 + i_error, i_b] for i_error in range(3)])
-                        error_rot_i = ti.Vector([self._IK_err_pose[i_ee * 6 + i_error, i_b] for i_error in range(3, 6)])
-                        error_pos_best = ti.Vector(
-                            [self._IK_err_pose_best[i_ee * 6 + i_error, i_b] for i_error in range(3)]
-                        )
-                        error_rot_best = ti.Vector(
-                            [self._IK_err_pose_best[i_ee * 6 + i_error, i_b] for i_error in range(3, 6)]
-                        )
-                        if error_pos_i.norm() > error_pos_best.norm() or error_rot_i.norm() > error_rot_best.norm():
-                            improved = False
-                            break
-
-                    if improved:
-                        for i_q in range(self.n_qs):
-                            self._IK_qpos_best[i_q, i_b] = self._solver.qpos[i_q + self._q_start, i_b]
-                        for i_error in range(n_error_dims):
-                            self._IK_err_pose_best[i_error, i_b] = self._IK_err_pose[i_error, i_b]
-
-                    # Resample init q
-                    if respect_joint_limit and i_sample < max_samples - 1:
-                        for _i_l in range(n_links_by_dofs):
-                            i_l = links_idx_by_dofs[_i_l]
-                            I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
-                            l_info = self._solver.links_info[I_l]
-
-                            for i_j in range(l_info.joint_start, l_info.joint_end):
-                                I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
-                                j_info = self._solver.joints_info[I_j]
-
-                                I_dof_start = (
-                                    [j_info.dof_start, i_b]
-                                    if ti.static(self.solver._options.batch_dofs_info)
-                                    else j_info.dof_start
-                                )
-                                dof_info = self._solver.dofs_info[I_dof_start]
-                                q_start = j_info.q_start
-
-                                if j_info.type == gs.JOINT_TYPE.FREE:
-                                    pass
-
-                                elif j_info.type == gs.JOINT_TYPE.REVOLUTE or j_info.type == gs.JOINT_TYPE.PRISMATIC:
-                                    if ti.math.isinf(dof_info.limit[0]) or ti.math.isinf(dof_info.limit[1]):
-                                        pass
-                                    else:
-                                        self._solver.qpos[q_start, i_b] = dof_info.limit[0] + ti.random() * (
-                                            dof_info.limit[1] - dof_info.limit[0]
-                                        )
-                    else:
-                        pass  # When respect_joint_limit=False, we can simply continue from the last solution
-
-            # restore original qpos and link state
-            for i_q in range(self.n_qs):
-                self._solver.qpos[i_q + self._q_start, i_b] = self._IK_qpos_orig[i_q, i_b]
-            self._solver._func_forward_kinematics_entity(
-                self._idx_in_solver,
-                i_b,
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.joints_state,
-                self._solver.joints_info,
-                self._solver.dofs_state,
-                self._solver.dofs_info,
-                self._solver.entities_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
 
     @gs.assert_built
     def forward_kinematics(self, qpos, qs_idx_local=None, links_idx_local=None, envs_idx=None):
@@ -1606,9 +1350,9 @@ class RigidEntity(Entity):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             for i in ti.static(range(3)):
-                links_pos[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].pos[i]
+                links_pos[i_b_, i_l_, i] = self._solver.links_state.pos[links_idx[i_l_], envs_idx[i_b_]]
             for i in ti.static(range(4)):
-                links_quat[i_b_, i_l_, i] = self._solver.links_state[links_idx[i_l_], envs_idx[i_b_]].quat[i]
+                links_quat[i_b_, i_l_, i] = self._solver.links_state.quat[links_idx[i_l_], envs_idx[i_b_]]
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
@@ -1714,6 +1458,9 @@ class RigidEntity(Entity):
             assert ee_link_name is not None, "reference link of the robot must be specified."
             assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
+        # import here to avoid circular import
+        from genesis.utils.path_planing import RRT, RRTConnect
+
         match planner:
             case "RRT":
                 planner_obj = RRT(self)
@@ -1723,27 +1470,28 @@ class RigidEntity(Entity):
                 gs.raise_exception(f"invalid planner {planner} specified.")
 
         path = torch.empty((num_waypoints, n_envs, self.n_qs), dtype=gs.tc_float, device=gs.device)
-        is_invalid = torch.ones((n_envs), dtype=bool)
+        is_invalid = torch.ones((n_envs,), dtype=torch.bool, device=gs.device)
         for i in range(1 + max_retry):
-            if is_invalid.any():
-                if i > 0:
-                    gs.logger.info(f"planning failed. retrying for {is_invalid.sum()} environments")
-                retry_path, retry_is_invalid = planner_obj.plan(
-                    qpos_goal,
-                    qpos_start=qpos_start,
-                    resolution=resolution,
-                    timeout=timeout,
-                    max_nodes=max_nodes,
-                    smooth_path=smooth_path,
-                    num_waypoints=num_waypoints,
-                    ignore_collision=ignore_collision,
-                    envs_idx=envs_idx,
-                    ee_link_idx=ee_link_idx,
-                    obj_entity=with_entity,
-                )
-                # NOTE: update the previously failed path with the new results
-                path[:, is_invalid] = retry_path[:, is_invalid]
-                is_invalid &= retry_is_invalid
+            retry_path, retry_is_invalid = planner_obj.plan(
+                qpos_goal,
+                qpos_start=qpos_start,
+                resolution=resolution,
+                timeout=timeout,
+                max_nodes=max_nodes,
+                smooth_path=smooth_path,
+                num_waypoints=num_waypoints,
+                ignore_collision=ignore_collision,
+                envs_idx=envs_idx,
+                ee_link_idx=ee_link_idx,
+                obj_entity=with_entity,
+            )
+            # NOTE: update the previously failed path with the new results
+            path[:, is_invalid] = retry_path[:, is_invalid]
+
+            is_invalid &= retry_is_invalid
+            if not is_invalid.any():
+                break
+            gs.logger.info(f"Planning failed. Retrying for {is_invalid.sum()} environments...")
 
         if self._solver.n_envs == 0:
             if return_valid_mask:
@@ -2151,7 +1899,7 @@ class RigidEntity(Entity):
 
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state[idx_vert, b].pos[j]
+            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
@@ -2161,7 +1909,7 @@ class RigidEntity(Entity):
 
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state[idx_vert].pos[j]
+            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_AABB(self):

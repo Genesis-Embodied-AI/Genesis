@@ -9,6 +9,7 @@ import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
+import genesis.utils.sdf_decomp as sdf_decomp
 
 from .base_solver import Solver
 
@@ -392,9 +393,18 @@ class MPMSolver(Solver):
 
                         sep_geom_idx = -1
                         for i_g in range(self.sim.rigid_solver.n_geoms):
-                            if self.sim.rigid_solver.geoms_info[i_g].needs_coup:
+                            if self.sim.rigid_solver.geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
-                                sdf_normal_cell = self.sim.rigid_solver.sdf.sdf_normal_world(cell_pos, i_g, i_b)
+                                sdf_normal_cell = sdf_decomp.sdf_func_normal_world(
+                                    geoms_state=self.sim.rigid_solver.geoms_state,
+                                    geoms_info=self.sim.rigid_solver.geoms_info,
+                                    collider_static_config=self.sim.rigid_solver.collider._collider_static_config,
+                                    sdf_info=self.sim.rigid_solver.sdf._sdf_info,
+                                    pos_world=cell_pos,
+                                    geom_idx=i_g,
+                                    batch_idx=i_b,
+                                )
+
                                 if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g
                                     sep_geom_idx = i_g
                                     break
