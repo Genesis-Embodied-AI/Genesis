@@ -2882,6 +2882,7 @@ def kernel_init_vgeom_fields(
     vgeoms_vface_start: ti.types.ndarray(),
     vgeoms_vvert_end: ti.types.ndarray(),
     vgeoms_vface_end: ti.types.ndarray(),
+    vgeoms_color: ti.types.ndarray(),
     # taichi variables
     vgeoms_info: array_class.VGeomsInfo,
     static_rigid_sim_config: ti.template(),
@@ -2904,6 +2905,8 @@ def kernel_init_vgeom_fields(
         vgeoms_info.vface_num[i] = vgeoms_vface_end[i] - vgeoms_vface_start[i]
 
         vgeoms_info.link_idx[i] = vgeoms_link_idx[i]
+        for j in ti.static(range(4)):
+            vgeoms_info.color[i][j] = vgeoms_color[i, j]
 
 
 @ti.kernel
