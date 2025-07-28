@@ -154,7 +154,7 @@ def parse_preview_surface(shader, output_name):
 def parse_usd_material(material, surface):
     surface_outputs = material.GetSurfaceOutputs()
     material_dict, uv_name = None, None
-    material_surface = None
+    material_surface = surface.copy()
 
     require_bake = False
     material_candidates = []
@@ -175,7 +175,6 @@ def parse_usd_material(material, surface):
         material_candidates.append((surface_shader.GetPath(), surface_shader_id, surface_shader_implement))
 
     if material_dict is not None:
-        material_surface = surface.copy()
         material_surface.update_texture(
             color_texture=material_dict.get("color_texture"),
             opacity_texture=material_dict.get("opacity_texture"),
@@ -383,7 +382,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
                 material_id = material_file + material_spec.path.pathString
                 material, uv_name = materials.get(material_id, (None, "st"))
             else:
-                material, uv_name, material_id = None, "st", None
+                material, uv_name, material_id = surface.copy(), "st", None
 
             # parse uvs
             uvs = None
