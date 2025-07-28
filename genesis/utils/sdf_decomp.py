@@ -3,7 +3,7 @@ import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.utils.array_class as array_class
 
 
 @ti.data_oriented

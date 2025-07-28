@@ -2,7 +2,7 @@ from enum import IntEnum
 import taichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
-import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
 from dataclasses import dataclass
 

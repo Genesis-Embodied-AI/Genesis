@@ -15,13 +15,13 @@ from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TEN
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.styles import colors, formats
-import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.utils.array_class as array_class
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .sdf_decomp import SDF
+from ....utils.sdf_decomp import SDF
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -276,17 +276,8 @@ class RigidSolver(Solver):
         )
 
         # when the migration is finished, we will remove the about two lines
-        # and initizlize the awake_dofs and n_awake_dofs in _rigid_global_info directly
-
-        # self._rigid_global_info = self.data_manager.rigid_global_info
-        # self._rigid_global_info = array_class.RigidGlobalInfo(
-        #     solver=self,
-        #     n_dofs=self.n_dofs_,
-        #     n_entities=self.n_entities_,
-        #     n_geoms=self.n_geoms_,
-        #     _B=self._B,
-        #     f_batch=self._batch_shape,
-        # )
+        self._func_vel_at_point = func_vel_at_point
+        self._func_apply_external_force = func_apply_external_force
 
         if self.is_active():
 
@@ -5029,10 +5020,10 @@ def kernel_apply_links_external_torque(
 
 
 @ti.func
-def func_apply_external_force(self, pos, force, link_idx, env_idx):
-    torque = (pos - self.links_state.COM[link_idx, env_idx]).cross(force)
-    self.links_state.cfrc_applied_ang[link_idx, env_idx] -= torque
-    self.links_state.cfrc_applied_vel[link_idx, env_idx] -= force
+def func_apply_external_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
+    torque = (pos - links_state.COM[link_idx, env_idx]).cross(force)
+    links_state.cfrc_applied_ang[link_idx, env_idx] -= torque
+    links_state.cfrc_applied_vel[link_idx, env_idx] -= force
 
 
 @ti.func

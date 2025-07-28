@@ -12,16 +12,16 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 from genesis.utils.misc import ti_field_to_torch
-import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.gjk_decomp as gjk
 import genesis.engine.solvers.rigid.mpr_decomp as mpr
-import genesis.engine.solvers.rigid.sdf_decomp as sdf
+import genesis.utils.sdf_decomp as sdf
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 
 from .mpr_decomp import MPR
 from .gjk_decomp import GJK
-from .sdf_decomp import SDF
+from ....utils.sdf_decomp import SDF
 from .support_field_decomp import SupportField
 
 from enum import IntEnum

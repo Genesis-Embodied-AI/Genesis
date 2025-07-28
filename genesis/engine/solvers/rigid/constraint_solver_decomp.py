@@ -5,7 +5,7 @@ import numpy.typing as npt
 
 import genesis as gs
 import genesis.utils.geom as gu
-import genesis.engine.solvers.rigid.array_class as array_class
+import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 
 if TYPE_CHECKING:
