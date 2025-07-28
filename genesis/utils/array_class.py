@@ -1067,6 +1067,7 @@ class StructDofsInfo:
     invweight: V_ANNOTATION
     armature: V_ANNOTATION
     damping: V_ANNOTATION
+    frictionloss: V_ANNOTATION
     motion_ang: V_ANNOTATION
     motion_vel: V_ANNOTATION
     limit: V_ANNOTATION
@@ -1083,6 +1084,7 @@ def get_dofs_info(solver):
         "invweight": V(dtype=gs.ti_float, shape=shape),
         "armature": V(dtype=gs.ti_float, shape=shape),
         "damping": V(dtype=gs.ti_float, shape=shape),
+        "frictionloss": V(dtype=gs.ti_float, shape=shape),
         "motion_ang": V(dtype=gs.ti_vec3, shape=shape),
         "motion_vel": V(dtype=gs.ti_vec3, shape=shape),
         "limit": V(dtype=gs.ti_vec2, shape=shape),
