@@ -71,12 +71,16 @@ class BatchRenderer(RBC):
         """
         if len(self._visualizer._cameras) == 0:
             raise ValueError("No cameras to render")
+
+        if gs.backend != gs.cuda:
+            gs.raise_exception("BatchRenderer requires CUDA backend.")
+
         cameras = self._visualizer._cameras
         lights = self._lights
         rigid = self._visualizer.scene.rigid_solver
-        device = torch.cuda.current_device()
         n_envs = self._visualizer.scene.n_envs if self._visualizer.scene.n_envs > 0 else 1
         res = cameras[0].res
+        gpu_id = gs.device.index
         use_rasterizer = self._renderer_options.use_rasterizer
 
         # Cameras
@@ -96,7 +100,7 @@ class BatchRenderer(RBC):
         light_cutoff = self.light_cutoff_tensor
 
         self._renderer = MadronaBatchRendererAdapter(
-            rigid, device, n_envs, n_cameras, n_lights, camera_fov, *res, False, use_rasterizer
+            rigid, gpu_id, n_envs, n_cameras, n_lights, camera_fov, *res, False, use_rasterizer
         )
         self._renderer.init(
             rigid,
