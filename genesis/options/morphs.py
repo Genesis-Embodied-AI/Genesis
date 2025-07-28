@@ -1,5 +1,5 @@
 import os
-from typing import Any, List, Optional, Tuple, Sequence, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -12,7 +12,8 @@ from .options import Options
 
 """
 We define all types of morphologies here: shape primitives, meshes, URDF, MJCF, and soft robot description files.
-These are independent of backend solver type and are shared by different solvers. E.g. a mesh can be either loaded as a rigid object / MPM object / FEM object.
+These are independent of backend solver type and are shared by different solvers.
+E.g. a mesh can be either loaded as a rigid object / MPM object / FEM object.
 """
 
 
@@ -39,7 +40,8 @@ class TetGenMixin(Options):
 class Morph(Options):
     """
     This is the base class for all genesis morphs.
-    A morph in genesis is a hybrid concept, encapsulating both the geometry and pose information of an entity. This includes shape primitives, meshes, URDF, MJCF, Terrain, and soft robot description files.
+    A morph in genesis is a hybrid concept, encapsulating both the geometry and pose information of an entity.
+    This includes shape primitives, meshes, URDF, MJCF, Terrain, and soft robot description files.
 
     Note
     ----
@@ -50,15 +52,21 @@ class Morph(Options):
     pos : tuple, shape (3,), optional
         The initial position of the entity in meters at creation time. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The initial euler angle of the entity in degrees at creation time. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The initial euler angle of the entity in degrees at creation time. This follows scipy's extrinsic x-y-z
+        rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The initial quaternion (w-x-y-z convention) of the entity at creation time. If specified, `euler` will be ignored. Defaults to None.
+        The initial quaternion (w-x-y-z convention) of the entity at creation time.
+        If specified, `euler` will be ignored. Defaults to None.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
     is_free : bool, optional
         Whether the entity is free to move. Defaults to True. **This is only used for RigidEntity.**
     """
@@ -133,21 +141,34 @@ class Primitive(Morph):
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics.
+        Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    contype : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
+        conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    conaffinity : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
+        the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     """
 
     # Rigid specific
     fixed: bool = False
+    contype: int = 0xFFFF
+    conaffinity: int = 0xFFFF
 
 
 class Box(Primitive, TetGenMixin):
@@ -163,7 +184,8 @@ class Box(Primitive, TetGenMixin):
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     lower : tuple, shape (3,), optional
@@ -173,29 +195,46 @@ class Box(Primitive, TetGenMixin):
     size : tuple, shape (3,), optional
         The size of the box in meters. Defaults to None.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    contype : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
+        conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    conaffinity : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
+        the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
     mindihedral : int, optional
-        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     minratio : float, optional
-        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     nobisect : bool, optional
-        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to disable bisection during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     quality : bool, optional
-        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to improve quality during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     maxvolume : float, optional
-        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit).
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     verbose : int, optional
-        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The verbosity level during tetraheralization. Defaults to 0.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     force_retet : bool, optional
-        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to force re-tetraheralization. Defaults to False.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     lower: Optional[tuple] = None
@@ -229,7 +268,8 @@ class Cylinder(Primitive, TetGenMixin):
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     height : float, optional
@@ -237,29 +277,46 @@ class Cylinder(Primitive, TetGenMixin):
     radius : float, optional
         The radius of the cylinder in meters. Defaults to 0.5.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    contype : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
+        conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    conaffinity : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
+        the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
     mindihedral : int, optional
-        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     minratio : float, optional
-        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     nobisect : bool, optional
-        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to disable bisection during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     quality : bool, optional
-        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to improve quality during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     maxvolume : float, optional
-        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit).
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     verbose : int, optional
-        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The verbosity level during tetraheralization. Defaults to 0.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     force_retet : bool, optional
-        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to force re-tetraheralization. Defaults to False.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     height: float = 1.0
@@ -275,35 +332,53 @@ class Sphere(Primitive, TetGenMixin):
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     radius : float, optional
         The radius of the sphere in meters. Defaults to 0.5.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    contype : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
+        conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    conaffinity : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
+        the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
     mindihedral : int, optional
-        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     minratio : float, optional
-        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     nobisect : bool, optional
-        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to disable bisection during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     quality : bool, optional
-        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to improve quality during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     maxvolume : float, optional
-        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit).
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     verbose : int, optional
-        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The verbosity level during tetraheralization. Defaults to 0.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     force_retet : bool, optional
-        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to force re-tetraheralization. Defaults to False.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     radius: float = 0.5
@@ -315,22 +390,35 @@ class Plane(Primitive):
 
     Note
     ----
-    Plane is a primitive with infinite size. Note that the `pos` is the center of the plane, but essetially only defines a point where the plane passes through.
+    Plane is a primitive with infinite size. Note that the `pos` is the center of the plane,
+    but essetially only defines a point where the plane passes through.
 
     Parameters
     ----------
     pos : tuple, shape (3,), optional
         The center position of the plane in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     normal : tuple, shape (3,), optional
         The normal normal of the plane in its local frame. Defaults to (0, 0, 1).
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+    fixed : bool, optional
+        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    contype : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
+        conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    conaffinity : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
+        the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     """
 
     fixed: bool = True
@@ -363,11 +451,14 @@ class FileMorph(Morph):
     file : str
         The path to the file.
     scale : float or tuple, optional
-        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
@@ -398,11 +489,15 @@ class FileMorph(Morph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
     """
 
     file: Any = ""
@@ -469,18 +564,23 @@ class Mesh(FileMorph, TetGenMixin):
 
     Note
     ----
-    In order to speed up simulation, the loaded mesh will first be decimated (simplified) to a target number of faces, followed by convexification (for collision mesh only). Such process can be disabled by setting `decimate` and `convexify` to False.
+    In order to speed up simulation, the loaded mesh will first be decimated (simplified) to a target number of faces,
+    followed by convexification (for collision mesh only).
+    Such process can be disabled by setting `decimate` and `convexify` to False.
 
     Parameters
     ----------
     file : str
         The path to the file.
     scale : float or tuple, optional
-        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
@@ -513,40 +613,59 @@ class Mesh(FileMorph, TetGenMixin):
     merge_submeshes_for_collision : bool, optional
         Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False. **This is only used for RigidEntity.**
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
     parse_glb_with_trimesh : bool, optional
         Whether to use trimesh to load glb files. Defaults to False, in which case pygltflib will be used.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    contype : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
+        conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    conaffinity : int, optional
+        The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
+        the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     group_by_material : bool, optional
-        Whether to group submeshes by their visual material type defined in the asset file. Defaults to True. **This is only used for RigidEntity.**
+        Whether to group submeshes by their visual material type defined in the asset file. Defaults to True.
+        **This is only used for RigidEntity.**
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
     mindihedral : int, optional
-        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum dihedral angle in degrees during tetraheralization. Defaults to 10.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     minratio : float, optional
-        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The minimum tetrahedron quality ratio during tetraheralization. Defaults to 1.1.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     nobisect : bool, optional
-        Whether to disable bisection during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to disable bisection during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     quality : bool, optional
-        Whether to improve quality during tetraheralization. Defaults to True. **This is only used for Volumetric Entity that requires tetraheralization.**
+        Whether to improve quality during tetraheralization. Defaults to True.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     maxvolume : float, optional
-        The maximum tetrahedron volume. Defaults to -1.0 (no limit). **This is only used for Volumetric Entity that requires tetraheralization.**
+        The maximum tetrahedron volume. Defaults to -1.0 (no limit).
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     verbose : int, optional
-        The verbosity level during tetraheralization. Defaults to 0. **This is only used for Volumetric Entity that requires tetraheralization.**
+        The verbosity level during tetraheralization. Defaults to 0.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     force_retet : bool, optional
-        Whether to force re-tetraheralization. Defaults to False. **This is only used for Volumetric Entity that requires tetraheralization.**
-
+        Whether to force re-tetraheralization. Defaults to False.
+        **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
     parse_glb_with_trimesh: bool = False
 
     # Rigid specific
     fixed: bool = False
+    contype: int = 0xFFFF
+    conaffinity: int = 0xFFFF
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
 
@@ -566,22 +685,30 @@ class MJCF(FileMorph):
 
     Note
     ----
-    MJCF file always contains a worldbody, which we will skip during loading. The robots/objects in MJCF come with their own baselink pose. If `pos`, `euler`, or `quat` is specified, it will override the baselink pose in the MJCF file.
+    MJCF file always contains a worldbody, which we will skip during loading.
+    The robots/objects in MJCF come with their own baselink pose.
+    If `pos`, `euler`, or `quat` is specified, it will override the baselink pose in the MJCF file.
 
-    The current version of Genesis asumes there's only one child of the worldbody. However, it's possible that a MJCF file contains a scene, not just a single robot, in which case the worldbody will have multiple kinematic trees. We will support such cases in the future.
+    The current version of Genesis asumes there's only one child of the worldbody.
+    However, it's possible that a MJCF file contains a scene, not just a single robot, in which case the worldbody will
+    have multiple kinematic trees. We will support such cases in the future.
 
     Parameters
     ----------
     file : str
         The path to the file.
     scale : float or tuple, optional
-        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity's baselink in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity's baselink in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity's baselink in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored.
+        Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional
@@ -610,9 +737,11 @@ class MJCF(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False.
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     default_armature : float, optional
@@ -652,24 +781,31 @@ class MJCF(FileMorph):
 
 class URDF(FileMorph):
     """
-    Morph loaded from a URDF file. This morph only supports `RigidEntity`. If you need to create a `Drone` entity, use `gs.morphs.Drone` instead.
+    Morph loaded from a URDF file. This morph only supports `RigidEntity`.
+    If you need to create a `Drone` entity, use `gs.morphs.Drone` instead.
 
     Note
     ----
-    As part of performance optimization, links connected via a fixed joint are merged if `merge_fixed_links` is True. This is turned on by default, and can help improve simulation speed without affecting any dynamics and rendering behaviors.
-    However, in cases where certain links are still needed as independent links, such as virtual end-effector links created for being used as IK targets, these links will not be merged if their names are added to `links_to_keep`.
-    You can also completely turn off link merging by setting `merge_fixed_links` to False, but it's recommended to use `merge_fixed_links=True` in combination with `links_to_keep` for better performance.
+    As part of performance optimization, links connected via a fixed joint are merged if `merge_fixed_links` is True.
+    This is turned on by default, and can help improve simulation speed without affecting any dynamics and rendering
+    behaviors. However, in cases where certain links are still needed as independent links, such as virtual
+    end-effector links created for being used as IK targets, these links will not be merged if their names are added
+    to `links_to_keep`. You can also completely turn off link merging by setting `merge_fixed_links` to False,
+    but it's recommended to use `merge_fixed_links=True` in combination with `links_to_keep` for better performance.
 
     Parameters
     ----------
     file : str
         The path to the file.
     scale : float or tuple, optional
-        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to (0.0, 0.0, 0.0).
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
@@ -700,15 +836,19 @@ class URDF(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False.
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False.
     prioritize_urdf_material : bool, optional
-        Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material. Defaults to False.
+        Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual
+        material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material.
+        Defaults to False.
     merge_fixed_links : bool, optional
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
@@ -856,11 +996,16 @@ class Drone(FileMorph):
 class Terrain(Morph):
     """
 
-    Morph for creating a rigid terrain. This can be instantiated from two choices: 1) a grid of subterrains generated using the given configurations, 2) a terrain generated using the given height field.
+    Morph for creating a rigid terrain. This can be instantiated from two choices:
+    1) a grid of subterrains generated using the given configurations
+    2) a terrain generated using the given height field.
 
-    If randomize is True, subterrain type that involves randomness will have random parameters. Otherwise, they will use fixed random seed 0.
+    If randomize is True, subterrain type that involves randomness will have random parameters.
+    Otherwise, they will use fixed random seed 0.
 
-    Users can easily configure the subterrain types by specifying the `subterrain_types` parameter. If using a single string, it will be repeated for all subterrains. If it's a 2D list, it should have the same shape as `n_subterrains`. The supported subterrain types are:
+    Users can easily configure the subterrain types by specifying the `subterrain_types` parameter.
+    If using a single string, it will be repeated for all subterrains. If it's a 2D list, it should have the same shape
+    as `n_subterrains`. The supported subterrain types are:
 
     - 'flat_terrain': flat terrain
     - 'random_uniform_terrain': random uniform terrain
@@ -874,20 +1019,25 @@ class Terrain(Morph):
 
     Note
     ----
-    Rigid terrain will also be represented as SDF for collision checking, but its resolution is auto-computed and ignores the value specified in `gs.materials.Rigid()`.
+    Rigid terrain will also be represented as SDF for collision checking, but its resolution is auto-computed and
+    ignores the value specified in `gs.materials.Rigid()`.
 
     Parameters
     ----------
     file : str
         The path to the file.
     scale : float or tuple, optional
-        The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     visualization : bool, optional
-        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
-        Whether the entity needs to be considered for collision checking. Defaults to True. `visualization` and `collision` cannot both be False.
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False.
     randomize : bool, optional
         Whether to randomize the subterrains that involve randomness. Defaults to False.
     n_subterrains : tuple of int, optional
@@ -901,9 +1051,11 @@ class Terrain(Morph):
     uv_scale : float, optional
         The scale of the UV mapping for the terrain. Defaults to 1.0.
     subterrain_types : str or 2D list of str, optional
-        The types of subterrains to generate. If a string, it will be repeated for all subterrains. If a 2D list, it should have the same shape as `n_subterrains`.
+        The types of subterrains to generate. If a string, it will be repeated for all subterrains.
+        If a 2D list, it should have the same shape as `n_subterrains`.
     height_field : array-like, optional
-        The height field to generate the terrain. If specified, all other configurations will be ignored. Defaults to None.
+        The height field to generate the terrain. If specified, all other configurations will be ignored.
+        Defaults to None.
     name : str, optional
         The name of the terrain to save
     from_stored : str, optional

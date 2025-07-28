@@ -2696,3 +2696,52 @@ def test_geom_pos_quat(show_viewer, tol):
         for vgeom, geom in zip(link.vgeoms, link.geoms):
             assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=tol)
             assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_contype_conaffinity(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 0.5),
+            contype=3,
+            conaffinity=3,
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.0),
+            contype=2,
+            conaffinity=2,
+        )
+    )
+    box3 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.5),
+            contype=1,
+            conaffinity=1,
+        )
+    )
+    scene.build()
+
+    for _ in range(100):
+        scene.step()
+
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-3)
+    assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
+    assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+    assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)

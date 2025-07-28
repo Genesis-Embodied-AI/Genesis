@@ -91,7 +91,7 @@ def get_motors_info(robot):
             if len(dofs_idx_local) == 1:
                 dofs_name = [joint.name]
             else:
-                dofs_name = [f"{joint.name}_{i_d}" for i_d in range(dofs_idx_local)]
+                dofs_name = [f"{joint.name}_{i_d}" for i_d in dofs_idx_local]
             motors_dof_idx += dofs_idx_local
             motors_dof_name += dofs_name
     return motors_dof_idx, motors_dof_name
