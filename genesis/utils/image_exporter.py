@@ -31,7 +31,7 @@ class FrameImageExporter:
         # Take the normal channel in case the rgb tensor has RGBA channel.
         normal = np.flip(tensor_to_array(normal[i_env, ..., :3]), axis=-1)
         cv2.imwrite(f"{export_dir}/normal_cam{i_cam}_env{i_env}_{i_step:03d}.png", normal)
-        
+
     @staticmethod
     def _export_frame_segmentation_camera(i_env, export_dir, i_cam, i_step, segmentation):
         segmentation = tensor_to_array(segmentation[i_env])
@@ -156,7 +156,7 @@ class FrameImageExporter:
 
             with ThreadPoolExecutor() as executor:
                 executor.map(depth_job, np.arange(len(depth)))
-        
+
         if normal is not None:
             normal = torch.as_tensor(normal, dtype=gs.tc_float, device=gs.device)
 
