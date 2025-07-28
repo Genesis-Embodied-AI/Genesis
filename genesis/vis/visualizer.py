@@ -181,12 +181,7 @@ class Visualizer(RBC):
 
             if self._scene.rigid_solver.is_active():
                 self._scene.rigid_solver.update_geoms_render_T()
-                self._scene.rigid_solver._kernel_update_vgeoms(
-                    vgeoms_info=self._scene.rigid_solver.vgeoms_info,
-                    vgeoms_state=self._scene.rigid_solver.vgeoms_state,
-                    links_state=self._scene.rigid_solver.links_state,
-                    static_rigid_sim_config=self._scene.rigid_solver._static_rigid_sim_config,
-                )
+                self._scene.rigid_solver.update_vgeoms()
 
                 # drone propellers
                 for entity in self._scene.rigid_solver.entities:
