@@ -445,7 +445,7 @@ class RigidEntity(Entity):
                     l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
 
         # URDF is a robot description file so all links have same root_idx
-        if isinstance(morph, gs.morphs.URDF):
+        if isinstance(morph, gs.morphs.URDF) and not morph._enable_mujoco_compatibility:
             for l_info in l_infos:
                 l_info["root_idx"] = 0
 

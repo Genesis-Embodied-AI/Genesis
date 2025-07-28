@@ -160,6 +160,8 @@ class RigidSolver(Solver):
         else:
             verts_state_start = self.n_fixed_verts
 
+        morph._enable_mujoco_compatibility = self._enable_mujoco_compatibility
+
         entity = EntityClass(
             scene=self._scene,
             solver=self,
