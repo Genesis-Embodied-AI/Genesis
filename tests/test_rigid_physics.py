@@ -1416,12 +1416,14 @@ def test_path_planning_avoidance(n_envs, show_viewer):
             scene.visualizer.update()
 
             # Check if the cube is colliding with the robot
-            scene.rigid_solver._kernel_forward_dynamics()
+            scene.rigid_solver._func_forward_dynamics()
             scene.rigid_solver._func_constraint_force()
             for i in range(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]):
-                contact_data = scene.rigid_solver.collider._collider_state.contact_data[i, 0]
-                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_data.link_a, contact_data.link_b)):
-                    max_penetration = max(max_penetration, contact_data.penetration)
+                contact_link_a = scene.rigid_solver.collider._collider_state.contact_data.link_a[i, 0]
+                contact_link_b = scene.rigid_solver.collider._collider_state.contact_data.link_b[i, 0]
+                penetration = scene.rigid_solver.collider._collider_state.contact_data.penetration[i, 0]
+                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_link_a, contact_link_b)):
+                    max_penetration = max(max_penetration, penetration)
 
         args = (max_penetration, 5e-3)
         np.testing.assert_array_less(*(args if ignore_collision else args[::-1]))
@@ -2064,6 +2066,10 @@ def test_urdf_parsing(show_viewer, tol):
         entities[(fixed, merge_fixed_links)] = entity
     scene.build()
 
+    # four microwaves have four different root_idx
+    root_idx_all = [link.root_idx for link in scene.rigid_solver.links]
+    assert len(set(root_idx_all)) == 4
+
     def _check_entity_positions(relative, tol):
         nonlocal entities
         AABB_all = []
@@ -2420,7 +2426,7 @@ def test_data_accessor(n_envs, batched, tol):
             break
     else:
         assert False
-    gs_sim.rigid_solver._kernel_forward_dynamics()
+    gs_sim.rigid_solver._func_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
 
     gs_robot.get_contacts()

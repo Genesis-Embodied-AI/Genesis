@@ -331,7 +331,10 @@ MAX_CACHE_SIZE = 1000
 class FieldMetadata:
     ndim: int
     shape: tuple[int, ...]
-    dtype: ti._lib.core.DataType
+    try:
+        dtype: ti._lib.core.DataType
+    except:
+        dtype: ti._lib.core.DataTypeCxx
     mapping_key: Any
 
 
