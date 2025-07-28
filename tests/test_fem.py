@@ -582,3 +582,135 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
         atol=0.2,
         err_msg=f"Link center {center} moves too far from [-0.5, -0.5, 0.04].",
     )
+def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_viewer):
+    """
+    Test if a box with hard vertex constraints has those vertices fixed,
+    and that updating and removing constraints works correctly.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=1,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            enable_vertex_constraints=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+    )
+
+    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
+    cube = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            scale=0.1,
+            pos=np.array([0.0, 0.0, 0.6], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    verts_idx = [0]
+    initial_target_poss = cube.init_positions[verts_idx]
+
+    scene.build()
+
+    if show_viewer:
+        sphere = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+
+    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
+
+    for _ in range(100):
+        scene.step()
+
+    positions = cube.get_state().pos[0][verts_idx]
+    assert_allclose(
+        positions, initial_target_poss, tol=0.0
+    ), "Vertices should stay at initial target positions with hard constraints"
+    new_target_poss = initial_target_poss + gs.tensor(
+        [[0.1, 0.1, 0.1]],
+    )
+    cube.update_constraint_targets(verts_idx=verts_idx, target_poss=new_target_poss)
+    if show_viewer:
+        scene.clear_debug_object(sphere)
+        sphere = scene.draw_debug_spheres(poss=new_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+    for _ in range(100):
+        scene.step()
+
+    positions_after_update = cube.get_state().pos[0][verts_idx]
+    assert_allclose(
+        positions_after_update, new_target_poss, tol=0.0
+    ), "Vertices should be at new target positions after updating constraints"
+
+    cube.remove_vertex_constraints()
+    if show_viewer:
+        scene.clear_debug_object(sphere)
+
+    for _ in range(100):
+        scene.step()
+
+    state = cube.get_state()
+    min_pos_z = state.pos[..., 2].min()
+    # The contact requires some penetration to generate enough contact force to cancel out gravity
+    assert_allclose(min_pos_z, -2.0e-5, atol=5e-6), f"Cube minimum Z position {min_pos_z} is not close to -2.0e-5."
+
+
+def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
+    """
+    Test if a box with hard vertex constraints has those vertices fixed,
+    and that updating and removing constraints works correctly.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=1,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            enable_vertex_constraints=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+    )
+
+    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
+    cube = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            scale=0.1,
+            pos=np.array([0.0, 0.0, 0.35], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    verts_idx = [0]
+    initial_target_poss = cube.init_positions[verts_idx]
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.1),
+            radius=0.1,
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    scene.build()
+    # return
+    if show_viewer:
+        sphere_debug = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+
+    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
+
+    for _ in range(200):
+        scene.step()
+
+    pos = cube.get_state().pos
+    fixed_pos = pos[0][verts_idx]
+    assert_allclose(
+        fixed_pos, initial_target_poss, tol=0.0
+    ), "Vertices should stay at initial target positions with hard constraints"
+
+    min_sphere_pos_z = sphere.get_state().pos[..., 2].min()
+    assert_allclose(
+        min_sphere_pos_z, -1e-3, atol=2e-4
+    ), f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface."

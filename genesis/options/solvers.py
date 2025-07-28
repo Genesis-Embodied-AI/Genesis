@@ -612,7 +612,8 @@ class FEMOptions(Options):
         Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_beta : float, optional
         Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is True.
-
+    enable_vertex_constraints : bool, optional
+        Whether to enable vertex constraints. Defaults to False.
     Note
     ----
     - Damping coefficients are used to control the damping effect in the simulation.
@@ -635,6 +636,7 @@ class FEMOptions(Options):
     linesearch_tau: float = 0.5
     damping_alpha: float = 0.5
     damping_beta: float = 5e-4
+    enable_vertex_constraints: bool = False
 
 
 class SFOptions(Options):
