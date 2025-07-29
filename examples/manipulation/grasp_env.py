@@ -205,7 +205,6 @@ class GraspEnv:
             self.robot.center_finger_pose[:, 3:7],
         )
         obj_pos, obj_quat = self.object.get_pos(), self.object.get_quat()
-        #
         obs_components = [
             finger_pos - obj_pos,  # 3D position difference
             finger_quat,  # current orientation (4D quaternion)
@@ -295,17 +294,14 @@ class GraspEnv:
         total_steps = 500
         goal_pose = self.robot.ee_pose.clone()
 
-        #
         lift_height = 0.3
         lift_pose = goal_pose.clone()
         lift_pose[:, 2] += lift_height
 
-        #
         final_pose = goal_pose.clone()
         final_pose[:, 0] = 0.3
         final_pose[:, 1] = 0.0
         final_pose[:, 2] = 0.4
-        #
         reset_pose = torch.tensor([0.2, 0.0, 0.4, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         for i in range(total_steps):
             if render:
@@ -364,7 +360,6 @@ class Manipulator:
         self._arm_dof_dim = self._robot_entity.n_dofs - 2  # total number of arm: joints
         self._gripper_dim = 2  # number of gripper joints
 
-        #
         self._arm_dof_idx = torch.arange(self._arm_dof_dim, device=self._device)
         self._fingers_dof = torch.arange(
             self._arm_dof_dim,
@@ -373,11 +368,9 @@ class Manipulator:
         )
         self._left_finger_dof = self._fingers_dof[0]
         self._right_finger_dof = self._fingers_dof[1]
-        #
         self._ee_link = self._robot_entity.get_link(self._args["ee_link_name"])
         self._left_finger_link = self._robot_entity.get_link(self._args["gripper_link_names"][0])
         self._right_finger_link = self._robot_entity.get_link(self._args["gripper_link_names"][1])
-        #
         self._default_joint_angles = self._args["default_arm_dof"]
         if self._args["default_gripper_dof"] is not None:
             self._default_joint_angles += self._args["default_gripper_dof"]
@@ -424,7 +417,6 @@ class Manipulator:
         target_position = delta_position + self._ee_link.get_pos()
         quat_rel = xyz_to_quat(delta_orientation, rpy=True, degrees=False)
         target_orientation = transform_quat_by_quat(quat_rel, self._ee_link.get_quat())
-        #
         q_pos = self._robot_entity.inverse_kinematics(
             link=self._ee_link,
             pos=target_position,
@@ -438,7 +430,6 @@ class Manipulator:
         Damped least squares inverse kinematics
         """
         delta_pose = action[:, :6]
-        #
         lambda_val = 0.01
         jacobian = self._robot_entity.get_jacobian(link=self._ee_link)
         jacobian_T = jacobian.transpose(1, 2)

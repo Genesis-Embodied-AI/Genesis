@@ -75,12 +75,10 @@ def get_cfgs():
         "num_actions": 6,
         "action_scales": [0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
         "episode_length_s": 3.0,
-        #
         "ctrl_dt": 0.01,
         "box_size": [0.04, 0.04, 0.06],
         "box_collision": False,
         "box_fixed": True,
-        #
         "visualize_camera": False,
     }
     reward_scales = {
