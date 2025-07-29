@@ -163,7 +163,7 @@ def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
     for py_func, shapes_in, shapes_out in (
-        (gu.z_up_to_R, [[3], [3]], [[3, 3]]),
+        (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
         (gu.pos_lookat_up_to_T, [[3], [3], [3]], [[4, 4]]),
     ):
         num_inputs = len(shapes_in)
@@ -189,7 +189,7 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
         tc_outs = tuple(map(tensor_to_array, tc_outs))
 
         for np_out, tc_out in zip(np_outs, tc_outs):
-            np.testing.assert_allclose(np_out, tc_out, atol=1e2 * gs.EPS)
+            np.testing.assert_allclose(np_out, tc_out, atol=gs.EPS)
 
 
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
