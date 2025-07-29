@@ -59,8 +59,8 @@ def load_bc_policy(env, bc_cfg, log_dir):
     return bc_runner._policy
 
 
-def display_stereo_images(env, step_count):
-    """Display left and right RGB images side by side in one window."""
+def get_stereo_frame(env, step_count):
+    """Get stereo frame as numpy array."""
     # Get individual camera images
     rgb_left, _, _, _ = env.left_cam.render(rgb=True, depth=False)
     rgb_right, _, _, _ = env.right_cam.render(rgb=True, depth=False)
@@ -73,34 +73,12 @@ def display_stereo_images(env, step_count):
     left_img = cv2.cvtColor(left_img, cv2.COLOR_RGB2BGR)
     right_img = cv2.cvtColor(right_img, cv2.COLOR_RGB2BGR)
 
-    # Resize images for better display (optional)
+    # Resize images for better display
     scale = 2.0
     left_img = cv2.resize(left_img, (int(left_img.shape[1] * scale), int(left_img.shape[0] * scale)))
     right_img = cv2.resize(right_img, (int(right_img.shape[1] * scale), int(right_img.shape[0] * scale)))
-
-    # Add text labels
-    cv2.putText(
-        left_img,
-        f"Left Camera - Step {step_count}",
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 255, 0),
-        2,
-    )
-    cv2.putText(
-        right_img,
-        f"Right Camera - Step {step_count}",
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 255, 0),
-        2,
-    )
-
     # Concatenate images horizontally (side by side)
     stereo_img = np.hstack([left_img, right_img])
-
     # Add a vertical line separator between the two images
     separator_x = left_img.shape[1]
     cv2.line(
@@ -110,6 +88,12 @@ def display_stereo_images(env, step_count):
         (255, 255, 255),
         2,
     )
+    return stereo_img
+
+
+def display_stereo_images(env, step_count):
+    """Display left and right RGB images side by side in one window."""
+    stereo_img = get_stereo_frame(env, step_count)
 
     # Display combined image
     cv2.imshow("Stereo Cameras", stereo_img)
@@ -119,6 +103,35 @@ def display_stereo_images(env, step_count):
     if key == 27:  # ESC key
         return False
     return True
+
+
+def save_frames_as_video(frames, video_path, fps=60):
+    """Save a list of frames as a video."""
+    if not frames:
+        print("No frames to save!")
+        return
+
+    # Get frame dimensions from the first frame
+    height, width = frames[0].shape[:2]
+
+    # Create video writer
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+
+    if not video_writer.isOpened():
+        print(f"Error: Could not open video writer for {video_path}")
+        return
+
+    # Write frames to video
+    print(f"Saving {len(frames)} frames to {video_path}...")
+    for i, frame in enumerate(frames):
+        video_writer.write(frame)
+        if i % 30 == 0:  # Progress indicator every 30 frames
+            print(f"Progress: {i + 1}/{len(frames)} frames")
+
+    # Release video writer
+    video_writer.release()
+    print(f"Video saved successfully: {video_path}")
 
 
 def main():
@@ -131,7 +144,17 @@ def main():
         choices=["rl", "bc"],
         help="Model type: 'rl' for reinforcement learning, 'bc' for behavior cloning",
     )
-    parser.add_argument("--record", action="store_true", default=False)
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="Record stereo images as video during evaluation",
+    )
+    parser.add_argument(
+        "--video_path",
+        type=str,
+        default=None,
+        help="Path to save the video file (default: auto-generated)",
+    )
     args = parser.parse_args()
 
     # Set PyTorch default dtype to float32 for better performance
@@ -170,47 +193,50 @@ def main():
         policy = load_rl_policy(env, rl_train_cfg, log_dir)
     else:
         policy = load_bc_policy(env, bc_train_cfg, log_dir)
+        policy.eval()
         # Verify policy is float32
         print(f"Policy dtype: {next(policy.parameters()).dtype}")
 
     obs, _ = env.reset()
 
+    # Initialize frame list for recording
+    frames = []
     max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
+
     with torch.no_grad():
-        if args.record:
-            for step in range(max_sim_step):
-                if args.stage == "rl":
-                    actions = policy(obs)
-                else:
-                    # Get stereo grayscale images and ensure float32
-                    rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
-                    ee_pose = env.robot.ee_pose.float()
+        for step in range(max_sim_step):
+            if args.stage == "rl":
+                actions = policy(obs)
+            else:
+                # Get stereo grayscale images and ensure float32
+                rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
+                ee_pose = env.robot.ee_pose.float()
 
-                    actions = policy(rgb_obs, ee_pose)
-                obs, rews, dones, infos = env.step(actions)
-            env.grasp_and_lift_demo(render=True)
-        else:
-            for step in range(max_sim_step):
-                if args.stage == "rl":
-                    actions = policy(obs)
-                else:
-                    # Get stereo grayscale images and ensure float32
-                    rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
-                    ee_pose = env.robot.ee_pose.float()
+                actions = policy(rgb_obs, ee_pose)
 
-                    actions = policy(rgb_obs, ee_pose)["actions"]
+                # Display stereo images for BC evaluation
+                if not display_stereo_images(env, step):
+                    print("Evaluation stopped by user (ESC key pressed)")
+                    break
 
-                    # Display stereo images for BC evaluation
-                    if not display_stereo_images(env, step):
-                        print("Evaluation stopped by user (ESC key pressed)")
-                        break
+                # Collect frame for video recording
+                if args.record:
+                    frame = get_stereo_frame(env, step)
+                    frames.append(frame)
 
-                obs, rews, dones, infos = env.step(actions)
-            env.grasp_and_lift_demo(render=False)
+            obs, rews, dones, infos = env.step(actions)
+        env.grasp_and_lift_demo()
 
-            # Close OpenCV windows if BC evaluation
-            if args.stage == "bc":
-                cv2.destroyAllWindows()
+        # Save video if recording was enabled
+        if args.record and frames:
+            video_path = f"{log_dir}/stereo_evaluation.mp4"
+            # Save frames as video
+            fps = env_cfg["max_visualize_FPS"]
+            save_frames_as_video(frames, video_path, fps)
+
+        # Close OpenCV windows if BC evaluation
+        if args.stage == "bc":
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
@@ -226,8 +252,4 @@ python examples/manipulation/grasp_eval.py --stage bc
 
 # With video recording:
 python examples/manipulation/grasp_eval.py --stage bc --record
-
-# Note
-If you experience slow performance or encounter other issues
-during evaluation, try removing the --record option.
 """

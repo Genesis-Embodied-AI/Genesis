@@ -71,15 +71,9 @@ def get_train_cfg(exp_name, max_iterations):
         # Basic training parameters
         "num_steps_per_env": 24,
         "learning_rate": 0.001,
-        "num_epochs": 10,
-        "mini_batches_size": 64,
+        "num_epochs": 5,
+        "mini_batches_size": 512,
         "max_grad_norm": 1.0,
-        # Learning rate schedule
-        "lr_schedule": {
-            "type": "cosine",
-            "T_max": 500,  # total iterations for cosine cycle
-            "min_lr": 0.0001,  # minimum learning rate
-        },
         # Network architecture
         "policy": {
             "vision_encoder": {
@@ -108,18 +102,18 @@ def get_train_cfg(exp_name, max_iterations):
                 ],
                 "pooling": "adaptive_avg",
             },
-            "mlp_head": {
+            "action_head": {
                 "state_obs_dim": 7,  # end-effector pose as additional state observation
                 "hidden_dims": [128, 128, 64],
+            },
+            "pose_head": {
+                "hidden_dims": [64, 64],
             },
         },
         # Training settings
         "buffer_size": 1000,
         "save_freq": 50,
         "eval_freq": 50,
-        # Multi-task learning weights
-        "action_loss_weight": 1.0,  # Weight for action prediction loss
-        "pose_loss_weight": 0.5,  # Weight for object pose prediction loss
     }
 
     return rl_cfg_dict, bc_cfg_dict
@@ -136,7 +130,6 @@ def get_task_cfgs():
         "box_size": [0.08, 0.03, 0.06],
         "box_collision": False,
         "box_fixed": True,
-        # for depth image
         "image_resolution": (64, 64),
         "use_rasterizer": True,
     }
@@ -173,7 +166,7 @@ def main():
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-B", "--num_envs", type=int, default=2048)
-    parser.add_argument("--max_iterations", type=int, default=500)
+    parser.add_argument("--max_iterations", type=int, default=300)
     parser.add_argument("--stage", type=str, default="rl")
     args = parser.parse_args()
 
