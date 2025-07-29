@@ -336,7 +336,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
 @pytest.mark.parametrize("n_envs", [0, 3])
 @pytest.mark.required
 @pytest.mark.xfail(reason="gs-madrona must be built and installed manually for now.")
-def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, n_steps, tol):
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, tol):
     scene = gs.Scene(
         renderer=gs.options.renderers.BatchRenderer(
             use_rasterizer=use_rasterizer,
