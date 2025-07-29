@@ -104,7 +104,6 @@ class GraspEnv:
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=gs.device)
         self.goal_pose = torch.zeros(self.num_envs, 7, device=gs.device)
-        #
         self.extras = dict()
         self.extras["observations"] = dict()
 
@@ -123,7 +122,7 @@ class GraspEnv:
         random_z = torch.ones(num_reset, device=self.device) * 0.025  # 0.15 ~ 0.15
         random_pos = torch.stack([random_x, random_y, random_z], dim=-1)
 
-        #
+        # randomly yaw the object
         q_downward = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(num_reset, 1)
         PI = 3.1415926
         random_yaw = (torch.rand(num_reset, device=self.device) * 2 * PI - PI) * 0.25
@@ -139,7 +138,6 @@ class GraspEnv:
         goal_yaw = transform_quat_by_quat(q_yaw, q_downward)
 
         self.goal_pose[envs_idx] = torch.cat([random_pos, goal_yaw], dim=-1)
-        #
         self.object.set_pos(random_pos, envs_idx=envs_idx)
         self.object.set_quat(goal_yaw, envs_idx=envs_idx)
 
