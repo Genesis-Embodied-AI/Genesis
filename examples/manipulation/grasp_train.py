@@ -69,31 +69,37 @@ def get_train_cfg(exp_name, max_iterations):
     # stage 2: vision-based behavior cloning
     bc_cfg_dict = {
         # Basic training parameters
-        "learning_rate": 0.0005,
-        "num_epochs": 10,
-        "num_mini_batches": 4,
+        "learning_rate": 0.001,
+        "num_epochs": 1,
+        "mini_batches_size": 1024,
         "max_grad_norm": 1.0,
+        # Learning rate schedule
+        "lr_schedule": {
+            "type": "cosine",
+            "T_max": 500,  # total iterations for cosine cycle
+            "min_lr": 0.0001,  # minimum learning rate
+        },
         # Network architecture
         "policy": {
             "vision_encoder": {
                 "conv_layers": [
                     {
-                        "in_channels": 3,  # 1 channel for rgb image
-                        "out_channels": 32,
+                        "in_channels": 3,  # 3 channel for rgb image
+                        "out_channels": 8,
                         "kernel_size": 3,
                         "stride": 1,
                         "padding": 1,
                     },
                     {
-                        "in_channels": 32,
-                        "out_channels": 64,
+                        "in_channels": 8,
+                        "out_channels": 16,
                         "kernel_size": 3,
                         "stride": 2,
                         "padding": 1,
                     },
                     {
-                        "in_channels": 64,
-                        "out_channels": 128,  # vision feature dim
+                        "in_channels": 16,
+                        "out_channels": 32,
                         "kernel_size": 3,
                         "stride": 2,
                         "padding": 1,
@@ -103,13 +109,16 @@ def get_train_cfg(exp_name, max_iterations):
             },
             "mlp_head": {
                 "state_obs_dim": 7,  # end-effector pose
-                "hidden_dims": [256, 256, 128],
+                "hidden_dims": [128, 128, 64],
             },
         },
         # Training settings
-        "buffer_size": 100,
-        "save_freq": 100,
+        "buffer_size": 300,
+        "save_freq": 50,
         "eval_freq": 50,
+        # Multi-task learning weights
+        "action_loss_weight": 1.0,  # Weight for action prediction loss
+        "reconstruction_loss_weight": 0.1,  # Weight for image reconstruction loss
     }
 
     return rl_cfg_dict, bc_cfg_dict
@@ -127,7 +136,7 @@ def get_task_cfgs():
         "box_collision": False,
         "box_fixed": True,
         # for depth image
-        "depth_image_resolution": (64, 64),
+        "image_resolution": (64, 64),
         "use_rasterizer": True,
     }
     reward_scales = {

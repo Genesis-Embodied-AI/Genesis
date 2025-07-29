@@ -2,7 +2,11 @@ import torch
 import math
 from typing import Literal
 import genesis as gs
-from genesis.utils.geom import xyz_to_quat, transform_quat_by_quat, transform_by_quat
+from genesis.utils.geom import (
+    xyz_to_quat,
+    transform_quat_by_quat,
+    transform_by_quat,
+)
 
 
 class GraspEnv:
@@ -18,8 +22,8 @@ class GraspEnv:
         self.num_obs = env_cfg["num_obs"]
         self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
-        self.image_width = env_cfg["depth_image_resolution"][0]
-        self.image_height = env_cfg["depth_image_resolution"][1]
+        self.image_width = env_cfg["image_resolution"][0]
+        self.image_height = env_cfg["image_resolution"][1]
         self.rgb_image_shape = (3, self.image_height, self.image_width)
         self.device = gs.device
 
@@ -80,24 +84,26 @@ class GraspEnv:
             ),
         )
 
+        self.scene.add_entity(gs.morphs.Plane(fixed=True))
+
         # == add stero camera ==
         self.left_cam = self.scene.add_camera(
             res=(self.image_width, self.image_height),
-            pos=(1.5, 0.2, 0.4),
-            lookat=(0, 0, 0.2),
+            pos=(1.25, 0.3, 0.3),
+            lookat=(0.0, 0.0, 0.0),
             fov=50,
             GUI=False,
         )
         self.right_cam = self.scene.add_camera(
             res=(self.image_width, self.image_height),
-            pos=(1.5, -0.2, 0.4),
-            lookat=(0, 0, 0.2),
+            pos=(1.25, -0.3, 0.3),
+            lookat=(0.0, 0.0, 0.0),
             fov=50,
             GUI=False,
         )
 
         # build
-        self.scene.build(n_envs=num_envs, env_spacing=(1.0, 1.0))
+        self.scene.build(n_envs=num_envs)
         # set pd gains (must be called after scene.build)
         self.robot.set_pd_gains()
 
@@ -244,15 +250,25 @@ class GraspEnv:
             depth = (depth - 0.0) / (10.0 - 0.0)  # normalize to [0, 1]
         return depth
 
-    def get_rgb_image(self, normalize: bool = True):
+    def get_stereo_rgb_images(self, normalize: bool = True):
         rgb_left, _, _, _ = self.left_cam.render(rgb=True, depth=False)
         rgb_right, _, _, _ = self.right_cam.render(rgb=True, depth=False)
-        rgb = torch.cat([rgb_left, rgb_right], dim=-1)
-        rgb = rgb.permute(0, 3, 1, 2)  # shape (B, 4, H, W)
+
+        # Convert to proper format
+        rgb_left = rgb_left.permute(0, 3, 1, 2)[:, :3]  # shape (B, 3, H, W)
+        rgb_right = rgb_right.permute(0, 3, 1, 2)[:, :3]  # shape (B, 3, H, W)
+
+        # Normalize if requested
         if normalize:
-            rgb = torch.clamp(rgb, min=0.0, max=255.0)
-            rgb = (rgb - 0.0) / (255.0 - 0.0)
-        return rgb[:, :3]  # remove alpha channel
+            rgb_left = torch.clamp(rgb_left, min=0.0, max=255.0)
+            rgb_left = (rgb_left - 0.0) / (255.0 - 0.0)
+            rgb_right = torch.clamp(rgb_right, min=0.0, max=255.0)
+            rgb_right = (rgb_right - 0.0) / (255.0 - 0.0)
+
+        # Concatenate left and right rgb images along channel dimension
+        # Result: [B, 6, H, W] where channel 0 is left rgb, channel 1 is right rgb
+        stereo_rgb = torch.cat([rgb_left, rgb_right], dim=1)
+        return stereo_rgb
 
     # ------------ begin reward functions----------------
     def _reward_keypoints(self):
