@@ -2828,22 +2828,7 @@ def test_api_domain_randomization(show_viewer, tol):
 
     robot.set_dofs_kp(np.full(12, 20), motors_dof_idx)
     robot.set_dofs_kv(np.full(12, 1), motors_dof_idx)
-    default_dof_pos = np.array(
-        [
-            0.0,
-            0.8,
-            -1.5,
-            0.0,
-            0.8,
-            -1.5,
-            0.0,
-            1.0,
-            -1.5,
-            0.0,
-            1.0,
-            -1.5,
-        ]
-    )
+    default_dof_pos = np.array([0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5])
     # padding to n_env x n_dofs
     default_dof_pos = np.tile(default_dof_pos, (n_envs, 1))
     robot.control_dofs_position(default_dof_pos, motors_dof_idx)
