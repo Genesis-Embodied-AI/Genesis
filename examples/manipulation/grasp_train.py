@@ -69,9 +69,10 @@ def get_train_cfg(exp_name, max_iterations):
     # stage 2: vision-based behavior cloning
     bc_cfg_dict = {
         # Basic training parameters
+        "num_steps_per_env": 24,
         "learning_rate": 0.001,
-        "num_epochs": 1,
-        "mini_batches_size": 1024,
+        "num_epochs": 10,
+        "mini_batches_size": 64,
         "max_grad_norm": 1.0,
         # Learning rate schedule
         "lr_schedule": {
@@ -108,17 +109,17 @@ def get_train_cfg(exp_name, max_iterations):
                 "pooling": "adaptive_avg",
             },
             "mlp_head": {
-                "state_obs_dim": 7,  # end-effector pose
+                "state_obs_dim": 7,  # end-effector pose as additional state observation
                 "hidden_dims": [128, 128, 64],
             },
         },
         # Training settings
-        "buffer_size": 300,
+        "buffer_size": 1000,
         "save_freq": 50,
         "eval_freq": 50,
         # Multi-task learning weights
         "action_loss_weight": 1.0,  # Weight for action prediction loss
-        "reconstruction_loss_weight": 0.1,  # Weight for image reconstruction loss
+        "pose_loss_weight": 0.5,  # Weight for object pose prediction loss
     }
 
     return rl_cfg_dict, bc_cfg_dict
@@ -126,13 +127,13 @@ def get_train_cfg(exp_name, max_iterations):
 
 def get_task_cfgs():
     env_cfg = {
+        "num_envs": 10,
         "num_obs": 14,
         "num_actions": 6,
         "action_scales": [0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
         "episode_length_s": 3.0,
-        #
         "ctrl_dt": 0.01,
-        "box_size": [0.04, 0.04, 0.06],
+        "box_size": [0.08, 0.03, 0.06],
         "box_collision": False,
         "box_fixed": True,
         # for depth image
@@ -141,7 +142,6 @@ def get_task_cfgs():
     }
     reward_scales = {
         "keypoints": 1.0,
-        "table_contact": -1.0,  # Negative scale for penalty
     }
     # panda robot specific
     robot_cfg = {
@@ -172,7 +172,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-B", "--num_envs", type=int, default=100)
+    parser.add_argument("-B", "--num_envs", type=int, default=2048)
     parser.add_argument("--max_iterations", type=int, default=500)
     parser.add_argument("--stage", type=str, default="rl")
     args = parser.parse_args()
@@ -182,23 +182,7 @@ def main():
 
     # === task cfgs and trainning algos cfgs ===
     env_cfg, reward_scales, robot_cfg = get_task_cfgs()
-
-    if args.vis:
-        env_cfg["visualize_target"] = True
-
     rl_train_cfg, bc_train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
-
-    if args.stage == "rl":
-        # fix box and disable collision to make RL training easier
-        env_cfg["box_fixed"] = True
-        env_cfg["box_collision"] = False
-    elif args.stage == "bc":
-        # enable box collision and disable box fixed for BC training
-        env_cfg["box_fixed"] = True
-        env_cfg["box_collision"] = False
-        env_cfg["num_envs"] = 10  # normally you don't need thousands of envs for BC
-    else:
-        raise ValueError(f"Invalid stage: {args.stage}")
 
     # === log dir ===
     log_dir = f"logs/{args.exp_name + '_' + args.stage}"
@@ -208,8 +192,9 @@ def main():
         pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
 
     # === env ===
+    # BC only needs a small number of envs, e.g., 10
+    env_cfg["num_envs"] = args.num_envs if args.stage == "rl" else 10
     env = GraspEnv(
-        num_envs=args.num_envs,
         env_cfg=env_cfg,
         reward_cfg=reward_scales,
         robot_cfg=robot_cfg,

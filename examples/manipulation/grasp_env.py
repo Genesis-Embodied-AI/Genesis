@@ -12,13 +12,12 @@ from genesis.utils.geom import (
 class GraspEnv:
     def __init__(
         self,
-        num_envs,
-        env_cfg,
-        reward_cfg,
-        robot_cfg,
-        show_viewer=False,
-    ):
-        self.num_envs = num_envs
+        env_cfg: dict,
+        reward_cfg: dict,
+        robot_cfg: dict,
+        show_viewer: bool = False,
+    ) -> None:
+        self.num_envs = env_cfg["num_envs"]
         self.num_obs = env_cfg["num_obs"]
         self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
@@ -103,7 +102,7 @@ class GraspEnv:
         )
 
         # build
-        self.scene.build(n_envs=num_envs)
+        self.scene.build(n_envs=env_cfg["num_envs"], env_spacing=(1.0, 1.0))
         # set pd gains (must be called after scene.build)
         self.robot.set_pd_gains()
 
@@ -142,10 +141,9 @@ class GraspEnv:
         random_z = torch.ones(num_reset, device=self.device) * 0.025  # 0.15 ~ 0.15
         random_pos = torch.stack([random_x, random_y, random_z], dim=-1)
 
-        #
+        # downward facing quaternion to align with the hand
         q_downward = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(num_reset, 1)
-        PI = 3.1415926
-        random_yaw = (torch.rand(num_reset, device=self.device) * 2 * PI - PI) * 0.25
+        random_yaw = (torch.rand(num_reset, device=self.device) * 2 * math.pi - math.pi) * 0.25
         q_yaw = torch.stack(
             [
                 torch.cos(random_yaw / 2),
@@ -230,8 +228,8 @@ class GraspEnv:
         obs_components = [
             finger_pos - obj_pos,  # 3D position difference
             finger_quat,  # current orientation (4D quaternion)
-            obj_pos,  # goal pose (7D: pos + quat)
-            obj_quat,  # goal pose (7D: pos + quat)
+            obj_pos,  # goal position
+            obj_quat,  # goal orientation (4D quaternion)
         ]
         obs_tensor = torch.cat(obs_components, dim=-1)
         self.extras["observations"]["critic"] = obs_tensor
@@ -287,23 +285,6 @@ class GraspEnv:
         object_pos_keypoints = self._to_world_frame(self.object.get_pos(), self.object.get_quat(), keypoints_offset)
         dist = torch.norm(finger_pos_keypoints - object_pos_keypoints, p=2, dim=-1).sum(-1)
         return torch.exp(-dist)
-
-    def _reward_table_contact(self):
-        # Get current gripper DOF positions
-        gripper_dofs = self.robot._robot_entity.get_qpos()[:, self.robot._fingers_dof]
-
-        # Expected gripper positions when not in contact (open gripper)
-        expected_open_pos = torch.tensor([0.04, 0.04], device=self.device).repeat(self.num_envs, 1)
-
-        # Penalize when gripper DOFs are significantly different from expected open position
-        # This indicates contact with table or other obstacles
-        dof_error = torch.norm(gripper_dofs - expected_open_pos, dim=-1)
-
-        # Apply penalty when error is above threshold (indicating contact)
-        contact_threshold = 0.001  # 1cm tolerance
-        contact_penalty = torch.where(dof_error > contact_threshold, -dof_error, torch.zeros_like(dof_error))
-
-        return contact_penalty
 
     # ------------ end reward functions----------------
 
@@ -389,6 +370,9 @@ class Manipulator:
         )
         self._robot_entity: gs.Entity = scene.add_entity(material=material, morph=morph)
 
+        self._gripper_open_dof = 0.04
+        self._gripper_close_dof = 0.00
+
         self._ik_method: Literal["rel_pose", "dls"] = args["ik_method"]
 
         # == some buffer initialization ==
@@ -458,9 +442,9 @@ class Manipulator:
             raise ValueError(f"Invalid control mode: {self._ik_method}")
         # set gripper to open
         if open_gripper:
-            q_pos[:, self._fingers_dof] = +0.04
+            q_pos[:, self._fingers_dof] = self._gripper_open_dof
         else:
-            q_pos[:, self._fingers_dof] = +0.02
+            q_pos[:, self._fingers_dof] = self._gripper_close_dof
         self._robot_entity.control_dofs_position(position=q_pos)
 
     def _gs_ik(self, action: torch.Tensor) -> torch.Tensor:
@@ -506,20 +490,10 @@ class Manipulator:
             dofs_idx_local=self._arm_dof_idx,
         )
         if open_gripper:
-            q_pos[:, self._fingers_dof] = 0.04
+            q_pos[:, self._fingers_dof] = self._gripper_open_dof
         else:
-            q_pos[:, self._fingers_dof] = +0.00
+            q_pos[:, self._fingers_dof] = self._gripper_close_dof
         self._robot_entity.control_dofs_position(position=q_pos)
-
-    def open_gripper(self):
-        q_pos = self._robot_entity.get_qpos()
-        q_pos[:, self._fingers_dof] = 0.04
-        self._robot_entity.set_qpos(q_pos)
-
-    def close_gripper(self):
-        q_pos = self._robot_entity.get_qpos()
-        q_pos[:, self._fingers_dof] = +0.00
-        self._robot_entity.set_qpos(q_pos)
 
     @property
     def base_pos(self):

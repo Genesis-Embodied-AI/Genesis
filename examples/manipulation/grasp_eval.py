@@ -144,11 +144,10 @@ def main():
     # Load configurations
     if args.stage == "rl":
         # For RL, load the standard configs
-        env_cfg, reward_cfg, robot_cfg, train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
     else:
         # For BC, we need to load the configs and create BC config
         env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
-        train_cfg = bc_train_cfg
 
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
@@ -156,9 +155,10 @@ def main():
     env_cfg["box_collision"] = True
     # set the box fixed
     env_cfg["box_fixed"] = False
+    # set the number of envs for evaluation
+    env_cfg["num_envs"] = 10
 
     env = GraspEnv(
-        num_envs=10,
         env_cfg=env_cfg,
         reward_cfg=reward_cfg,
         robot_cfg=robot_cfg,
@@ -167,9 +167,9 @@ def main():
 
     # Load the appropriate policy based on model type
     if args.stage == "rl":
-        policy = load_rl_policy(env, train_cfg, log_dir)
+        policy = load_rl_policy(env, rl_train_cfg, log_dir)
     else:
-        policy = load_bc_policy(env, train_cfg, log_dir)
+        policy = load_bc_policy(env, bc_train_cfg, log_dir)
         # Verify policy is float32
         print(f"Policy dtype: {next(policy.parameters()).dtype}")
 
@@ -186,11 +186,6 @@ def main():
                     rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
                     ee_pose = env.robot.ee_pose.float()
 
-                    # Diagnostic prints for first few steps
-                    if step < 3:
-                        print(f"Step {step}: RGB obs shape: {rgb_obs.shape}, dtype: {rgb_obs.dtype}")
-                        print(f"Step {step}: EE pose shape: {ee_pose.shape}, dtype: {ee_pose.dtype}")
-
                     actions = policy(rgb_obs, ee_pose)
                 obs, rews, dones, infos = env.step(actions)
             env.grasp_and_lift_demo(render=True)
@@ -203,12 +198,7 @@ def main():
                     rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
                     ee_pose = env.robot.ee_pose.float()
 
-                    # Diagnostic prints for first few steps
-                    if step < 3:
-                        print(f"Step {step}: RGB obs shape: {rgb_obs.shape}, dtype: {rgb_obs.dtype}")
-                        print(f"Step {step}: EE pose shape: {ee_pose.shape}, dtype: {ee_pose.dtype}")
-
-                    actions = policy(rgb_obs, ee_pose)
+                    actions = policy(rgb_obs, ee_pose)["actions"]
 
                     # Display stereo images for BC evaluation
                     if not display_stereo_images(env, step):
