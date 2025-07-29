@@ -273,11 +273,7 @@ class Simulator(RBC):
                     self.save_ckpt()
 
         if self.rigid_solver.is_active():
-            self.rigid_solver._kernel_clear_external_force(
-                links_state=self.rigid_solver.links_state,
-                rigid_global_info=self.rigid_solver._rigid_global_info,
-                static_rigid_sim_config=self.rigid_solver._static_rigid_sim_config,
-            )
+            self.rigid_solver.clear_external_force()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):

@@ -9,14 +9,14 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.repr_base import RBC
+from genesis.sensors import Sensor
 from genesis.utils.misc import tensor_to_array
 
 
-class Camera(RBC):
+class Camera(Sensor):
     """
-    Genesis camera class. The camera can be used to render RGB, depth, and segmentation images. The camera can use either rasterizer or raytracer for rendering, specified by `scene.renderer`.
-    The camera also comes with handy tools such as video recording.
+    A camera which can be used to render RGB, depth, and segmentation images.
+    Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
 
     Parameters
     ----------
@@ -45,7 +45,9 @@ class Camera(RBC):
     spp : int, optional
         Samples per pixel. Only available when using the RayTracer renderer. Defaults to 256.
     denoise : bool
-        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option when building RayTracer.
+        Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer.
+        Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
+        option when building RayTracer.
     near : float
         The near plane of the camera.
     far : float
