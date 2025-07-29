@@ -1731,12 +1731,13 @@ class StructVgeomsInfo:
     pos: V_ANNOTATION
     quat: V_ANNOTATION
     link_idx: V_ANNOTATION
-    : V_ANNOTATION
+    vvert_num: V_ANNOTATION
     vvert_start: V_ANNOTATION
     vvert_end: V_ANNOTATION
     vface_num: V_ANNOTATION
     vface_start: V_ANNOTATION
     vface_end: V_ANNOTATION
+    color: V_ANNOTATION
 
 
 def get_vgeoms_info(solver):
