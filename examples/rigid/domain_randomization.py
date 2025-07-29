@@ -22,11 +22,11 @@ def main():
             camera_fov=40,
             max_FPS=200,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             constraint_solver=gs.constraint_solver.Newton,
         ),
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################
@@ -48,9 +48,6 @@ def main():
         friction_ratio=0.5 + torch.rand(scene.n_envs, robot.n_links),
         links_idx_local=np.arange(0, robot.n_links),
     )
-    from IPython import embed
-
-    embed()
 
     # set mass of a single link
     link = robot.get_link("RR_thigh")
@@ -104,10 +101,11 @@ def main():
             -1.5,
         ]
     )
+    # padding to n_env x n_dofs
+    default_dof_pos = np.tile(default_dof_pos, (n_envs, 1))
     robot.control_dofs_position(default_dof_pos, motors_dof_idx)
 
-    for i in range(1000):
-        scene.step()
+    scene.step()
 
 
 if __name__ == "__main__":

@@ -168,6 +168,10 @@ class RigidLink(RBC):
         if is_fixed:
             self._invweight = np.zeros((2,), dtype=gs.np_float)
 
+        import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
+
+        self.rsd = rigid_solver_decomp
+
     def _compose_init_mesh(self):
         if len(self._geoms) == 0 and len(self._vgeoms) == 0:
             return None
@@ -391,8 +395,11 @@ class RigidLink(RBC):
             self._invweight /= ratio
         self._inertial_i *= ratio
 
-        self._solver._kernel_adjust_link_inertia(
-            self.idx, ratio, self._solver.links_info, self._solver._static_rigid_sim_config
+        self.rsd.kernel_adjust_link_inertia(
+            link_idx=self.idx,
+            ratio=ratio,
+            links_info=self._solver.links_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     @gs.assert_built

@@ -1410,7 +1410,7 @@ class RigidSolver(Solver):
                         if tensor.shape[0] != len(envs_idx):
                             gs.raise_exception(
                                 f"Invalid input shape: {tensor.shape}. First dimension of the input tensor does not match "
-                                "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
+                                f"length ({len(envs_idx)}) of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
                             )
                     else:
                         gs.raise_exception(
