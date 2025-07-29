@@ -168,6 +168,10 @@ class RigidLink(RBC):
         if is_fixed:
             self._invweight = np.zeros((2,), dtype=gs.np_float)
 
+        import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
+
+        self.rsd = rigid_solver_decomp
+
     def _compose_init_mesh(self):
         if len(self._geoms) == 0 and len(self._vgeoms) == 0:
             return None
@@ -310,8 +314,15 @@ class RigidLink(RBC):
     def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
         for i_g_, i_b in ti.ndrange(self.n_geoms, self._solver._B):
             i_g = i_g_ + self._geom_start
-            self._solver._func_update_verts_for_geom(i_g, i_b)
-
+            self.rsd.func_update_verts_for_geom(
+                i_g=i_g,
+                i_b=i_b,
+                geoms_state=self._solver.geoms_state,
+                geoms_info=self._solver.geoms_info,
+                verts_info=self._solver.verts_info,
+                free_verts_state=self._solver.free_verts_state,
+                fixed_verts_state=self._solver.fixed_verts_state,
+            )
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
             tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
@@ -320,8 +331,15 @@ class RigidLink(RBC):
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
         for i_g_ in range(self.n_geoms):
             i_g = i_g_ + self._geom_start
-            self._solver._func_update_verts_for_geom(i_g, 0)
-
+            self.rsd.func_update_verts_for_geom(
+                i_g=i_g,
+                i_b=0,
+                geoms_state=self._solver.geoms_state,
+                geoms_info=self._solver.geoms_info,
+                verts_info=self._solver.verts_info,
+                free_verts_state=self._solver.free_verts_state,
+                fixed_verts_state=self._solver.fixed_verts_state,
+            )
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
             tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
@@ -392,8 +410,11 @@ class RigidLink(RBC):
             self._invweight /= ratio
         self._inertial_i *= ratio
 
-        self._solver._kernel_adjust_link_inertia(
-            self.idx, ratio, self._solver.links_info, self._solver._static_rigid_sim_config
+        self.rsd.kernel_adjust_link_inertia(
+            link_idx=self.idx,
+            ratio=ratio,
+            links_info=self._solver.links_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     @gs.assert_built
