@@ -278,10 +278,9 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     robot = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    n_cameras = 3
-    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_cameras)]
     n_envs = 3
     env_spacing = (2.0, 2.0)
+    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_envs)]
     scene.build(n_envs=n_envs, env_spacing=env_spacing)
 
     T = np.eye(4)
@@ -326,7 +325,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
             diff_tol = 0.02  # expect atlest 2% difference between each frame
             frames_t_minus_1 = steps_rgb_queue.get()
             frames_t = steps_rgb_queue.get()
-            for i in range(n_cameras):
+            for i in range(n_envs):
                 diff = frames_t[i] - frames_t_minus_1[i]
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
 
