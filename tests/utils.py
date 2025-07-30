@@ -217,17 +217,18 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     if atol is None:
         atol = 0.0
 
-    if isinstance(actual, torch.Tensor):
-        actual = tensor_to_array(actual)
-    actual = np.asanyarray(actual)
-    if isinstance(desired, torch.Tensor):
-        desired = tensor_to_array(desired)
-    desired = np.asanyarray(desired)
+    args = [actual, desired]
+    for i, arg in enumerate(args):
+        if isinstance(arg, torch.Tensor):
+            arg = tensor_to_array(arg)
+        elif isinstance(arg, (tuple, list)):
+            arg = [tensor_to_array(val) for val in arg]
+        args[i] = np.asanyarray(arg)
 
-    if all(e.size == 0 for e in (actual, desired)):
+    if all(e.size == 0 for e in args):
         return
 
-    np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
+    np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
 def assert_array_equal(actual, desired, *, err_msg=""):
