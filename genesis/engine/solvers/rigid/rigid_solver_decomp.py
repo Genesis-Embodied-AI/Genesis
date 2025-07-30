@@ -491,7 +491,7 @@ class RigidSolver(Solver):
         # self._rigid_global_info.mass_parent_mask = self.mass_parent_mask
         # self._rigid_global_info.gravity = self._gravity
 
-        gravity = np.repeat(self.sim.gravity[None], self._B, axis=0)
+        gravity = np.tile(self.sim.gravity, (self._B, 1))
         self._rigid_global_info.gravity.from_numpy(gravity)
 
     def _init_dof_fields(self):
@@ -2197,8 +2197,7 @@ class RigidSolver(Solver):
         g = np.asarray(gravity, dtype=gs.np_float)
         if envs_idx is None:
             if g.ndim == 1:
-                _B = self._rigid_global_info.gravity.shape[0]
-                g = np.repeat(g[None], _B, axis=0)
+                g = np.tile(g, (self._B, 1))
             self._rigid_global_info.gravity.from_numpy(g)
         else:
             self._rigid_global_info.gravity[envs_idx] = g
