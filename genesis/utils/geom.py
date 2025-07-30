@@ -147,9 +147,15 @@ def ti_quat_to_xyz(quat):
         q_xx, q_xy, q_xz = q_x * q_xs, q_x * q_ys, q_x * q_zs
         q_yy, q_yz, q_zz = q_y * q_ys, q_y * q_zs, q_z * q_zs
 
+        siny_cosp = q_wz - q_xy
+        cosy_cosp = 1.0 - (q_yy + q_zz)
+        hypot_min = ti.min(siny_cosp, cosy_cosp)
+        hypot_max = ti.max(siny_cosp, cosy_cosp)
+        cosp = ti.select(hypot_max > 0.0, hypot_max * ti.sqrt(1.0 + (hypot_min / hypot_max) ** 2), 0.0)
+
         roll = ti.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
-        pitch = -0.5 * ti.math.pi + 2.0 * ti.atan2(ti.sqrt(1.0 + (q_xz + q_wy)), ti.sqrt(1.0 - (q_xz + q_wy)))
-        yaw = ti.atan2(q_wz - q_xy, 1.0 - (q_yy + q_zz))
+        pitch = ti.atan2(q_xz + q_wy, cosp)
+        yaw = ti.atan2(siny_cosp, cosy_cosp)
 
     return ti.Vector([roll, pitch, yaw], dt=gs.ti_float)
 
@@ -637,22 +643,23 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
     q_yy, q_yz, q_zz = q_y * q_ys, q_y * q_zs, q_z * q_zs
 
     if rpy:
-        sinr_cosp = q_wx + q_yz
-    else:
-        sinr_cosp = q_wx - q_yz
-    out_[..., 0] = np.arctan2(sinr_cosp, 1.0 - (q_xx + q_yy))
-
-    if rpy:
         sinp = q_wy - q_xz
-    else:
-        sinp = q_xz + q_wy
-    out_[..., 1] = -0.5 * math.pi + 2.0 * np.arctan2(np.sqrt(1.0 + sinp), np.sqrt(1.0 - sinp))
-
-    if rpy:
+        sinr_cosp = q_wx + q_yz
         siny_cosp = q_wz + q_xy
     else:
+        sinp = q_xz + q_wy
+        sinr_cosp = q_wx - q_yz
         siny_cosp = q_wz - q_xy
-    out_[..., 2] = np.arctan2(siny_cosp, 1.0 - (q_yy + q_zz))
+    cosr_cosp = 1.0 - (q_xx + q_yy)
+    cosy_cosp = 1.0 - (q_yy + q_zz)
+
+    hypot_min = np.minimum(siny_cosp, cosy_cosp)
+    hypot_max = np.maximum(siny_cosp, cosy_cosp)
+    cosp = np.where(hypot_max > 0.0, hypot_max * np.sqrt(1.0 + (hypot_min / hypot_max) ** 2), 0.0)
+
+    out_[..., 0] = np.arctan2(sinr_cosp, cosr_cosp)
+    out_[..., 1] = np.arctan2(sinp, cosp)
+    out_[..., 2] = np.arctan2(siny_cosp, cosy_cosp)
 
     return out_
 
@@ -671,27 +678,33 @@ def _tc_quat_to_xyz(quat, rpy=False, out=None):
     q_yy, q_yz = torch.unbind(q_y * q_vec_s[..., 1:], -1)
     q_zz = q_z[..., 0] * q_vec_s[..., 2]
 
-    # Roll (x-axis rotation)
+    # Compute some intermediary quantities
     if rpy:
+        sinp = q_wy - q_xz
         sinr_cosp = q_wx + q_yz
+        siny_cosp = q_wz + q_xy
     else:
+        sinp = q_xz + q_wy
         sinr_cosp = q_wx - q_yz
+        siny_cosp = q_wz - q_xy
     cosr_cosp = 1.0 - (q_xx + q_yy)
+    cosy_cosp = 1.0 - (q_yy + q_zz)
+
+    # Use numerical robust formula for computing cos(pitch)
+    # See Eigen implementation for reference:
+    # https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Geometry/EulerAngles.h#L45
+    # https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Core/MathFunctionsImpl.h#L149
+    hypot_min = torch.minimum(siny_cosp, cosy_cosp)
+    hypot_max = torch.maximum(siny_cosp, cosy_cosp)
+    cosp = torch.where(hypot_max > 0.0, hypot_max * torch.sqrt(1.0 + (hypot_min / hypot_max) ** 2), 0.0)
+
+    # Roll (x-axis rotation)
     out[..., 0] = torch.atan2(sinr_cosp, cosr_cosp)
 
     # Pitch (y-axis rotation)
-    if rpy:
-        sinp = q_wy - q_xz
-    else:
-        sinp = q_xz + q_wy
-    out[..., 1] = -0.5 * math.pi + 2.0 * torch.atan2(torch.sqrt(1.0 + sinp), torch.sqrt(1.0 - sinp))
+    out[..., 1] = torch.atan2(sinp, cosp)
 
     # Yaw (z-axis rotation)
-    if rpy:
-        siny_cosp = q_wz + q_xy
-    else:
-        siny_cosp = q_wz - q_xy
-    cosy_cosp = 1.0 - (q_yy + q_zz)
     out[..., 2] = torch.atan2(siny_cosp, cosy_cosp)
 
     return out

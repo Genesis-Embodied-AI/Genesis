@@ -108,7 +108,7 @@ class Simulator(RBC):
         self._steps_local = options._steps_local
 
         self._cur_substep_global = 0
-        self._gravity = np.array(options.gravity)
+        self._gravity = np.array(options.gravity, dtype=gs.np_float)
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -273,11 +273,7 @@ class Simulator(RBC):
                     self.save_ckpt()
 
         if self.rigid_solver.is_active():
-            self.rigid_solver._kernel_clear_external_force(
-                links_state=self.rigid_solver.links_state,
-                rigid_global_info=self.rigid_solver._rigid_global_info,
-                static_rigid_sim_config=self.rigid_solver._static_rigid_sim_config,
-            )
+            self.rigid_solver.clear_external_force()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):

@@ -681,9 +681,9 @@ def test_pendulum_links_acc(gs_sim, tol):
         # Linear true acceleration:
         # * acc_classical_lin_y = sin(theta) * g (tangential angular acceleration effect)
         # * acc_classical_lin_z = - theta_dot ** 2  (radial centripedal effect)
-        acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc(mimick_imu=False).cpu()
+        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc(mimick_imu=False))
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
-        acc_classical_lin_local = R @ acc_classical_lin_world[2].numpy()
+        acc_classical_lin_local = R @ acc_classical_lin_world[2]
         assert_allclose(acc_classical_lin_local, np.array([0.0, np.sin(theta) * g, -(theta_dot**2)]), tol=tol)
         # IMU accelerometer data:
         # * acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
@@ -1007,7 +1007,7 @@ def test_pd_control(show_viewer):
         robot.control_dofs_force(dofs_torque, envs_idx=1)
         scene.step()
         qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_torch(device="cpu").T
-        # dofs_torque = robot.get_dofs_control_force().cpu()
+        # dofs_torque = robot.get_dofs_control_force()
         assert_allclose(qf_applied[0], qf_applied[1], tol=1e-6)
 
 
@@ -1416,12 +1416,14 @@ def test_path_planning_avoidance(n_envs, show_viewer):
             scene.visualizer.update()
 
             # Check if the cube is colliding with the robot
-            scene.rigid_solver._kernel_forward_dynamics()
+            scene.rigid_solver._func_forward_dynamics()
             scene.rigid_solver._func_constraint_force()
             for i in range(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]):
-                contact_data = scene.rigid_solver.collider._collider_state.contact_data[i, 0]
-                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_data.link_a, contact_data.link_b)):
-                    max_penetration = max(max_penetration, contact_data.penetration)
+                contact_link_a = scene.rigid_solver.collider._collider_state.contact_data.link_a[i, 0]
+                contact_link_b = scene.rigid_solver.collider._collider_state.contact_data.link_b[i, 0]
+                penetration = scene.rigid_solver.collider._collider_state.contact_data.penetration[i, 0]
+                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_link_a, contact_link_b)):
+                    max_penetration = max(max_penetration, penetration)
 
         args = (max_penetration, 5e-3)
         np.testing.assert_array_less(*(args if ignore_collision else args[::-1]))
@@ -2064,6 +2066,10 @@ def test_urdf_parsing(show_viewer, tol):
         entities[(fixed, merge_fixed_links)] = entity
     scene.build()
 
+    # four microwaves have four different root_idx
+    root_idx_all = [link.root_idx for link in scene.rigid_solver.links]
+    assert len(set(root_idx_all)) == 4
+
     def _check_entity_positions(relative, tol):
         nonlocal entities
         AABB_all = []
@@ -2356,7 +2362,7 @@ def test_drone_advanced(show_viewer):
     ],
 )
 def test_data_accessor(n_envs, batched, tol):
-    # create and build the scene
+    # Create and build the scene
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             batch_dofs_info=batched,
@@ -2364,6 +2370,7 @@ def test_data_accessor(n_envs, batched, tol):
             batch_links_info=batched,
         ),
         show_viewer=False,
+        show_FPS=False,
     )
     scene.add_entity(gs.morphs.Plane())
     gs_robot = scene.add_entity(
@@ -2371,13 +2378,13 @@ def test_data_accessor(n_envs, batched, tol):
             file="urdf/go2/urdf/go2.urdf",
         ),
     )
+    gs_link = gs_robot.get_link("RR_thigh")
     scene.build(n_envs=n_envs)
-    gs_sim = scene.sim
-    gs_s = gs_sim.rigid_solver
+    gs_s = scene.sim.rigid_solver
 
     # Initialize the simulation
     np.random.seed(0)
-    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_torch(device="cpu")
+    dof_bounds = gs_s.dofs_info.limit.to_torch(device="cpu")
     dof_bounds[..., :2, :] = torch.tensor((-1.0, 1.0))
     dof_bounds[..., 2, :] = torch.tensor((0.7, 1.0))
     dof_bounds[..., 3:6, :] = torch.tensor((-np.pi / 2, np.pi / 2))
@@ -2387,13 +2394,13 @@ def test_data_accessor(n_envs, batched, tol):
 
     # Simulate for a while, until they collide with something
     for _ in range(400):
-        gs_sim.step()
+        scene.step()
 
-        gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()
+        gs_n_contacts = gs_s.collider._collider_state.n_contacts.to_numpy()
         assert len(gs_n_contacts) == max(n_envs, 1)
         for as_tensor in (False, True):
             for to_torch in (False, True):
-                contacts_info = gs_sim.rigid_solver.collider.get_contacts(as_tensor, to_torch)
+                contacts_info = gs_s.collider.get_contacts(as_tensor, to_torch)
                 for value in contacts_info.values():
                     if n_envs > 0:
                         assert n_envs == len(value)
@@ -2420,10 +2427,8 @@ def test_data_accessor(n_envs, batched, tol):
             break
     else:
         assert False
-    gs_sim.rigid_solver._kernel_forward_dynamics()
-    gs_sim.rigid_solver._func_constraint_force()
-
-    gs_robot.get_contacts()
+    gs_s._func_forward_dynamics()
+    gs_s._func_constraint_force()
 
     # Make sure that all the robots ends up in the different state
     qposs = gs_robot.get_qpos()
@@ -2453,7 +2458,8 @@ def test_data_accessor(n_envs, batched, tol):
     def must_cast(value):
         return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
 
-    for arg1_max, arg2_max, getter, setter, field in (
+    for arg1_max, arg2_max, getter_or_spec, setter, field in (
+        # SOLVER
         (gs_s.n_links, n_envs, gs_s.get_links_pos, None, gs_s.links_state.pos),
         (gs_s.n_links, n_envs, gs_s.get_links_quat, None, gs_s.links_state.quat),
         (gs_s.n_links, n_envs, gs_s.get_links_vel, None, None),
@@ -2477,13 +2483,24 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.kp),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, gs_s.dofs_info.kv),
         (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
+        (
+            gs_s.n_geoms,
+            n_envs,
+            gs_s.get_geoms_friction_ratio,
+            gs_s.set_geoms_friction_ratio,
+            gs_s.geoms_state.friction_ratio,
+        ),
         (gs_s.n_geoms, -1, gs_s.get_geoms_friction, gs_s.set_geoms_friction, gs_s.geoms_info.friction),
         (gs_s.n_qs, n_envs, gs_s.get_qpos, gs_s.set_qpos, gs_s.qpos),
+        # ROBOT
         (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_quat, None, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_vel, None, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_ang, None, None),
         (gs_robot.n_links, n_envs, gs_robot.get_links_acc, None, None),
+        (gs_robot.n_links, n_envs, (), gs_robot.set_mass_shift, None),
+        (gs_robot.n_links, n_envs, (3,), gs_robot.set_COM_shift, None),
+        (gs_robot.n_links, n_envs, (), gs_robot.set_friction_ratio, None),
         (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass, None),
         (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None, None),
@@ -2503,84 +2520,128 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_links_net_contact_force, None, None),
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
+        (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
+        (-1, -1, gs_robot.get_AABB, None, None),
+        # LINK
+        (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
     ):
+        getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
+
         # Check getter and setter without row or column masking
-        datas = getter()
-        datas = datas.cpu() if isinstance(datas, torch.Tensor) else [val.cpu() for val in datas]
+        if getter is not None:
+            datas = getter()
+            is_tuple = isinstance(datas, (tuple, list))
+            if arg1_max > 0:
+                assert_allclose(getter(range(arg1_max)), datas, tol=tol)
+        else:
+            batch_shape = []
+            if arg2_max > 0:
+                batch_shape.append(arg2_max)
+            if arg1_max > 0:
+                batch_shape.append(arg1_max)
+            is_tuple = spec and isinstance(spec[0], (tuple, list))
+            if is_tuple:
+                datas = [torch.ones((*batch_shape, *shape)) for shape in spec]
+            else:
+                datas = torch.ones((*batch_shape, *spec))
         if field is not None:
             true = field.to_torch(device="cpu")
             true = true.movedim(true.ndim - getattr(field, "ndim", 0) - 1, 0)
-            if isinstance(datas, torch.Tensor):
-                true = true.reshape(datas.shape)
-            else:
+            if is_tuple:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]
+            else:
+                true = true.reshape(datas.shape)
             assert_allclose(datas, true, tol=tol)
         if setter is not None:
-            if isinstance(datas, torch.Tensor):
-                # Make sure that the vector is normalized and positive just in case it is a quaternion
-                datas = torch.abs(torch.randn(datas.shape, dtype=gs.tc_float, device="cpu"))
-                datas /= torch.linalg.norm(datas, dim=-1, keepdims=True)
-                setter(datas)
+            if is_tuple:
+                datas = [torch.as_tensor(val) for val in datas]
             else:
-                for val in datas:
-                    val[:] = torch.abs(torch.randn(val.shape, dtype=gs.tc_float, device="cpu"))
+                datas = torch.as_tensor(datas)
+            datas_tp = datas if is_tuple else (datas,)
+            if getter is not None:
+                # Randomly sample new data that are strictly positive and normalized,
+                # as this may be required for some setters (mass, quaternion, ...).
+                for val in datas_tp:
+                    val[()] = torch.abs(torch.randn(val.shape, dtype=gs.tc_float, device=gs.device)) + gs.EPS
                     val /= torch.linalg.norm(val, dim=-1, keepdims=True)
-                setter(*datas)
-        if arg1_max > 0:
-            datas_ = getter(range(arg1_max))
-            datas_ = datas_.cpu() if isinstance(datas_, torch.Tensor) else [val.cpu() for val in datas_]
-            assert_allclose(datas_, datas, tol=tol)
+            setter(*datas_tp)
+            if getter is not None:
+                assert_allclose(getter(), datas, tol=tol)
+
+        # Early return if neither rows or columns can be masked
+        if not (arg1_max > 0 or arg2_max > 0):
+            continue
 
         # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
             for arg1 in get_all_supported_masks(i) if arg1_max > 0 else (None,):
                 for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
                     for arg2 in get_all_supported_masks(j) if arg2_max > 0 else (None,):
-                        if arg1 is None:
+                        if arg1 is None and arg2 is not None:
                             unsafe = not must_cast(arg2)
-                            data = getter(arg2, unsafe=unsafe)
+                            if getter is not None:
+                                data = getter(arg2, unsafe=unsafe)
+                            else:
+                                if is_tuple:
+                                    data = [torch.ones((1, *shape)) for shape in spec]
+                                else:
+                                    data = torch.ones((1, *spec))
                             if setter is not None:
                                 setter(data, arg2, unsafe=unsafe)
                             if n_envs:
-                                if isinstance(datas, torch.Tensor):
-                                    data_ = datas[[j]]
-                                else:
+                                if is_tuple:
                                     data_ = [val[[j]] for val in datas]
+                                else:
+                                    data_ = datas[[j]]
                             else:
                                 data_ = datas
-                        elif arg2 is None:
+                        elif arg1 is not None and arg2 is None:
                             unsafe = not must_cast(arg1)
-                            data = getter(arg1, unsafe=unsafe)
-                            if setter is not None:
-                                if isinstance(data, torch.Tensor):
-                                    setter(data, arg1, unsafe=unsafe)
-                                else:
-                                    setter(*data, arg1, unsafe=unsafe)
-                            if isinstance(datas, torch.Tensor):
-                                data_ = datas[[i]]
+                            if getter is not None:
+                                data = getter(arg1, unsafe=unsafe)
                             else:
+                                if is_tuple:
+                                    data = [torch.ones((1, *shape)) for shape in spec]
+                                else:
+                                    data = torch.ones((1, *spec))
+                            if setter is not None:
+                                if is_tuple:
+                                    setter(*data, arg1, unsafe=unsafe)
+                                else:
+                                    setter(data, arg1, unsafe=unsafe)
+                            if is_tuple:
                                 data_ = [val[[i]] for val in datas]
+                            else:
+                                data_ = datas[[i]]
                         else:
                             unsafe = not any(map(must_cast, (arg1, arg2)))
-                            data = getter(arg1, arg2, unsafe=unsafe)
+                            if getter is not None:
+                                data = getter(arg1, arg2, unsafe=unsafe)
+                            else:
+                                if is_tuple:
+                                    data = [torch.ones((1, 1, *shape)) for shape in spec]
+                                else:
+                                    data = torch.ones((1, 1, *spec))
                             if setter is not None:
                                 setter(data, arg1, arg2, unsafe=unsafe)
-                            if isinstance(datas, torch.Tensor):
-                                data_ = datas[[j], :][:, [i]]
-                            else:
+                            if is_tuple:
                                 data_ = [val[[j], :][:, [i]] for val in datas]
-                        data = data.cpu() if isinstance(data, torch.Tensor) else [val.cpu() for val in data]
-                        # FIXME: Not sure why tolerance must be increased for test to pass
-                        assert_allclose(data_, data, tol=(5 * tol))
+                            else:
+                                data_ = datas[[j], :][:, [i]]
+                        # FIXME: Not sure why tolerance must be increased for tests to pass
+                        assert_allclose(data_, data, tol=(5.0 * tol))
 
     for dofs_idx in (*get_all_supported_masks(0), None):
         for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
             unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
             dofs_pos = gs_s.get_dofs_position(dofs_idx, envs_idx)
             dofs_vel = gs_s.get_dofs_velocity(dofs_idx, envs_idx)
-            gs_sim.rigid_solver.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
-            gs_sim.rigid_solver.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
+            gs_s.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
+            gs_s.control_dofs_velocity(dofs_vel, dofs_idx, envs_idx)
+
+    # Must be tested independently because of non-trival return type
+    gs_robot.get_contacts()
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -2696,3 +2757,52 @@ def test_geom_pos_quat(show_viewer, tol):
         for vgeom, geom in zip(link.vgeoms, link.geoms):
             assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=tol)
             assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_contype_conaffinity(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 0.5),
+            contype=3,
+            conaffinity=3,
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.0),
+            contype=2,
+            conaffinity=2,
+        )
+    )
+    box3 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.5),
+            contype=1,
+            conaffinity=1,
+        )
+    )
+    scene.build()
+
+    for _ in range(100):
+        scene.step()
+
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-3)
+    assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
+    assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+    assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)

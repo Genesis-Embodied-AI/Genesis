@@ -1527,7 +1527,7 @@ class FEMSolver(Solver):
             i_b = envs_idx[i_b_]
             i_v = verts_idx[i_b, i_v_]
             self.vertex_constraints[i_v, i_b].is_constrained = True
-            self.vertex_constraints[i_v, i_b].is_soft_constraint = is_soft_constraint
+            self.vertex_constraints[i_v, i_b].is_soft_constraint = ti.cast(is_soft_constraint, gs.ti_bool)
             self.vertex_constraints[i_v, i_b].stiffness = stiffness
             self.vertex_constraints[i_v, i_b].link_idx = link_idx
 

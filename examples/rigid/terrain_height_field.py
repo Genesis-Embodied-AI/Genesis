@@ -25,14 +25,11 @@ def main():
             camera_lookat=(5.0, 5.0, 0.0),
             camera_fov=40,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             constraint_solver=gs.constraint_solver.Newton,
         ),
-        vis_options=gs.options.VisOptions(
-            # geom_type='sdf',
-        ),
+        show_viewer=args.vis,
     )
 
     horizontal_scale = 0.25
