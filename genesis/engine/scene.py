@@ -1273,7 +1273,7 @@ class Scene(RBC):
         return self._sim.requires_grad
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """Whether the scene has been built."""
         return self._is_built
 

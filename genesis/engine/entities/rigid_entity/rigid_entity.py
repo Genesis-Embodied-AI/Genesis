@@ -1,6 +1,6 @@
 from copy import copy
 from itertools import chain
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
 import taichi as ti
@@ -25,6 +25,10 @@ from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.scene import Scene
+
 
 @ti.data_oriented
 class RigidEntity(Entity):
@@ -32,17 +36,20 @@ class RigidEntity(Entity):
     Entity class in rigid body systems. One rigid entity can be a robot, a terrain, a floating rigid body, etc.
     """
 
+    # override typing
+    _solver: "RigidSolver"
+
     def __init__(
         self,
         scene: "Scene",
-        solver: "Solver",
+        solver: "RigidSolver",
         material: Material,
         morph: Morph,
         surface: Surface,
         idx: int,
         idx_in_solver,
-        link_start=0,
-        joint_start=0,
+        link_start: int = 0,
+        joint_start: int = 0,
         q_start=0,
         dof_start=0,
         geom_start=0,
@@ -55,13 +62,13 @@ class RigidEntity(Entity):
         vvert_start=0,
         vface_start=0,
         equality_start=0,
-        visualize_contact=False,
+        visualize_contact: bool = False,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
 
         self._idx_in_solver = idx_in_solver
-        self._link_start = link_start
-        self._joint_start = joint_start
+        self._link_start: int = link_start
+        self._joint_start: int = joint_start
         self._q_start = q_start
         self._dof_start = dof_start
         self._geom_start = geom_start
@@ -77,11 +84,11 @@ class RigidEntity(Entity):
 
         self._base_links_idx = torch.tensor([self.base_link_idx], dtype=gs.tc_int, device=gs.device)
 
-        self._visualize_contact = visualize_contact
+        self._visualize_contact: bool = visualize_contact
 
-        self._is_free = morph.is_free
+        self._is_free: bool = morph.is_free
 
-        self._is_built = False
+        self._is_built: bool = False
 
         self._load_model()
 
@@ -2874,7 +2881,7 @@ class RigidEntity(Entity):
         return self._equalities
 
     @property
-    def is_free(self):
+    def is_free(self) -> bool:
         """Whether the entity is free to move."""
         return self._is_free
 

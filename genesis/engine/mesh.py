@@ -421,7 +421,7 @@ class Mesh(RBC):
         return self._mesh
 
     @property
-    def is_convex(self):
+    def is_convex(self) -> bool:
         """
         Whether the mesh is convex.
         """

@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 import taichi as ti
 import torch
-from numpy.typing import ArrayLike
 
 import genesis as gs
 import trimesh
@@ -26,30 +26,30 @@ class RigidLink(RBC):
 
     def __init__(
         self,
-        entity,
-        name,
-        idx,
-        joint_start,
-        n_joints,
-        geom_start,
-        cell_start,
-        vert_start,
-        face_start,
-        edge_start,
-        verts_state_start,
-        vgeom_start,
-        vvert_start,
-        vface_start,
-        pos,
-        quat,
-        inertial_pos,
-        inertial_quat,
-        inertial_i,
-        inertial_mass,
-        parent_idx,
-        root_idx,
-        invweight,
-        visualize_contact,
+        entity: "RigidEntity",
+        name: str,
+        idx: int,
+        joint_start: int,
+        n_joints: int,
+        geom_start: int,
+        cell_start: int,
+        vert_start: int,
+        face_start: int,
+        edge_start: int,
+        verts_state_start: int,
+        vgeom_start: int,
+        vvert_start: int,
+        vface_start: int,
+        pos: ArrayLike,
+        quat: ArrayLike,
+        inertial_pos: ArrayLike,
+        inertial_quat: ArrayLike,
+        inertial_i: NDArray[np.float32] | None,  # may be None, eg. for plane; NDArray is 3x3 matrix
+        inertial_mass: float | None,  # may be None, eg. for plane
+        parent_idx: int,
+        root_idx: int | None,
+        invweight: float | None,
+        visualize_contact: bool,
     ):
         self._name: str = name
         self._entity: "RigidEntity" = entity
@@ -86,13 +86,13 @@ class RigidLink(RBC):
         if inertial_quat is not None:
             inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
         self._inertial_quat: ArrayLike | None = inertial_quat
-        self._inertial_mass = inertial_mass
-        self._inertial_i = inertial_i
+        self._inertial_mass: float | None = inertial_mass
+        self._inertial_i: NDArray[np.float32] | None = inertial_i
 
         self._visualize_contact = visualize_contact
 
         self._geoms: list[RigidGeom] = gs.List()
-        self._vgeoms = gs.List()
+        self._vgeoms: list[RigidVisGeom] = gs.List()
 
     def _build(self):
         for geom in self._geoms:
@@ -429,35 +429,35 @@ class RigidLink(RBC):
         return self._uid
 
     @property
-    def name(self):
+    def name(self) -> str:
         """
         The name of the link.
         """
         return self._name
 
     @property
-    def entity(self):
+    def entity(self) -> "RigidEntity":
         """
         The entity that the link belongs to.
         """
         return self._entity
 
     @property
-    def solver(self):
+    def solver(self) -> "RigidSolver":
         """
         The solver that the link belongs to.
         """
         return self._solver
 
     @property
-    def visualize_contact(self):
+    def visualize_contact(self) -> bool:
         """
         Whether to visualize the contact of the link.
         """
         return self._visualize_contact
 
     @property
-    def joints(self):
+    def joints(self) -> list["Joint"]:
         """
         The sequence of joints that connects the link to its parent link.
         """
@@ -606,84 +606,84 @@ class RigidLink(RBC):
         return self._quat
 
     @property
-    def inertial_pos(self):
+    def inertial_pos(self) -> NDArray[np.float32]:
         """
         The initial position of the link's inertial frame.
         """
         return self._inertial_pos
 
     @property
-    def inertial_quat(self):
+    def inertial_quat(self) -> NDArray[np.float32]:
         """
         The initial quaternion of the link's inertial frame.
         """
         return self._inertial_quat
 
     @property
-    def inertial_mass(self):
+    def inertial_mass(self) -> float:
         """
         The initial mass of the link.
         """
         return self._inertial_mass
 
     @property
-    def inertial_i(self):
+    def inertial_i(self) -> NDArray[np.float32]:
         """
         The inerial matrix of the link.
         """
         return self._inertial_i
 
     @property
-    def geoms(self):
+    def geoms(self) -> list[RigidGeom]:
         """
         The list of the link's collision geometries (`RigidGeom`).
         """
         return self._geoms
 
     @property
-    def vgeoms(self):
+    def vgeoms(self) -> list[RigidVisGeom]:
         """
         The list of the link's visualization geometries (`RigidVisGeom`).
         """
         return self._vgeoms
 
     @property
-    def n_geoms(self):
+    def n_geoms(self) -> int:
         """
         Number of the link's collision geometries.
         """
         return len(self._geoms)
 
     @property
-    def geom_start(self):
+    def geom_start(self) -> int:
         """
         The start index of the link's collision geometries in the RigidSolver.
         """
         return self._geom_start
 
     @property
-    def geom_end(self):
+    def geom_end(self) -> int:
         """
         The end index of the link's collision geometries in the RigidSolver.
         """
         return self._geom_start + self.n_geoms
 
     @property
-    def n_vgeoms(self):
+    def n_vgeoms(self) -> int:
         """
         Number of the link's visualization geometries (`vgeom`).
         """
         return len(self._vgeoms)
 
     @property
-    def vgeom_start(self):
+    def vgeom_start(self) -> int:
         """
         The start index of the link's vgeom in the RigidSolver.
         """
         return self._vgeom_start
 
     @property
-    def vgeom_end(self):
+    def vgeom_end(self) -> int:
         """
         The end index of the link's vgeom in the RigidSolver.
         """
@@ -697,42 +697,42 @@ class RigidLink(RBC):
         return sum([geom.n_cells for geom in self._geoms])
 
     @property
-    def n_verts(self):
+    def n_verts(self) -> int:
         """
         Number of vertices of all the link's geoms.
         """
         return sum([geom.n_verts for geom in self._geoms])
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """
         Number of vertices of all the link's vgeoms.
         """
         return sum([vgeom.n_vverts for vgeom in self._vgeoms])
 
     @property
-    def n_faces(self):
+    def n_faces(self) -> int:
         """
         Number of faces of all the link's geoms.
         """
         return sum([geom.n_faces for geom in self._geoms])
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """
         Number of faces of all the link's vgeoms.
         """
         return sum([vgeom.n_vfaces for vgeom in self._vgeoms])
 
     @property
-    def n_edges(self):
+    def n_edges(self) -> int:
         """
         Number of edges of all the link's geoms.
         """
         return sum([geom.n_edges for geom in self._geoms])
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """
         Whether the entity the link belongs to is built.
         """

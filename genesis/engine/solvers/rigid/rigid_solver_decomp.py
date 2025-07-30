@@ -26,6 +26,7 @@ from ....utils.sdf_decomp import SDF
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
+    import genesis.engine.solvers.rigid.array_class
 
 
 # minimum constraint impedance
@@ -67,6 +68,14 @@ def _sanitize_sol_params(
 
 @ti.data_oriented
 class RigidSolver(Solver):
+
+    # override typing
+    _entities: list[RigidEntity] = gs.List()
+
+    # created outside of __init__; added for linting
+    geoms_info: array_class.StructGeomsInfo
+    geoms_state: array_class.StructGeomsState
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -149,11 +158,10 @@ class RigidSolver(Solver):
             EntityClass = AvatarEntity
             if visualize_contact:
                 gs.raise_exception("AvatarEntity does not support 'visualize_contact=True'.")
+        elif isinstance(morph, gs.morphs.Drone):
+            EntityClass = DroneEntity
         else:
-            if isinstance(morph, gs.morphs.Drone):
-                EntityClass = DroneEntity
-            else:
-                EntityClass = RigidEntity
+            EntityClass = RigidEntity
 
         if morph.is_free:
             verts_state_start = self.n_free_verts
@@ -185,6 +193,7 @@ class RigidSolver(Solver):
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
         )
+        assert isinstance(entity, RigidEntity)
         self._entities.append(entity)
 
         return entity
@@ -704,8 +713,8 @@ class RigidSolver(Solver):
             )
 
     def _init_geom_fields(self):
-        self.geoms_info = self.data_manager.geoms_info
-        self.geoms_state = self.data_manager.geoms_state
+        self.geoms_info: array_class.GeomsInfo = self.data_manager.geoms_info
+        self.geoms_state: array_class.StructGeomsState = self.data_manager.geoms_state
         self.geoms_init_AABB = self._rigid_global_info.geoms_init_AABB
         self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=np.float32)
 
