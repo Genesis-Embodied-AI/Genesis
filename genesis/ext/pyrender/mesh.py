@@ -266,7 +266,7 @@ class Mesh(object):
                     else:
                         colors = vc[mesh.faces].reshape((3 * len(mesh.faces), vc.shape[1]))
                 material = MetallicRoughnessMaterial(
-                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    alphaMode="OPAQUE" if colors.shape[-1] < 4 or (colors[..., 3] == 255).all() else "BLEND",
                     baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                     metallicFactor=0.2,
                     roughnessFactor=0.8,
@@ -277,9 +277,8 @@ class Mesh(object):
                     raise ValueError("Cannot use face colors with a smooth mesh")
                 else:
                     colors = np.repeat(mesh.visual.face_colors, 3, axis=0)
-
                 material = MetallicRoughnessMaterial(
-                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    alphaMode="OPAQUE" if colors.shape[-1] < 4 or (colors[..., 3] == 255).all() else "BLEND",
                     baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                     metallicFactor=0.2,
                     roughnessFactor=0.8,
