@@ -2754,7 +2754,7 @@ def test_contype_conaffinity(show_viewer, tol):
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_api_domain_randomization(show_viewer, tol):
+def test_examples_api(show_viewer, tol):
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -2834,3 +2834,18 @@ def test_api_domain_randomization(show_viewer, tol):
     robot.control_dofs_position(default_dof_pos, motors_dof_idx)
 
     scene.step()
+    # test the api for drawing debug objects
+    scene.draw_debug_arrow(
+        pos=(0, 0, 0),
+        vec=(0, 0, 1),
+        color=(0, 1, 0),
+    )
+    scene.draw_debug_line(start=(0.5, -0.25, 0.5), end=(0.5, 0.25, 0.5), radius=0.01, color=(1, 0, 0, 1))
+    scene.draw_debug_sphere(
+        pos=(0, 0, 0),
+        radius=1,
+        color=(0, 1, 0),
+    )
+    scene.draw_debug_frame(T=np.eye(4), axis_length=0.5, origin_size=0.03, axis_radius=0.02)
+    scene.step()
+    scene.clear_debug_objects()
