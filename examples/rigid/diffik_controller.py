@@ -53,8 +53,6 @@ def main():
         gs.morphs.MJCF(file=mjcf_file),
     )
 
-    print("links=", robot.links)
-
     target_entity = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/axis.obj",
