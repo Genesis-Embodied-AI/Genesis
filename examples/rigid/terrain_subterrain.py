@@ -64,8 +64,8 @@ def main():
     ).unsqueeze(-1)
     cols = horizontal_scale * torch.range(0, height_field.shape[1] - 1, 1).unsqueeze(0).repeat(
         height_field.shape[0], 1
-    ).unsqueeze(-1)
-    heights = vertical_scale * torch.tensor(height_field).unsqueeze(-1)
+    ).unsqueeze(-1).to(rows.device)
+    heights = vertical_scale * torch.tensor(height_field).unsqueeze(-1).to(rows.device)
 
     poss = torch.cat([rows, cols, heights], dim=-1).reshape(-1, 3)
     scene.draw_debug_spheres(poss=poss, radius=0.05, color=(0, 0, 1, 0.7))

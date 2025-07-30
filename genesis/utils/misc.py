@@ -6,12 +6,11 @@ import platform
 import random
 import types
 import shutil
-import subprocess
 import sys
 import os
 from dataclasses import dataclass
 from collections import OrderedDict
-from typing import Any, Type
+from typing import Any, Type, NoReturn
 
 import numpy as np
 import cpuinfo
@@ -36,11 +35,11 @@ class DeprecationError(Exception):
     pass
 
 
-def raise_exception(msg="Something went wrong."):
+def raise_exception(msg="Something went wrong.") -> NoReturn:
     raise gs.GenesisException(msg)
 
 
-def raise_exception_from(msg="Something went wrong.", cause=None):
+def raise_exception_from(msg="Something went wrong.", cause=None) -> NoReturn:
     raise gs.GenesisException(msg) from cause
 
 
@@ -332,7 +331,10 @@ MAX_CACHE_SIZE = 1000
 class FieldMetadata:
     ndim: int
     shape: tuple[int, ...]
-    dtype: ti._lib.core.DataType
+    try:
+        dtype: ti._lib.core.DataType
+    except:
+        dtype: ti._lib.core.DataTypeCxx
     mapping_key: Any
 
 

@@ -5,24 +5,24 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import pytest
-import trimesh
-import torch
-import numpy as np
 import mujoco
+import numpy as np
+import pytest
+import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array, get_assets_dir
+from genesis.utils.misc import get_assets_dir, tensor_to_array
 
 from .utils import (
-    get_hf_assets,
     assert_allclose,
-    build_mujoco_sim,
     build_genesis_sim,
-    init_simulators,
-    check_mujoco_model_consistency,
+    build_mujoco_sim,
     check_mujoco_data_consistency,
+    check_mujoco_model_consistency,
+    get_hf_assets,
+    init_simulators,
     simulate_and_check_mujoco_consistency,
 )
 
@@ -1416,12 +1416,14 @@ def test_path_planning_avoidance(n_envs, show_viewer):
             scene.visualizer.update()
 
             # Check if the cube is colliding with the robot
-            scene.rigid_solver._kernel_forward_dynamics()
+            scene.rigid_solver._func_forward_dynamics()
             scene.rigid_solver._func_constraint_force()
             for i in range(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]):
-                contact_data = scene.rigid_solver.collider._collider_state.contact_data[i, 0]
-                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_data.link_a, contact_data.link_b)):
-                    max_penetration = max(max_penetration, contact_data.penetration)
+                contact_link_a = scene.rigid_solver.collider._collider_state.contact_data.link_a[i, 0]
+                contact_link_b = scene.rigid_solver.collider._collider_state.contact_data.link_b[i, 0]
+                penetration = scene.rigid_solver.collider._collider_state.contact_data.penetration[i, 0]
+                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_link_a, contact_link_b)):
+                    max_penetration = max(max_penetration, penetration)
 
         args = (max_penetration, 5e-3)
         np.testing.assert_array_less(*(args if ignore_collision else args[::-1]))
@@ -2064,6 +2066,10 @@ def test_urdf_parsing(show_viewer, tol):
         entities[(fixed, merge_fixed_links)] = entity
     scene.build()
 
+    # four microwaves have four different root_idx
+    root_idx_all = [link.root_idx for link in scene.rigid_solver.links]
+    assert len(set(root_idx_all)) == 4
+
     def _check_entity_positions(relative, tol):
         nonlocal entities
         AABB_all = []
@@ -2420,7 +2426,7 @@ def test_data_accessor(n_envs, batched, tol):
             break
     else:
         assert False
-    gs_sim.rigid_solver._kernel_forward_dynamics()
+    gs_sim.rigid_solver._func_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
 
     gs_robot.get_contacts()
@@ -2673,3 +2679,173 @@ def test_get_cartesian_space_variables(show_viewer, tol):
             link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
 
         scene.step()
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_geom_pos_quat(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 2.0),
+        )
+    )
+    scene.build()
+
+    for link in box.links:
+        for vgeom, geom in zip(link.vgeoms, link.geoms):
+            assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=tol)
+            assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_contype_conaffinity(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 0.5),
+            contype=3,
+            conaffinity=3,
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.0),
+            contype=2,
+            conaffinity=2,
+        )
+    )
+    box3 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.5),
+            contype=1,
+            conaffinity=1,
+        )
+    )
+    scene.build()
+
+    for _ in range(100):
+        scene.step()
+
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-3)
+    assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
+    assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+    assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_examples_api(show_viewer, tol):
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.0, -2, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=40,
+            max_FPS=200,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+            constraint_solver=gs.constraint_solver.Newton,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    ########################## entities ##########################
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            pos=(0, 0, 0.4),
+        ),
+    )
+    ########################## build ##########################
+    n_envs = 8
+    scene.build(n_envs=n_envs)
+
+    ########################## domain randomization ##########################
+    robot.set_friction_ratio(
+        friction_ratio=0.5 + torch.rand(scene.n_envs, robot.n_links),
+        links_idx_local=np.arange(0, robot.n_links),
+    )
+
+    # set mass of a single link
+    link = robot.get_link("RR_thigh")
+    rigid = scene.sim.rigid_solver
+    ori_mass = rigid.links_info.inertial_mass.to_numpy()
+    link.set_mass(1.0)
+    new_mass = rigid.links_info.inertial_mass.to_numpy()
+    tol = 1e-7  # difference on my machine is 3.0517578e-08
+    assert_allclose(new_mass[link.idx], 1, atol=tol)
+
+    robot.set_mass_shift(
+        mass_shift=-0.5 + torch.rand(scene.n_envs, robot.n_links),
+        links_idx_local=np.arange(0, robot.n_links),
+    )
+    robot.set_COM_shift(
+        com_shift=-0.05 + 0.1 * torch.rand(scene.n_envs, robot.n_links, 3),
+        links_idx_local=np.arange(0, robot.n_links),
+    )
+    # test aabb api
+    aabb = robot.get_AABB()
+
+    joints_name = (
+        "FR_hip_joint",
+        "FR_thigh_joint",
+        "FR_calf_joint",
+        "FL_hip_joint",
+        "FL_thigh_joint",
+        "FL_calf_joint",
+        "RR_hip_joint",
+        "RR_thigh_joint",
+        "RR_calf_joint",
+        "RL_hip_joint",
+        "RL_thigh_joint",
+        "RL_calf_joint",
+    )
+    motors_dof_idx = [robot.get_joint(name).dofs_idx_local[0] for name in joints_name]
+
+    robot.set_dofs_kp(np.full(12, 20), motors_dof_idx)
+    robot.set_dofs_kv(np.full(12, 1), motors_dof_idx)
+    default_dof_pos = np.array([0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5])
+    # padding to n_env x n_dofs
+    default_dof_pos = np.tile(default_dof_pos, (n_envs, 1))
+    robot.control_dofs_position(default_dof_pos, motors_dof_idx)
+
+    scene.step()
+    # test the api for drawing debug objects
+    scene.draw_debug_arrow(
+        pos=(0, 0, 0),
+        vec=(0, 0, 1),
+        color=(0, 1, 0),
+    )
+    scene.draw_debug_line(start=(0.5, -0.25, 0.5), end=(0.5, 0.25, 0.5), radius=0.01, color=(1, 0, 0, 1))
+    scene.draw_debug_sphere(
+        pos=(0, 0, 0),
+        radius=1,
+        color=(0, 1, 0),
+    )
+    scene.draw_debug_frame(T=np.eye(4), axis_length=0.5, origin_size=0.03, axis_radius=0.02)
+    scene.step()
+    scene.clear_debug_objects()
