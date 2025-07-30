@@ -148,7 +148,9 @@ def ti_quat_to_xyz(quat):
         q_yy, q_yz, q_zz = q_y * q_ys, q_y * q_zs, q_z * q_zs
 
         roll = ti.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
-        pitch = -0.5 * ti.math.pi + 2.0 * ti.atan2(ti.sqrt(1.0 + (q_xz + q_wy)), ti.sqrt(1.0 - (q_xz + q_wy)))
+        sin_pitch = q_xz + q_wy
+        sin_pitch = ti.math.clamp(sin_pitch, -1.0, 1.0)
+        pitch = ti.asin(sin_pitch)
         yaw = ti.atan2(q_wz - q_xy, 1.0 - (q_yy + q_zz))
 
     return ti.Vector([roll, pitch, yaw], dt=gs.ti_float)
