@@ -761,7 +761,6 @@ class RigidSolver(Solver):
             )
 
     def _init_vgeom_fields(self):
-
         self.vgeoms_info = self.data_manager.vgeoms_info
         self.vgeoms_state = self.data_manager.vgeoms_state
         self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)

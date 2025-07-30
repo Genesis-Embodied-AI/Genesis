@@ -297,8 +297,8 @@ class ParticleEntity(Entity):
                 gs.raise_exception(
                     "Entity has particles outside solver boundary. Note that for MPMSolver, boundary is slightly "
                     "tighter than the specified domain due to safety padding.\n\n"
-                    "Current boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\n"
-                    "max: {particles.max(0)}\n"
+                    f"Current boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\n"
+                    f"max: {particles.max(0)}\n"
                 )
 
             if self._need_skinning:
