@@ -13,7 +13,7 @@ def main():
     parser.add_argument(
         "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
     )
-    parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
+    parser.add_argument("--vis", "-v", default=False, action="store_true", help="Show visualization GUI")
 
     args = parser.parse_args()
 
@@ -130,7 +130,7 @@ def main():
                 cam.render()
 
         print("Now dropping the cube")
-        cube.solver.remove_vertex_constraints()
+        cube.remove_vertex_constraints()
         steps = int(1 / dt)
         for i in tqdm(range(steps), total=steps):
             arm.control_dofs_position(arm_path_waypoints[-1])

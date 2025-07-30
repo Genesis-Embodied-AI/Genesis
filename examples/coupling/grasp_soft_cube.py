@@ -26,7 +26,6 @@ def main():
             camera_fov=30,
             max_FPS=60,
         ),
-        show_viewer=args.vis,
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
         ),
@@ -35,6 +34,7 @@ def main():
             upper_bound=(0.75, 0.1, 0.3),
             grid_density=128,
         ),
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################

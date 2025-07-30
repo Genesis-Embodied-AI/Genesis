@@ -32,10 +32,10 @@ def main():
         vis_options=gs.options.VisOptions(
             rendered_envs_idx=[0],
         ),
-        show_viewer=args.vis,
         sph_options=gs.options.SPHOptions(
             particle_size=0.02,
         ),
+        show_viewer=args.vis,
     )
 
     plane = scene.add_entity(gs.morphs.Plane())

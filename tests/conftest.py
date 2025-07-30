@@ -4,6 +4,7 @@ import re
 import sys
 from enum import Enum
 
+from pathlib import Path
 import pytest
 from _pytest.mark import Expression, MarkMatcher
 
@@ -27,6 +28,19 @@ def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
     return f"{val}"
+
+
+def pytest_ignore_collect(path: Path, config):
+    # Get absolute path to the file
+    file_to_skip = Path(__file__).parent / "manual_test_examples.py"
+
+    # If the user is explicitly invoking the file, don't skip
+    explicitly_requested = any(str(file_to_skip) in str(arg) for arg in config.args)
+
+    if not explicitly_requested and path.samefile(file_to_skip):
+        return True  # skip during auto collection
+
+    return False
 
 
 @pytest.hookimpl(tryfirst=True)

@@ -52,7 +52,7 @@ def main():
         pos=(3.5, 0.0, 2.5),
         lookat=(0, 0, 0.5),
         fov=30,
-        GUI=True,
+        GUI=args.vis,
     )
     ########################## build ##########################
     scene.build(n_envs=args.num_env, env_spacing=(0.5, 0.5))
