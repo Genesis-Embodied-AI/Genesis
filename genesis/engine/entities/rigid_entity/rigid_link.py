@@ -112,7 +112,7 @@ class RigidLink(RBC):
                 is_fixed = False
         if self._root_idx is None:
             self._root_idx = gs.np_int(link.idx)
-        self.is_fixed: np.int32 = gs.np_int(is_fixed)  # note: type inconsistent with is_built, is_free, is_leaf: bool
+        self.is_fixed = is_fixed
 
         # inertial_mass and inertia_i
         if self._inertial_mass is None:

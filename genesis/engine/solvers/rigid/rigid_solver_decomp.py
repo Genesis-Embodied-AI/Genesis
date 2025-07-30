@@ -590,7 +590,7 @@ class RigidSolver(Solver):
             links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
             links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
             links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
-            links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_int),
+            links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
             links_pos=np.array([link.pos for link in links], dtype=gs.np_float),
             links_quat=np.array([link.quat for link in links], dtype=gs.np_float),
             links_inertial_pos=np.array([link.inertial_pos for link in links], dtype=gs.np_float),
