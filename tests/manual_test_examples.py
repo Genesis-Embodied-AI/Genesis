@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-rigid_files = glob.glob(Path(__file__).parent.parent / "examples" / "rigid" / "*.py")
-coupling_files = glob.glob(Path(__file__).parent.parent / "examples" / "coupling" / "*.py")
+rigid_files = glob.glob(f"{ Path(__file__).parent.parent / 'examples' / 'rigid'}/*.py")
+coupling_files = glob.glob(f"{ Path(__file__).parent.parent / 'examples' / 'coupling'}/*.py")
 
 example_files = coupling_files + rigid_files
 # a regular expression to match the files to exclude
