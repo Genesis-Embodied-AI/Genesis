@@ -1650,6 +1650,8 @@ class RigidSolver(Solver):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
             friction_ratio, geoms_idx, self.n_geoms, envs_idx, idx_name="geoms_idx", skip_allocation=True, unsafe=unsafe
         )
+        if self.n_envs == 0:
+            friction_ratio = friction_ratio.unsqueeze(0)
         kernel_set_geoms_friction_ratio(
             friction_ratio, geoms_idx, envs_idx, self.geoms_state, self._static_rigid_sim_config
         )
@@ -2864,12 +2866,11 @@ def kernel_adjust_link_inertia(
             for j1, j2 in ti.static(ti.ndrange(3, 3)):
                 links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio
     else:
-        for i_b in range(1):
-            for j in ti.static(range(2)):
-                links_info.invweight[link_idx][j] /= ratio
-            links_info.inertial_mass[link_idx] *= ratio
-            for j1, j2 in ti.static(ti.ndrange(3, 3)):
-                links_info.inertial_i[link_idx][j1, j2] *= ratio
+        for j in ti.static(range(2)):
+            links_info.invweight[link_idx][j] /= ratio
+        links_info.inertial_mass[link_idx] *= ratio
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[link_idx][j1, j2] *= ratio
 
 
 @ti.kernel

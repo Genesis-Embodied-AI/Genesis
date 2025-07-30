@@ -476,9 +476,9 @@ class ParticleEntity(Entity):
         mass : float
             The computed total mass.
         """
-        mass = np.zeros(1, dtype=gs.np_float)
+        mass = np.zeros((1,), dtype=gs.np_float)
         self._kernel_get_mass(mass)
-        return mass[0]
+        return float(mass)
 
     def deactivate(self):
         """
