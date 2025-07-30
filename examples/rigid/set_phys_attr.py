@@ -26,7 +26,6 @@ def main():
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             # NOTE: Batching dofs/links info to set different physical attributes across environments (in parallel)
             #       By default, both are False as it's faster and thus only turn this on if necessary
@@ -34,6 +33,7 @@ def main():
             batch_joints_info=True,
             batch_links_info=True,
         ),
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################
@@ -151,6 +151,12 @@ def main():
         motors_dof_idx,
     )
     print("=== damping ===\n", franka.get_dofs_damping())
+    links_inertial_mass = np.array(
+        [
+            [0.6298, 4.9707, 0.6469, 3.2286, 3.5879, 1.2259, 1.6666, 0.7355, 0.7300, 0.0150, 0.0150],
+            [0.015, 0.015, 0.73, 0.7355, 1.6666, 1.2259, 3.5879, 3.2286, 0.6469, 4.9707, 0.6298],
+        ]
+    )
     franka.set_links_inertial_mass(
         np.array(
             [
@@ -160,14 +166,16 @@ def main():
         ),
         links_idx,
     )
-    print("=== links inertial mass ===\n", franka.get_links_inertial_mass())
+    inv_weight = franka.get_links_invweight().cpu().numpy()
+    linear_inv_weight = np.array(
+        [
+            [0.0, 3.6037e-05, 0.00030664, 0.025365, 0.036351, 0.072328, 0.089559, 0.11661, 0.11288, 3.0179, 3.0179],
+            [3.0179, 3.0179, 0.11288, 0.11661, 0.089559, 0.072328, 0.036351, 0.025365, 0.00030664, 3.6037e-05, 0.0],
+        ]
+    )
+    inv_weight[:, :, 0] = linear_inv_weight  # inv_weight has a linear and angular part
     franka.set_links_invweight(
-        np.array(
-            [
-                [0.0, 3.6037e-05, 0.00030664, 0.025365, 0.036351, 0.072328, 0.089559, 0.11661, 0.11288, 3.0179, 3.0179],
-                [3.0179, 3.0179, 0.11288, 0.11661, 0.089559, 0.072328, 0.036351, 0.025365, 0.00030664, 3.6037e-05, 0.0],
-            ]
-        ),
+        inv_weight.copy(),  # to make it contiguous
         links_idx,
     )
     print("=== links invweight ===\n", franka.get_links_invweight())

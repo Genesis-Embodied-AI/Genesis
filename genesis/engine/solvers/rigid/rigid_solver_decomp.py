@@ -1411,7 +1411,7 @@ class RigidSolver(Solver):
                         if tensor.shape[0] != len(envs_idx):
                             gs.raise_exception(
                                 f"Invalid input shape: {tensor.shape}. First dimension of the input tensor does not match "
-                                "length of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
+                                f"length ({len(envs_idx)}) of `envs_idx` (or `scene.n_envs` if `envs_idx` is None)."
                             )
                     else:
                         gs.raise_exception(
@@ -4781,21 +4781,34 @@ def kernel_update_verts_for_geom(
 ):
     _B = geoms_state.verts_updated.shape[1]
     for i_b in range(_B):
-        if not geoms_state.verts_updated[i_g, i_b]:
-            if geoms_info.is_free[i_g]:
-                for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
-                    verts_state_idx = verts_info.verts_state_idx[i_v]
-                    free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                        verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
-                    )
-                geoms_state.verts_updated[i_g, i_b] = 1
-            elif i_b == 0:
-                for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
-                    verts_state_idx = verts_info.verts_state_idx[i_v]
-                    fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                        verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
-                    )
-                geoms_state.verts_updated[i_g, 0] = 1
+        func_update_verts_for_geom(i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state)
+
+
+@ti.func
+def func_update_verts_for_geom(
+    i_g: ti.i32,
+    i_b: ti.i32,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.FreeVertsState,
+    fixed_verts_state: array_class.FixedVertsState,
+):
+    if not geoms_state.verts_updated[i_g, i_b]:
+        if geoms_info.is_free[i_g]:
+            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+                verts_state_idx = verts_info.verts_state_idx[i_v]
+                free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                    verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
+                )
+            geoms_state.verts_updated[i_g, i_b] = 1
+        elif i_b == 0:
+            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+                verts_state_idx = verts_info.verts_state_idx[i_v]
+                fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+                    verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
+                )
+            geoms_state.verts_updated[i_g, 0] = 1
 
 
 @ti.func
