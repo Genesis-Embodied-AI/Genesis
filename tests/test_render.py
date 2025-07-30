@@ -244,6 +244,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

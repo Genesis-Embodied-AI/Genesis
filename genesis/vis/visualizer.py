@@ -8,6 +8,7 @@ from genesis.repr_base import RBC
 from .camera import Camera
 from .rasterizer import Rasterizer
 
+
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
 
