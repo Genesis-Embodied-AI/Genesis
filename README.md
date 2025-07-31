@@ -1,14 +1,3 @@
-![Genesis](imgs/big_text.png)
-
-![Teaser](imgs/teaser.png)
-
-[![PyPI - Version](https://img.shields.io/pypi/v/genesis-world)](https://pypi.org/project/genesis-world/)
-[![PyPI Downloads](https://static.pepy.tech/badge/genesis-world)](https://pepy.tech/projects/genesis-world)
-[![GitHub Issues](https://img.shields.io/github/issues/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/issues)
-[![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/Genesis)](https://github.com/Genesis-Embodied-AI/Genesis/discussions)
-[![Discord](https://img.shields.io/discord/1322086972302430269?logo=discord)](https://discord.gg/nukCuhB47p)
-<a href="https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ"><img src="https://img.shields.io/badge/WeChat-07C160?style=for-the-badge&logo=wechat&logoColor=white" height="20" style="display:inline"></a>
-
 [![README in English](https://img.shields.io/badge/English-d9d9d9)](./README.md)
 [![README en Français](https://img.shields.io/badge/Francais-d9d9d9)](./README_FR.md)
 [![한국어 README](https://img.shields.io/badge/한국어-d9d9d9)](./README_KR.md)
@@ -18,19 +7,13 @@
 # ZJU-UAV Yufeng01
 
 ## 🔥 News
-- [2025-07-02] The development of Genesis is now officially supported by [Genesis AI](https://genesis-ai.company/).
-- [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
-- [2025-01-08] Released v0.2.1 🎊 🎉
-- [2025-01-08] Created [Discord](https://discord.gg/nukCuhB47p) and [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) group.
-- [2024-12-25] Added a [docker](#docker) including support for the ray-tracing renderer
-- [2024-12-24] Added guidelines for [contributing to Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)
+- [2025-07-31] Build project for Vector anti-wind UAV (Yufeng01).
 
 ## Table of Contents
 
 - [ZJU-UAV Yufeng01](#zju-uav-yufeng01)
   - [🔥 News](#-news)
   - [Table of Contents](#table-of-contents)
-  - [What is Genesis?](#what-is-genesis)
   - [Key Features](#key-features)
   - [Quick Installation](#quick-installation)
   - [Docker](#docker)
@@ -42,20 +25,8 @@
   - [Associated Papers](#associated-papers)
   - [Citation](#citation)
 
-## What is Genesis?
 
-Genesis is a physics platform designed for general-purpose *Robotics/Embodied AI/Physical AI* applications. It is simultaneously multiple things:
-
-1. A **universal physics engine** re-built from the ground up, capable of simulating a wide range of materials and physical phenomena.
-2. A **lightweight**, **ultra-fast**, **pythonic**, and **user-friendly** robotics simulation platform.
-3. A powerful and fast **photo-realistic rendering system**.
-4. A **generative data engine** that transforms user-prompted natural language description into various modalities of data.
-
-Powered by a universal physics engine re-designed and re-built from the ground up, Genesis integrates various physics solvers and their coupling into a unified framework. This core physics engine is further enhanced by a generative agent framework that operates at an upper level, aiming towards fully automated data generation for robotics and beyond.
-
-**Note**: Currently, we are open-sourcing the _underlying physics engine_ and the _simulation platform_. Our _generative framework_ is a modular system that incorporates many different generative modules, each handling a certain range of data modalities, routed by a high level agent. Some of the modules integrated existing papers and some are still under submission. Access to our generative feature will be gradually rolled out in the near future. If you are interested, feel free to explore more in the [paper list](#associated-papers) below.
-
-Genesis aims to:
+Genesis aims to: [Genesis AI](https://genesis-ai.company/).
 
 - **Lower the barrier** to using physics simulations, making robotics research accessible to everyone. See our [mission statement](https://genesis-world.readthedocs.io/en/latest/user_guide/overview/mission.html).
 - **Unify diverse physics solvers** into a single framework to recreate the physical world with the highest fidelity.
