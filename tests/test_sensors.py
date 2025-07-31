@@ -1,7 +1,8 @@
-import genesis as gs
 import torch
 
-from .utils import assert_allclose
+import genesis as gs
+
+from .utils import assert_allclose, assert_array_equal
 
 
 def test_rigid_tactile_sensors_gravity_force(show_viewer):
@@ -27,20 +28,31 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
         ),
         material=gs.materials.Rigid(rho=1.0),  # mass = 1 kg
     )
+
     bool_sensor = gs.sensors.RigidContactSensor(entity=box)
-    grid_force_sensor = gs.sensors.RigidContactForceGridSensor(entity=box, grid_size=(1, 1, 2))
-    grid_normtan_force_sensor = gs.sensors.RigidNormalTangentialForceGridSensor(entity=box, grid_size=(1, 1, 2))
+    force_sensor = gs.sensors.RigidContactForceSensor(entity=box)
+    normtan_force_sensor = gs.sensors.RigidNormalTangentialForceSensor(entity=box)
+
+    grid_size = (1, 1, 2)
+    grid_bool_sensor = gs.sensors.RigidContactGridSensor(entity=box, grid_size=grid_size)
+    grid_force_sensor = gs.sensors.RigidContactForceGridSensor(entity=box, grid_size=grid_size)
+    grid_normtan_force_sensor = gs.sensors.RigidNormalTangentialForceGridSensor(entity=box, grid_size=grid_size)
 
     scene.build()
 
-    assert not bool_sensor.read(), "Sensor should not be in contact with the ground yet"
-    (
-        assert_allclose(grid_force_sensor.read(), 0.0, tol=1e-9),
-        "Force should be zero before contact",
+    assert not bool_sensor.read(), "RigidContactSensor should not be in contact with the ground yet."
+    assert_array_equal(force_sensor.read(), 0.0, "RigidContactForceSensor should be zero before contact.")
+    assert_array_equal(
+        normtan_force_sensor.read(), 0.0, "RigidNormalTangentialForceSensor should be zero before contact."
     )
-    (
-        assert_allclose(grid_normtan_force_sensor.read(), 0.0, tol=1e-9),
-        "Normal-tangential force should be zero before contact",
+    assert_array_equal(
+        grid_bool_sensor.read(),
+        False,
+        "RigidContactGridSensor should not be in contact with the ground yet.",
+    )
+    assert_array_equal(grid_force_sensor.read(), 0.0, "RigidContactForceGridSensor should be zero before contact.")
+    assert_array_equal(
+        grid_normtan_force_sensor.read(), 0.0, "RigidNormalTangentialForceGridSensor should be zero before contact."
     )
 
     for _ in range(500):

@@ -43,7 +43,10 @@ class RigidContactSensor(Sensor):
 
         all_contacts = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
         contact_links = torch.cat(
-            [self._ensure_batchdim(all_contacts["link_a"]), self._ensure_batchdim(all_contacts["link_b"])],
+            [
+                self._preprocess_kernel_input(all_contacts["link_a"]),
+                self._preprocess_kernel_input(all_contacts["link_b"]),
+            ],
             dim=1,
         )
         is_contact = (contact_links == self.link_idx).any(dim=1)
@@ -51,12 +54,12 @@ class RigidContactSensor(Sensor):
         self._cached = tensor_to_array(is_contact)
         return self._cached[envs_idx] if envs_idx is not None else self._cached
 
-    def _ensure_batchdim(self, tensor: torch.Tensor) -> torch.Tensor:
+    def _preprocess_kernel_input(self, tensor: torch.Tensor) -> torch.Tensor:
+        # adds missing batch dim for n_envs=0 and ensures tensor is continuous
         if self._scene.n_envs > 0:
-            return tensor
+            return tensor.contiguous()
         else:
-            # add the missing env dimension
-            return tensor.unsqueeze(0)
+            return tensor.unsqueeze(0).contiguous()
 
 
 @ti.data_oriented
@@ -89,11 +92,11 @@ class RigidContactForceSensor(RigidContactSensor):
 
         if link_mask.any():
             self._kernel_get_contacts_forces(
-                self._ensure_batchdim(all_contacts["force"]).contiguous(),
-                self._ensure_batchdim(all_contacts["link_a"]).contiguous(),
-                self._ensure_batchdim(all_contacts["link_b"]).contiguous(),
-                link_mask.contiguous(),
-                self._ensure_batchdim(self._solver.get_links_quat()).contiguous(),
+                self._preprocess_kernel_input(all_contacts["force"]),
+                self._preprocess_kernel_input(all_contacts["link_a"]),
+                self._preprocess_kernel_input(all_contacts["link_b"]),
+                self._preprocess_kernel_input(link_mask),
+                self._preprocess_kernel_input(self._solver.get_links_quat()),
                 self.link_idx,
                 self._cached,
             )
@@ -175,12 +178,12 @@ class RigidNormalTangentialForceSensor(RigidContactSensor):
 
         if link_mask.any():
             self._kernel_get_contacts_norm_tan(
-                all_contacts["force"].contiguous(),
-                all_contacts["normal"].contiguous(),
-                all_contacts["link_a"].contiguous(),
-                all_contacts["link_b"].contiguous(),
-                link_mask.contiguous(),
-                self._ensure_batchdim(self._solver.get_links_quat()).contiguous(),
+                self._preprocess_kernel_input(all_contacts["force"]),
+                self._preprocess_kernel_input(all_contacts["normal"]),
+                self._preprocess_kernel_input(all_contacts["link_a"]),
+                self._preprocess_kernel_input(all_contacts["link_b"]),
+                self._preprocess_kernel_input(link_mask),
+                self._preprocess_kernel_input(self._solver.get_links_quat()),
                 self.force_eps,
                 self.link_idx,
                 self._cached,
@@ -299,12 +302,12 @@ class RigidContactGridSensor(RigidContactSensor):
 
         if link_mask.any():
             self._kernel_compute_grid(
-                self._ensure_batchdim(all_contacts["position"]).contiguous(),
-                self._ensure_batchdim(all_contacts["link_a"]).contiguous(),
-                self._ensure_batchdim(all_contacts["link_b"]).contiguous(),
-                link_mask.contiguous(),
-                self._ensure_batchdim(self._solver.get_links_pos()).contiguous(),
-                self._ensure_batchdim(self._solver.get_links_quat()).contiguous(),
+                self._preprocess_kernel_input(all_contacts["position"]),
+                self._preprocess_kernel_input(all_contacts["link_a"]),
+                self._preprocess_kernel_input(all_contacts["link_b"]),
+                self._preprocess_kernel_input(link_mask),
+                self._preprocess_kernel_input(self._solver.get_links_pos()),
+                self._preprocess_kernel_input(self._solver.get_links_quat()),
                 self.link_idx,
                 self.grid_size,
                 self._min_bounds,
@@ -401,13 +404,13 @@ class RigidContactForceGridSensor(RigidContactGridSensor):
 
         if link_mask.any():
             self._kernel_compute_force_grid(
-                all_contacts["position"].contiguous(),
-                all_contacts["force"].contiguous(),
-                all_contacts["link_a"].contiguous(),
-                all_contacts["link_b"].contiguous(),
-                link_mask.contiguous(),
-                self._ensure_batchdim(self._solver.get_links_pos()).contiguous(),
-                self._ensure_batchdim(self._solver.get_links_quat()).contiguous(),
+                self._preprocess_kernel_input(all_contacts["position"]),
+                self._preprocess_kernel_input(all_contacts["force"]),
+                self._preprocess_kernel_input(all_contacts["link_a"]),
+                self._preprocess_kernel_input(all_contacts["link_b"]),
+                self._preprocess_kernel_input(link_mask),
+                self._preprocess_kernel_input(self._solver.get_links_pos()),
+                self._preprocess_kernel_input(self._solver.get_links_quat()),
                 self.link_idx,
                 self.grid_size,
                 self._min_bounds,
@@ -517,14 +520,14 @@ class RigidNormalTangentialForceGridSensor(RigidContactForceGridSensor):
 
         if link_mask.any():
             self._kernel_compute_norm_tan_grid(
-                all_contacts["position"].contiguous(),
-                all_contacts["force"].contiguous(),
-                all_contacts["normal"].contiguous(),
-                all_contacts["link_a"].contiguous(),
-                all_contacts["link_b"].contiguous(),
-                link_mask.contiguous(),
-                self._ensure_batchdim(self._solver.get_links_pos()).contiguous(),
-                self._ensure_batchdim(self._solver.get_links_quat()).contiguous(),
+                self._preprocess_kernel_input(all_contacts["position"]),
+                self._preprocess_kernel_input(all_contacts["force"]),
+                self._preprocess_kernel_input(all_contacts["normal"]),
+                self._preprocess_kernel_input(all_contacts["link_a"]),
+                self._preprocess_kernel_input(all_contacts["link_b"]),
+                self._preprocess_kernel_input(link_mask),
+                self._preprocess_kernel_input(self._solver.get_links_pos()),
+                self._preprocess_kernel_input(self._solver.get_links_quat()),
                 self.link_idx,
                 self.grid_size,
                 self._min_bounds,
