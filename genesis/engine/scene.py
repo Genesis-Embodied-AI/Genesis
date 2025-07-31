@@ -542,11 +542,13 @@ class Scene(RBC):
         """
         Add a camera to the scene.
 
-        The camera model can be either 'pinhole' or 'thinlens'.
-        The 'pinhole' model is a simple camera model that captures light rays from a single point in space.
-        The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size,
-        allowing for depth of field effects. When 'pinhole' is used, the `aperture` and `focal_len`
-        parameters are ignored.
+        The camera model can be either 'pinhole' or 'thinlens'. The 'pinhole' model is a simple camera model that
+        captures light rays from a single point in space. The 'thinlens' model is a more complex camera model that
+        simulates a lens with a finite aperture size, allowing for depth of field effects.
+
+        Warning
+        -------
+        When 'pinhole' is used, the `aperture` and `focal_len` parameters are ignored.
 
         Parameters
         ----------
@@ -571,16 +573,15 @@ class Scene(RBC):
         spp : int, optional
             Samples per pixel. Only available when using RayTracer renderer. Defaults to 256.
         denoise : bool
-            Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer..
-            Defaults to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser
-            option when building the RayTracer.
+            Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
+            to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option
+            when building the RayTracer.
 
         Returns
         -------
         camera : genesis.Camera
             The created camera object.
         """
-
         return self._visualizer.add_camera(res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise)
 
     @gs.assert_unbuilt

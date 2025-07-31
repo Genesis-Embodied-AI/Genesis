@@ -234,7 +234,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
                 lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
                 cam.set_pose(pos=pos_i, lookat=lookat_i)
                 rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-                assert np.std(rgb_array) > 10.0
+                assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
                 robots_rgb_arrays.append(rgb_array)
 
             steps_rgb_arrays.append(robots_rgb_arrays)
@@ -318,7 +318,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
         robots_rgb_arrays = []
         for cam in cams:
             rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-            assert np.std(rgb_array) > 10.0
+            assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
             robots_rgb_arrays.append(rgb_array)
         steps_rgb_queue.put(robots_rgb_arrays)
 
@@ -329,6 +329,63 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
             for i in range(n_cameras):
                 diff = frames_t[i] - frames_t_minus_1[i]
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
+
+
+def test_debug_draw(show_viewer):
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    cam = scene.add_camera(
+        pos=(3.5, 0.5, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        up=(0.0, 0.0, 1.0),
+        fov=40,
+        res=(640, 640),
+        GUI=show_viewer,
+    )
+    scene.build(n_envs=2)
+
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+    scene.draw_debug_arrow(
+        pos=(0, 0.4, 0.1),
+        vec=(0, 0.3, 0.8),
+        color=(1, 0, 0),
+    )
+    scene.draw_debug_line(
+        start=(0.7, -0.3, 0.7),
+        end=(0.6, 0.2, 0.7),
+        radius=0.01,
+        color=(1, 0, 0, 1),
+    )
+    scene.draw_debug_sphere(
+        pos=(-0.3, 0.3, 0.0),
+        radius=0.15,
+        color=(0, 1, 0),
+    )
+    scene.draw_debug_frame(
+        T=np.array(
+            [
+                [1.0, 0.0, 0.0, -0.3],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, -1.0, 0.0, -0.2],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        ),
+        axis_length=0.5,
+        origin_size=0.03,
+        axis_radius=0.02,
+    )
+    scene.step()
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+    scene.clear_debug_objects()
+    scene.step()
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
 
 @pytest.mark.parametrize("use_rasterizer", [True, False])

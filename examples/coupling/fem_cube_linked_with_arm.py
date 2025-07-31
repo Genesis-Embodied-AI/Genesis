@@ -130,7 +130,7 @@ def main():
                 cam.render()
 
         print("Now dropping the cube")
-        cube.solver.remove_vertex_constraints()
+        cube.remove_vertex_constraints()
         steps = int(1 / dt)
         for i in tqdm(range(steps), total=steps):
             arm.control_dofs_position(arm_path_waypoints[-1])

@@ -81,11 +81,16 @@ class Mesh(object):
     def bounds(self):
         """(2,3) float : The axis-aligned bounds of the mesh."""
         if self._bounds is None:
-            bounds = np.array([[np.inf, np.inf, np.inf], [-np.inf, -np.inf, -np.inf]])
-            for p in self.primitives:
-                bounds[0] = np.minimum(bounds[0], p.bounds[0])
-                bounds[1] = np.maximum(bounds[1], p.bounds[1])
-            self._bounds = bounds
+            if self.primitives:
+                self._bounds = np.stack(
+                    (
+                        np.min([p.bounds[0] for p in self.primitives], axis=0),
+                        np.max([p.bounds[1] for p in self.primitives], axis=0),
+                    ),
+                    axis=0,
+                )
+            else:
+                self._bounds = np.zeros((2, 3))
         return self._bounds
 
     @property
@@ -98,12 +103,12 @@ class Mesh(object):
     @property
     def extents(self):
         """(3,) float : The lengths of the axes of the mesh's AABB."""
-        return np.diff(self.bounds, axis=0).reshape(-1)
+        return self.bounds[1] - self.bounds[0]
 
     @property
     def scale(self):
         """(3,) float : The length of the diagonal of the mesh's AABB."""
-        return np.linalg.norm(self.extents)
+        return max(np.linalg.norm(self.extents), 1e-7)
 
     @property
     def is_transparent(self):
@@ -266,7 +271,7 @@ class Mesh(object):
                     else:
                         colors = vc[mesh.faces].reshape((3 * len(mesh.faces), vc.shape[1]))
                 material = MetallicRoughnessMaterial(
-                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    alphaMode="OPAQUE" if colors.shape[-1] < 4 or (colors[..., 3] == 255).all() else "BLEND",
                     baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                     metallicFactor=0.2,
                     roughnessFactor=0.8,
@@ -277,9 +282,8 @@ class Mesh(object):
                     raise ValueError("Cannot use face colors with a smooth mesh")
                 else:
                     colors = np.repeat(mesh.visual.face_colors, 3, axis=0)
-
                 material = MetallicRoughnessMaterial(
-                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    alphaMode="OPAQUE" if colors.shape[-1] < 4 or (colors[..., 3] == 255).all() else "BLEND",
                     baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                     metallicFactor=0.2,
                     roughnessFactor=0.8,
