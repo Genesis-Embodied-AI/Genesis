@@ -1162,42 +1162,85 @@ def _tc_z_up_to_R(z, up=None, out=None):
         R = torch.empty((*B, 3, 3), dtype=z.dtype, device=z.device)
     else:
         assert out.shape == (*B, 3, 3)
-        R = out.reshape((-1, 3, 3))
+        R = out
 
-    z = normalize(z)
-    up = normalize(up)
+    # Compute z norms
+    z_norm = torch.sqrt(torch.sum(z.reshape(-1, 3) ** 2, dim=-1)).reshape(B)
+
+    # Set z as the third column of rotation matrix
+    R[..., 2] = z
 
     # Handle batch dimension properly
-    if z.ndim == 2:
-        # For batch of vectors, process all vectors in parallel
-        # Compute cross products for all vectors at once
-        x = torch.cross(up, z, dim=1)
+    if z.ndim > 1:
+        # For batched inputs, use vectorized operations
+        # Normalize z vectors
+        z_normalized = z / z_norm.unsqueeze(-1).clamp(min=gs.EPS)
 
-        # Check norms for all vectors at once
+        # Handle zero norm cases
+        zero_mask = z_norm < gs.EPS
+        if zero_mask.any():
+            z_normalized[zero_mask] = torch.tensor([0.0, 1.0, 0.0], device=z.device, dtype=z.dtype)
+
+        # Compute x vectors (first column)
+        if up is not None:
+            # Handle up vector broadcasting
+            if up.ndim == 1:
+                up_expanded = up.unsqueeze(0).expand(z.shape[0], -1)
+            else:
+                up_expanded = up
+            x = torch.cross(up_expanded, z_normalized, dim=-1)
+        else:
+            # Default up vector case
+            x = torch.stack(
+                [z_normalized[..., 1], -z_normalized[..., 0], torch.zeros_like(z_normalized[..., 0])], dim=-1
+            )
+
+        # Normalize x vectors
         x_norm = torch.norm(x, dim=-1, keepdim=True)
-        zero_mask = x_norm < 1e-6
+        x_normalized = x / x_norm.clamp(min=gs.EPS)
 
-        # Create identity matrices for all vectors
-        R = torch.eye(3, device=z.device, dtype=z.dtype).expand(z.shape[0], 3, 3)
+        # Handle zero x norm cases
+        zero_x_mask = x_norm.squeeze(-1) < gs.EPS
+        if zero_x_mask.any():
+            # For zero x norm, set identity matrix
+            R[zero_x_mask] = torch.eye(3, device=z.device, dtype=z.dtype)
+            # Continue with non-zero cases
+            valid_mask = ~zero_x_mask
+            if valid_mask.any():
+                z_valid = z_normalized[valid_mask]
+                x_valid = x_normalized[valid_mask]
+                y_valid = torch.cross(z_valid, x_valid, dim=-1)
 
-        # For non-zero norm cases, compute proper rotation
-        non_zero_mask = ~zero_mask.squeeze(-1)
-        if non_zero_mask.any():
-            x_valid = normalize(x[non_zero_mask])
-            z_valid = z[non_zero_mask]
-            y_valid = normalize(torch.cross(z_valid, x_valid, dim=1))
+                # Stack vectors and assign to valid positions
+                R_valid = torch.stack([x_valid, y_valid, z_valid], dim=-1)
+                R[valid_mask] = R_valid
+        else:
+            # All x norms are valid, compute y vectors
+            y = torch.cross(z_normalized, x_normalized, dim=-1)
 
-            # Stack vectors and transpose for all valid cases at once
-            R[non_zero_mask] = torch.stack([x_valid, y_valid, z_valid], dim=2)
+            # Stack vectors to form rotation matrices
+            R[:] = torch.stack([x_normalized, y, z_normalized], dim=-1)
     else:
         # Single vector case
-        x = torch.cross(up, z)
-        if torch.norm(x) == 0:
-            R = torch.eye(3, device=z.device, dtype=z.dtype)
+        x, y, z = R.T
+
+        if z_norm > gs.EPS:  # Use hardcoded EPS for consistency
+            z[:] = z / z_norm
         else:
-            x = normalize(x)
-            y = normalize(torch.cross(z, x))
-            R = torch.vstack([x, y, z]).T
+            z[:] = torch.tensor([0.0, 1.0, 0.0], device=z.device, dtype=z.dtype)
+
+        if up is not None:
+            x[:] = torch.cross(up, z)
+        else:
+            x[0] = z[1]
+            x[1] = -z[0]
+            x[2] = 0.0
+        x_norm = torch.norm(x)
+        if x_norm > gs.EPS:  # Use hardcoded EPS for consistency
+            x /= x_norm
+            y[:] = torch.cross(z, x)
+        else:
+            R[:] = torch.eye(3, device=z.device, dtype=z.dtype)
 
     return R
 
@@ -1225,7 +1268,7 @@ def _np_z_up_to_R(z, up=None, out=None):
             z[:] = 0.0, 1.0, 0.0
 
         if up is not None:
-            x[:] = np.cross(up, z)
+            x[:] = np.cross(up[i], z)
         else:
             x[0] = z[1]
             x[1] = -z[0]
@@ -1248,22 +1291,13 @@ def pos_lookat_up_to_T(pos, lookat, up, *, dtype=np.float32):
             z = pos - lookat
         R = z_up_to_R(z, up=up)
         return trans_R_to_T(pos, R)
-    elif all(isinstance(e, tuple) for e in (pos, lookat, up) if e is not None):
-        pos = np.asarray(pos, dtype=dtype)
-        lookat = np.asarray(lookat, dtype=dtype)
-        up = np.asarray(up, dtype=dtype)
-
-        T = np.zeros((4, 4), dtype=dtype)
-        T[3, 3] = 1.0
-        T[:3, 3] = pos
-
-        z = pos - lookat
-        z_norm = np.linalg.norm(z)
-        if z_norm < gs.EPS:
-            z = np.array([0.0, 1.0, 0.0], dtype=dtype)
-        z_up_to_R(z, up=up, out=T[:3, :3])
-
-        return T
+    elif all(isinstance(e, (tuple, np.ndarray)) for e in (pos, lookat, up) if e is not None):
+        if (np.abs(pos - lookat).max() < gs.EPS).all():
+            z = np.array([1.0, 0.0, 0.0], dtype=pos.dtype)
+        else:
+            z = pos - lookat
+        R = z_up_to_R(z, up=up)
+        return trans_R_to_T(pos, R)
     else:
         gs.raise_exception(
             f"all of the inputs must be torch.Tensor or np.ndarray. got: {type(pos)=}, {type(lookat)=}, {type(up)=}"

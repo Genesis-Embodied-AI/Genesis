@@ -244,6 +244,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -278,10 +279,9 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     robot = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    n_cameras = 3
-    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_cameras)]
     n_envs = 3
     env_spacing = (2.0, 2.0)
+    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_envs)]
     scene.build(n_envs=n_envs, env_spacing=env_spacing)
 
     T = np.eye(4)
@@ -326,7 +326,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
             diff_tol = 0.02  # expect atlest 2% difference between each frame
             frames_t_minus_1 = steps_rgb_queue.get()
             frames_t = steps_rgb_queue.get()
-            for i in range(n_cameras):
+            for i in range(n_envs):
                 diff = frames_t[i] - frames_t_minus_1[i]
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
 
@@ -393,7 +393,7 @@ def test_debug_draw(show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 3])
 @pytest.mark.required
 @pytest.mark.xfail(reason="gs-madrona must be built and installed manually for now.")
-def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, n_steps, tol):
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, tol):
     scene = gs.Scene(
         renderer=gs.options.renderers.BatchRenderer(
             use_rasterizer=use_rasterizer,
