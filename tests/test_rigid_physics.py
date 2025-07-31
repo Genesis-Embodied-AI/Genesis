@@ -2849,3 +2849,13 @@ def test_examples_api(show_viewer, tol):
     scene.draw_debug_frame(T=np.eye(4), axis_length=0.5, origin_size=0.03, axis_radius=0.02)
     scene.step()
     scene.clear_debug_objects()
+
+
+@pytest.mark.parametrize("xml_path", ["xml/frictionloss_pendulum.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler, gs.integrator.implicitfast])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_frictionloss(gs_sim, mj_sim, tol):
+    qpos = np.array([0.0, 0.0])
+    qvel = np.array([0.0, 0.0])
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=1000, tol=tol)

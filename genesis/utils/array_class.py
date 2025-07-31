@@ -113,6 +113,7 @@ class StructConstraintState:
     jac_relevant_dofs: V_ANNOTATION
     jac_n_relevant_dofs: V_ANNOTATION
     n_constraints_equality: V_ANNOTATION
+    n_constraints_frictionloss: V_ANNOTATION
     improved: V_ANNOTATION
     Jaref: V_ANNOTATION
     Ma: V_ANNOTATION
@@ -121,6 +122,7 @@ class StructConstraintState:
     Mgrad: V_ANNOTATION
     search: V_ANNOTATION
     efc_D: V_ANNOTATION
+    efc_frictionloss: V_ANNOTATION
     efc_force: V_ANNOTATION
     active: V_ANNOTATION
     prev_active: V_ANNOTATION
@@ -171,6 +173,7 @@ def get_constraint_state(constraint_solver, solver):
         "jac_relevant_dofs": V(gs.ti_int, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
         "jac_n_relevant_dofs": V(gs.ti_int, shape=solver._batch_shape(len_constraints_)),
         "n_constraints_equality": V(gs.ti_int, shape=solver._batch_shape()),
+        "n_constraints_frictionloss": V(gs.ti_int, shape=solver._batch_shape()),
         "improved": V(gs.ti_int, shape=solver._batch_shape()),
         "Jaref": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "Ma": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
@@ -179,6 +182,7 @@ def get_constraint_state(constraint_solver, solver):
         "Mgrad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "search": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "efc_D": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "efc_frictionloss": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_force": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
         "prev_active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),

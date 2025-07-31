@@ -1,0 +1,20 @@
+<mujoco>
+
+  <default>
+    <joint damping=".01" frictionloss=".1"/>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 1"/>
+    <geom type="plane" size="1 1 .01" pos="0 0 -1"/>
+    <body name="pendulum" pos="0.15 0 0">
+      <joint name="hinge" axis="0 1 0"/>
+      <geom type="capsule" size="0.02" fromto="0 0 0 .1 0 0"/>
+      <body name="link1" pos="0.1 0 0">
+        <joint name="slide" type="slide" axis="1 0 0" stiffness="200"/>
+        <geom type="capsule" size="0.015" fromto="-.1 0 0 .1 0 0"/>
+      </body>
+    </body>
+  </worldbody>
+
+</mujoco>
