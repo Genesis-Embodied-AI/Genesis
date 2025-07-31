@@ -1303,29 +1303,15 @@ def func_ls_point_fn(
 ):
     tmp_quad_total0, tmp_quad_total1, tmp_quad_total2 = gs.ti_float(0.0), gs.ti_float(0.0), gs.ti_float(0.0)
     for _i0 in range(1):
-
-        # tmp_quad_total0 = self.quad_gauss[_i0 + 0, i_b]
-        # tmp_quad_total1 = self.quad_gauss[_i0 + 1, i_b]
-        # tmp_quad_total2 = self.quad_gauss[_i0 + 2, i_b]
-        # for i_c in range(self.n_constraints[i_b]):
-        #     active = 1
-        #     if i_c >= self.n_constraints_equality[i_b]:
-        #         active = self.Jaref[i_c, i_b] + alpha * self.jv[i_c, i_b] < 0
-        #     tmp_quad_total0 += self.quad[i_c, _i0 + 0, i_b] * active
-        #     tmp_quad_total1 += self.quad[i_c, _i0 + 1, i_b] * active
-        #     tmp_quad_total2 += self.quad[i_c, _i0 + 2, i_b] * active
-
         tmp_quad_total0 = constraint_state.quad_gauss[_i0 + 0, i_b]
         tmp_quad_total1 = constraint_state.quad_gauss[_i0 + 1, i_b]
         tmp_quad_total2 = constraint_state.quad_gauss[_i0 + 2, i_b]
         for i_c in range(constraint_state.n_constraints[i_b]):
             x = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b]
             active = 1
-            if (
-                i_c >= constraint_state.n_constraints_equality[i_b]
-                and i_c
-                < constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
-            ):
+            ne = constraint_state.n_constraints_equality[i_b]
+            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+            if i_c >= ne and i_c < nef:
                 f = constraint_state.efc_frictionloss[i_c, i_b]
                 r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
                 rf = r * f
@@ -1344,7 +1330,7 @@ def func_ls_point_fn(
                     constraint_state.quad[i_c, _i0 + 1, i_b] = qf[1]
                     constraint_state.quad[i_c, _i0 + 2, i_b] = qf[2]
 
-            elif i_c >= constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]:
+            elif i_c >= nef:
                 active = x < 0
 
             tmp_quad_total0 += constraint_state.quad[i_c, _i0 + 0, i_b] * active
@@ -1731,10 +1717,9 @@ def func_update_constraint(
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
         constraint_state.active[i_c, i_b] = 1
         floss_force = gs.ti_float(0.0)
-        if (
-            i_c >= constraint_state.n_constraints_equality[i_b]
-            and i_c < constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
-        ):
+        ne = constraint_state.n_constraints_equality[i_b]
+        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        if i_c >= ne and i_c < nef:
             f = constraint_state.efc_frictionloss[i_c, i_b]
             r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
             linear_neg = constraint_state.Jaref[i_c, i_b] <= -r * f
@@ -1744,7 +1729,7 @@ def func_update_constraint(
             floss_cost_local = linear_neg * (-0.5 * r * f * f - f * constraint_state.Jaref[i_c, i_b])
             floss_cost_local += linear_pos * (-0.5 * r * f * f + f * constraint_state.Jaref[i_c, i_b])
             cost[i_b] = cost[i_b] + floss_cost_local
-        elif i_c >= constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]:
+        elif i_c >= nef:
             constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
 
         constraint_state.efc_force[i_c, i_b] = floss_force + (
