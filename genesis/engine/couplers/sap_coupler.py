@@ -618,7 +618,7 @@ class SAPCoupler(RBC):
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
 
-    @ti.kernel
+    @ti.func
     def compute_regularization(self):
         for contact in ti.static(self.contact_handlers):
             contact.compute_regularization()
@@ -629,6 +629,9 @@ class SAPCoupler(RBC):
     def _init_sap_solve(self, i_step: ti.i32):
         self._init_v(i_step)
         self.batch_active.fill(True)
+        self.compute_regularization()
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_regularization()
 
     @ti.func
     def _init_v(self, i_step: ti.i32):
@@ -2125,10 +2128,12 @@ class FEMFloorTetContactHandler(FEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
+        eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
         self.name = "FEMFloorTetContact"
         self.fem_solver = self.sim.fem_solver
+        self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             geom_idx=gs.ti_int,  # index of the FEM element
@@ -2179,7 +2184,8 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         self.n_contact_pairs[None] = 0
         # Compute pair from candidates
-        for i_c in range(self.n_contact_candidates[None]):
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
+        for i_c in range(result_count):
             candidate = self.contact_candidates[i_c]
             i_b = candidate.batch_idx
             i_e = candidate.geom_idx
@@ -2219,12 +2225,24 @@ class FEMFloorTetContactHandler(FEMContactHandler):
             deformable_g = self.coupler._hydroelastic_stiffness
             rigid_g = self.coupler.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
-            if total_area < gs.EPS or rigid_g < gs.EPS:
+            if total_area < self.eps or rigid_g < self.eps:
                 continue
             g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
+            # print(
+            #     "total_area",
+            #     total_area,
+            #     "pressure",
+            #     pressure,
+            #     "rigid_k",
+            #     rigid_k,
+            #     "rigid_phi0",
+            #     rigid_phi0,
+            #     "barycentric",
+            #     barycentric,
+            # )
             if i_p < self.max_contact_pairs:
                 self.contact_pairs[i_p].batch_idx = i_b
                 self.contact_pairs[i_p].geom_idx = i_e
@@ -2300,9 +2318,11 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
+        eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
         self.name = "FEMSelfTetContact"
+        self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             geom_idx0=gs.ti_int,  # index of the FEM element0
@@ -2335,7 +2355,11 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     def compute_candidates(self, f: ti.i32):
         overflow = False
         self.n_contact_candidates[None] = 0
-        for i_r in ti.ndrange(self.coupler.fem_surface_tet_bvh.query_result_count[None]):
+        result_count = ti.min(
+            self.coupler.fem_surface_tet_bvh.query_result_count[None],
+            self.coupler.fem_surface_tet_bvh.max_n_query_results,
+        )
+        for i_r in range(result_count):
             i_b, i_sa, i_sq = self.coupler.fem_surface_tet_bvh.query_result[i_r]
             i_a = self.fem_solver.surface_elements[i_sa]
             i_q = self.fem_solver.surface_elements[i_sq]
@@ -2412,7 +2436,11 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0], dt=gs.ti_float)  # make normal point outward
         self.n_contact_pairs[None] = 0
-        for i_c in range(self.n_contact_candidates[None]):
+        result_count = ti.min(
+            self.n_contact_candidates[None],
+            self.max_contact_candidates,
+        )
+        for i_c in range(result_count):
             i_b = self.contact_candidates[i_c].batch_idx
             i_e0 = self.contact_candidates[i_c].geom_idx0
             i_e1 = self.contact_candidates[i_c].geom_idx1
@@ -2494,7 +2522,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
             for i in range(2, polygon_n_vertices):
                 accumulate_area_centroid(polygon_vertices, i, total_area, total_area_weighted_centroid)
 
-            if total_area < gs.EPS:
+            if total_area < self.eps:
                 continue
             centroid = total_area_weighted_centroid / total_area
             barycentric0 = tet_barycentric(centroid, tet_vertices0)
@@ -2822,11 +2850,11 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
+        eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
         self.name = "RigidFemTetContact"
-        self.fem_solver = self.sim.fem_solver
-        self.rigid_solver = self.sim.rigid_solver
+        self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             geom_idx0=gs.ti_int,  # index of the FEM element
@@ -2864,7 +2892,11 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
     def compute_candidates(self, f: ti.i32):
         self.n_contact_candidates[None] = 0
         overflow = False
-        for i_r in ti.ndrange(self.coupler.rigid_tri_bvh.query_result_count[None]):
+        result_count = ti.min(
+            self.coupler.rigid_tri_bvh.query_result_count[None],
+            self.coupler.rigid_tri_bvh.max_n_query_results,
+        )
+        for i_r in range(result_count):
             i_b, i_a, i_sq = self.coupler.rigid_tri_bvh.query_result[i_r]
             i_q = self.fem_solver.surface_elements[i_sq]
             i_v0 = self.rigid_solver.faces_info.verts_idx[i_a][0]
@@ -2921,7 +2953,11 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
         overflow = False
         normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0])  # make normal point outward
         self.n_contact_pairs[None] = 0
-        for i_c in range(self.n_contact_candidates[None]):
+        result_count = ti.min(
+            self.n_contact_candidates[None],
+            self.max_contact_candidates,
+        )
+        for i_c in range(result_count):
             i_b = self.contact_candidates[i_c].batch_idx
             i_e = self.contact_candidates[i_c].geom_idx0
             i_f = self.contact_candidates[i_c].geom_idx1
@@ -2988,8 +3024,6 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
                     area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
                 )
 
-            if total_area < gs.EPS:
-                continue
             centroid = total_area_weighted_centroid / total_area
             barycentric0 = tet_barycentric(centroid, tet_vertices)
             barycentric1 = tri_barycentric(centroid, tri_vertices, normal=self.contact_candidates[i_c].normal)
@@ -2998,7 +3032,7 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
             deformable_g = self.coupler._hydroelastic_stiffness
             rigid_g = self.coupler.fem_pressure_gradient[i_b, i_e].dot(self.contact_candidates[i_c].normal)
             pressure = barycentric0.dot(tet_pressures)
-            if total_area < gs.EPS or rigid_g < gs.EPS:
+            if total_area < self.eps or rigid_g < self.eps:
                 continue
             g = rigid_g * deformable_g / (deformable_g + rigid_g)  # harmonic average
             rigid_k = total_area * g
