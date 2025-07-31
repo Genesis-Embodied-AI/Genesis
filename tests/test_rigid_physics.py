@@ -2813,7 +2813,6 @@ def test_contype_conaffinity(show_viewer, tol):
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler, gs.integrator.implicitfast])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_frictionloss(gs_sim, mj_sim, tol):
-    qpos = np.array([0.0, 0.0])
-    qvel = np.array([0.0, 0.0])
+    qvel = np.array([1.0, -1.0])
     tol = 1e-7  # TODO: I have to relax the tolerance a bit. Need to look closer why it differs from mujoco
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=1000, tol=tol)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=1000, tol=tol)

@@ -369,7 +369,7 @@ def ti_orthogonals(a):
 
 
 @ti.func
-def imp_aref(params, neg_penetration, vel, pos_aref):
+def imp_aref(params, neg_penetration, vel, pos):
     timeconst, dampratio, dmin, dmax, width, mid, power = params
 
     imp_x = ti.abs(neg_penetration) / width
@@ -384,7 +384,7 @@ def imp_aref(params, neg_penetration, vel, pos_aref):
     b = 2.0 / (dmax * timeconst)
     k = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
 
-    aref = -b * vel - k * imp * pos_aref
+    aref = -b * vel - k * imp * pos
 
     return imp, aref
 

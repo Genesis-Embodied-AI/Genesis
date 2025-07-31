@@ -1320,15 +1320,15 @@ def func_ls_point_fn(
                 # active = (~linear_neg) & (~linear_pos)
 
                 if linear_neg or linear_pos:
-                    qf = linear_neg * ti.Vector(
-                        [f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]), -f * constraint_state.jv[i_c, i_b], 0.0]
+                    qf_0 = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
+                        -0.5 * rf + constraint_state.Jaref[i_c, i_b]
                     )
-                    qf += linear_pos * ti.Vector(
-                        [f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b]), f * constraint_state.jv[i_c, i_b], 0.0]
+                    qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
+                        f * constraint_state.jv[i_c, i_b]
                     )
-                    constraint_state.quad[i_c, _i0 + 0, i_b] = qf[0]
-                    constraint_state.quad[i_c, _i0 + 1, i_b] = qf[1]
-                    constraint_state.quad[i_c, _i0 + 2, i_b] = qf[2]
+                    constraint_state.quad[i_c, _i0 + 0, i_b] = qf_0
+                    constraint_state.quad[i_c, _i0 + 1, i_b] = qf_1
+                    constraint_state.quad[i_c, _i0 + 2, i_b] = 0.0
 
             elif i_c >= nef:
                 active = x < 0
@@ -1722,12 +1722,13 @@ def func_update_constraint(
         if i_c >= ne and i_c < nef:
             f = constraint_state.efc_frictionloss[i_c, i_b]
             r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
-            linear_neg = constraint_state.Jaref[i_c, i_b] <= -r * f
-            linear_pos = constraint_state.Jaref[i_c, i_b] >= r * f
+            rf = r * f
+            linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+            linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
             constraint_state.active[i_c, i_b] = (~linear_neg) & (~linear_pos)
             floss_force = linear_neg * f + linear_pos * -f
-            floss_cost_local = linear_neg * (-0.5 * r * f * f - f * constraint_state.Jaref[i_c, i_b])
-            floss_cost_local += linear_pos * (-0.5 * r * f * f + f * constraint_state.Jaref[i_c, i_b])
+            floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
+            floss_cost_local += linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
             cost[i_b] = cost[i_b] + floss_cost_local
         elif i_c >= nef:
             constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
