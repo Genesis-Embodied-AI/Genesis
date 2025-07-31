@@ -3,8 +3,6 @@ requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# name = "genesis-world-nightly"
-# version = "0.0.3"
 name = "genesis-world"
 version = "0.2.1"
 description = "A universal and generative physics engine"
@@ -18,6 +16,8 @@ dependencies = [
     "trimesh",
     "scipy >= 1.14",
     "libigl",
+    "ompl>=1.7.0; platform_system != 'Windows'",
+    "torch>=2.7.1",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
     # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
@@ -60,7 +60,6 @@ dependencies = [
     # Motion Planning library
     # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
     #          Fix OMPL DLL search directory.
-    "ompl>=1.7.0; platform_system != 'Windows'"
 ]
 
 [tool.setuptools.packages.find]
@@ -75,13 +74,9 @@ genesis = [
     "ext/VolumeSampling",
 ]
 
-[tool.black]
+[tool.ruff]
 line-length = 120
-force-exclude = '''
-/(
-    genesis/ext
-)/
-'''
+extend-exclude = ["genesis/ext"]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -112,7 +107,7 @@ gs = "genesis._main:main"
 
 [project.optional-dependencies]
 dev = [
-    "black",
+    "ruff>=0.12.7",
     "pytest",
     "pytest-xdist",
     "pytest-forked",
