@@ -170,7 +170,7 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
         shape_args = (*shapes_in, *shapes_out)
         np_args, tc_args = [], []
         for i in range(len(shape_args)):
-            np_arg = np.random.rand(*batch_shape, *shape_args[i]).astype(gs.np_float)
+            np_arg = np.random.randn(*batch_shape, *shape_args[i]).clip(-1.0, 1.0).astype(gs.np_float)
             tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
 
             if i < num_inputs:

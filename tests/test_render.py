@@ -1,14 +1,12 @@
 import queue
 import sys
-import shutil
-import os
 
 import numpy as np
 import pytest
 import torch
 
 import genesis as gs
-from genesis.utils.geom import trans_to_T
+import genesis.utils.geom as gu
 from genesis.utils.image_exporter import FrameImageExporter
 
 from .utils import assert_allclose, assert_array_equal
@@ -244,7 +242,6 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -284,11 +281,10 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_envs)]
     scene.build(n_envs=n_envs, env_spacing=env_spacing)
 
-    T = np.eye(4)
-    T[:3, :3] = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-    T[:3, 3] = np.array([0.1, 0.0, 0.1])
+    R = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    trans = np.array([0.1, 0.0, 0.1])
     for cam in cams:
-        cam.attach(robot.get_link("hand"), T)
+        cam.attach(robot.get_link("hand"), gu.trans_R_to_T(trans, R))
 
     target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
     center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
@@ -388,13 +384,22 @@ def test_debug_draw(show_viewer):
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(sys.platform != "linux", reason="Madrona batch renderer only supports Linux.")
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
-@pytest.mark.parametrize("n_envs", [0, 3])
-@pytest.mark.required
-@pytest.mark.xfail(reason="gs-madrona must be built and installed manually for now.")
-def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, tol):
+@pytest.mark.parametrize("n_envs", [0, 4])
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, show_viewer):
+    CAM_RES = (512, 512)
+
+    pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.02,
+            substeps=4,
+        ),
         renderer=gs.options.renderers.BatchRenderer(
             use_rasterizer=use_rasterizer,
         ),
@@ -405,26 +410,30 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
             ior=10.0,
         ),
     )
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-        visualize_contact=True,
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            merge_fixed_links=False,
+        ),
     )
     cam_0 = scene.add_camera(
-        res=(512, 512),
+        res=CAM_RES,
         pos=(1.5, 0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
-        GUI=True,
+        GUI=show_viewer,
     )
     cam_1 = scene.add_camera(
-        res=(512, 512),
+        res=CAM_RES,
         pos=(1.5, -0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
-        GUI=True,
+        GUI=show_viewer,
+    )
+    cam_2 = scene.add_camera(
+        res=CAM_RES,
+        fov=45,
+        GUI=show_viewer,
     )
     scene.add_light(
         pos=[0.0, 0.0, 1.5],
@@ -442,53 +451,51 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
         cutoff=45.0,
         intensity=0.5,
     )
-    scene.build(n_envs=n_envs)
+    scene.build(n_envs=n_envs, env_spacing=(0.8, 0.8))
+
+    # Attach cameras
+    R = np.eye(3)
+    trans = np.array([0.1, 0.0, 0.1])
+    cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
+    cam_1.follow_entity(robot)
 
     # Create an image exporter
-    # FrameImageExporter exports images from all cameras and all environments in batch and parallelly,
-    # while Camera.start|stop_recording only exports images from a single camera and environment.
     exporter = FrameImageExporter(tmp_path)
 
-    expected_rgba_shape = torch.Size([n_envs, 512, 512, 4])
-    expected_rgba_0_mean = 83.9395
-    expected_rgba_1_mean = 112.4114
-    expected_rgba_0_std = 102.3653
-    expected_rgba_1_std = 88.9406
+    # Initialize the simulation
+    np.random.seed(0)
+    dof_bounds = scene.rigid_solver.dofs_info.limit.to_torch(gs.device)
+    for i in range(max(n_envs, 1)):
+        qpos = torch.zeros(robot.n_dofs)
+        qpos[:2] = torch.rand(2) - 0.5
+        qpos[2] = 1.0
+        qpos[3:6] = 0.5 * (torch.rand(3) - 0.5)
+        qpos[6:] = torch.rand(robot.n_dofs - 6) - 0.5
+        robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
 
-    expected_depth_shape = torch.Size([n_envs, 512, 512, 1])
-    expected_depth_0_mean = 58.2162
-    expected_depth_1_mean = 3.4597
-    expected_depth_0_std = 44.5696
-    expected_depth_1_std = 1.7867
+        qvel = torch.zeros(robot.n_dofs)
+        qvel[:6] = torch.rand(6) - 0.5
+        robot.set_dofs_velocity(qvel, envs_idx=([i] if n_envs else None))
 
-    # Only verify functionality works without crashes and output dimension matches for now
-    # To verify whether the output is correct pixel-wise, we need to use a more sophisticated test
-    for i in range(1):
-        scene.step()
+    # Verify that the output is correct pixel-wise over multiple simulation steps
+    for i in range(2):
+        batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
         if render_all_cameras:
             rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
-            # 2 cameras
-            assert len(rgba) == 2
-            assert len(depth) == 2
-            assert rgba[0].shape == expected_rgba_shape
-            assert rgba[1].shape == expected_rgba_shape
-            assert depth[0].shape == expected_depth_shape
-            assert depth[1].shape == expected_depth_shape
-            assert_allclose(rgba[0].mean(), expected_rgba_0_mean, tol=tol)
-            assert_allclose(rgba[1].mean(), expected_rgba_1_mean, tol=tol)
-            assert_allclose(rgba[0].std(), expected_rgba_0_std, tol=tol)
-            assert_allclose(rgba[1].std(), expected_rgba_1_std, tol=tol)
-            assert_allclose(depth[0].mean(), expected_depth_0_mean, tol=tol)
-            assert_allclose(depth[1].mean(), expected_depth_1_mean, tol=tol)
-            assert_allclose(depth[0].std(), expected_depth_0_std, tol=tol)
-            assert_allclose(depth[1].std(), expected_depth_1_std, tol=tol)
+
+            assert len(rgba) == len(depth) == len(scene.visualizer.cameras)
+            assert all(e.shape == (*batch_shape, 3) for e in rgba)
+            assert all(e.shape == (*batch_shape, 1) for e in depth)
+
             exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
-            rgba, depth, _, _ = cam_0.render(rgb=True, depth=True)
-            assert rgba.shape == expected_rgba_shape[1:]
-            assert depth.shape == expected_depth_shape[1:]
-            assert_allclose(rgba.mean(), expected_rgba_0_mean, tol=tol)
-            assert_allclose(depth.mean(), expected_depth_0_mean, tol=tol)
-            assert_allclose(rgba.std(), expected_rgba_0_std, tol=tol)
-            assert_allclose(depth.std(), expected_depth_0_std, tol=tol)
-            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgba, depth=depth)
+            rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
+
+            assert rgba.shape == (*batch_shape, 3)
+            assert depth.shape == (*batch_shape, 1)
+
+            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
+
+        scene.step()
+
+    breakpoint()

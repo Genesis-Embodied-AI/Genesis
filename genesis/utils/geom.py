@@ -1220,7 +1220,7 @@ def _tc_z_up_to_R(z, up=None, out=None):
             z[:] = torch.tensor([0.0, 1.0, 0.0], device=z.device, dtype=z.dtype)
 
         if up is not None:
-            x[:] = torch.cross(up, z)
+            x[:] = torch.linalg.cross(up, z)
         else:
             x[0] = z[1]
             x[1] = -z[0]
@@ -1228,7 +1228,7 @@ def _tc_z_up_to_R(z, up=None, out=None):
         x_norm = torch.norm(x)
         if x_norm > gs.EPS:  # Use hardcoded EPS for consistency
             x /= x_norm
-            y[:] = torch.cross(z, x)
+            y[:] = torch.linalg.cross(z, x)
         else:
             R[:] = torch.eye(3, device=z.device, dtype=z.dtype)
 
@@ -1275,17 +1275,15 @@ def _np_z_up_to_R(z, up=None, out=None):
 
 def pos_lookat_up_to_T(pos, lookat, up, *, dtype=np.float32):
     if all(isinstance(e, torch.Tensor) for e in (pos, lookat, up) if e is not None):
-        if (torch.abs(pos - lookat).max() < gs.EPS).all():
-            z = torch.tensor([1.0, 0.0, 0.0], device=pos.device, dtype=pos.dtype)
-        else:
-            z = pos - lookat
+        z = pos - lookat
+        if (torch.abs(z).max() < gs.EPS).all():
+            z = torch.tensor((1.0, 0.0, 0.0), dtype=pos.dtype, device=pos.device)
         R = z_up_to_R(z, up=up)
         return trans_R_to_T(pos, R)
-    elif all(isinstance(e, (tuple, np.ndarray)) for e in (pos, lookat, up) if e is not None):
-        if (np.abs(pos - lookat).max() < gs.EPS).all():
-            z = np.array([1.0, 0.0, 0.0], dtype=pos.dtype)
-        else:
-            z = pos - lookat
+    elif all(isinstance(e, np.ndarray) for e in (pos, lookat, up) if e is not None):
+        z = pos - lookat
+        if (np.abs(z).max() < gs.EPS).all():
+            z = np.array((1.0, 0.0, 0.0), dtype=pos.dtype)
         R = z_up_to_R(z, up=up)
         return trans_R_to_T(pos, R)
     else:

@@ -13,6 +13,18 @@ from genesis.sensors import Sensor
 from genesis.utils.misc import tensor_to_array
 
 
+# quat for Madrona needs to be transformed to y-forward
+def _T_to_quat_for_madrona(T):
+    if not isinstance(T, torch.Tensor):
+        gs.raise_exception(f"the input must be torch.Tensor. got: {type(T)=}")
+
+    R = T[..., :3, :3].contiguous()
+    quat = gu.R_to_quat(R)
+
+    w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+    return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
+
+
 class Camera(Sensor):
     """
     A camera which can be used to render RGB, depth, and segmentation images.
@@ -90,15 +102,14 @@ class Camera(Sensor):
         self._initial_pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
         self._initial_lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
         self._initial_up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
-        self._initial_transform = (
-            torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device) if transform is not None else None
-        )
+        self._initial_transform = None
+        if transform is not None:
+            self._initial_transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
         self._aspect_ratio = self._res[0] / self._res[1]
         self._visualizer = visualizer
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
-        self._attached_env_idx = None
 
         self._in_recording = False
         self._recorded_imgs = []
@@ -112,21 +123,24 @@ class Camera(Sensor):
             gs.raise_exception(f"Invalid camera model: {self._model}")
 
         if self._focus_dist is None:
-            self._focus_dist = np.linalg.norm(np.array(lookat) - np.array(pos))
+            self._focus_dist = np.linalg.norm(np.asarray(lookat) - np.asarray(pos))
 
     def build(self):
         self._batch_renderer = self._visualizer.batch_renderer
         self._rasterizer = self._visualizer.rasterizer
         self._raytracer = self._visualizer.raytracer
 
-        self._rgb_stacked = self._visualizer._context.env_separate_rigid
-        self._other_stacked = self._visualizer._context.env_separate_rigid
-
-        if self._rasterizer is not None:
-            self._rasterizer.add_camera(self)
-        if self._raytracer is not None:
+        self._rasterizer.add_camera(self)
+        if self._batch_renderer is not None:
+            self._rgb_stacked = True
+            self._other_stacked = True
+        elif self._raytracer is not None:
             self._raytracer.add_camera(self)
-            self._rgb_stacked = False  # TODO: Raytracer currently does not support batch rendering
+            self._rgb_stacked = False
+            self._other_stacked = False
+        else:
+            self._rgb_stacked = self._visualizer._context.env_separate_rigid
+            self._other_stacked = self._visualizer._context.env_separate_rigid
 
         self._is_built = True
         self.setup_initial_env_poses()
@@ -135,7 +149,9 @@ class Camera(Sensor):
         """
         Attach the camera to a rigid link in the scene.
 
-        Once attached, the camera's position and orientation can be updated relative to the attached link using `move_to_attach()`. This is useful for mounting the camera to dynamic entities like robots or articulated objects.
+        Once attached, the camera's position and orientation can be updated relative to the attached link using
+        `move_to_attach()`. This is useful for mounting the camera to dynamic entities like robots or articulated
+        objects.
 
         Parameters
         ----------
@@ -144,6 +160,8 @@ class Camera(Sensor):
         offset_T : np.ndarray, shape (4, 4)
             The transformation matrix specifying the camera's pose relative to the rigid link.
         """
+        if self._followed_entity is not None:
+            gs.raise_exception("Impossible to attach a camera that is already following an entity.")
         self._attached_link = rigid_link
         self._attached_offset_T = torch.as_tensor(offset_T, dtype=gs.tc_float, device=gs.device)
 
@@ -151,29 +169,31 @@ class Camera(Sensor):
         """
         Detach the camera from the currently attached rigid link.
 
-        After detachment, the camera will stop following the motion of the rigid link and maintain its current world pose. Calling this method has no effect if the camera is not currently attached.
+        After detachment, the camera will stop following the motion of the rigid link and maintain its current world
+        pose. Calling this method has no effect if the camera is not currently attached.
         """
         self._attached_link = None
         self._attached_offset_T = None
-        self._attached_env_idx = None
 
     def move_to_attach(self, env_idx=None):
         """
         Move the camera to follow the currently attached rigid link.
 
-        This method updates the camera's pose using the transform of the attached rigid link combined with the specified offset. It should only be called after `attach()` has been used. This method is not compatible with simulations running multiple environments in parallel.
+        This method updates the camera's pose using the transform of the attached rigid link combined with the
+        specified offset. It should only be called after `attach()` has been used.
 
         Raises
         ------
         Exception
-            If the camera has not been mounted using `attach()`.
+            If the camera has not been attached to a rigid link.
         """
         # move_to_attach can be called from update_visual_states(), which could be called either before or after build(),
         # but set_pose() is only allowed after build(), so we need to check if the camera is built here, and early out if not.
         if not self._is_built:
             return
+
         if self._attached_link is None:
-            gs.raise_exception(f"The camera hasn't been mounted!")
+            gs.raise_exception("Camera not attached")
 
         link_pos = self._attached_link.get_pos(env_idx)
         link_quat = self._attached_link.get_quat(env_idx)
@@ -181,13 +201,88 @@ class Camera(Sensor):
         transform = torch.matmul(link_T, self._attached_offset_T)
         self.set_pose(transform=transform)
 
+    def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
+        """
+        Set the camera to follow a specified entity.
+
+        Parameters
+        ----------
+        entity : genesis.Entity
+            The entity to follow.
+        fixed_axis : (float, float, float), optional
+            The fixed axis for the camera's movement. For each axis, if None, the camera will move freely. If a float,
+            the viewer will be fixed on at that value. For example, [None, None, None] will allow the camera to move
+            freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.
+        smoothing : float, optional
+            The smoothing factor for the camera's movement. If None, no smoothing will be applied.
+        fix_orientation : bool, optional
+            If True, the camera will maintain its orientation relative to the world. If False, the camera will look at
+            the base link of the entity.
+        """
+        if self._attached_link is not None:
+            gs.raise_exception("Impossible to following an entity with a camera that is already attached.")
+
+        self._followed_entity = entity
+        self._follow_fixed_axis = fixed_axis
+        self._follow_smoothing = smoothing
+        self._follow_fix_orientation = fix_orientation
+
+    def unfollow_entity(self):
+        """
+        Stop following any entity with the camera.
+
+        Calling this method has no effect if the camera is not currently following any entity.
+        """
+        self._followed_entity = None
+        self._follow_fixed_axis = None
+        self._follow_smoothing = None
+        self._follow_fix_orientation = None
+
+    @gs.assert_built
+    def update_following(self):
+        """
+        Update the camera position to follow the specified entity.
+        """
+        if self._followed_entity is None:
+            gs.raise_exception("No entity to follow. Please call `camera.follow_entity(entity)` first.")
+
+        # Keep the camera orientation fixed by overriding the lookat point if requested
+        if self._follow_fix_orientation:
+            camera_transform = self._multi_env_transform_tensor.clone()
+            camera_lookat = None
+            camera_pos = camera_transform[:, :3, 3]
+        else:
+            camera_lookat = self._multi_env_lookat_tensor.clone()
+            camera_pos = self._multi_env_pos_tensor.clone()
+
+        # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
+        entity_pos = self._followed_entity.get_pos()
+        camera_pos -= self._initial_pos
+        if self._follow_smoothing is not None:
+            camera_pos[:] = self._follow_smoothing * camera_pos + (1.0 - self._follow_smoothing) * entity_pos
+            if camera_lookat is not None:
+                camera_lookat[:] = self._follow_smoothing * camera_lookat + (1.0 - self._follow_smoothing) * entity_pos
+        else:
+            camera_pos[:] = entity_pos
+        camera_pos += self._initial_pos
+
+        # Fix the camera's position along the specified axis if requested
+        for i, fixed_axis in enumerate(self._follow_fixed_axis):
+            if fixed_axis is not None:
+                camera_pos[:, i] = fixed_axis
+
+        # Update the pose of all camera at once
+        if self._follow_fix_orientation:
+            self.set_pose(transform=camera_transform)
+        else:
+            self.set_pose(pos=camera_pos, lookat=camera_lookat)
+
     @gs.assert_built
     def _batch_render(
         self,
         rgb=True,
         depth=False,
         segmentation=False,
-        colorize_seg=False,
         normal=False,
         force_render=False,
         antialiasing=False,
@@ -195,8 +290,7 @@ class Camera(Sensor):
         """
         Render the camera view with batch renderer.
         """
-        assert self._visualizer._use_batch_renderer, "Batch renderer is not enabled."
-
+        assert self._visualizer._batch_renderer is not None
         rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(
             rgb, depth, segmentation, normal, force_render, antialiasing
         )
@@ -204,13 +298,13 @@ class Camera(Sensor):
         # If n_envs > 0, the second dimension of the output is env.
         # If n_envs == 0, the second dimension of the output is camera.
         # Only return the current camera's image
-        if rgb_arr is not None:
+        if rgb_arr:
             rgb_arr = rgb_arr[self._idx]
-        if depth_arr is not None:
+        if depth:
             depth_arr = depth_arr[self._idx]
-        if seg_arr is not None:
+        if segmentation:
             seg_arr = seg_arr[self._idx]
-        if normal_arr is not None:
+        if normal:
             normal_arr = normal_arr[self._idx]
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
@@ -226,8 +320,16 @@ class Camera(Sensor):
         antialiasing=False,
     ):
         """
-        Render the camera view. Note that the segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based on the segmentation level specified in `VisOptions.segmentation_level`. For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
-        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal to `len(rendered_envs_idx)`.
+        Render the camera view.
+
+        Note
+        ----
+        The segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based
+        on the segmentation level specified in `VisOptions.segmentation_level`.
+        For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be
+        used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`. If `env_separate_rigid`
+        in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal
+        to `len(rendered_envs_idx)`.
 
         Parameters
         ----------
@@ -261,51 +363,46 @@ class Camera(Sensor):
         if (rgb or depth or segmentation or normal) is False:
             gs.raise_exception("Nothing to render.")
 
-        rgb_arr, depth_arr, seg_idxc_arr, seg_arr, normal_arr = None, None, None, None, None
+        rgb_arr, depth_arr, seg_arr, seg_color_arr, normal_arr = None, None, None, None, None
 
-        if self._followed_entity is not None:
-            self.update_following()
-
-        if self._visualizer._use_batch_renderer:
-            return self._batch_render(rgb, depth, segmentation, colorize_seg, normal, force_render, antialiasing)
-
-        if self._raytracer is not None:
+        if self._batch_renderer is not None:
+            rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
+                rgb, depth, segmentation, normal, force_render, antialiasing
+            )
+        elif self._raytracer is not None:
             if rgb:
                 self._raytracer.update_scene()
                 rgb_arr = self._raytracer.render_camera(self)
 
             if depth or segmentation or normal:
-                if self._rasterizer is not None:
-                    self._rasterizer.update_scene()
-                    _, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-                        self, False, depth, segmentation, normal=normal
-                    )
-                else:
-                    gs.raise_exception("Cannot render depth or segmentation image.")
-
-        elif self._rasterizer is not None:
+                self._rasterizer.update_scene()
+                _, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
+                    self, False, depth, segmentation, normal=normal
+                )
+        else:
             self._rasterizer.update_scene()
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                 self, rgb, depth, segmentation, normal=normal
             )
 
-        else:
-            gs.raise_exception("No renderer was found.")
-
         if seg_idxc_arr is not None:
-            if colorize_seg or (self._GUI and self._visualizer.connected_to_display):
+            if colorize_seg or (self._GUI and self._visualizer.has_display):
                 seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
-            if colorize_seg:
-                seg_arr = seg_color_arr
-            else:
-                seg_arr = seg_idxc_arr
+            seg_arr = seg_color_arr if colorize_seg else seg_idxc_arr
+
+        if self._in_recording or self._GUI and self._visualizer.has_display:
+            rgb_np = rgb_arr if rgb_arr is None else tensor_to_array(rgb_arr)
 
         # succeed rendering, and display image
-        if self._GUI and self._visualizer.connected_to_display:
-            title = f"Genesis - Camera {self._idx}"
+        if self._GUI and self._visualizer.has_display:
+            depth_np, seg_color_np, normal_np = map(
+                lambda e: e if e is None else tensor_to_array(e), (depth_arr, seg_color_arr, normal_arr)
+            )
 
+            title = f"Genesis - Camera {self._idx}"
             if rgb:
-                rgb_img = rgb_arr[..., [2, 1, 0]]
+                # FIXME: Check whether it always render RGB or RGBA ?
+                rgb_img = np.flip(rgb_np, axis=-1)
                 rgb_env = ""
                 if self._rgb_stacked:
                     rgb_img = rgb_img[0]
@@ -314,34 +411,33 @@ class Camera(Sensor):
 
             other_env = " Environment 0" if self._other_stacked else ""
             if depth:
-                depth_min = depth_arr.min()
-                depth_max = depth_arr.max()
-                depth_normalized = (depth_arr - depth_min) / max(depth_max - depth_min, gs.EPS)
-                depth_normalized = 1 - depth_normalized  # closer objects appear brighter
-                depth_img = (depth_normalized * 255).astype(np.uint8)
+                depth_min = depth_np.min()
+                depth_max = depth_np.max()
+                if depth_max - depth_min > gs.EPS:
+                    depth_normalized = (depth_max - depth_np) / (depth_max - depth_min)
+                    depth_img = (depth_normalized * 255).astype(np.uint8)
+                else:
+                    depth_img = np.zeros_like(depth_arr, dtype=np.uint8)
                 if self._other_stacked:
                     depth_img = depth_img[0]
-
                 cv2.imshow(f"{title + other_env} [Depth]", depth_img)
 
             if segmentation:
-                seg_img = seg_color_arr[..., [2, 1, 0]]
+                seg_img = np.flip(seg_color_np, axis=-1)
                 if self._other_stacked:
                     seg_img = seg_img[0]
-
                 cv2.imshow(f"{title + other_env} [Segmentation]", seg_img)
 
             if normal:
-                normal_img = normal_arr[..., [2, 1, 0]]
+                normal_img = np.flip(normal_np, axis=-1)
                 if self._other_stacked:
                     normal_img = normal_img[0]
-
                 cv2.imshow(f"{title + other_env} [Normal]", normal_img)
 
             cv2.waitKey(1)
 
-        if self._in_recording and rgb_arr is not None:
-            self._recorded_imgs.append(rgb_arr)
+        if self._in_recording and rgb_np is not None:
+            self._recorded_imgs.append(rgb_np)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
@@ -375,99 +471,82 @@ class Camera(Sensor):
         mask_arr : np.ndarray
             The valid depth mask.
         """
-        if self._rasterizer is not None:
-            self._rasterizer.update_scene()
-            rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-                self, False, True, False, normal=False
-            )
+        self._rasterizer.update_scene()
+        rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
+            self, False, True, False, normal=False
+        )
 
-            def opengl_projection_matrix_to_intrinsics(P: np.ndarray, width: int, height: int):
-                """Convert OpenGL projection matrix to camera intrinsics.
-                Args:
-                    P (np.ndarray): OpenGL projection matrix.
-                    width (int): Image width.
-                    height (int): Image height
-                Returns:
-                    np.ndarray: Camera intrinsics. [3, 3]
-                """
+        def opengl_projection_matrix_to_intrinsics(P: np.ndarray, width: int, height: int):
+            """Convert OpenGL projection matrix to camera intrinsics.
+            Args:
+                P (np.ndarray): OpenGL projection matrix.
+                width (int): Image width.
+                height (int): Image height
+            Returns:
+                np.ndarray: Camera intrinsics. [3, 3]
+            """
 
-                fx = P[0, 0] * width / 2
-                fy = P[1, 1] * height / 2
-                cx = (1.0 - P[0, 2]) * width / 2
-                cy = (1.0 + P[1, 2]) * height / 2
+            fx = P[0, 0] * width / 2
+            fy = P[1, 1] * height / 2
+            cx = (1.0 - P[0, 2]) * width / 2
+            cy = (1.0 + P[1, 2]) * height / 2
 
-                K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-                return K
+            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+            return K
 
-            def backproject_depth_to_pointcloud(K: np.ndarray, depth: np.ndarray, pose, world, znear, zfar):
-                """Convert depth image to pointcloud given camera intrinsics.
-                Args:
-                    depth (np.ndarray): Depth image.
-                Returns:
-                    np.ndarray: (x, y, z) Point cloud. [n, m, 3]
-                """
-                _fx = K[0, 0]
-                _fy = K[1, 1]
-                _cx = K[0, 2]
-                _cy = K[1, 2]
+        def backproject_depth_to_pointcloud(K: np.ndarray, depth: np.ndarray, pose, world, znear, zfar):
+            """Convert depth image to pointcloud given camera intrinsics.
+            Args:
+                depth (np.ndarray): Depth image.
+            Returns:
+                np.ndarray: (x, y, z) Point cloud. [n, m, 3]
+            """
+            _fx = K[0, 0]
+            _fy = K[1, 1]
+            _cx = K[0, 2]
+            _cy = K[1, 2]
 
-                # Mask out invalid depth
-                mask = np.where((depth > znear) & (depth < zfar * 0.99))
-                # zfar * 0.99 for filtering out precision error of float
-                height, width = depth.shape
-                y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
-                x = x.reshape((-1,))
-                y = y.reshape((-1,))
+            # Mask out invalid depth
+            mask = np.where((depth > znear) & (depth < zfar * 0.99))
+            # zfar * 0.99 for filtering out precision error of float
+            height, width = depth.shape
+            y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+            x = x.reshape((-1,))
+            y = y.reshape((-1,))
 
-                # Normalize pixel coordinates
-                normalized_x = x - _cx
-                normalized_y = y - _cy
+            # Normalize pixel coordinates
+            normalized_x = x - _cx
+            normalized_y = y - _cy
 
-                # Convert to world coordinates
-                depth_grid = depth[y, x]
-                world_x = normalized_x * depth_grid / _fx
-                world_y = normalized_y * depth_grid / _fy
-                world_z = depth_grid
+            # Convert to world coordinates
+            depth_grid = depth[y, x]
+            world_x = normalized_x * depth_grid / _fx
+            world_y = normalized_y * depth_grid / _fy
+            world_z = depth_grid
 
-                pc = np.stack((world_x, world_y, world_z), axis=1)
+            pc = np.stack((world_x, world_y, world_z), axis=1)
 
-                point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
-                if world:
-                    point_cloud_world = point_cloud_h @ pose.T
-                    point_cloud_world = point_cloud_world[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
-                    return point_cloud_world, mask
-                else:
-                    point_cloud = point_cloud_h[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
-                    return point_cloud, mask
+            point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
+            if world:
+                point_cloud_world = point_cloud_h @ pose.T
+                point_cloud_world = point_cloud_world[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
+                return point_cloud_world, mask
+            else:
+                point_cloud = point_cloud_h[:, :3].reshape((depth.shape[0], depth.shape[1], 3))
+                return point_cloud, mask
 
-            intrinsic_K = opengl_projection_matrix_to_intrinsics(
-                self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(),
-                width=self.res[0],
-                height=self.res[1],
-            )
+        intrinsic_K = opengl_projection_matrix_to_intrinsics(
+            self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(),
+            width=self.res[0],
+            height=self.res[1],
+        )
 
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
-            cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
+        T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
+        cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
-            pc, mask = backproject_depth_to_pointcloud(
-                intrinsic_K, depth_arr, cam_pose, world_frame, self.near, self.far
-            )
+        pc, mask = backproject_depth_to_pointcloud(intrinsic_K, depth_arr, cam_pose, world_frame, self.near, self.far)
 
-            return pc, mask
-
-        else:
-            gs.raise_exception("We need a rasterizer to render depth and then convert it to pount cloud.")
-
-    # quat for Madrona needs to be transformed to y-forward
-    def _T_to_quat_for_madrona(self, T):
-        if isinstance(T, torch.Tensor):
-            R = T[..., :3, :3].contiguous()
-            quat = gu.R_to_quat(R)
-
-            w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
-            return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
-        else:
-            gs.raise_exception(f"the input must be torch.Tensor. got: {type(T)=}")
+        return pc, mask
 
     @gs.assert_built
     def setup_initial_env_poses(self):
@@ -480,16 +559,16 @@ class Camera(Sensor):
         else:
             self._initial_transform = gu.pos_lookat_up_to_T(self._initial_pos, self._initial_lookat, self._initial_up)
 
-        self._multi_env_pos_tensor = self._initial_pos.repeat(self.n_envs, 1)
-        self._multi_env_lookat_tensor = self._initial_lookat.repeat(self.n_envs, 1)
-        self._multi_env_up_tensor = self._initial_up.repeat(self.n_envs, 1)
-        self._multi_env_transform_tensor = self._initial_transform.repeat(self.n_envs, 1, 1)
+        n_envs = max(self._visualizer.scene.n_envs, 1)
+        self._multi_env_pos_tensor = self._initial_pos.repeat((n_envs, 1))
+        self._multi_env_lookat_tensor = self._initial_lookat.repeat((n_envs, 1))
+        self._multi_env_up_tensor = self._initial_up.repeat((n_envs, 1))
+        self._multi_env_transform_tensor = self._initial_transform.repeat((n_envs, 1, 1))
 
-        initial_quat = self._T_to_quat_for_madrona(self._initial_transform.unsqueeze(0))
-        self._multi_env_quat_tensor = initial_quat.repeat(self.n_envs, 1)
+        initial_quat = _T_to_quat_for_madrona(self._initial_transform.unsqueeze(0))
+        self._multi_env_quat_tensor = initial_quat.repeat((n_envs, 1))
 
-        if self._rasterizer is not None:
-            self._rasterizer.update_camera(self)
+        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
 
@@ -525,25 +604,26 @@ class Camera(Sensor):
             up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
 
         # Expand to n_envs
+        n_envs = max(self._visualizer.scene.n_envs, 1)
         if env_idx is None:
-            env_idx = torch.arange(self.n_envs)
+            env_idx = torch.arange(n_envs)
         if transform is not None:
             if transform.shape[-2:] != (4, 4):
                 raise ValueError(f"Transform shape {transform.shape} does not match (4, 4)")
             if transform.ndim == 2:
-                transform = transform.expand(self.n_envs, 4, 4)
+                transform = transform.expand((n_envs, 4, 4))
         if pos is not None:
             assert pos.shape[-1] == 3, f"Pos shape {pos.shape} does not match (n_envs, 3)"
             if pos.ndim == 1:
-                pos = pos.expand(self.n_envs, 3)
+                pos = pos.expand((n_envs, 3))
         if lookat is not None:
             assert lookat.shape[-1] == 3, f"Lookat shape {lookat.shape} does not match (n_envs, 3)"
             if lookat.ndim == 1:
-                lookat = lookat.expand(self.n_envs, 3)
+                lookat = lookat.expand((n_envs, 3))
         if up is not None:
             assert up.shape[-1] == 3, f"Up shape {up.shape} does not match (n_envs, 3)"
             if up.ndim == 1:
-                up = up.expand(self.n_envs, 3)
+                up = up.expand((n_envs, 3))
 
         assert (
             transform is None or transform.shape[0] == env_idx.shape[0]
@@ -574,7 +654,7 @@ class Camera(Sensor):
                 new_up = up
             new_transform = gu.pos_lookat_up_to_T(new_pos, new_lookat, new_up)
 
-        new_quat = self._T_to_quat_for_madrona(new_transform)
+        new_quat = _T_to_quat_for_madrona(new_transform)
 
         self._multi_env_pos_tensor[env_idx] = new_pos
         self._multi_env_lookat_tensor[env_idx] = new_lookat
@@ -582,70 +662,9 @@ class Camera(Sensor):
         self._multi_env_transform_tensor[env_idx] = new_transform
         self._multi_env_quat_tensor[env_idx] = new_quat
 
-        if self._rasterizer is not None:
-            self._rasterizer.update_camera(self)
+        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
-
-    def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
-        """
-        Set the camera to follow a specified entity.
-
-        Parameters
-        ----------
-        entity : genesis.Entity
-            The entity to follow.
-        fixed_axis : (float, float, float), optional
-            The fixed axis for the camera's movement. For each axis, if None, the camera will move freely. If a float, the viewer will be fixed on at that value.
-            For example, [None, None, None] will allow the camera to move freely while following, [None, None, 0.5] will fix the viewer's z-axis at 0.5.
-        smoothing : float, optional
-            The smoothing factor for the camera's movement. If None, no smoothing will be applied.
-        fix_orientation : bool, optional
-            If True, the camera will maintain its orientation relative to the world. If False, the camera will look at the base link of the entity.
-        """
-        self._followed_entity = entity
-        self._follow_fixed_axis = fixed_axis
-        self._follow_smoothing = smoothing
-        self._follow_fix_orientation = fix_orientation
-
-    @gs.assert_built
-    def update_following(self):
-        """
-        Update the camera position to follow the specified entity.
-        """
-        if self._followed_entity is None:
-            gs.raise_exception("No entity to follow. Please call `camera.follow_entity(entity)` first.")
-
-        entity_pos = self._followed_entity.get_pos()
-        camera_pos = self._multi_env_pos_tensor
-        camera_transform = self._multi_env_transform_tensor
-        lookat_pos = self._multi_env_lookat_tensor
-
-        # TODO: Optimize with batch computation
-        for env_idx in range(self.n_envs):
-            if self._follow_smoothing is not None:
-                # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA)
-                camera_pos_env = self._follow_smoothing * camera_pos[env_idx] + (1 - self._follow_smoothing) * (
-                    entity_pos[env_idx] + self._initial_pos
-                )
-                lookat_pos_env = (
-                    self._follow_smoothing * lookat_pos[env_idx] + (1 - self._follow_smoothing) * entity_pos[env_idx]
-                )
-            else:
-                camera_pos_env = entity_pos[env_idx] + self._initial_pos
-                lookat_pos_env = entity_pos[env_idx]
-
-            for i, fixed_axis in enumerate(self._follow_fixed_axis):
-                # Fix the camera's position along the specified axis
-                if fixed_axis is not None:
-                    camera_pos_env[i] = fixed_axis
-
-            if self._follow_fix_orientation:
-                # Keep the camera orientation fixed by overriding the lookat point
-                camera_transform[env_idx, :3, 3] = camera_pos_env
-                self.set_pose(transform=camera_transform[env_idx], env_idx=env_idx)
-            else:
-                self.set_pose(pos=camera_pos_env, lookat=lookat_pos_env, env_idx=env_idx)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
@@ -686,8 +705,7 @@ class Camera(Sensor):
             else:
                 self._fov = intrinsics_fov
 
-        if self._rasterizer is not None:
-            self._rasterizer.update_camera(self)
+        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
 
@@ -893,7 +911,3 @@ class Camera(Sensor):
         cx = 0.5 * self._res[0]
         cy = 0.5 * self._res[1]
         return np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
-
-    @property
-    def n_envs(self):
-        return max(self._visualizer.scene.n_envs, 1)

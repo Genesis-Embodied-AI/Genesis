@@ -1,6 +1,8 @@
+import enum
+import math
+
 import numpy as np
 import torch
-import taichi as ti
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -8,7 +10,14 @@ from genesis.repr_base import RBC
 try:
     from gs_madrona.renderer_gs import MadronaBatchRendererAdapter
 except ImportError as e:
-    gs.raise_exception(f"Failed to import Madrona batch renderer. {e.__class__.__name__}: {e}")
+    gs.raise_exception_from("Madrona batch renderer is only supported on Linux x86-64.", e)
+
+
+class IMAGE_TYPE(enum.IntEnum):
+    RGB = 0
+    DEPTH = 3
+    NORMAL = 1
+    SEGMENTATION = 2
 
 
 class Light:
@@ -42,7 +51,7 @@ class Light:
 
     @property
     def cutoffRad(self):
-        return np.deg2rad(self._cutoff)
+        return math.radians(self._cutoff)
 
     @property
     def cutoffDeg(self):
@@ -58,9 +67,9 @@ class BatchRenderer(RBC):
         self._visualizer = visualizer
         self._lights = gs.List()
         self._renderer_options = renderer_options
-        self._rgb_torch = None
-        self._depth_torch = None
-        self._last_t = -1
+
+        self._data_cache = {}
+        self._t = -1
 
     def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
         self._lights.append(Light(pos, dir, intensity, directional, castshadow, cutoff))
@@ -78,34 +87,34 @@ class BatchRenderer(RBC):
         cameras = self._visualizer._cameras
         lights = self._lights
         rigid = self._visualizer.scene.rigid_solver
-        n_envs = self._visualizer.scene.n_envs if self._visualizer.scene.n_envs > 0 else 1
+        n_envs = max(self._visualizer.scene.n_envs, 1)
         res = cameras[0].res
         gpu_id = gs.device.index
         use_rasterizer = self._renderer_options.use_rasterizer
 
         # Cameras
         n_cameras = len(cameras)
-        camera_pos = self._visualizer.camera_pos
-        camera_quat = self._visualizer.camera_quat
-        camera_fov = self._visualizer.camera_fov
+        cameras_pos = torch.stack([camera.get_pos() for camera in cameras], dim=1)
+        cameras_quat = torch.stack([camera.get_quat() for camera in cameras], dim=1)
+        cameras_fov = torch.tensor([camera.fov for camera in cameras], dtype=gs.tc_float, device=gs.device)
 
-        # Build taichi arrays to store light properties once.
-        # If later we need to support dynamic lights, we should consider storing light properties as taichi fields in Genesis.
+        # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
+        # consider storing light properties as taichi fields in Genesis.
         n_lights = len(lights)
-        light_pos = self.light_pos_tensor
-        light_dir = self.light_dir_tensor
-        light_intensity = self.light_intensity_tensor
-        light_directional = self.light_directional_tensor
-        light_castshadow = self.light_castshadow_tensor
-        light_cutoff = self.light_cutoff_tensor
+        light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
+        light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
+        light_intensity = torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
+        light_directional = torch.tensor([light.directional for light in self._lights], dtype=gs.tc_int)
+        light_castshadow = torch.tensor([light.castshadow for light in self._lights], dtype=gs.tc_int)
+        light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=gs.tc_float)
 
         self._renderer = MadronaBatchRendererAdapter(
-            rigid, gpu_id, n_envs, n_cameras, n_lights, camera_fov, *res, False, use_rasterizer
+            rigid, gpu_id, n_envs, n_cameras, n_lights, cameras_fov, *res, False, use_rasterizer
         )
         self._renderer.init(
             rigid,
-            camera_pos,
-            camera_quat,
+            cameras_pos,
+            cameras_quat,
             light_pos,
             light_dir,
             light_intensity,
@@ -138,86 +147,72 @@ class BatchRenderer(RBC):
 
         Returns
         -------
-        rgb_torch : tuple of tensors
-            The rgb image.
-        depth_torch : tuple of tensors
-            The depth image.
+        rgb_arr : tuple of tensors
+            The sequence of rgb images associated with each camera.
+        depth_arr : tuple of tensors
+            The sequence of depth images associated with each camera.
         """
         if normal:
-            raise NotImplementedError("Normal rendering is not implemented")
+            raise NotImplementedError("Normal rendering not supported from now")
         if segmentation:
-            raise NotImplementedError("Segmentation rendering is not implemented")
+            raise NotImplementedError("Segmentation rendering not supported from now")
 
-        render_options = (rgb, depth, normal, segmentation, aliasing)
+        # Clear cache if requested or necessary
+        if force_render or self._t < self._visualizer.scene.t:
+            self._data_cache.clear()
 
-        if (
-            not force_render
-            and self._last_t == self._visualizer.scene.t
-            and self._last_render_options == render_options
-        ):
-            return self._rgb_torch, self._depth_torch, None, None
+        # Fetch available cached data
+        cache_key = (aliasing,)
+        rgb_arr = self._data_cache.get((IMAGE_TYPE.RGB, cache_key), None)
+        depth_arr = self._data_cache.get((IMAGE_TYPE.DEPTH, cache_key), None)
 
-        # Update last_t to current time to avoid re-rendering if the scene is not updated
-        self._last_t = self._visualizer.scene.t
-        self._last_render_options = render_options
+        # Force disabling rendering whenever cached data is already available
+        rgb_ = rgb and rgb_arr is None
+        depth_ = depth and depth_arr is None
+
+        # Early return if there is nothing to do
+        if not (rgb_ or depth_):
+            return rgb_arr if rgb else None, depth_arr if depth else None, None, None
+
+        # Update scene
         self.update_scene()
 
-        rigid = self._visualizer.scene.rigid_solver
-        camera_pos = self._visualizer.camera_pos
-        camera_quat = self._visualizer.camera_quat
+        # Render frame
+        cameras_pos = torch.stack([camera.get_pos() for camera in self._visualizer._cameras], dim=1)
+        cameras_quat = torch.stack([camera.get_quat() for camera in self._visualizer._cameras], dim=1)
+        render_options = np.array((rgb_, depth_, False, False, aliasing), dtype=np.uint32)
+        rgba_arr_all, depth_arr_all = self._renderer.render(
+            self._visualizer.scene.rigid_solver, cameras_pos, cameras_quat, render_options
+        )
 
-        render_options_array = np.array([rgb, depth, normal, segmentation, aliasing], dtype=np.uint32)
+        # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
+        buffers = [rgba_arr_all[..., :3], depth_arr_all]
+        for i, data in enumerate(buffers):
+            if data is not None:
+                data = data.swapaxes(0, 1)
+                if self._visualizer.scene.n_envs == 0:
+                    data = data.squeeze(1)
+                buffers[i] = tuple(data)
 
-        rgb_torch, depth_torch = self._renderer.render(rigid, camera_pos, camera_quat, render_options_array)
+        # Update cache
+        self._t = self._visualizer.scene.t
+        if rgb_:
+            rgb_arr = self._data_cache[(IMAGE_TYPE.RGB, cache_key)] = buffers[0]
+        if depth_:
+            depth_arr = self._data_cache[(IMAGE_TYPE.DEPTH, cache_key)] = buffers[1]
 
-        if rgb_torch is not None:
-            if rgb_torch.ndim == 4:
-                rgb_torch = rgb_torch.squeeze(0)
-            self._rgb_torch = tuple(rgb_torch.swapaxes(0, 1))
-        else:
-            self._rgb_torch = None
-
-        if depth_torch is not None:
-            if depth_torch.ndim == 4:
-                depth_torch = depth_torch.squeeze(0)
-            self._depth_torch = tuple(depth_torch.swapaxes(0, 1))
-        else:
-            self._depth_torch = None
-
-        return self._rgb_torch, self._depth_torch, None, None
+        return rgb_arr, depth_arr, None, None
 
     def destroy(self):
         self._lights.clear()
-        self._rgb_torch = None
-        self._depth_torch = None
+        self._data_cache.clear()
+        if self._renderer is not None:
+            del self._renderer.madrona
+            self._renderer = None
+
+    def reset(self):
+        self._t = -1
 
     @property
     def lights(self):
         return self._lights
-
-    def has_lights(self):
-        return len(self._lights) > 0
-
-    @property
-    def light_pos_tensor(self):
-        return torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
-
-    @property
-    def light_dir_tensor(self):
-        return torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
-
-    @property
-    def light_intensity_tensor(self):
-        return torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
-
-    @property
-    def light_directional_tensor(self):
-        return torch.tensor([light.directional for light in self._lights], dtype=gs.tc_int)
-
-    @property
-    def light_castshadow_tensor(self):
-        return torch.tensor([light.castshadow for light in self._lights], dtype=gs.tc_int)
-
-    @property
-    def light_cutoff_tensor(self):
-        return torch.tensor([light.cutoffRad for light in self._lights], dtype=gs.tc_float)

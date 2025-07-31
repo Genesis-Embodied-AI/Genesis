@@ -35,7 +35,6 @@ class Visualizer(RBC):
         self._rasterizer = None
         self._raytracer = None
         self._batch_renderer = None
-        self._use_batch_renderer = False
         self.viewer_lock = None  # check if null to know if the Visualizer has been built
 
         # Rasterizer context is shared by viewer and rasterizer
@@ -57,11 +56,11 @@ class Visualizer(RBC):
                 display = pyglet.display.get_display()
                 screen = display.get_default_screen()
                 scale = screen.get_scale()
-            self._connected_to_display = True
+            self._has_display = True
         except Exception as e:
             if show_viewer:
                 gs.raise_exception_from("No display detected. Use `show_viewer=False` for headless mode.", e)
-            self._connected_to_display = False
+            self._has_display = False
 
         if show_viewer:
             if gs.global_scene_list:
@@ -95,17 +94,13 @@ class Visualizer(RBC):
         if isinstance(renderer_options, gs.renderers.BatchRenderer):
             from .batch_renderer import BatchRenderer
 
-            self._batch_renderer = BatchRenderer(self, renderer_options)
-            self._renderer = self._batch_renderer
-            self._raytracer = None
-            self._use_batch_renderer = True
+            self._renderer = self._batch_renderer = BatchRenderer(self, renderer_options)
         elif isinstance(renderer_options, gs.renderers.RayTracer):
             from .raytracer import Raytracer
 
             self._renderer = self._raytracer = Raytracer(renderer_options, vis_options)
         elif isinstance(renderer_options, gs.renderers.Rasterizer):
             self._renderer = self._rasterizer
-            self._raytracer = None
 
         self._cameras = gs.List()
 
@@ -139,7 +134,7 @@ class Visualizer(RBC):
         return camera
 
     def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
-        if self._use_batch_renderer:
+        if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
 
     def reset(self):
@@ -150,10 +145,11 @@ class Visualizer(RBC):
         if self._raytracer is not None:
             self._raytracer.reset()
 
-        # Ideally the code below should be skipped when viewer_lock is a DummyViewerLock.
-        # Temporary workaround: Skip when using batch renderer.
+        if self._batch_renderer is not None:
+            self._batch_renderer.reset()
+
         if self.viewer_lock is not None:
-            if not self._use_batch_renderer:
+            if self._batch_renderer is None:
                 for camera in self._cameras:
                     self._rasterizer.render_camera(camera)
 
@@ -176,8 +172,8 @@ class Visualizer(RBC):
         for camera in self._cameras:
             camera.build()
 
-        if self._use_batch_renderer:
-            # Batch renderer needs to be built after cameras are built
+        # Batch renderer needs to be built after cameras are built
+        if self._batch_renderer is not None:
             self._batch_renderer.build()
 
         # Make sure that the viewer is fully compiled and in a clean state
@@ -196,42 +192,47 @@ class Visualizer(RBC):
         """
         Update all visualization-only variables here.
         """
-        if self._t < self._scene._t:
-            self._t = self._scene._t
+        # Early return if already updated previously
+        if self._t >= self.scene._t:
+            return
 
-            for camera in self._cameras:
-                if camera._attached_link is not None:
-                    camera.move_to_attach()
+        for camera in self._cameras:
+            if camera._attached_link is not None:
+                camera.move_to_attach()
+            elif camera._followed_entity is not None:
+                camera.update_following()
 
-            if self._scene.rigid_solver.is_active():
-                self._scene.rigid_solver.update_geoms_render_T()
-                self._scene.rigid_solver.update_vgeoms()
+        if self._scene.rigid_solver.is_active():
+            self._scene.rigid_solver.update_geoms_render_T()
+            self._scene.rigid_solver.update_vgeoms()
 
-                # drone propellers
-                for entity in self._scene.rigid_solver.entities:
-                    if isinstance(entity, gs.engine.entities.DroneEntity):
-                        entity.update_propeller_vgeoms()
+            # drone propellers
+            for entity in self._scene.rigid_solver.entities:
+                if isinstance(entity, gs.engine.entities.DroneEntity):
+                    entity.update_propeller_vgeoms()
 
-                self._scene.rigid_solver.update_vgeoms_render_T()
+            self._scene.rigid_solver.update_vgeoms_render_T()
 
-            if self._scene.avatar_solver.is_active():
-                self._scene.avatar_solver.update_geoms_render_T()
-                self._scene.avatar_solver._kernel_update_vgeoms(
-                    vgeoms_info=self._scene.avatar_solver.vgeoms_info,
-                    vgeoms_state=self._scene.avatar_solver.vgeoms_state,
-                    links_state=self._scene.avatar_solver.links_state,
-                    static_rigid_sim_config=self._scene.avatar_solver._static_rigid_sim_config,
-                )
-                self._scene.avatar_solver.update_vgeoms_render_T()
+        if self._scene.avatar_solver.is_active():
+            self._scene.avatar_solver.update_geoms_render_T()
+            self._scene.avatar_solver._kernel_update_vgeoms(
+                vgeoms_info=self._scene.avatar_solver.vgeoms_info,
+                vgeoms_state=self._scene.avatar_solver.vgeoms_state,
+                links_state=self._scene.avatar_solver.links_state,
+                static_rigid_sim_config=self._scene.avatar_solver._static_rigid_sim_config,
+            )
+            self._scene.avatar_solver.update_vgeoms_render_T()
 
-            if self._scene.mpm_solver.is_active():
-                self._scene.mpm_solver.update_render_fields()
+        if self._scene.mpm_solver.is_active():
+            self._scene.mpm_solver.update_render_fields()
 
-            if self._scene.sph_solver.is_active():
-                self._scene.sph_solver.update_render_fields()
+        if self._scene.sph_solver.is_active():
+            self._scene.sph_solver.update_render_fields()
 
-            if self._scene.pbd_solver.is_active():
-                self._scene.pbd_solver.update_render_fields()
+        if self._scene.pbd_solver.is_active():
+            self._scene.pbd_solver.update_render_fields()
+
+        self._t = self._scene._t
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -266,21 +267,9 @@ class Visualizer(RBC):
         return self._scene
 
     @property
-    def connected_to_display(self):
-        return self._connected_to_display
+    def has_display(self):
+        return self._has_display
 
     @property
     def cameras(self):
         return self._cameras
-
-    @property
-    def camera_pos(self):
-        return torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
-
-    @property
-    def camera_quat(self):
-        return torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
-
-    @property
-    def camera_fov(self):
-        return torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)

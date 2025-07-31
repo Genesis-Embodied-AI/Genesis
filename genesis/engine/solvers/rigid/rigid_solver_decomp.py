@@ -3437,7 +3437,9 @@ def kernel_rigid_entity_inverse_kinematics(
     rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
     n_error_dims = 6 * n_links
 
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         # save original qpos
         for i_q in range(rigid_entity.n_qs):
             rigid_entity._IK_qpos_orig[i_q, i_b] = rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b]
@@ -4051,7 +4053,9 @@ def kernel_forward_kinematics_links_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         func_update_cartesian_space(
             i_b=i_b,
             links_state=links_state,
@@ -4492,7 +4496,9 @@ def kernel_forward_kinematics_entity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         func_forward_kinematics_entity(
             i_e,
             i_b,
@@ -4522,7 +4528,6 @@ def func_forward_kinematics_entity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
@@ -4635,7 +4640,6 @@ def func_forward_velocity_entity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
@@ -4712,7 +4716,9 @@ def kernel_update_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         func_update_geoms(
             i_b,
             entities_info,

@@ -42,7 +42,7 @@ def main():
         pos=(1.5, 0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
-        GUI=True,
+        GUI=args.vis,
     )
     cam_0.attach(franka.links[6], trans_to_T(np.array([0.0, 0.5, 0.0])))
     cam_1 = scene.add_camera(
@@ -50,7 +50,7 @@ def main():
         pos=(1.5, -0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
-        GUI=True,
+        GUI=args.vis,
     )
     scene.add_light(
         pos=[0.0, 0.0, 1.5],
@@ -81,8 +81,8 @@ def main():
             rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
             exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
-            rgba, depth, _, _ = cam_0.render(rgb=True, depth=True)
-            exporter.export_frame_single_camera(i, cam_0.idx, rgb=rgba, depth=depth)
+            rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
+            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 import os
+import pickle
+import time
 
 import numpy as np
 import torch
-import pickle
-import time
 import taichi as ti
+from numpy.typing import ArrayLike
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -434,7 +435,8 @@ class Scene(RBC):
 
         if child_link._parent_idx != -1:
             gs.logger.warning(
-                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure this operation is intended."
+                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure "
+                "this operation is intended."
             )
         child_link._parent_idx = parent_link.idx
         parent_link._child_idxs.append(child_link.idx)
@@ -442,87 +444,75 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_light(
         self,
-        morph: Morph,
-        color=(1.0, 1.0, 1.0, 1.0),
-        intensity=20.0,
-        revert_dir=False,
-        double_sided=False,
-        beam_angle=180.0,
+        *,
+        morph: Morph | None = None,
+        color: ArrayLike | None = (1.0, 1.0, 1.0, 1.0),
+        intensity: float = 20.0,
+        revert_dir: bool | None = False,
+        double_sided: bool | None = False,
+        beam_angle: float | None = 180.0,
+        pos: ArrayLike | None = None,
+        dir: ArrayLike | None = None,
+        directional: bool | None = None,
+        castshadow: bool | None = None,
+        cutoff: float | None = None,
     ):
         """
-        Add a light to the scene. Note that lights added this way can be instantiated from morphs
-        (supporting `gs.morphs.Primitive` or `gs.morphs.Mesh`), and will only be used by the RayTracer renderer.
+        Add a light to the scene.
+
+        Warning
+        -------
+        The signature of this method is different depending on the renderer being used, i.e.:
+        - RayTracer: 'add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle)'
+        - BatchRender: 'add_ligth(self, pos, dir, intensity, directional, castshadow, cutoff)'
+        - Rasterizer: **Unsupported**
 
         Parameters
         ----------
         morph : gs.morphs.Morph
-            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`.
+            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`. Only supported by
+            RayTracer.
         color : tuple of float, shape (3,)
-            The color of the light, specified as (r, g, b).
+            The color of the light, specified as (r, g, b). Only supported by RayTracer.
         intensity : float
             The intensity of the light.
         revert_dir : bool
             Whether to revert the direction of the light. If True, the light will be emitted towards the mesh's inside.
+            Only supported by RayTracer.
         double_sided : bool
-            Whether to emit light from both sides of surface.
+            Whether to emit light from both sides of surface. Only supported by RayTracer.
         beam_angle : float
-            The beam angle of the light.
-        """
-        if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-            gs.logger.warning(
-                "This add_light() function is only supported when NOT using BatchRenderer."
-                "Please use add_light(self, pos, dir, intensity, directional, castshadow, cutoff) instead."
-            )
-            return
-
-        if self.visualizer.raytracer is None:
-            gs.logger.warning("Light is only supported by RayTracer renderer.")
-            return
-
-        if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
-            gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
-
-        mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
-        self.visualizer.raytracer.add_mesh_light(
-            mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, beam_angle
-        )
-
-    @gs.assert_unbuilt
-    def add_light(
-        self,
-        pos,
-        dir,
-        intensity,
-        directional,
-        castshadow,
-        cutoff,
-    ):
-        """
-        Add a light to the scene for batch renderer.
-
-        Parameters
-        ----------
+            The beam angle of the light. Only supported by RayTracer.
         pos : tuple of float, shape (3,)
-            The position of the light, specified as (x, y, z).
+            The position of the light, specified as (x, y, z). Only supported by BatchRenderer.
         dir : tuple of float, shape (3,)
-            The direction of the light, specified as (x, y, z).
+            The direction of the light, specified as (x, y, z). Only supported by BatchRenderer.
         intensity : float
-            The intensity of the light.
+            The intensity of the light. Only supported by BatchRenderer.
         directional : bool
-            Whether the light is directional.
+            Whether the light is directional. Only supported by BatchRenderer.
         castshadow : bool
-            Whether the light casts shadows.
+            Whether the light casts shadows. Only supported by BatchRenderer.
         cutoff : float
-            The cutoff angle of the light in degrees.
+            The cutoff angle of the light in degrees. Only supported by BatchRenderer.
         """
-        if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-            gs.logger.warning(
-                "This add_light() function is only supported when using BatchRenderer."
-                "Please use add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle) instead."
-            )
-            return
+        if self._visualizer.batch_renderer is not None:
+            if any(map(lambda e: e is None, (pos, dir, intensity, directional, castshadow, cutoff))):
+                gs.raise_exception("Input arguments do not complain with expected signature when using 'BatchRenderer'")
 
-        self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+            self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+        elif self.visualizer.raytracer is not None:
+            if any(map(lambda e: e is None, (morph, color, intensity, revert_dir, double_sided, beam_angle))):
+                gs.raise_exception("Input arguments do not complain with expected signature when using 'RayTracer'")
+            if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
+                gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
+
+            mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
+            self.visualizer.raytracer.add_mesh_light(
+                mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, beam_angle
+            )
+        else:
+            gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
 
     @gs.assert_unbuilt
     def add_camera(
@@ -780,7 +770,8 @@ class Scene(RBC):
         self._forward_ready = True
         self._reset_grad()
 
-        # TODO: sets _t = -1; not sure this is env isolation safe
+        # Clear the entire cache of the visualizer.
+        # TODO: Could be optimized to only clear cache associated the the environments being reset.
         self._visualizer.reset()
 
         # TODO: sets _next_particle = 0; not sure this is env isolation safe
@@ -1110,8 +1101,11 @@ class Scene(RBC):
         Returns:
             A tuple of tensors of shape (n_envs, H, W, 3) if rgb is not None,
             otherwise a list of tensors of shape (n_envs, H, W, 1) if depth is not None.
-            If n_envs ==0, the first dimension of the tensor is squeezed.
+            If n_envs == 0, the first dimension of the tensor is squeezed.
         """
+        if self._visualizer.batch_renderer is None:
+            gs.raise_exception("Method only supported by 'BatchRenderer'")
+
         return self._visualizer.batch_renderer.render(rgb, depth, normal, segmentation, force_render)
 
     @gs.assert_built
