@@ -1,0 +1,7 @@
+<mujoco model="mimic_sites">
+    <default>
+    <default class="mimic">
+        <site group="4" type="box" size="0.075 0.05 0.025" rgba="1.0 0.0 0.0 0.5"/>
+    </default>
+    </default>
+</mujoco>

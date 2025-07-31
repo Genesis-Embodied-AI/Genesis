@@ -1,0 +1,32 @@
+Default:
+  # these joints will not be included during domain randomization.
+  exclude: ["pelvis_tx", "pelvis_ty", "pelvis_tz", "pelvis_tilt", "pelvis_list", "pelvis_rotation"]
+  Joints:
+    damping:
+      sigma: 0.0
+    stiffness:
+      sigma: 0.0
+    frictionloss:
+      sigma: 0.0
+
+# here joint specific configurations can be made
+Joints:
+  # set either a sigma for sampling from a normal distribution or set a delta-range for uniform sampling, but not both!
+  hip_adduction_r:
+      damping:
+        uniform_range: [4.0, 6.0]
+      stiffness:
+        sigma: 0.0
+      armature:
+        sigma: 0.0
+      frictionloss:
+        sigma: 0.0
+  hip_adduction_l:
+      damping:
+        sigma: 0.0
+      stiffness:
+        sigma: 0.0
+      armature:
+        sigma: 0.0
+      frictionloss:
+        sigma: 0.0
