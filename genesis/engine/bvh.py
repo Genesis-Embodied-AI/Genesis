@@ -299,7 +299,7 @@ class LBVH(RBC):
                 (i_g + 1) * self.group_size,
             )
             for i_a in range(start, end):
-                code = (self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF
+                code = ti.i32((self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF)
                 self.offset[i_b, i_a] = self.hist_group[i_b, i_g, code]
                 self.hist_group[i_b, i_g, code] = self.hist_group[i_b, i_g, code] + 1
 
@@ -319,7 +319,7 @@ class LBVH(RBC):
 
         # Reorder morton codes
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
-            code = (self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF
+            code = ti.i32((self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF)
             i_g = ti.min(i_a // self.group_size, self.n_radix_sort_groups - 1)
             idx = ti.i32(self.prefix_sum[i_b, code] + self.prefix_sum_group[i_b, i_g, code] + self.offset[i_b, i_a])
             # Use the group prefix sum to find the correct index

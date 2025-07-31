@@ -491,7 +491,7 @@ class RigidSolver(Solver):
         # self._rigid_global_info.mass_parent_mask = self.mass_parent_mask
         # self._rigid_global_info.gravity = self._gravity
 
-        gravity = np.repeat(self.sim.gravity[None], self._B, axis=0)
+        gravity = np.tile(self.sim.gravity, (self._B, 1))
         self._rigid_global_info.gravity.from_numpy(gravity)
 
     def _init_dof_fields(self):
@@ -590,7 +590,7 @@ class RigidSolver(Solver):
             links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
             links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
             links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
-            links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_int),
+            links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
             links_pos=np.array([link.pos for link in links], dtype=gs.np_float),
             links_quat=np.array([link.quat for link in links], dtype=gs.np_float),
             links_inertial_pos=np.array([link.inertial_pos for link in links], dtype=gs.np_float),
@@ -761,7 +761,6 @@ class RigidSolver(Solver):
             )
 
     def _init_vgeom_fields(self):
-
         self.vgeoms_info = self.data_manager.vgeoms_info
         self.vgeoms_state = self.data_manager.vgeoms_state
         self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)
@@ -1650,6 +1649,8 @@ class RigidSolver(Solver):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
             friction_ratio, geoms_idx, self.n_geoms, envs_idx, idx_name="geoms_idx", skip_allocation=True, unsafe=unsafe
         )
+        if self.n_envs == 0:
+            friction_ratio = friction_ratio.unsqueeze(0)
         kernel_set_geoms_friction_ratio(
             friction_ratio, geoms_idx, envs_idx, self.geoms_state, self._static_rigid_sim_config
         )
@@ -2195,8 +2196,7 @@ class RigidSolver(Solver):
         g = np.asarray(gravity, dtype=gs.np_float)
         if envs_idx is None:
             if g.ndim == 1:
-                _B = self._rigid_global_info.gravity.shape[0]
-                g = np.repeat(g[None], _B, axis=0)
+                g = np.tile(g, (self._B, 1))
             self._rigid_global_info.gravity.from_numpy(g)
         else:
             self._rigid_global_info.gravity[envs_idx] = g
@@ -2864,12 +2864,11 @@ def kernel_adjust_link_inertia(
             for j1, j2 in ti.static(ti.ndrange(3, 3)):
                 links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio
     else:
-        for i_b in range(1):
-            for j in ti.static(range(2)):
-                links_info.invweight[link_idx][j] /= ratio
-            links_info.inertial_mass[link_idx] *= ratio
-            for j1, j2 in ti.static(ti.ndrange(3, 3)):
-                links_info.inertial_i[link_idx][j1, j2] *= ratio
+        for j in ti.static(range(2)):
+            links_info.invweight[link_idx][j] /= ratio
+        links_info.inertial_mass[link_idx] *= ratio
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[link_idx][j1, j2] *= ratio
 
 
 @ti.kernel
