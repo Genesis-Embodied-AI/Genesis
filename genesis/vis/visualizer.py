@@ -286,3 +286,11 @@ class Visualizer(RBC):
     @property
     def camera_fov(self):
         return torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
+
+    @property
+    def camera_near(self):
+        return torch.tensor([camera.near for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
+
+    @property
+    def camera_far(self):
+        return torch.tensor([camera.far for camera in self._cameras], dtype=gs.tc_float, device=gs.device)

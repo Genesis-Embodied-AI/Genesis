@@ -37,7 +37,7 @@ class FrameImageExporter:
         segmentation = tensor_to_array(segmentation[i_env])
         cv2.imwrite(f"{export_dir}/segmentation_cam{i_cam}_env{i_env}_{i_step:03d}.png", segmentation)
 
-    def __init__(self, export_dir, depth_clip_max=100, depth_scale="log"):
+    def __init__(self, export_dir, depth_clip_max=100, depth_scale="linear"):
         self.export_dir = export_dir
         if not os.path.exists(export_dir):
             os.makedirs(export_dir)
@@ -53,16 +53,20 @@ class FrameImageExporter:
         Returns:
             Normalized depth tensor as uint8
         """
-        # Clip depth values
-        depth = depth.clamp(0.0, self.depth_clip_max)
+        # Filter corrupted depth pixels. inf/-inf should be replaced with max/min values (not clip values)
+        pinf_mask = torch.isposinf(depth)
+        ninf_mask = torch.isneginf(depth)
+        depth_min = torch.where(ninf_mask, float("inf"), depth).amin(dim=(-3, -2), keepdim=True)
+        depth_max = torch.where(pinf_mask, -float("inf"), depth).amax(dim=(-3, -2), keepdim=True)
+        depth_min = torch.maximum(depth_min, 0.0)
+        depth_max = torch.minimum(depth_max, self.depth_clip_max)
+        depth = depth.clamp(0.0, self.depth_clip_max)       # clip depth values
+        depth = torch.where(ninf_mask, depth_min, depth)
+        depth = torch.where(pinf_mask, depth_max, depth)
 
         # Apply scaling if specified
         if self.depth_scale == "log":
             depth = torch.log(depth + 1)
-
-        # Calculate min/max for each image in the batch
-        depth_min = depth.amin(dim=(-3, -2), keepdim=True)
-        depth_max = depth.amax(dim=(-3, -2), keepdim=True)
 
         # Normalize to 0-255 range
         return torch.where(

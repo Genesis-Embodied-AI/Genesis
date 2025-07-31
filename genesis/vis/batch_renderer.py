@@ -98,6 +98,8 @@ class BatchRenderer(RBC):
         cameras_pos = torch.stack([camera.get_pos() for camera in cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in cameras], dim=1)
         cameras_fov = torch.tensor([camera.fov for camera in cameras], dtype=gs.tc_float, device=gs.device)
+        cameras_near = torch.tensor([camera.near for camera in cameras], dtype=gs.tc_float, device=gs.device)
+        cameras_far = torch.tensor([camera.far for camera in cameras], dtype=gs.tc_float, device=gs.device)
 
         # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
         # consider storing light properties as taichi fields in Genesis.
@@ -110,7 +112,7 @@ class BatchRenderer(RBC):
         light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=gs.tc_float)
 
         self._renderer = MadronaBatchRendererAdapter(
-            rigid, gpu_id, n_envs, n_cameras, n_lights, cameras_fov, *res, False, use_rasterizer
+            rigid, gpu_id, n_envs, n_cameras, n_lights, cameras_fov, cameras_near, cameras_far, *res, False, use_rasterizer
         )
         self._renderer.init(
             rigid,
@@ -137,10 +139,10 @@ class BatchRenderer(RBC):
             Whether to render the rgb image.
         depth : bool, optional
             Whether to render the depth image.
-        segmentation : bool, optional
-            Whether to render the segmentation image.
         normal : bool, optional
             Whether to render the normal image.
+        segmentation : bool, optional
+            Whether to render the segmentation image.
         force_render : bool, optional
             Whether to force render the scene.
         aliasing : bool, optional
@@ -166,10 +168,14 @@ class BatchRenderer(RBC):
         cache_key = (aliasing,)
         rgb_arr = self._data_cache.get((IMAGE_TYPE.RGB, cache_key), None)
         depth_arr = self._data_cache.get((IMAGE_TYPE.DEPTH, cache_key), None)
+        normal_arr = self._data_cache.get((IMAGE_TYPE.NORMAL, cache_key), None)
+        segmentation_arr = self._data_cache.get((IMAGE_TYPE.SEGMENTATION, cache_key), None)
 
         # Force disabling rendering whenever cached data is already available
         rgb_ = rgb and rgb_arr is None
         depth_ = depth and depth_arr is None
+        normal_ = normal and normal_arr is None
+        segmentation_ = segmentation and segmentation_arr is None
 
         # Early return if there is nothing to do
         if not (rgb_ or depth_):
