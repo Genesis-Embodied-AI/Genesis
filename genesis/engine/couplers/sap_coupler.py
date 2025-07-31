@@ -2065,7 +2065,7 @@ class FEMFloorTetContact(FEMContact):
     def __init__(
         self,
         simulator: "Simulator",
-        eps: float = 1e-10,
+        eps: float = 1e-6,
     ) -> None:
         super().__init__(simulator)
         self.name = "FEMFloorTetContact"
@@ -2182,18 +2182,6 @@ class FEMFloorTetContact(FEMContact):
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
-            # print(
-            #     "total_area",
-            #     total_area,
-            #     "pressure",
-            #     pressure,
-            #     "rigid_k",
-            #     rigid_k,
-            #     "rigid_phi0",
-            #     rigid_phi0,
-            #     "barycentric",
-            #     barycentric,
-            # )
             if i_p < self.max_contact_pairs:
                 pairs[i_p].batch_idx = i_b
                 pairs[i_p].geom_idx = i_e
