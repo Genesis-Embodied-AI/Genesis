@@ -28,6 +28,7 @@ jobs:
       TI_ENABLE_METAL: "0"
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
+      OMNI_KIT_ACCEPT_EULA: "yes"
 
     runs-on: ${{ matrix.OS }}
 
@@ -102,8 +103,14 @@ jobs:
           black --line-length 120 --check .
 
       - name: Install Genesis
+        # TODO: USD baking does not currently support Python 3.11 since
+        # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
+        # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
         run: |
-          pip install -e '.[dev,render]'
+          pip install -e '.[dev,render,usd]'
+          if [[ "${{ matrix.PYTHON_VERSION }}" == '3.10' ]] ; then
+            pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit
+          fi
 
       - name: Run unit tests
         run: |
