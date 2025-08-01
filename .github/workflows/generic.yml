@@ -95,11 +95,12 @@ jobs:
           pip install --upgrade pip setuptools pkg-info wheel
           pip install torch
 
-      - name: Black Format Check
+      - name: Ruff Format Check
         if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
         run: |
-          pip install black
-          black --line-length 120 --check .
+          pip install ruff
+          ruff format --check .
+          ruff check --select I .
 
       - name: Install Genesis
         run: |
