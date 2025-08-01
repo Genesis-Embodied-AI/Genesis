@@ -1,14 +1,18 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
 
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 @ti.data_oriented
 class ContactIsland:
     def __init__(self, collider):
-        self.solver = collider._solver
+        self.solver: "RigidSolver" = collider._solver
         self.collider = collider
 
         struct_agg_list = ti.types.struct(
@@ -77,8 +81,8 @@ class ContactIsland:
         link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
         link_b_maybe_batch = [link_b, i_b] if ti.static(self.solver._options.batch_links_info) else link_b
 
-        ea = self.solver.links_info[link_a_maybe_batch].entity_idx
-        eb = self.solver.links_info[link_b_maybe_batch].entity_idx
+        ea = self.solver.links_info.entity_idx[link_a_maybe_batch]
+        eb = self.solver.links_info.entity_idx[link_b_maybe_batch]
 
         self.entity_edge[ea, i_b].n = self.entity_edge[ea, i_b].n + 1
         self.entity_edge[eb, i_b].n = self.entity_edge[eb, i_b].n + 1
@@ -93,8 +97,10 @@ class ContactIsland:
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
-                impact = self.collider._collider_state.contact_data[i_col, i_b]
-                self.add_edge(impact.link_a, impact.link_b, i_b)
+                # get links indices of the impact
+                link_a = self.collider._collider_state.contact_data.link_a[i_col, i_b]
+                link_b = self.collider._collider_state.contact_data.link_b[i_col, i_b]
+                self.add_edge(link_a, link_b, i_b)
 
     def construct(self):
         self.clear()
@@ -108,14 +114,14 @@ class ContactIsland:
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
-                impact = self.collider._collider_state.contact_data[i_col, i_b]
-                link_a = impact.link_a
-                link_b = impact.link_b
+                # get links indices of the impact
+                link_a = self.collider._collider_state.contact_data.link_a[i_col, i_b]
+                link_b = self.collider._collider_state.contact_data.link_b[i_col, i_b]
                 link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
                 link_b_maybe_batch = [link_b, i_b] if ti.static(self.solver._options.batch_links_info) else link_b
 
-                ea = self.solver.links_info[link_a_maybe_batch].entity_idx
-                eb = self.solver.links_info[link_b_maybe_batch].entity_idx
+                ea = self.solver.links_info.entity_idx[link_a_maybe_batch]
+                eb = self.solver.links_info.entity_idx[link_b_maybe_batch]
 
                 island_a = self.entity_island[ea, i_b]
                 island_b = self.entity_island[eb, i_b]
