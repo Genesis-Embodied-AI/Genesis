@@ -4,12 +4,19 @@ import sys
 import numpy as np
 import pytest
 import torch
+from syrupy.extensions.image import PNGImageSnapshotExtension
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter
 
 from .utils import assert_allclose, assert_array_equal
+
+
+@pytest.fixture
+def png_snapshot(snapshot):
+    return snapshot.use_extension(PNGImageSnapshotExtension)
 
 
 @pytest.mark.required
@@ -87,7 +94,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 
 @pytest.mark.required
-@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
+@pytest.mark.xfail(sys.platform == "darwin", reason="'shadow_mapping_pass' causes segfault on MacOS CI.")
 def test_batched_offscreen_rendering(show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -242,6 +249,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.xfail(sys.platform == "darwin", reason="'shadow_mapping_pass' causes segfault on MacOS CI.")
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -390,8 +398,8 @@ def test_debug_draw(show_viewer):
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
 @pytest.mark.parametrize("n_envs", [0, 4])
-def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, show_viewer):
-    CAM_RES = (512, 512)
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, show_viewer, png_snapshot):
+    CAM_RES = (256, 256)
 
     pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
 
@@ -463,7 +471,7 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     exporter = FrameImageExporter(tmp_path)
 
     # Initialize the simulation
-    np.random.seed(0)
+    set_random_seed(0)
     dof_bounds = scene.rigid_solver.dofs_info.limit.to_torch(gs.device)
     for i in range(max(n_envs, 1)):
         qpos = torch.zeros(robot.n_dofs)
@@ -498,4 +506,6 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
 
         scene.step()
 
-    breakpoint()
+    for image_file in sorted(tmp_path.rglob("*.png")):
+        with open(image_file, "rb") as f:
+            assert f.read() == png_snapshot

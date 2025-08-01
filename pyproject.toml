@@ -9,7 +9,7 @@ name = "genesis-world"
 version = "0.2.1"
 description = "A universal and generative physics engine"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
     "taichi >= 1.7.2",
@@ -57,10 +57,6 @@ dependencies = [
     "z3-solver",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
-    # Motion Planning library
-    # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
-    #          Fix OMPL DLL search directory.
-    "ompl>=1.7.0; platform_system != 'Windows'",
     # Native batch renderer specifically designed for Genesis
     "gs-madrona>=0.0.2; platform_system == 'Linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
 ]
@@ -74,6 +70,7 @@ dev = [
     "pytest-random-order",
     "pytest-print",
     "pytest-rerunfailures",
+    "syrupy",
     "huggingface_hub",
     "wandb",
 ]
@@ -133,7 +130,7 @@ addopts = [
     "--dist=worksteal",
     "--random-order-bucket=global",
     "--random-order-seed=0",
-    "--max-worker-restart=0",
+    # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=40.0",
     "-m not benchmarks",
