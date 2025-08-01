@@ -206,14 +206,14 @@ def test_utils_geom_taichi_inverse(batch_shape):
         ti_value_in_args, ti_transform_args, ti_value_out_args, ti_value_inv_out_args = [], [], [], []
         for i, shape_arg in enumerate(map(tuple, (*shapes_in, *shapes_value_args, *shapes_value_args))):
             if shape_arg in ((4, 4), (3, 3)):
-                R = gu.rotvec_to_R(np.random.rand(*batch_shape, 3).astype(gs.np_float))
+                R = gu.rotvec_to_R(np.random.randn(*batch_shape, 3).clip(-1.0, 1.0).astype(gs.np_float))
                 if shape_arg == (4, 4):
-                    trans = np.random.rand(*batch_shape, 3).astype(gs.np_float)
+                    trans = np.random.randn(*batch_shape, 3).astype(gs.np_float)
                     np_arg = gu.trans_R_to_T(trans, R)
                 else:
                     np_arg = R
             else:
-                np_arg = np.random.rand(*batch_shape, *shape_arg).astype(gs.np_float)
+                np_arg = np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float)
 
             ti_type = ti.Vector if len(shape_arg) == 1 else ti.Matrix
             ti_arg = ti_type.field(*shape_arg, dtype=gs.ti_float, shape=batch_shape)
@@ -251,7 +251,7 @@ def test_utils_geom_taichi_identity(batch_shape):
         for shape_arg in (*shape_args, shape_args[0]):
             ti_type = ti.Vector if len(shape_arg) == 1 else ti.Matrix
             ti_arg = ti_type.field(*shape_arg, dtype=gs.ti_float, shape=batch_shape)
-            ti_arg.from_numpy(np.random.rand(*batch_shape, *shape_arg).astype(gs.np_float))
+            ti_arg.from_numpy(np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float))
             ti_args.append(ti_arg)
 
         num_funcs = len(ti_funcs)
@@ -273,9 +273,9 @@ def test_utils_geom_tensor_identity(batch_shape):
         np_args, tc_args = [], []
         for shape_arg in (*shape_args, shape_args[0]):
             if tuple(shape_arg) == (3, 3):
-                np_arg = gu.rotvec_to_R(np.random.rand(*batch_shape, 3).astype(gs.np_float))
+                np_arg = gu.rotvec_to_R(np.random.randn(*batch_shape, 3).clip(-1.0, 1.0).astype(gs.np_float))
             else:
-                np_arg = np.random.rand(*batch_shape, *shape_arg).astype(gs.np_float)
+                np_arg = np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float)
             tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
             np_args.append(np_arg)
             tc_args.append(tc_arg)

@@ -149,9 +149,7 @@ def ti_quat_to_xyz(quat):
 
         siny_cosp = q_wz - q_xy
         cosy_cosp = 1.0 - (q_yy + q_zz)
-        hypot_min = ti.min(siny_cosp, cosy_cosp)
-        hypot_max = ti.max(siny_cosp, cosy_cosp)
-        cosp = ti.select(hypot_max > 0.0, hypot_max * ti.sqrt(1.0 + (hypot_min / hypot_max) ** 2), 0.0)
+        cosp = ti.sqrt(cosy_cosp**2 + siny_cosp**2)
 
         roll = ti.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
         pitch = ti.atan2(q_xz + q_wy, cosp)
@@ -652,10 +650,7 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
         siny_cosp = q_wz - q_xy
     cosr_cosp = 1.0 - (q_xx + q_yy)
     cosy_cosp = 1.0 - (q_yy + q_zz)
-
-    hypot_min = np.minimum(siny_cosp, cosy_cosp)
-    hypot_max = np.maximum(siny_cosp, cosy_cosp)
-    cosp = np.where(hypot_max > 0.0, hypot_max * np.sqrt(1.0 + (hypot_min / hypot_max) ** 2), 0.0)
+    cosp = np.sqrt(cosy_cosp**2 + siny_cosp**2)
 
     out_[..., 0] = np.arctan2(sinr_cosp, cosr_cosp)
     out_[..., 1] = np.arctan2(sinp, cosp)
@@ -678,7 +673,9 @@ def _tc_quat_to_xyz(quat, rpy=False, out=None):
     q_yy, q_yz = torch.unbind(q_y * q_vec_s[..., 1:], -1)
     q_zz = q_z[..., 0] * q_vec_s[..., 2]
 
-    # Compute some intermediary quantities
+    # Compute some intermediary quantities.
+    # Numerical robustness of 'cos(pitch)' could be improved using 'hypot' implementation from Eigen:
+    # https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Core/MathFunctionsImpl.h#L149
     if rpy:
         sinp = q_wy - q_xz
         sinr_cosp = q_wx + q_yz
@@ -689,14 +686,7 @@ def _tc_quat_to_xyz(quat, rpy=False, out=None):
         siny_cosp = q_wz - q_xy
     cosr_cosp = 1.0 - (q_xx + q_yy)
     cosy_cosp = 1.0 - (q_yy + q_zz)
-
-    # Use numerical robust formula for computing cos(pitch)
-    # See Eigen implementation for reference:
-    # https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Geometry/EulerAngles.h#L45
-    # https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Core/MathFunctionsImpl.h#L149
-    hypot_min = torch.minimum(siny_cosp, cosy_cosp)
-    hypot_max = torch.maximum(siny_cosp, cosy_cosp)
-    cosp = torch.where(hypot_max > 0.0, hypot_max * torch.sqrt(1.0 + (hypot_min / hypot_max) ** 2), 0.0)
+    cosp = torch.sqrt(cosy_cosp**2 + siny_cosp**2)
 
     # Roll (x-axis rotation)
     out[..., 0] = torch.atan2(sinr_cosp, cosr_cosp)
