@@ -258,7 +258,7 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward=False):
-        if self._rigid_only:  # "Only Advance!" --Thomas Wade :P
+        if self._rigid_only and not isinstance(self._coupler, SAPCoupler):  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
                 self.rigid_solver.substep()
                 self._cur_substep_global += 1
