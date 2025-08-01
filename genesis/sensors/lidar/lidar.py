@@ -264,39 +264,42 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
     return result
 
 @ti.kernel 
-def lidar_cast_rays_kernel(
+def lidar_cast_rays_kernel_bvh(
+    # Mesh data
     mesh_vertices: ti.types.ndarray(ndim=2),     # [n_vertices, 3]
     mesh_triangles: ti.types.ndarray(ndim=2),    # [n_triangles, 3]
-    triangle_aabbs_min: ti.types.ndarray(ndim=2), # [n_triangles, 3]
-    triangle_aabbs_max: ti.types.ndarray(ndim=2), # [n_triangles, 3]
+    
+    # BVH data structures
+    bvh_nodes: ti.template(),                    # The BVH node tree
+    bvh_morton_codes: ti.template(),             # Maps sorted leaves to original triangle indices
+
+    # Per-ray data
     lidar_positions: ti.types.ndarray(ndim=3),   # [n_env, n_cam, 3]
     lidar_quaternions: ti.types.ndarray(ndim=3), # [n_env, n_cam, 4] (wxyz format)
     ray_vectors: ti.types.ndarray(ndim=3),       # [n_scan_lines, n_points, 3]
     far_plane: ti.f32,
+
+    # Output arrays
     hit_points: ti.types.ndarray(ndim=5),        # [n_env, n_cam, n_scan_lines, n_points, 3]
     hit_distances: ti.types.ndarray(ndim=4),     # [n_env, n_cam, n_scan_lines, n_points]
     world_frame: ti.i32,
 ):
     """
-    Taichi kernel for LiDAR ray casting.
+    Taichi kernel for LiDAR ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
     """
-    # Get kernel execution dimensions
-    n_envs = hit_points.shape[0]
-    n_cams = hit_points.shape[1] 
-    n_scan_lines = hit_points.shape[2]
-    n_points = hit_points.shape[3]
     n_triangles = mesh_triangles.shape[0]
     
     # Parallel execution over all rays
-    for env_id, cam_id, scan_line, point_index in ti.ndrange(n_envs, n_cams, n_scan_lines, n_points):
-        # Get LiDAR position and orientation
+    for env_id, cam_id, scan_line, point_index in ti.ndrange(
+        hit_points.shape[0], hit_points.shape[1], hit_points.shape[2], hit_points.shape[3]
+    ):
+        # --- 1. Setup Ray ---
         lidar_position = ti.math.vec3(
             lidar_positions[env_id, cam_id, 0],
             lidar_positions[env_id, cam_id, 1], 
             lidar_positions[env_id, cam_id, 2]
         )
         
-        # Genesis quaternion format: wxyz
         lidar_quat = ti.math.vec4(
             lidar_quaternions[env_id, cam_id, 1],  # x
             lidar_quaternions[env_id, cam_id, 2],  # y  
@@ -304,7 +307,6 @@ def lidar_cast_rays_kernel(
             lidar_quaternions[env_id, cam_id, 0]   # w
         )
         
-        # Get ray direction in local coordinates
         ray_dir_local = ti.math.vec3(
             ray_vectors[scan_line, point_index, 0],
             ray_vectors[scan_line, point_index, 1],
@@ -312,68 +314,62 @@ def lidar_cast_rays_kernel(
         )
         ray_dir_local = ti_normalize(ray_dir_local)
         
-        # Transform ray direction to world coordinates using quaternion
+        # Transform ray direction to world coordinates.
         ray_direction_world = ti_transform_by_quat(ray_dir_local, lidar_quat)
-        ray_direction_world = ti_normalize(ray_direction_world)
-        
-        # Perform ray casting
+
+        # --- 2. BVH Traversal ---
         min_t = far_plane
         hit_face = -1
-        hit_u = 0.0
-        hit_v = 0.0
         
-        # For each triangle, test intersection
-        for i in range(n_triangles):
-            # First test AABB intersection for early culling
-            aabb_min = ti.math.vec3(
-                triangle_aabbs_min[i, 0],
-                triangle_aabbs_min[i, 1],
-                triangle_aabbs_min[i, 2]
-            )
-            aabb_max = ti.math.vec3(
-                triangle_aabbs_max[i, 0],
-                triangle_aabbs_max[i, 1],
-                triangle_aabbs_max[i, 2]
-            )
-            aabb_t = ray_aabb_intersection(lidar_position, ray_direction_world, aabb_min, aabb_max)
+        # Stack for non-recursive traversal, size 64 is typical for BVH
+        stack = ti.Vector.zero(ti.i32, 64)
+        stack[0] = 0  # Start traversal at the root node (index 0)
+        stack_ptr = 1
+
+        while stack_ptr > 0:
+            stack_ptr -= 1
+            node_idx = stack[stack_ptr]
             
-            # Skip triangle if ray doesn't hit its AABB or if AABB is farther than current hit
-            if aabb_t < 0.0 or aabb_t >= min_t:
-                continue
+            # Since n_batches=1, we index the BVH with [0, node_idx]
+            node = bvh_nodes[0, node_idx]
+
+            # Check if ray hits the node's bounding box
+            aabb_t = ray_aabb_intersection(lidar_position, ray_direction_world, node.bound.min, node.bound.max)
+            
+            if aabb_t >= 0.0 and aabb_t < min_t:
+                if node.left == -1:  # It's a LEAF node
+                    # A leaf node corresponds to one of the sorted triangles.
+                    # We need to find the original triangle index.
+                    sorted_leaf_idx = node_idx - (n_triangles - 1)
+                    original_tri_idx = bvh_morton_codes[0, sorted_leaf_idx][1]
+
+                    # Get triangle vertices
+                    v0_idx = mesh_triangles[original_tri_idx, 0]
+                    v1_idx = mesh_triangles[original_tri_idx, 1]
+                    v2_idx = mesh_triangles[original_tri_idx, 2]
+                    
+                    v0 = ti.math.vec3(mesh_vertices[v0_idx, 0], mesh_vertices[v0_idx, 1], mesh_vertices[v0_idx, 2])
+                    v1 = ti.math.vec3(mesh_vertices[v1_idx, 0], mesh_vertices[v1_idx, 1], mesh_vertices[v1_idx, 2])
+                    v2 = ti.math.vec3(mesh_vertices[v2_idx, 0], mesh_vertices[v2_idx, 1], mesh_vertices[v2_idx, 2])
+                    
+                    # Perform the expensive ray-triangle intersection test
+                    hit_result = ray_triangle_intersection(lidar_position, ray_direction_world, v0, v1, v2)
+                    
+                    if hit_result.w > 0.0 and hit_result.x < min_t and hit_result.x >= 0.0:
+                        min_t = hit_result.x
+                        hit_face = original_tri_idx
+                        # hit_u, hit_v could be stored here if needed
                 
-            # Get triangle vertices
-            v0_idx = mesh_triangles[i, 0]
-            v1_idx = mesh_triangles[i, 1]
-            v2_idx = mesh_triangles[i, 2]
-            
-            v0 = ti.math.vec3(
-                mesh_vertices[v0_idx, 0],
-                mesh_vertices[v0_idx, 1],
-                mesh_vertices[v0_idx, 2]
-            )
-            v1 = ti.math.vec3(
-                mesh_vertices[v1_idx, 0],
-                mesh_vertices[v1_idx, 1],
-                mesh_vertices[v1_idx, 2]
-            )
-            v2 = ti.math.vec3(
-                mesh_vertices[v2_idx, 0],
-                mesh_vertices[v2_idx, 1],
-                mesh_vertices[v2_idx, 2]
-            )
-            
-            # Perform ray-triangle intersection
-            hit_result = ray_triangle_intersection(lidar_position, ray_direction_world, v0, v1, v2)
-            
-            # Check if we have a valid hit closer than previous hits
-            if hit_result.w > 0.0 and hit_result.x < min_t and hit_result.x >= 0.0:
-                min_t = hit_result.x
-                hit_face = i
-                hit_u = hit_result.y
-                hit_v = hit_result.z
-        
-        # Process hit result
-        if hit_face >= 0 and min_t < far_plane:
+                else:  # It's an INTERNAL node
+                    # Push children onto the stack for further traversal
+                    # Make sure stack doesn't overflow
+                    if stack_ptr < 62:
+                        stack[stack_ptr] = node.left
+                        stack[stack_ptr+1] = node.right
+                        stack_ptr += 2
+
+        # --- 3. Process Hit Result ---
+        if hit_face >= 0:
             dist = min_t
             hit_distances[env_id, cam_id, scan_line, point_index] = dist
             
@@ -387,9 +383,9 @@ def lidar_cast_rays_kernel(
                 hit_points[env_id, cam_id, scan_line, point_index, 0] = hit_point.x
                 hit_points[env_id, cam_id, scan_line, point_index, 1] = hit_point.y
                 hit_points[env_id, cam_id, scan_line, point_index, 2] = hit_point.z
+
         else:
-            # No hit - set to default miss values
-            hit_distances[env_id, cam_id, scan_line, point_index] = 1000.0  # NO_HIT_RAY_VAL
+            hit_distances[env_id, cam_id, scan_line, point_index] = 1000.0
             hit_points[env_id, cam_id, scan_line, point_index, 0] = 0.0
             hit_points[env_id, cam_id, scan_line, point_index, 1] = 0.0
             hit_points[env_id, cam_id, scan_line, point_index, 2] = 0.0
@@ -419,12 +415,12 @@ class LidarKernels:
         if self.mesh_data is None:
             raise RuntimeError("No mesh registered")
         
-        # Use pre-computed arrays for efficiency (static mesh optimization)
-        lidar_cast_rays_kernel(
+        # Call the BVH-accelerated kernel
+        lidar_cast_rays_kernel_bvh(
             self.mesh_data.vertices_np, 
             self.mesh_data.triangles_np,
-            self.mesh_data.triangle_aabbs_min, 
-            self.mesh_data.triangle_aabbs_max,
+            self.mesh_data.bvh.nodes,
+            self.mesh_data.bvh.morton_codes,
             lidar_positions, lidar_quaternions, ray_vectors,
             far_plane, hit_points, hit_distances, world_frame
         )
