@@ -277,8 +277,8 @@ class LBVH(RBC):
 
         # Reorder morton codes
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
-            code = (self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF
-            idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, ti.i32(code)])
+            code = ti.i32((self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF)
+            idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, code])
             self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
 
         # Swap the temporary and original morton codes
@@ -441,7 +441,7 @@ class LBVH(RBC):
 
         return is_done
 
-    @ti.kernel
+    @ti.func
     def query(self, aabbs: ti.template()):
         """
         Query the BVH for intersections with the given AABBs.
@@ -449,6 +449,7 @@ class LBVH(RBC):
         The results are stored in the query_result field.
         """
         self.query_result_count[None] = 0
+        overflow = False
 
         n_querys = aabbs.shape[1]
         for i_b, i_q in ti.ndrange(self.n_batches, n_querys):
@@ -470,6 +471,8 @@ class LBVH(RBC):
                         idx = ti.atomic_add(self.query_result_count[None], 1)
                         if idx < self.max_n_query_results:
                             self.query_result[idx] = gs.ti_ivec3(i_b, i_a, i_q)  # Store the AABB index
+                        else:
+                            overflow = True
                     else:
                         # Push children onto the stack
                         if node.right != -1:
@@ -479,12 +482,13 @@ class LBVH(RBC):
                             query_stack[stack_depth] = node.left
                             stack_depth += 1
 
+        return overflow
+
 
 @ti.data_oriented
 class FEMSurfaceTetLBVH(LBVH):
     """
     FEMSurfaceTetLBVH is a specialized Linear BVH for FEM surface tetrahedrals.
-
     It extends the LBVH class to support filtering based on FEM surface tetrahedral elements.
     """
 
@@ -495,14 +499,11 @@ class FEMSurfaceTetLBVH(LBVH):
     @ti.func
     def filter(self, i_a, i_q):
         """
-        Filter function for FEM surface tets. Filter out tet that share vertices.
-
+        Filter function for FEM surface tets. Filter out tet that share vertices.\
         This is used to avoid self-collisions in FEM surface tets.
-
         i_a: index of the found AABB
         i_q: index of the query AABB
         """
-
         result = i_a >= i_q
         i_av = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_a]].el2v
         i_qv = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_q]].el2v

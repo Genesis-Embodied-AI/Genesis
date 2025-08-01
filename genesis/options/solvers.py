@@ -169,6 +169,8 @@ class SAPCouplerOptions(BaseCouplerOptions):
     point_contact_stiffness: float = 1e8
     fem_floor_type: str = "tet"
     fem_self_tet: bool = True
+    rigid_floor_vert: bool = True
+    rigid_fem: bool = True
 
 
 ############################ Solvers inside simulator ############################
