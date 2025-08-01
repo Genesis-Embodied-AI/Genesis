@@ -42,6 +42,9 @@ class Viewer(RBC):
         self._camera_fov = options.camera_fov
         self._enable_interaction = options.enable_interaction
 
+        if options.enable_interaction and gs.backend != gs.cpu:
+            gs.logger.warning("Interaction code is slow on GPU. Switch to CPU backend or disable interaction.")
+
         self._pyrender_viewer = None
         self.context = context
 
