@@ -105,6 +105,10 @@ class LidarMeshData:
         self.vertices.from_numpy(vertices.astype(np.float32))
         self.triangles.from_numpy(triangles.astype(np.int32))
         
+        # Pre-store numpy arrays for kernel usage (static mesh optimization)
+        self.vertices_np = vertices.astype(np.float32)
+        self.triangles_np = triangles.astype(np.int32)
+        
         # Build BVH acceleration structure
         self._build_bvh()
     
@@ -117,6 +121,20 @@ class LidarMeshData:
         # Create AABB for each triangle
         self.triangle_aabbs = AABB(n_batches=1, n_aabbs=self.n_triangles)
         self._compute_triangle_aabbs()
+        
+        # Pre-compute AABB arrays for efficient kernel usage (static mesh optimization)
+        self.triangle_aabbs_min = np.zeros((self.n_triangles, 3), dtype=np.float32)
+        self.triangle_aabbs_max = np.zeros((self.n_triangles, 3), dtype=np.float32)
+        
+        # Copy AABB data once during initialization
+        for i in range(self.n_triangles):
+            aabb = self.triangle_aabbs.aabbs[0, i]
+            self.triangle_aabbs_min[i, 0] = aabb.min[0]
+            self.triangle_aabbs_min[i, 1] = aabb.min[1]
+            self.triangle_aabbs_min[i, 2] = aabb.min[2]
+            self.triangle_aabbs_max[i, 0] = aabb.max[0]
+            self.triangle_aabbs_max[i, 1] = aabb.max[1]
+            self.triangle_aabbs_max[i, 2] = aabb.max[2]
         
         # Build the BVH tree
         self.bvh = LBVH(self.triangle_aabbs)
@@ -401,29 +419,12 @@ class LidarKernels:
         if self.mesh_data is None:
             raise RuntimeError("No mesh registered")
         
-        # Extract AABB data for kernel
-        n_triangles = self.mesh_data.n_triangles
-        triangle_aabbs_min = np.zeros((n_triangles, 3), dtype=np.float32)
-        triangle_aabbs_max = np.zeros((n_triangles, 3), dtype=np.float32)
-        
-        # Copy AABB data
-        for i in range(n_triangles):
-            aabb = self.mesh_data.triangle_aabbs.aabbs[0, i]
-            triangle_aabbs_min[i, 0] = aabb.min[0]
-            triangle_aabbs_min[i, 1] = aabb.min[1]
-            triangle_aabbs_min[i, 2] = aabb.min[2]
-            triangle_aabbs_max[i, 0] = aabb.max[0]
-            triangle_aabbs_max[i, 1] = aabb.max[1]
-            triangle_aabbs_max[i, 2] = aabb.max[2]
-        
-        # Convert mesh data
-        vertices_np = self.mesh_data.vertices.to_numpy()
-        triangles_np = self.mesh_data.triangles.to_numpy()
-        
-        # Call kernel
+        # Use pre-computed arrays for efficiency (static mesh optimization)
         lidar_cast_rays_kernel(
-            vertices_np, triangles_np,
-            triangle_aabbs_min, triangle_aabbs_max,
+            self.mesh_data.vertices_np, 
+            self.mesh_data.triangles_np,
+            self.mesh_data.triangle_aabbs_min, 
+            self.mesh_data.triangle_aabbs_max,
             lidar_positions, lidar_quaternions, ray_vectors,
             far_plane, hit_points, hit_distances, world_frame
         )
@@ -455,8 +456,12 @@ class LidarSensor(Sensor):
     _mesh_registered = False
     _kernels = None
     _scene_geometry_cache = None
-    _scene_cache_step = -1
     _scene_mesh_info = None  # Store detailed mesh information
+    _scene_mesh_data = None  # Store original mesh data for static extraction
+    
+    # TODO: Future API for dynamic mesh support
+    # _dynamic_entities = []  # List of entities that can move
+    # _update_dynamic_mesh = False  # Flag to update dynamic entities
     
     def __init__(self, 
                  entity: RigidEntity, 
@@ -492,10 +497,8 @@ class LidarSensor(Sensor):
         # Generate ray pattern
         self.ray_vectors = self._create_ray_pattern()
         
-        # Cache for sensor data
-        self._cached_points = None
-        self._cached_distances = None
-        self._last_updated_step = -1
+        # Note: For static mesh approach, no per-instance caching needed
+        # TODO: Add dynamic entity tracking for future dynamic mesh support
     
     def _create_ray_pattern(self) -> np.ndarray:
         """Create LiDAR ray pattern based on configuration."""
@@ -520,317 +523,305 @@ class LidarSensor(Sensor):
         
         return ray_vectors
     
-    def _extract_scene_geometry(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Extract mesh data from Genesis scene for ray casting, following raytracer.py pattern."""
-        # Check if we need to update the cached scene geometry
-        if (LidarSensor._scene_cache_step != self._sim.cur_step_global or 
-            LidarSensor._scene_geometry_cache is None):
-            
-            all_vertices = []
-            all_triangles = []
-            vertex_offset = 0
-            
-            # Store detailed mesh information
-            mesh_info = {
-                'entities': [],
-                'total_vertices': 0,
-                'total_triangles': 0,
-                'geometry_count': 0,
-                'extraction_time': None
-            }
-            
-            import time
-            start_time = time.time()
-            
-            # Process rigid entities (following raytracer.py pattern)
-            if self._sim.rigid_solver.is_active():
-                for rigid_entity in self._sim.rigid_solver.entities:
-                    # Skip the LiDAR sensor's own entity to avoid self-detection
-                    if rigid_entity == self._entity:
-                        continue
-                    
-                    entity_info = {
-                        'type': 'rigid',
-                        'entity': rigid_entity,
-                        'geometries': [],
-                        'vertex_count': 0,
-                        'triangle_count': 0
-                    }
-                    
-                    # Choose visual or collision geometry based on surface vis_mode
-                    if rigid_entity.surface.vis_mode == "visual":
-                        geoms = rigid_entity.vgeoms
-                    else:
-                        geoms = rigid_entity.geoms
-                    
-                    for geom_idx, geom in enumerate(geoms):
-                        try:
-                            # Get the trimesh from the geometry
-                            if "sdf" in rigid_entity.surface.vis_mode:
-                                mesh = geom.get_sdf_trimesh()
-                            else:
-                                mesh = geom.get_trimesh()
-                            
-                            if len(mesh.vertices) > 0 and len(mesh.faces) > 0:
-                                # IMPORTANT: Transform mesh to world coordinates
-                                # Get entity world transformation
-                                entity_pos = rigid_entity.get_pos()
-                                entity_quat = rigid_entity.get_quat()
-                                
-                                # Convert to numpy arrays for transformation
-                                if hasattr(entity_pos, 'cpu'):
-                                    entity_pos_np = entity_pos.cpu().numpy()
-                                else:
-                                    entity_pos_np = np.array(entity_pos)
-                                    
-                                if hasattr(entity_quat, 'cpu'):
-                                    entity_quat_np = entity_quat.cpu().numpy()
-                                else:
-                                    entity_quat_np = np.array(entity_quat)
-                                
-                                # Apply world transformation to mesh
-                                world_transform = trans_quat_to_T(entity_pos_np, entity_quat_np)
-                                if world_transform.ndim == 3:
-                                    world_transform = world_transform[0]
-                                
-                                mesh_transformed = mesh.copy()
-                                mesh_transformed.apply_transform(world_transform)
-                                
-                                # Store geometry info
-                                geom_info = {
-                                    'geom': geom,
-                                    'vertices': len(mesh_transformed.vertices),
-                                    'triangles': len(mesh_transformed.faces),
-                                    'vertex_offset': vertex_offset,
-                                    'world_pos': entity_pos_np,
-                                    'world_quat': entity_quat_np
-                                }
-                                entity_info['geometries'].append(geom_info)
-                                entity_info['vertex_count'] += len(mesh_transformed.vertices)
-                                entity_info['triangle_count'] += len(mesh_transformed.faces)
-                                mesh_info['geometry_count'] += 1
-                                
-                                # Add transformed vertices
-                                all_vertices.append(mesh_transformed.vertices.astype(np.float32))
-                                
-                                # Add triangles with vertex offset
-                                triangles = mesh_transformed.faces.astype(np.int32) + vertex_offset
-                                all_triangles.append(triangles)
-                                
-                                vertex_offset += len(mesh_transformed.vertices)
-                                
-                        except Exception as e:
-                            # Skip geometries that can't provide mesh data
-                            print(f"Warning: Could not extract mesh from geom {geom}: {e}")
-                            continue
-                    
-                    if entity_info['geometries']:  # Only add if we found geometries
-                        mesh_info['entities'].append(entity_info)
-            
-            # Process avatar entities if present
-            if hasattr(self._sim, 'avatar_solver') and self._sim.avatar_solver.is_active():
-                for avatar_entity in self._sim.avatar_solver.entities:
-                    # Skip the LiDAR sensor's own entity
-                    if avatar_entity == self._entity:
-                        continue
-                    
-                    entity_info = {
-                        'type': 'avatar',
-                        'entity': avatar_entity,
-                        'geometries': [],
-                        'vertex_count': 0,
-                        'triangle_count': 0
-                    }
-                        
-                    # Choose visual or collision geometry
-                    if avatar_entity.surface.vis_mode == "visual":
-                        geoms = avatar_entity.vgeoms
-                    else:
-                        geoms = avatar_entity.geoms
-                    
-                    for geom in geoms:
-                        try:
-                            if "sdf" in avatar_entity.surface.vis_mode:
-                                mesh = geom.get_sdf_trimesh()
-                            else:
-                                mesh = geom.get_trimesh()
-                                
-                            if len(mesh.vertices) > 0 and len(mesh.faces) > 0:
-                                # IMPORTANT: Transform mesh to world coordinates
-                                # Get entity world transformation
-                                entity_pos = avatar_entity.get_pos()
-                                entity_quat = avatar_entity.get_quat()
-                                
-                                # Convert to numpy arrays for transformation
-                                if hasattr(entity_pos, 'cpu'):
-                                    entity_pos_np = entity_pos.cpu().numpy()
-                                else:
-                                    entity_pos_np = np.array(entity_pos)
-                                    
-                                if hasattr(entity_quat, 'cpu'):
-                                    entity_quat_np = entity_quat.cpu().numpy()
-                                else:
-                                    entity_quat_np = np.array(entity_quat)
-                                
-                                # Apply world transformation to mesh
-                                world_transform = trans_quat_to_T(entity_pos_np, entity_quat_np)
-                                if world_transform.ndim == 3:
-                                    world_transform = world_transform[0]
-                                
-                                mesh_transformed = mesh.copy()
-                                mesh_transformed.apply_transform(world_transform)
-                                
-                                # Store geometry info
-                                geom_info = {
-                                    'geom': geom,
-                                    'vertices': len(mesh_transformed.vertices),
-                                    'triangles': len(mesh_transformed.faces),
-                                    'vertex_offset': vertex_offset,
-                                    'world_pos': entity_pos_np,
-                                    'world_quat': entity_quat_np
-                                }
-                                entity_info['geometries'].append(geom_info)
-                                entity_info['vertex_count'] += len(mesh_transformed.vertices)
-                                entity_info['triangle_count'] += len(mesh_transformed.faces)
-                                mesh_info['geometry_count'] += 1
-                                
-                                all_vertices.append(mesh_transformed.vertices.astype(np.float32))
-                                triangles = mesh_transformed.faces.astype(np.int32) + vertex_offset
-                                all_triangles.append(triangles)
-                                vertex_offset += len(mesh_transformed.vertices)
-                                
-                        except Exception as e:
-                            print(f"Warning: Could not extract mesh from avatar geom {geom}: {e}")
-                            continue
-                    
-                    if entity_info['geometries']:  # Only add if we found geometries
-                        mesh_info['entities'].append(entity_info)
-            
-            # Process tool entities if present
-            if hasattr(self._sim, 'tool_solver') and self._sim.tool_solver.is_active():
-                for tool_entity in self._sim.tool_solver.entities:
-                    # Skip the LiDAR sensor's own entity
-                    if tool_entity == self._entity:
-                        continue
-                    
-                    entity_info = {
-                        'type': 'tool',
-                        'entity': tool_entity,
-                        'geometries': [],
-                        'vertex_count': 0,
-                        'triangle_count': 0
-                    }
-                        
+    def _extract_static_scene_data(self):
+        """Extract static mesh data from scene entities once during initialization."""
+        if LidarSensor._scene_mesh_data is not None:
+            return  # Already extracted
+        
+        import time
+        start_time = time.time()
+        
+        mesh_data = {
+            'entities': [],
+            'total_geometry_count': 0
+        }
+        
+        # Process rigid entities
+        if self._sim.rigid_solver.is_active():
+            for rigid_entity in self._sim.rigid_solver.entities:
+                # Skip the LiDAR sensor's own entity to avoid self-detection
+                if rigid_entity == self._entity:
+                    continue
+                
+                entity_data = {
+                    'type': 'rigid',
+                    'entity': rigid_entity,
+                    'geometries': []
+                }
+                
+                # Choose visual or collision geometry based on surface vis_mode
+                if rigid_entity.surface.vis_mode == "visual":
+                    geoms = rigid_entity.vgeoms
+                else:
+                    geoms = rigid_entity.geoms
+                
+                for geom_idx, geom in enumerate(geoms):
                     try:
-                        vertices = tool_entity.mesh.raw_vertices
-                        faces = tool_entity.mesh.faces_np
+                        # Get the original trimesh from the geometry (in local coordinates)
+                        if "sdf" in rigid_entity.surface.vis_mode:
+                            mesh = geom.get_sdf_trimesh()
+                        else:
+                            mesh = geom.get_trimesh()
                         
-                        if len(vertices) > 0 and len(faces) > 0:
-                            # Create trimesh from tool entity mesh
-                            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-                            
-                            # IMPORTANT: Transform mesh to world coordinates
-                            # Get entity world transformation
-                            entity_pos = tool_entity.get_pos()
-                            entity_quat = tool_entity.get_quat()
-                            
-                            # Convert to numpy arrays for transformation
-                            if hasattr(entity_pos, 'cpu'):
-                                entity_pos_np = entity_pos.cpu().numpy()
-                            else:
-                                entity_pos_np = np.array(entity_pos)
-                                
-                            if hasattr(entity_quat, 'cpu'):
-                                entity_quat_np = entity_quat.cpu().numpy()
-                            else:
-                                entity_quat_np = np.array(entity_quat)
-                            
-                            # Apply world transformation to mesh
-                            world_transform = trans_quat_to_T(entity_pos_np, entity_quat_np)
-                            if world_transform.ndim == 3:
-                                world_transform = world_transform[0]
-                            
-                            mesh_transformed = mesh.copy()
-                            mesh_transformed.apply_transform(world_transform)
-                            
-                            # Store geometry info
-                            geom_info = {
-                                'tool_mesh': tool_entity.mesh,
-                                'vertices': len(mesh_transformed.vertices),
-                                'triangles': len(mesh_transformed.faces),
-                                'vertex_offset': vertex_offset,
-                                'world_pos': entity_pos_np,
-                                'world_quat': entity_quat_np
+                        if len(mesh.vertices) > 0 and len(mesh.faces) > 0:
+                            # Store original mesh data (no transformation applied)
+                            geom_data = {
+                                'geom': geom,
+                                'vertices': mesh.vertices.astype(np.float32),
+                                'faces': mesh.faces.astype(np.int32),
+                                'vertex_count': len(mesh.vertices),
+                                'triangle_count': len(mesh.faces)
                             }
-                            entity_info['geometries'].append(geom_info)
-                            entity_info['vertex_count'] += len(mesh_transformed.vertices)
-                            entity_info['triangle_count'] += len(mesh_transformed.faces)
-                            mesh_info['geometry_count'] += 1
-                            
-                            all_vertices.append(mesh_transformed.vertices.astype(np.float32))
-                            triangles = mesh_transformed.faces.astype(np.int32) + vertex_offset
-                            all_triangles.append(triangles)
-                            vertex_offset += len(mesh_transformed.vertices)
+                            entity_data['geometries'].append(geom_data)
+                            mesh_data['total_geometry_count'] += 1
                             
                     except Exception as e:
-                        print(f"Warning: Could not extract mesh from tool entity {tool_entity}: {e}")
+                        print(f"Warning: Could not extract mesh from geom {geom}: {e}")
                         continue
-                    
-                    if entity_info['geometries']:  # Only add if we found geometries
-                        mesh_info['entities'].append(entity_info)
-            
-            # Combine all meshes
-            if len(all_vertices) > 0:
-                combined_vertices = np.vstack(all_vertices)
-                combined_triangles = np.vstack(all_triangles)
-            else:
-                # If no geometry found, create a minimal ground plane
-                print("Warning: No scene geometry found, creating minimal ground plane")
-                ground_size = 50.0
-                combined_vertices = np.array([
-                    [-ground_size, -ground_size, 0], 
-                    [ground_size, -ground_size, 0], 
-                    [ground_size, ground_size, 0], 
-                    [-ground_size, ground_size, 0]
-                ], dtype=np.float32)
-                combined_triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
                 
-                # Add ground plane to mesh info
-                mesh_info['entities'].append({
-                    'type': 'ground_plane',
-                    'entity': None,
-                    'geometries': [{
-                        'vertices': 4,
-                        'triangles': 2,
-                        'vertex_offset': 0
-                    }],
-                    'vertex_count': 4,
-                    'triangle_count': 2
-                })
-                mesh_info['geometry_count'] += 1
+                if entity_data['geometries']:  # Only add if we found geometries
+                    mesh_data['entities'].append(entity_data)
+        
+        # Process avatar entities if present
+        if hasattr(self._sim, 'avatar_solver') and self._sim.avatar_solver.is_active():
+            for avatar_entity in self._sim.avatar_solver.entities:
+                if avatar_entity == self._entity:
+                    continue
+                
+                entity_data = {
+                    'type': 'avatar',
+                    'entity': avatar_entity,
+                    'geometries': []
+                }
+                
+                # Choose visual or collision geometry
+                if avatar_entity.surface.vis_mode == "visual":
+                    geoms = avatar_entity.vgeoms
+                else:
+                    geoms = avatar_entity.geoms
+                
+                for geom in geoms:
+                    try:
+                        if "sdf" in avatar_entity.surface.vis_mode:
+                            mesh = geom.get_sdf_trimesh()
+                        else:
+                            mesh = geom.get_trimesh()
+                            
+                        if len(mesh.vertices) > 0 and len(mesh.faces) > 0:
+                            geom_data = {
+                                'geom': geom,
+                                'vertices': mesh.vertices.astype(np.float32),
+                                'faces': mesh.faces.astype(np.int32),
+                                'vertex_count': len(mesh.vertices),
+                                'triangle_count': len(mesh.faces)
+                            }
+                            entity_data['geometries'].append(geom_data)
+                            mesh_data['total_geometry_count'] += 1
+                            
+                    except Exception as e:
+                        print(f"Warning: Could not extract mesh from avatar geom {geom}: {e}")
+                        continue
+                
+                if entity_data['geometries']:
+                    mesh_data['entities'].append(entity_data)
+        
+        # Process tool entities if present
+        if hasattr(self._sim, 'tool_solver') and self._sim.tool_solver.is_active():
+            for tool_entity in self._sim.tool_solver.entities:
+                if tool_entity == self._entity:
+                    continue
+                
+                entity_data = {
+                    'type': 'tool',
+                    'entity': tool_entity,
+                    'geometries': []
+                }
+                
+                try:
+                    vertices = tool_entity.mesh.raw_vertices
+                    faces = tool_entity.mesh.faces_np
+                    
+                    if len(vertices) > 0 and len(faces) > 0:
+                        geom_data = {
+                            'tool_mesh': tool_entity.mesh,
+                            'vertices': vertices.astype(np.float32),
+                            'faces': faces.astype(np.int32),
+                            'vertex_count': len(vertices),
+                            'triangle_count': len(faces)
+                        }
+                        entity_data['geometries'].append(geom_data)
+                        mesh_data['total_geometry_count'] += 1
+                        
+                except Exception as e:
+                    print(f"Warning: Could not extract mesh from tool entity {tool_entity}: {e}")
+                    continue
+                
+                if entity_data['geometries']:
+                    mesh_data['entities'].append(entity_data)
+        
+        end_time = time.time()
+        mesh_data['extraction_time'] = (end_time - start_time) * 1000  # in milliseconds
+        
+        LidarSensor._scene_mesh_data = mesh_data
+        print(f"LiDAR: Extracted static scene data with {mesh_data['total_geometry_count']} geometries")
+        print(f"       from {len(mesh_data['entities'])} entities in {mesh_data['extraction_time']:.1f}ms")
+        
+        # Check if we're dealing with multi-environment scenario
+        n_envs = getattr(self._sim, 'n_envs', 1)
+        if n_envs > 1:
+            print(f"Note: Genesis replicates entities across {n_envs} environments.")
+            print(f"      LiDAR uses mesh data from all replicated entities with proper world transforms.")
+    
+    def _extract_scene_geometry(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract static mesh data from Genesis scene once during initialization."""
+        # Only extract once - static mesh approach
+        if LidarSensor._scene_geometry_cache is not None:
+            return LidarSensor._scene_geometry_cache
+        
+        # Ensure static mesh data is extracted
+        if LidarSensor._scene_mesh_data is None:
+            self._extract_static_scene_data()
+        
+        import time
+        start_time = time.time()
+        
+        all_vertices = []
+        all_triangles = []
+        vertex_offset = 0
+        
+        # Store detailed mesh information for debugging
+        mesh_info = {
+            'entities': [],
+            'total_vertices': 0,
+            'total_triangles': 0,
+            'geometry_count': 0,
+            'extraction_time': None
+        }
+        
+        # Process each entity using pre-extracted static data
+        # For static mesh, we transform to world coordinates at initialization time
+        for entity_data in LidarSensor._scene_mesh_data['entities']:
+            entity = entity_data['entity']
+            entity_info = {
+                'type': entity_data['type'],
+                'entity': entity,
+                'geometries': [],
+                'vertex_count': 0,
+                'triangle_count': 0
+            }
             
-            # Finalize mesh info
-            end_time = time.time()
-            mesh_info['total_vertices'] = len(combined_vertices)
-            mesh_info['total_triangles'] = len(combined_triangles)
-            mesh_info['extraction_time'] = (end_time - start_time) * 1000  # in milliseconds
+            # Get entity world transformation at initialization time
+            try:
+                entity_pos = entity.get_pos()
+                entity_quat = entity.get_quat()
+                
+                # Convert to numpy arrays for transformation
+                if hasattr(entity_pos, 'cpu'):
+                    entity_pos_np = entity_pos.cpu().numpy()
+                else:
+                    entity_pos_np = np.array(entity_pos)
+                    
+                if hasattr(entity_quat, 'cpu'):
+                    entity_quat_np = entity_quat.cpu().numpy()
+                else:
+                    entity_quat_np = np.array(entity_quat)
+                
+                # Compute world transformation matrix
+                world_transform = trans_quat_to_T(entity_pos_np, entity_quat_np)
+                if world_transform.ndim == 3:
+                    world_transform = world_transform[0]
+                
+                # Process each geometry for this entity
+                for geom_data in entity_data['geometries']:
+                    # Apply world transformation to pre-extracted vertices
+                    original_vertices = geom_data['vertices']
+                    original_faces = geom_data['faces']
+                    
+                    # Transform vertices to world coordinates (static - done once)
+                    vertices_homogeneous = np.hstack([
+                        original_vertices, 
+                        np.ones((len(original_vertices), 1), dtype=np.float32)
+                    ])
+                    transformed_vertices = (world_transform @ vertices_homogeneous.T).T[:, :3]
+                    
+                    # Store geometry info
+                    geom_info = {
+                        'geom': geom_data.get('geom'),
+                        'vertices': len(transformed_vertices),
+                        'triangles': len(original_faces),
+                        'vertex_offset': vertex_offset,
+                        'world_pos': entity_pos_np,
+                        'world_quat': entity_quat_np
+                    }
+                    entity_info['geometries'].append(geom_info)
+                    entity_info['vertex_count'] += len(transformed_vertices)
+                    entity_info['triangle_count'] += len(original_faces)
+                    mesh_info['geometry_count'] += 1
+                    
+                    # Add transformed vertices and faces
+                    all_vertices.append(transformed_vertices.astype(np.float32))
+                    triangles = original_faces.astype(np.int32) + vertex_offset
+                    all_triangles.append(triangles)
+                    
+                    vertex_offset += len(transformed_vertices)
+                    
+            except Exception as e:
+                print(f"Warning: Could not get transformation for entity {entity}: {e}")
+                continue
             
-            LidarSensor._scene_geometry_cache = (combined_vertices, combined_triangles)
-            LidarSensor._scene_mesh_info = mesh_info
-            LidarSensor._scene_cache_step = self._sim.cur_step_global
+            if entity_info['geometries']:  # Only add if we found geometries
+                mesh_info['entities'].append(entity_info)
+        
+        # Combine all meshes
+        if len(all_vertices) > 0:
+            combined_vertices = np.vstack(all_vertices)
+            combined_triangles = np.vstack(all_triangles)
+        else:
+            # If no geometry found, create a minimal ground plane
+            print("Warning: No scene geometry found, creating minimal ground plane")
+            ground_size = 50.0
+            combined_vertices = np.array([
+                [-ground_size, -ground_size, 0], 
+                [ground_size, -ground_size, 0], 
+                [ground_size, ground_size, 0], 
+                [-ground_size, ground_size, 0]
+            ], dtype=np.float32)
+            combined_triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
             
-            # print(f"LiDAR: Extracted scene geometry with {len(combined_vertices)} vertices and {len(combined_triangles)} triangles")
-            # print(f"       from {mesh_info['geometry_count']} geometries across {len(mesh_info['entities'])} entities")
-            # print(f"       extraction took {mesh_info['extraction_time']:.1f}ms")
+            # Add ground plane to mesh info
+            mesh_info['entities'].append({
+                'type': 'ground_plane',
+                'entity': None,
+                'geometries': [{
+                    'vertices': 4,
+                    'triangles': 2,
+                    'vertex_offset': 0
+                }],
+                'vertex_count': 4,
+                'triangle_count': 2
+            })
+            mesh_info['geometry_count'] += 1
+        
+        # Finalize mesh info
+        end_time = time.time()
+        mesh_info['total_vertices'] = len(combined_vertices)
+        mesh_info['total_triangles'] = len(combined_triangles)
+        mesh_info['extraction_time'] = (end_time - start_time) * 1000  # in milliseconds
+        
+        # Cache the static mesh data permanently
+        LidarSensor._scene_geometry_cache = (combined_vertices, combined_triangles)
+        LidarSensor._scene_mesh_info = mesh_info
+        
+        print(f"LiDAR: Extracted static scene geometry with {len(combined_vertices)} vertices and {len(combined_triangles)} triangles")
+        print(f"       from {mesh_info['geometry_count']} geometries across {len(mesh_info['entities'])} entities")
+        print(f"       static mesh extraction took {mesh_info['extraction_time']:.1f}ms")
         
         return LidarSensor._scene_geometry_cache
     
     def _ensure_mesh_registered(self):
-        """Ensure the scene mesh is registered with the kernels."""
-        # Check if we need to re-register due to scene changes
-        if (not LidarSensor._mesh_registered or 
-            LidarSensor._scene_cache_step != self._sim.cur_step_global):
-            
+        """Ensure the scene mesh is registered with the kernels (static mesh - done once)."""
+        # Only register once for static mesh
+        if not LidarSensor._mesh_registered:
             vertices, triangles = self._extract_scene_geometry()
             LidarSensor._kernels.register_mesh(vertices, triangles)
             LidarSensor._mesh_registered = True
@@ -846,17 +837,7 @@ class LidarSensor(Sensor):
             hit_points: Hit points array [n_env, n_scan_lines, n_points, 3]
             hit_distances: Hit distances array [n_env, n_scan_lines, n_points]
         """
-        # Check if we already computed this step
-        if self._last_updated_step == self._sim.cur_step_global:
-            if envs_idx is not None:
-                return (
-                    self._cached_points[envs_idx] if self._cached_points is not None else None,
-                    self._cached_distances[envs_idx] if self._cached_distances is not None else None
-                )
-            else:
-                return self._cached_points, self._cached_distances
-        
-        # Ensure mesh is registered
+        # Ensure static mesh is registered (done once)
         self._ensure_mesh_registered()
         
         # Get sensor pose
@@ -874,7 +855,7 @@ class LidarSensor(Sensor):
         lidar_positions = tensor_to_array(link_pos).reshape(n_envs, 1, 3)
         lidar_quaternions = tensor_to_array(link_quat).reshape(n_envs, 1, 4)  # wxyz format
         
-        # Call Taichi kernel
+        # Call Taichi kernel for ray casting against static mesh
         LidarSensor._kernels.cast_rays(
             lidar_positions,
             lidar_quaternions,
@@ -888,11 +869,6 @@ class LidarSensor(Sensor):
         # Remove the camera dimension (we only have 1 camera per sensor)
         hit_points = hit_points.squeeze(1)  # [n_env, n_scan_lines, n_points, 3]
         hit_distances = hit_distances.squeeze(1)  # [n_env, n_scan_lines, n_points]
-        
-        # Cache results
-        self._cached_points = hit_points
-        self._cached_distances = hit_distances
-        self._last_updated_step = self._sim.cur_step_global
         
         # Return requested subset
         if envs_idx is not None:
@@ -1042,3 +1018,32 @@ class LidarSensor(Sensor):
             for j, geom_info in enumerate(entity_info['geometries']):
                 print(f"    Geometry {j+1}: {geom_info['vertices']} vertices, {geom_info['triangles']} triangles")
         print("================================")
+    
+    # TODO: Future API for dynamic mesh support
+    def add_dynamic_entity(self, entity):
+        """
+        Add an entity to the dynamic mesh tracking list (future feature).
+        
+        Args:
+            entity: Entity that can move and needs mesh updates
+        """
+        raise NotImplementedError("Dynamic mesh support not yet implemented")
+    
+    def update_dynamic_meshes(self):
+        """
+        Update meshes for dynamic entities (future feature).
+        This would re-transform only the meshes of entities that have moved.
+        """
+        raise NotImplementedError("Dynamic mesh support not yet implemented")
+    
+    def set_static_mode(self, static: bool = True):
+        """
+        Toggle between static and dynamic mesh modes (future feature).
+        
+        Args:
+            static: If True, use static mesh (current behavior).
+                   If False, enable dynamic mesh updates.
+        """
+        if not static:
+            raise NotImplementedError("Dynamic mesh support not yet implemented")
+        # Static mode is always enabled for now
