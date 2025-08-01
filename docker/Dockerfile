@@ -109,4 +109,39 @@ COPY 10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 COPY nvidia_icd.json /usr/share/vulkan/icd.d/nvidia_icd.json
 COPY nvidia_layers.json /etc/vulkan/implicit_layer.d/nvidia_layers.json
 
+
+# Create non-root user for security
+RUN groupadd -g 1000 genesis && \
+    useradd -u 1000 -g genesis -m -s /bin/bash genesis && \
+    mkdir -p /workspace && \
+    chown -R genesis:genesis /workspace
+
+# Switch to non-root user
+USER genesis
 ENTRYPOINT ["/bin/bash"]
+
+# Create non-root user for security
+RUN groupadd -g 1000 genesis && \
+    useradd -u 1000 -g genesis -m -s /bin/bash genesis
+
+# Switch to non-root user
+USER genesis
+
+# Create non-root user for security
+RUN groupadd -g 1000 genesis && \
+    useradd -u 1000 -g genesis -m -s /bin/bash genesis
+
+# Ensure the user has access to the working directory if it exists
+RUN if [ -d /workspace ]; then chown -R genesis:genesis /workspace; fi
+
+# Switch to non-root user
+USER genesis
+
+# Create a non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash genesis
+
+# Change ownership of workspace directory
+RUN chown -R genesis:genesis /workspace || true
+
+# Switch to non-root user
+USER genesis
