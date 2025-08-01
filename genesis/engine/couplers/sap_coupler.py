@@ -1302,12 +1302,27 @@ class SAPCoupler(RBC):
     def compute_d2ellA_dalpha2(self):
         for i_b in ti.ndrange(self._B):
             self.linesearch_state[i_b].d2ellA_dalpha2 = 0.0
+        if ti.static(self.fem_solver.is_active()):
+            self.compute_fem_d2ellA_dalpha2()
+        if ti.static(self.rigid_solver.is_active()):
+            self.compute_rigid_d2ellA_dalpha2()
 
+    @ti.func
+    def compute_fem_d2ellA_dalpha2(self):
         for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.linesearch_state[i_b].d2ellA_dalpha2 += self.pcg_fem_state_v[i_b, i_v].x.dot(
                 self.linesearch_fem_state_v[i_b, i_v].dp
+            )
+
+    @ti.func
+    def compute_rigid_d2ellA_dalpha2(self):
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].d2ellA_dalpha2 += (
+                self.pcg_rigid_state_dof[i_b, i_d].x * self.linesearch_rigid_state_dof[i_b, i_d].dp
             )
 
     @ti.func
