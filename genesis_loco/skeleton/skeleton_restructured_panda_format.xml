@@ -106,7 +106,7 @@
 
   <worldbody>
     <!-- Pelvis - Root body -->
-    <body name="pelvis" pos="0 0 0.975" quat="0.7071067811865475 0.7071067811865475 0.0 0.0">
+    <body name="pelvis" pos="0 6.73556e-17 0.975" quat="0.7071067811865475 0.7071067811865475 0.0 0.0">
       <geom class="visual" name="sacrum_vis" mesh="sacrum" material="bone_color"/>
       <geom class="visual" name="pelvis_vis" mesh="pelvis" material="bone_color"/>
       <geom class="visual" name="l_pelvis_vis" mesh="l_pelvis" material="bone_color"/>
@@ -122,17 +122,17 @@
       <!-- RIGHT LEG - Restructured with intermediate bodies -->
       <body name="hip_flex_r" pos="-0.0721882 -0.0674914 0.0852576" quat="1.0 0.0 0.0 0.0">
         <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-        <joint name="hip_flexion_r" damping="0.1" stiffness="0.0" type="hinge" pos="0 0 0" 
+        <joint name="hip_flexion_r" damping="5" stiffness="10" type="hinge" pos="0 0 0" 
                axis="0 0 1" limited="true" range="-0.787 0.787" ref="0"/>
         
         <body name="hip_add_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
           <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-          <joint name="hip_adduction_r" damping="0.1" stiffness="0.0" type="hinge" pos="0 0 0" 
+          <joint name="hip_adduction_r" damping="5" stiffness="10" type="hinge" pos="0 0 0" 
                  axis="1 0 0" limited="true" range="-0.524 0.524" ref="0"/>
           
           <body name="hip_rot_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
             <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-            <joint name="hip_rotation_r" damping="0.1" stiffness="0.0" type="hinge" pos="0 0 0" 
+            <joint name="hip_rotation_r" damping="5" stiffness="20" type="hinge" pos="0 0 0" 
                    axis="0 1 0" limited="true" range="-2.0944 2.0944" ref="0"/>
             
             <body name="femur_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
@@ -158,7 +158,7 @@
                   <inertial pos="0 0 0" mass="0.11524999800438" 
                             fullinertia="0.00143714 0.00143714 0.00143714 0 0 0"/>
                   
-                  <joint name="ankle_angle_r" stiffness="0.0" damping="0.1" type="hinge" pos="0 0 0" 
+                  <joint name="ankle_angle_r" stiffness="10" damping="1" type="hinge" pos="0 0 0" 
                          axis="-0.105014 -0.174022 0.979126" limited="true" range="-1.5708 1.5708" ref="0"/>
                   
                   <body name="calcn_r" pos="-0.0544606 -0.0468448 0.00884412" quat="1.0 0.0 0.0 0.0">
@@ -190,17 +190,17 @@
       <!-- LEFT LEG - Restructured with intermediate bodies -->
       <body name="hip_flex_l" pos="-0.0721882 -0.0674914 -0.0852576" quat="1.0 0.0 0.0 0.0">
         <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-        <joint name="hip_flexion_l" damping="0.1" stiffness="0.0" type="hinge" pos="0 0 0" 
+        <joint name="hip_flexion_l" damping="5" stiffness="10" type="hinge" pos="0 0 0" 
                axis="0 0 1" limited="true" range="-0.787 0.787" ref="0"/>
         
         <body name="hip_add_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
           <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-          <joint name="hip_adduction_l" damping="0.1" stiffness="0.0" type="hinge" pos="0 0 0" 
+          <joint name="hip_adduction_l" damping="5" stiffness="10" type="hinge" pos="0 0 0" 
                  axis="-1 0 0" limited="true" range="-0.524 0.524" ref="0"/>
           
           <body name="hip_rot_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
             <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-            <joint name="hip_rotation_l" damping="0.1" stiffness="0.0" type="hinge" pos="0 0 0" 
+            <joint name="hip_rotation_l" damping="5" stiffness="20" type="hinge" pos="0 0 0" 
                    axis="0 -1 0" limited="true" range="-2.0944 2.0944" ref="0"/>
             
             <body name="femur_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
@@ -226,7 +226,7 @@
                   <inertial pos="0 0 0" mass="0.11524999800438" 
                             fullinertia="0.00143714 0.00143714 0.00143714 0 0 0"/>
                   
-                  <joint name="ankle_angle_l" stiffness="0.0" damping="0.1" type="hinge" pos="0 0 0" 
+                  <joint name="ankle_angle_l" stiffness="10" damping="1" type="hinge" pos="0 0 0" 
                          axis="0.105014 0.174022 0.979126" limited="true" range="-1.0472 1.0472" ref="0"/>
                   
                   <body name="calcn_l" pos="-0.0544606 -0.0468448 -0.00884412" quat="1.0 0.0 0.0 0.0">
@@ -258,17 +258,17 @@
       <!-- TORSO - Restructured with intermediate bodies -->
       <body name="lumbar_ext" pos="-0.10282 0.0832155 0" quat="1.0 0.0 0.0 0.0">
         <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-        <joint name="lumbar_extension" stiffness="0.0" damping="0.1" type="hinge" pos="0 0 0" 
+        <joint name="lumbar_extension" stiffness="10" damping="5" type="hinge" pos="0 0 0" 
                axis="0 0 1" limited="true" range="-1.5708 0.377" ref="0"/>
         
         <body name="lumbar_bend" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
           <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-          <joint name="lumbar_bending" stiffness="0.0" damping="0.1" type="hinge" pos="0 0 0" 
+          <joint name="lumbar_bending" stiffness="10" damping="5" type="hinge" pos="0 0 0" 
                  axis="1 0 0" limited="true" range="-0.754 0.754" ref="0"/>
           
           <body name="lumbar_rot" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
             <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-            <joint name="lumbar_rotation" stiffness="0.0" damping="0.1" type="hinge" pos="0 0 0" 
+            <joint name="lumbar_rotation" stiffness="20" damping="5" type="hinge" pos="0 0 0" 
                    axis="0 1 0" limited="true" range="-0.754 0.754" ref="0"/>
             
             <body name="torso" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
@@ -286,17 +286,17 @@
               <!-- RIGHT ARM - Restructured -->
               <body name="arm_flex_r" pos="0.00339907 0.400239 0.183151" quat="1.0 0.0 0.0 0.0">
                 <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                <joint name="arm_flex_r" type="hinge" pos="0 0 0" axis="0 0 1" 
+                <joint name="arm_flex_r" damping="1.0" stiffness="1.0" type="hinge" pos="0 0 0" axis="0 0 1" 
                        limited="true" range="-1.5708 1.5708" ref="0"/>
                 
                 <body name="arm_add_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
                   <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                  <joint name="arm_add_r" type="hinge" pos="0 0 0" axis="1 0 0" 
+                  <joint name="arm_add_r" damping="1.0" stiffness="1.0" type="hinge" pos="0 0 0" axis="1 0 0" 
                          limited="true" range="-2.0944 1.5708" ref="0"/>
                   
                   <body name="arm_rot_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
                     <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                    <joint name="arm_rot_r" type="hinge" pos="0 0 0" axis="0 1 0" 
+                    <joint name="arm_rot_r" damping="1.0" stiffness="1.0" type="hinge" pos="0 0 0" axis="0 1 0" 
                            limited="true" range="-1.5708 1.5708" ref="0"/>
                     
                     <body name="humerus_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
@@ -311,7 +311,7 @@
                         <inertial pos="0 -0.133575 0" mass="0.700143737876607" 
                                   fullinertia="0.00419295 0.000874829 0.00454826 0 0 0"/>
                         
-                        <joint name="elbow_flex_r" stiffness="0.0" type="hinge" pos="0 0 0" 
+                        <joint name="elbow_flex_r" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" 
                                axis="0.226047 0.022269 0.973862" limited="true" range="-0.3 2.618" ref="0"/>
                         
                         <body name="radius_r" pos="-0.00745535 -0.0144153 0.0289071" quat="1.0 0.0 0.0 0.0">
@@ -320,17 +320,17 @@
                           <inertial pos="0 -0.133575 0" mass="0.700143737876607" 
                                     fullinertia="0.00419295 0.000874829 0.00454826 0 0 0"/>
                           
-                          <joint name="pro_sup_r" stiffness="0.0" type="hinge" pos="0 0 0" 
+                          <joint name="pro_sup_r" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" 
                                  axis="0.056398 0.998406 0.001952" limited="true" range="-0.6 1.5708" ref="0"/>
                           
                           <body name="wrist_flex_r" pos="-0.00974948 -0.261376 0.0150836" quat="1.0 0.0 0.0 0.0">
                             <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                            <joint name="wrist_flex_r" stiffness="0.0" type="hinge" pos="0 0 0" axis="0 0 1" 
+                            <joint name="wrist_flex_r" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" axis="0 0 1" 
                                    limited="true" range="-1.22173 1.22173" ref="0"/>
                             
                             <body name="wrist_dev_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
                               <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                              <joint name="wrist_dev_r" stiffness="0.0" type="hinge" pos="0 0 0" axis="1 0 0" 
+                              <joint name="wrist_dev_r" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" axis="1 0 0" 
                                      limited="true" range="-0.436332 0.610865" ref="0"/>
                               
                               <body name="hand_r" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
@@ -377,17 +377,17 @@
               <!-- LEFT ARM - Restructured -->
               <body name="arm_flex_l" pos="0.00339907 0.400239 -0.183151" quat="1.0 0.0 0.0 0.0">
                 <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                <joint name="arm_flex_l" type="hinge" pos="0 0 0" axis="0 0 1" 
+                <joint name="arm_flex_l" damping="1.0" stiffness="1.0" type="hinge" pos="0 0 0" axis="0 0 1" 
                        limited="true" range="-1.5708 1.5708" ref="0"/>
                 
                 <body name="arm_add_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
                   <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                  <joint name="arm_add_l" type="hinge" pos="0 0 0" axis="-1 0 0" 
+                  <joint name="arm_add_l" damping="1.0" stiffness="1.0" type="hinge" pos="0 0 0" axis="-1 0 0" 
                          limited="true" range="-2.0944 1.5708" ref="0"/>
                   
                   <body name="arm_rot_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
                     <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                    <joint name="arm_rot_l" type="hinge" pos="0 0 0" axis="0 -1 0" 
+                    <joint name="arm_rot_l" damping="1.0" stiffness="1.0" type="hinge" pos="0 0 0" axis="0 -1 0" 
                            limited="true" range="-1.5708 1.5708" ref="0"/>
                     
                     <body name="humerus_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
@@ -402,7 +402,7 @@
                         <inertial pos="0 -0.133575 0" mass="0.700143737876607" 
                                   fullinertia="0.00419295 0.000874829 0.00454826 0 0 0"/>
                         
-                        <joint name="elbow_flex_l" stiffness="0.0" type="hinge" pos="0 0 0" 
+                        <joint name="elbow_flex_l" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" 
                                axis="-0.226047 -0.022269 0.973862" limited="true" range="-0.3 2.618" ref="0"/>
                         
                         <body name="radius_l" pos="-0.00745535 -0.0144153 -0.0289071" quat="1.0 0.0 0.0 0.0">
@@ -411,17 +411,17 @@
                           <inertial pos="0 -0.133575 0" mass="0.700143737876607" 
                                     fullinertia="0.00419295 0.000874829 0.00454826 0 0 0"/>
                           
-                          <joint name="pro_sup_l" stiffness="0.0" type="hinge" pos="0 0 0" 
+                          <joint name="pro_sup_l" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" 
                                  axis="-0.056398 -0.998406 0.001952" limited="true" range="-0.60 1.5708" ref="0"/>
                           
                           <body name="wrist_flex_l" pos="-0.00974948 -0.261376 -0.0150836" quat="1.0 0.0 0.0 0.0">
                             <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                            <joint name="wrist_flex_l" stiffness="0.0" type="hinge" pos="0 0 0" axis="0 0 1" 
+                            <joint name="wrist_flex_l" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" axis="0 0 1" 
                                    limited="true" range="-1.22173 1.22173" ref="0"/>
                             
                             <body name="wrist_dev_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">
                               <inertial pos="0 0 0" mass="0.001" fullinertia="1e-6 1e-6 1e-6 0 0 0"/>
-                              <joint name="wrist_dev_l" stiffness="0.0" type="hinge" pos="0 0 0" axis="-1 0 0" 
+                              <joint name="wrist_dev_l" stiffness="0" damping="1.0" type="hinge" pos="0 0 0" axis="-1 0 0" 
                                      limited="true" range="-0.436332 0.610865" ref="0"/>
                               
                               <body name="hand_l" pos="0 0 0" quat="1.0 0.0 0.0 0.0">

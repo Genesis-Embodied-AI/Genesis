@@ -50,9 +50,20 @@ def test_skeleton_environment():
         print(f"✗ Reset failed: {e}")
         return False
     
+    cam = env.scene.add_camera(
+        res    = (1280, 960),
+        pos=(3.0, 0.0, 2.0),
+        lookat=(0.0, 0.0, 1.0),
+        fov=40,
+        GUI    = True
+    )
+
     # Test stepping
     try:
         for step in range(100):
+
+            cam.start_recording()
+
             # Random actions
             actions = torch.randn(env.num_envs, env.num_actions) * 100
             
@@ -72,8 +83,12 @@ def test_skeleton_environment():
             if torch.any(torch.isnan(rewards)):
                 print(f"✗ NaN detected in rewards at step {step}")
                 return False
+
+            cam.render()
         
         print(f"✓ Stepping test completed (10 steps)")
+
+        cam.stop_recording(save_to_filename='test_skeleton.mp4', fps=60)
         
     except Exception as e:
         print(f"✗ Stepping failed: {e}")
@@ -81,6 +96,8 @@ def test_skeleton_environment():
     
     print("✓ All tests passed!")
     return True
+
+    env.scene.reset_grad()
 
 
 if __name__ == "__main__":

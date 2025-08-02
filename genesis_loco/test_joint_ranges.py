@@ -81,22 +81,22 @@ def test_joint_ranges():
         obs, rewards, dones, info = env.step(stabilize_actions)
     
     print("Skeleton stabilized. Starting joint tests...\n")
+
+    
     
     # Test each action joint
     for action_idx, action_name in enumerate(env.action_spec):
-        print(f"Testing Action {action_idx + 1}/{len(env.action_spec)}: {action_name}")
+        print(f"Testing Action {action_idx}: {action_name}")
         
-        # Get corresponding joint name
-        joint_name = env._get_joint_name_from_action(action_name)
-        joint_idx = env._get_joint_index(joint_name)
+        # Get corresponding joint name and index using direct mapping (Option C)
+        # This uses the pre-computed action-to-joint-index mapping for O(1) lookup
+        joint_idx = env.action_to_joint_idx[action_name]
+        joint_name = env.robot.joints[joint_idx].name
         
-        if joint_idx is None:
-            print(f"  ✗ Joint not found: {joint_name}")
-            continue
-            
+        print(f"  Joint: {joint_name} (index: {joint_idx})")
+        
         # Get joint limits
         xml_limit = xml_limits.get(joint_name, (-3.14, 3.14))  # Default to ±π
-        print(f"  Joint: {joint_name}")
         print(f"  XML Limits: {xml_limit[0]:.3f} to {xml_limit[1]:.3f} radians")
         print(f"  XML Limits: {np.degrees(xml_limit[0]):.1f}° to {np.degrees(xml_limit[1]):.1f}°")
         
@@ -106,6 +106,7 @@ def test_joint_ranges():
         position_names = ["Neutral", "Positive Limit", "Negative Limit", "Return to Neutral"]
         
         for pos_idx, target_action in enumerate(test_positions):
+
             print(f"    {position_names[pos_idx]} (action: {target_action:+.1f})")
             
             # Create action vector (all zeros except current joint)
@@ -145,7 +146,8 @@ def test_joint_ranges():
     # List joint ranges
     print(f"\nJoint Limits Summary:")
     for action_name in env.action_spec:
-        joint_name = env._get_joint_name_from_action(action_name)
+        joint_idx = env.action_to_joint_idx[action_name]
+        joint_name = env.dof_names[joint_idx]
         xml_limit = xml_limits.get(joint_name, (-3.14, 3.14))
         print(f"  {joint_name:20s}: {xml_limit[0]:+.3f} to {xml_limit[1]:+.3f} rad "
               f"({np.degrees(xml_limit[0]):+.1f}° to {np.degrees(xml_limit[1]):+.1f}°)")
@@ -153,52 +155,10 @@ def test_joint_ranges():
     return True
 
 
-def test_gravity_response():
-    """Quick test to verify skeleton responds to gravity"""
-    print("\n=== Gravity Response Test ===")
-
-    gs.init()
-    
-    env = SkeletonHumanoidEnv(
-        num_envs=1,
-        episode_length_s=5.0,
-        dt=0.02,
-        use_box_feet=True,
-        disable_arms=False,
-        show_viewer=True
-    )
-    
-    obs, info = env.reset()
-    initial_height = env.root_pos[0, 2].item()
-    print(f"Initial height: {initial_height:.3f}m")
-    
-    # Apply zero actions (let gravity work)
-    for step in range(100):
-        zero_actions = torch.zeros(env.num_envs, env.num_actions)
-        obs, rewards, dones, info = env.step(zero_actions)
-        
-        current_height = env.root_pos[0, 2].item()
-        
-        if step % 25 == 0:
-            print(f"Step {step:3d}: Height = {current_height:.3f}m, Change = {current_height - initial_height:+.3f}m")
-    
-    final_height = env.root_pos[0, 2].item()
-    height_change = final_height - initial_height
-    
-    if abs(height_change) > 0.1:
-        print(f"✓ Gravity working: height changed by {height_change:+.3f}m")
-    else:
-        print(f"✗ Gravity issue: minimal height change ({height_change:+.3f}m)")
-
-
 if __name__ == "__main__":
     print("Starting comprehensive joint testing...\n")
     
     # Test joint ranges
-    # success = test_joint_ranges()
-    
-    # if success:
-        # Test gravity response
-    test_gravity_response()
+    success = test_joint_ranges()
     
     print("\nTesting complete!")

@@ -307,6 +307,7 @@ class GenesisLocoBaseEnv:
     
     def _apply_actions(self, actions: torch.Tensor):
         """Apply actions to the robot (to be implemented by subclasses)"""
+        
         # Default implementation: apply actions as joint position targets
         if actions.shape[-1] == self.num_dofs:
             self.robot.control_dofs_position(actions)
