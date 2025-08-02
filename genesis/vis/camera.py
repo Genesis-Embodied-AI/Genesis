@@ -594,36 +594,42 @@ class Camera(Sensor):
             The environment indices. If not provided, the camera pose will be set for all environments.
         """
         # Check that all provided inputs are of the same type (either all torch.Tensor or all numpy.ndarray)
+        n_envs = max(self._visualizer.scene.n_envs, 1)
         if transform is not None:
             transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
-        if pos is not None:
-            pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
-        if lookat is not None:
-            lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
-        if up is not None:
-            up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
-
-        # Expand to n_envs
-        n_envs = max(self._visualizer.scene.n_envs, 1)
-        if env_idx is None:
-            env_idx = torch.arange(n_envs)
-        if transform is not None:
             if transform.shape[-2:] != (4, 4):
                 raise ValueError(f"Transform shape {transform.shape} does not match (4, 4)")
             if transform.ndim == 2:
                 transform = transform.expand((n_envs, 4, 4))
+        else:
+            transform = self._multi_env_transform_tensor
+
         if pos is not None:
+            pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
             assert pos.shape[-1] == 3, f"Pos shape {pos.shape} does not match (n_envs, 3)"
             if pos.ndim == 1:
                 pos = pos.expand((n_envs, 3))
+        else:
+            pos = self._multi_env_pos_tensor
+
         if lookat is not None:
+            lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
             assert lookat.shape[-1] == 3, f"Lookat shape {lookat.shape} does not match (n_envs, 3)"
             if lookat.ndim == 1:
                 lookat = lookat.expand((n_envs, 3))
+        else:
+            lookat = self._multi_env_lookat_tensor
+
         if up is not None:
+            up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
             assert up.shape[-1] == 3, f"Up shape {up.shape} does not match (n_envs, 3)"
             if up.ndim == 1:
                 up = up.expand((n_envs, 3))
+        else:
+            up = self._multi_env_up_tensor
+
+        if env_idx is None:
+            env_idx = torch.arange(n_envs)
 
         assert (
             transform is None or transform.shape[0] == env_idx.shape[0]
@@ -643,15 +649,15 @@ class Camera(Sensor):
         new_lookat = self._multi_env_lookat_tensor[env_idx]
         new_up = self._multi_env_up_tensor[env_idx]
         if transform is not None:
-            new_transform = transform
+            new_transform = transform.clone()
             new_pos, new_lookat, new_up = gu.T_to_pos_lookat_up(new_transform)
         else:
             if pos is not None:
-                new_pos = pos
+                new_pos = pos.clone()
             if lookat is not None:
-                new_lookat = lookat
+                new_lookat = lookat.clone()
             if up is not None:
-                new_up = up
+                new_up = up.clone()
             new_transform = gu.pos_lookat_up_to_T(new_pos, new_lookat, new_up)
 
         new_quat = _T_to_quat_for_madrona(new_transform)
