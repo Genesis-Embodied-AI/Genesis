@@ -12,7 +12,8 @@ franka = scene.add_entity(
     #     file='urdf/panda_bullet/panda.urdf',
     #     fixed=True,
     # ),
-    gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    # gs.morphs.MJCF(file="/home/ez/Documents/Genesis/genesis_loco/skeleton/skeleton_torque.xml"),
+    gs.morphs.MJCF(file='/home/ez/Documents/Genesis/genesis_loco/skeleton/skeleton_restructured_panda_format.xml'),
 )
 
 scene.build()

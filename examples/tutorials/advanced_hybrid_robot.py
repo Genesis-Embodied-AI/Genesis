@@ -15,10 +15,10 @@ scene = gs.Scene(
         gravity=(0, 0, -9.8),
         enable_collision=True,
         enable_self_collision=False,
-        enable_adjacent_collision=False,
+        # enable_adjacent_collision=False,
         # Prevent the rigid contact solver from being too stiff otherwise this would cause large impulse, especially
         # because the simulation timestep must be very small to ensure numerical stability of rigid body dynamics.
-        constraint_timeconst=0.02,
+        # constraint_timeconst=0.02,
     ),
     mpm_options=gs.options.MPMOptions(
         lower_bound=(0.0, 0.0, -0.2),
