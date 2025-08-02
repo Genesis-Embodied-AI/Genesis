@@ -201,7 +201,9 @@ class PathPlanner(ABC):
         obj_geom_start: ti.i32,
         obj_geom_end: ti.i32,
     ):
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             collision_detected = self._func_check_collision(
                 ignore_geom_pairs,
                 i_b,
@@ -354,7 +356,9 @@ class RRT(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
                     [
@@ -434,7 +438,9 @@ class RRT(PathPlanner):
         - if collision is detected, remove the new node
         - if collision is not detected, check if the new node is within goal configuration
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 is_collision_detected = False
                 if not ignore_collision:
@@ -680,7 +686,9 @@ class RRTConnect(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
                     [
@@ -777,7 +785,9 @@ class RRTConnect(PathPlanner):
         - if collision is detected, remove the new node
         - if collision is not detected, check if the new node is within goal configuration
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 is_collision_detected = False
                 if not ignore_collision:

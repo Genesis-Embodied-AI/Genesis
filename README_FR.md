@@ -69,7 +69,7 @@ Page du projet : <https://genesis-embodied-ai.github.io/>
 Genesis est disponible via PyPI :
 
 ```bash
-pip install genesis-world  # Nécessite Python>=3.10,<3.13;
+pip install genesis-world  # Nécessite Python>=3.10,<3.14;
 ```
 
 Vous devez également installer **PyTorch** en suivant [les instructions officielles](https://pytorch.org/get-started/locally/).

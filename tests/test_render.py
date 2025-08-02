@@ -1,13 +1,43 @@
 import queue
 import sys
+from io import BytesIO
 
 import numpy as np
 import pytest
 import torch
+from PIL import Image
+from syrupy.extensions.image import PNGImageSnapshotExtension
 
 import genesis as gs
+import genesis.utils.geom as gu
+from genesis.utils import set_random_seed
+from genesis.utils.image_exporter import FrameImageExporter
 
 from .utils import assert_allclose, assert_array_equal
+
+
+IMG_STD_ERR_THR = 0.8
+
+
+class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
+    def matches(self, *, serialized_data, snapshot_data) -> bool:
+        img_arrays = []
+        for data in (serialized_data, snapshot_data):
+            buffer = BytesIO()
+            buffer.write(data)
+            buffer.seek(0)
+            img_arrays.append(np.asarray(Image.open(buffer)))
+        img_delta = img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)
+        return np.std(img_delta) < IMG_STD_ERR_THR
+
+    # def diff_snapshots(self, serialized_data, snapshot_data) -> "SerializableData":
+    #     # re-run pixelmatch and return a diff image (can cache on the class instance)
+    #     pass
+
+
+@pytest.fixture
+def png_snapshot(snapshot):
+    return snapshot.use_extension(PixelMatchSnapshotExtension)
 
 
 @pytest.mark.required
@@ -276,14 +306,13 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     )
     n_envs = 3
     env_spacing = (2.0, 2.0)
-    cams = [scene.add_camera(GUI=show_viewer, fov=70) for _ in range(n_envs)]
+    cams = [scene.add_camera(GUI=show_viewer, fov=70, env_idx=i_b) for i_b in range(n_envs)]
     scene.build(n_envs=n_envs, env_spacing=env_spacing)
 
-    T = np.eye(4)
-    T[:3, :3] = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-    T[:3, 3] = np.array([0.1, 0.0, 0.1])
-    for nenv, cam in enumerate(cams):
-        cam.attach(robot.get_link("hand"), T, nenv)
+    R = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    trans = np.array([0.1, 0.0, 0.1])
+    for cam in cams:
+        cam.attach(robot.get_link("hand"), gu.trans_R_to_T(trans, R))
 
     target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
     center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
@@ -314,11 +343,17 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
         for cam in cams:
             rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
             assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
-            robots_rgb_arrays.append(rgb_array)
+            robots_rgb_arrays.append(rgb_array.astype(np.int32))
         steps_rgb_queue.put(robots_rgb_arrays)
 
-        if steps_rgb_queue.full():  # we have a set of 2 consecutive frames
-            diff_tol = 0.02  # expect atlest 2% difference between each frame
+        # Make sure that cameras are recording different part of the scene
+        for rgb_diff in np.diff(robots_rgb_arrays, axis=0):
+            assert np.std(rgb_diff) > 10.0
+
+        # Make sure that the cameras are moving alongside the robot
+        # We expect atlest 2% difference between two consecutive frames
+        if steps_rgb_queue.full():
+            diff_tol = 0.02
             frames_t_minus_1 = steps_rgb_queue.get()
             frames_t = steps_rgb_queue.get()
             for i in range(n_envs):
@@ -381,3 +416,122 @@ def test_debug_draw(show_viewer):
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(sys.platform != "linux", reason="Madrona batch renderer only supports Linux.")
+@pytest.mark.parametrize("use_rasterizer", [True, False])
+@pytest.mark.parametrize("render_all_cameras", [True, False])
+@pytest.mark.parametrize("n_envs", [0, 4])
+def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n_envs, show_viewer, png_snapshot):
+    CAM_RES = (256, 256)
+
+    pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.02,
+            substeps=4,
+        ),
+        renderer=gs.options.renderers.BatchRenderer(
+            use_rasterizer=use_rasterizer,
+        ),
+    )
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            merge_fixed_links=False,
+        ),
+    )
+    cam_0 = scene.add_camera(
+        res=CAM_RES,
+        pos=(1.5, 0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        GUI=show_viewer,
+    )
+    cam_1 = scene.add_camera(
+        res=CAM_RES,
+        pos=(1.5, -0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        GUI=show_viewer,
+    )
+    cam_2 = scene.add_camera(
+        res=CAM_RES,
+        fov=45,
+        GUI=show_viewer,
+    )
+    scene.add_light(
+        pos=[0.0, 0.0, 1.5],
+        dir=[1.0, 1.0, -2.0],
+        directional=True,
+        castshadow=True,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.add_light(
+        pos=[4.0, -4.0, 4.0],
+        dir=[-1.0, 1.0, -1.0],
+        directional=False,
+        castshadow=True,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.build(n_envs=n_envs, env_spacing=(4.0, 4.0))
+
+    # Attach cameras
+    R = np.eye(3)
+    trans = np.array([0.1, 0.0, 0.1])
+    cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
+    cam_1.follow_entity(robot)
+
+    # Create an image exporter
+    exporter = FrameImageExporter(tmp_path)
+
+    # Initialize the simulation
+    set_random_seed(0)
+    dof_bounds = scene.rigid_solver.dofs_info.limit.to_torch(gs.device)
+    for i in range(max(n_envs, 1)):
+        qpos = torch.zeros(robot.n_dofs)
+        qpos[:2] = torch.rand(2) - 0.5
+        qpos[2] = 1.0
+        qpos[3:6] = 0.5 * (torch.rand(3) - 0.5)
+        qpos[6:] = torch.rand(robot.n_dofs - 6) - 0.5
+        robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
+
+        qvel = torch.zeros(robot.n_dofs)
+        qvel[:6] = torch.rand(6) - 0.5
+        robot.set_dofs_velocity(qvel, envs_idx=([i] if n_envs else None))
+
+    # Verify that the output is correct pixel-wise over multiple simulation steps
+    for i in range(2):
+        batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
+        if render_all_cameras:
+            rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
+
+            assert len(rgba) == len(depth) == len(scene.visualizer.cameras)
+            assert all(e.shape == (*batch_shape, 3) for e in rgba)
+            assert all(e.shape == (*batch_shape, 1) for e in depth)
+
+            exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
+        else:
+            rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
+
+            assert rgba.shape == (*batch_shape, 3)
+            assert depth.shape == (*batch_shape, 1)
+
+            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
+
+        scene.step()
+
+    for image_file in sorted(tmp_path.rglob("*.png")):
+        with open(image_file, "rb") as f:
+            assert f.read() == png_snapshot

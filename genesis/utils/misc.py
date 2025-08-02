@@ -205,9 +205,8 @@ def get_device(backend: gs_backend):
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
-            getattr(gs, "logger", LOGGER).warning(
-                "No Intel XPU device available. Falling back to CPU for torch device."
-            )
+            logger = getattr(gs, "logger", None) or LOGGER
+            logger.warning("No Intel XPU device available. Falling back to CPU for torch device.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
