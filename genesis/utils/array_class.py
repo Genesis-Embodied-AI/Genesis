@@ -1737,6 +1737,7 @@ class StructVgeomsInfo:
     vface_num: V_ANNOTATION
     vface_start: V_ANNOTATION
     vface_end: V_ANNOTATION
+    color: V_ANNOTATION
 
 
 def get_vgeoms_info(solver):
@@ -1751,6 +1752,7 @@ def get_vgeoms_info(solver):
         "vface_num": V(dtype=gs.ti_int, shape=shape),
         "vface_start": V(dtype=gs.ti_int, shape=shape),
         "vface_end": V(dtype=gs.ti_int, shape=shape),
+        "color": V(dtype=gs.ti_vec4, shape=shape),
     }
 
     if use_ndarray:

@@ -1140,7 +1140,7 @@ def scale_to_T(scale):
 
 
 @nb.jit(nopython=True, cache=True)
-def z_up_to_R(z, up=None, out=None):
+def _np_z_up_to_R(z, up=None, out=None):
     B = z.shape[:-1]
     if out is None:
         out_ = np.empty((*B, 3, 3), dtype=z.dtype)
@@ -1162,11 +1162,12 @@ def z_up_to_R(z, up=None, out=None):
             z[:] = 0.0, 1.0, 0.0
 
         if up is not None:
-            x[:] = np.cross(up, z)
+            x[:] = np.cross(up[i], z)
         else:
             x[0] = z[1]
             x[1] = -z[0]
             x[2] = 0.0
+
         x_norm = np.linalg.norm(x)
         if x_norm > gs.EPS:
             x /= x_norm
@@ -1177,28 +1178,95 @@ def z_up_to_R(z, up=None, out=None):
     return out_
 
 
-def pos_lookat_up_to_T(pos, lookat, up, *, dtype=np.float32):
-    pos = np.asarray(pos, dtype=dtype)
-    lookat = np.asarray(lookat, dtype=dtype)
-    up = np.asarray(up, dtype=dtype)
+def _tc_z_up_to_R(z, up=None, out=None):
+    B = z.shape[:-1]
+    if out is None:
+        R = torch.empty((*B, 3, 3), dtype=z.dtype, device=z.device)
+    else:
+        assert out.shape == (*B, 3, 3)
+        R = out
 
-    T = np.zeros((4, 4), dtype=dtype)
-    T[3, 3] = 1.0
-    T[:3, 3] = pos
+    # Set z as the third column of rotation matrix
+    R[..., 2] = z
 
-    z = pos - lookat
-    z_norm = np.linalg.norm(z)
-    if z_norm < gs.EPS:
-        z = np.array([0.0, 1.0, 0.0], dtype=dtype)
-    z_up_to_R(z, up=up, out=T[:3, :3])
+    # Handle batch dimension properly
+    x, y, z = R[..., 0], R[..., 1], R[..., 2]
 
-    return T
+    # Normalize z vectors
+    z_norm = torch.linalg.norm(z, dim=-1, keepdim=True)
+    z /= z_norm.clamp(min=gs.EPS)
+
+    # Handle zero norm cases
+    zero_mask = z_norm[..., 0] < gs.EPS
+    if zero_mask.any():
+        z[zero_mask] = torch.tensor((0.0, 1.0, 0.0), device=z.device, dtype=z.dtype)
+
+    # Compute x vectors (first column)
+    if up is not None:
+        x[:] = torch.cross(up, z, dim=-1)
+    else:
+        # Default up vector case
+        x[..., 0] = z[..., 1]
+        x[..., 1] = -z[..., 0]
+        x[..., 2] = 0.0
+
+    # Normalize x vectors
+    x_norm = torch.norm(x, dim=-1, keepdim=True)
+    x /= x_norm.clamp(min=gs.EPS)
+
+    # Handle zero x norm cases
+    zero_x_mask = x_norm[..., 0] < gs.EPS
+    if zero_x_mask.any():
+        # For zero x norm, set identity matrix
+        R[zero_x_mask] = torch.eye(3, device=z.device, dtype=z.dtype)
+
+        # Continue with non-zero cases
+        valid_mask = ~zero_x_mask
+        if valid_mask.any():
+            z_valid = z[valid_mask]
+            x_valid = x[valid_mask]
+            y[valid_mask] = torch.cross(z_valid, x_valid, dim=-1)
+    else:
+        # All x norms are valid, compute y vectors
+        y[:] = torch.cross(z, x, dim=-1)
+
+    return R
+
+
+def z_up_to_R(z, up=None, out=None):
+    if isinstance(z, torch.Tensor):
+        return _tc_z_up_to_R(z, up, out)
+    else:
+        return _np_z_up_to_R(z, up, out)
+
+
+def pos_lookat_up_to_T(pos, lookat, up):
+    if all(isinstance(e, torch.Tensor) for e in (pos, lookat, up) if e is not None):
+        T = torch.zeros((*pos.shape[:-1], 4, 4), dtype=pos.dtype, device=pos.device)
+        T[..., 3, 3] = 1.0
+        T[..., :3, 3] = pos
+
+        z = pos - lookat
+        z_up_to_R(z, up=up, out=T[..., :3, :3])
+        return T
+    elif all(isinstance(e, np.ndarray) for e in (pos, lookat, up) if e is not None):
+        T = np.zeros((*pos.shape[:-1], 4, 4), dtype=pos.dtype)
+        T[..., 3, 3] = 1.0
+        T[..., :3, 3] = pos
+
+        z = pos - lookat
+        z_up_to_R(z, up=up, out=T[..., :3, :3])
+        return T
+    else:
+        gs.raise_exception(
+            f"all of the inputs must be torch.Tensor or np.ndarray. got: {type(pos)=}, {type(lookat)=}, {type(up)=}"
+        )
 
 
 def T_to_pos_lookat_up(T):
-    pos = T[:3, 3]
-    lookat = T[:3, 3] - T[:3, 2]
-    up = T[:3, 1]
+    pos = T[..., :3, 3]
+    lookat = T[..., :3, 3] - T[..., :3, 2]
+    up = T[..., :3, 1]
     return pos, lookat, up
 
 

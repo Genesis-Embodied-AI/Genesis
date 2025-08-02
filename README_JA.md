@@ -69,7 +69,7 @@ Genesisの目指すところ：
 GenesisはPyPIで利用可能です：
 
 ```bash
-pip install genesis-world  # Python>=3.10,<3.13 が必要です;
+pip install genesis-world  # Python>=3.10,<3.14 が必要です;
 ```
 
 また、**PyTorch**を[公式手順](https://pytorch.org/get-started/locally/)に従ってインストールする必要があります。
