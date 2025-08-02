@@ -148,6 +148,12 @@ class SAPCouplerOptions(BaseCouplerOptions):
         Vert would be preferable when the mesh is very coarse, such as a single cube or a tetrahedron.
     fem_self_tet : bool, optional
         Whether to use tetrahedral based self-contact. Defaults to True.
+    rigid_floor_type : str, optional
+        Type of contact against the floor. Defaults to "tet". Can be "tet", "vert", or "none".
+        Tet would be the default choice for most cases.
+        Vert would be preferable when the mesh is very coarse, such as a single cube or a tetrahedron.
+    rigid_fem : bool, optional
+        Whether to enable coupling between rigid and FEM solvers. Defaults to True.
     Note
     ----
     Paper reference: https://arxiv.org/abs/2110.10107
@@ -169,7 +175,7 @@ class SAPCouplerOptions(BaseCouplerOptions):
     point_contact_stiffness: float = 1e8
     fem_floor_type: str = "tet"
     fem_self_tet: bool = True
-    rigid_floor_vert: bool = True
+    rigid_floor_type: str = "tet"
     rigid_fem: bool = True
 
 

@@ -150,6 +150,7 @@ class Simulator(RBC):
 
         # entities
         self._entities: list[Entity] = gs.List()
+        self._dummy = False  # used to force kernel compilation during scene.build()
 
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
