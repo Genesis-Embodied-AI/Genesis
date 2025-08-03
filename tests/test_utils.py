@@ -161,6 +161,38 @@ def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
 
 
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
+def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
+    for py_func, shapes_in, shapes_out in (
+        (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
+        (gu.pos_lookat_up_to_T, [[3], [3], [3]], [[4, 4]]),
+    ):
+        num_inputs = len(shapes_in)
+        shape_args = (*shapes_in, *shapes_out)
+        np_args, tc_args = [], []
+        for i in range(len(shape_args)):
+            np_arg = np.random.randn(*batch_shape, *shape_args[i]).clip(-1.0, 1.0).astype(gs.np_float)
+            tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
+
+            if i < num_inputs:
+                np_args.append(np_arg)
+                tc_args.append(tc_arg)
+
+        np_outs = py_func(*np_args)
+        if not isinstance(np_outs, (list, tuple)):
+            np_outs = (np_outs,)
+        for np_out, shape_out in zip(np_outs, shapes_out):
+            assert np_out.shape == (*batch_shape, *shape_out)
+
+        tc_outs = py_func(*tc_args)
+        if not isinstance(tc_outs, (list, tuple)):
+            tc_outs = (tc_outs,)
+        tc_outs = tuple(map(tensor_to_array, tc_outs))
+
+        for np_out, tc_out in zip(np_outs, tc_outs):
+            np.testing.assert_allclose(np_out, tc_out, atol=gs.EPS)
+
+
+@pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_inverse(batch_shape):
     import taichi as ti
 
@@ -174,14 +206,14 @@ def test_utils_geom_taichi_inverse(batch_shape):
         ti_value_in_args, ti_transform_args, ti_value_out_args, ti_value_inv_out_args = [], [], [], []
         for i, shape_arg in enumerate(map(tuple, (*shapes_in, *shapes_value_args, *shapes_value_args))):
             if shape_arg in ((4, 4), (3, 3)):
-                R = gu.rotvec_to_R(np.random.rand(*batch_shape, 3).astype(gs.np_float))
+                R = gu.rotvec_to_R(np.random.randn(*batch_shape, 3).clip(-1.0, 1.0).astype(gs.np_float))
                 if shape_arg == (4, 4):
-                    trans = np.random.rand(*batch_shape, 3).astype(gs.np_float)
+                    trans = np.random.randn(*batch_shape, 3).astype(gs.np_float)
                     np_arg = gu.trans_R_to_T(trans, R)
                 else:
                     np_arg = R
             else:
-                np_arg = np.random.rand(*batch_shape, *shape_arg).astype(gs.np_float)
+                np_arg = np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float)
 
             ti_type = ti.Vector if len(shape_arg) == 1 else ti.Matrix
             ti_arg = ti_type.field(*shape_arg, dtype=gs.ti_float, shape=batch_shape)
@@ -219,7 +251,7 @@ def test_utils_geom_taichi_identity(batch_shape):
         for shape_arg in (*shape_args, shape_args[0]):
             ti_type = ti.Vector if len(shape_arg) == 1 else ti.Matrix
             ti_arg = ti_type.field(*shape_arg, dtype=gs.ti_float, shape=batch_shape)
-            ti_arg.from_numpy(np.random.rand(*batch_shape, *shape_arg).astype(gs.np_float))
+            ti_arg.from_numpy(np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float))
             ti_args.append(ti_arg)
 
         num_funcs = len(ti_funcs)
@@ -241,9 +273,9 @@ def test_utils_geom_tensor_identity(batch_shape):
         np_args, tc_args = [], []
         for shape_arg in (*shape_args, shape_args[0]):
             if tuple(shape_arg) == (3, 3):
-                np_arg = gu.rotvec_to_R(np.random.rand(*batch_shape, 3).astype(gs.np_float))
+                np_arg = gu.rotvec_to_R(np.random.randn(*batch_shape, 3).clip(-1.0, 1.0).astype(gs.np_float))
             else:
-                np_arg = np.random.rand(*batch_shape, *shape_arg).astype(gs.np_float)
+                np_arg = np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float)
             tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
             np_args.append(np_arg)
             tc_args.append(tc_arg)

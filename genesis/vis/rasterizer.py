@@ -145,7 +145,7 @@ class Rasterizer(RBC):
             try:
                 self._renderer.make_current()
                 self._renderer.delete()
-            except OpenGL.error.GLError:
+            except (OpenGL.error.GLError, ImportError):
                 pass
             del self._renderer
             self._renderer = None
