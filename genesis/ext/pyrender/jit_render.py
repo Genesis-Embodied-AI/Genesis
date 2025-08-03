@@ -57,6 +57,7 @@ RenderFlags_SKIP_CULL_FACES = RenderFlags.SKIP_CULL_FACES
 RenderFlags_SHADOWS_DIRECTIONAL = RenderFlags.SHADOWS_DIRECTIONAL
 RenderFlags_SHADOWS_POINT = RenderFlags.SHADOWS_POINT
 RenderFlags_SKIP_FLOOR = RenderFlags.SKIP_FLOOR
+RenderFlags_OFFSCREEN = RenderFlags.OFFSCREEN
 RenderFlags_REFLECTIVE_FLOOR = RenderFlags.REFLECTIVE_FLOOR
 RenderFlags_FLAT = RenderFlags.FLAT
 
@@ -492,7 +493,7 @@ class JITRenderer:
                     wf = render_flags[id, 1]
                     if flags & RenderFlags_FLIP_WIREFRAME:
                         wf = not wf
-                    if (flags & RenderFlags_ALL_WIREFRAME) or wf:
+                    if wf or flags & RenderFlags_ALL_WIREFRAME:
                         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
                     else:
                         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)

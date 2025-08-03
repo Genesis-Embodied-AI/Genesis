@@ -49,35 +49,6 @@ class Mesh(object):
         self._name = value
 
     @property
-    def primitives(self):
-        """list of :class:`Primitive` : The primitives associated
-        with this mesh.
-        """
-        return self._primitives
-
-    @primitives.setter
-    def primitives(self, value):
-        self._primitives = value
-
-    @property
-    def weights(self):
-        """(k,) float : Weights to be applied to morph targets."""
-        return self._weights
-
-    @weights.setter
-    def weights(self, value):
-        self._weights = value
-
-    @property
-    def is_visible(self):
-        """bool : Whether the mesh is visible."""
-        return self._is_visible
-
-    @is_visible.setter
-    def is_visible(self, value):
-        self._is_visible = value
-
-    @property
     def bounds(self):
         """(2,3) float : The axis-aligned bounds of the mesh."""
         if self._bounds is None:
