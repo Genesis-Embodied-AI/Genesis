@@ -22,42 +22,6 @@ from genesis.utils.misc import tensor_to_array
 from ..base_sensor import Sensor
 
 
-def get_link_mesh(link, use_visual_mesh=False):
-    """
-    Extract mesh from a given link.
-
-    Args:
-        link: Genesis link object
-        use_visual_mesh: Whether to use visual mesh (True) or collision mesh (False)
-
-    Returns:
-        trimesh.Trimesh: Combined mesh for the link
-    """
-    meshes = []
-    if use_visual_mesh:
-        geoms = link.vgeoms
-    else:
-        geoms = link.geoms
-
-    for i, geom in enumerate(geoms):
-        T = trans_quat_to_T(
-            (geom.get_pos() - link.get_pos()).cpu(),
-            R_to_quat((quat_to_R(geom.get_quat()) @ torch.linalg.inv(quat_to_R(link.get_quat())))).cpu(),
-        )
-        if T.ndim == 3:
-            T = T[0]  # NOTE: we use the canonical space so batch can be ignored
-        mesh = geom.get_trimesh().copy()  # NOTE: avoid in-place write
-        mesh.apply_transform(T)
-        meshes.append(mesh)
-
-    if len(meshes) == 0:
-        # Return empty mesh if no geometry
-        return trimesh.Trimesh()
-
-    combined_mesh = trimesh.util.concatenate(meshes)
-    return combined_mesh
-
-
 # Global constants for LiDAR ray casting - will be initialized when needed
 NO_HIT_RAY_VAL = None
 NO_HIT_SEGMENTATION_VAL = None
@@ -100,10 +64,6 @@ class LidarMeshData:
         # Copy data to Taichi fields
         self.vertices.from_numpy(vertices.astype(np.float32))
         self.triangles.from_numpy(triangles.astype(np.int32))
-
-        # Pre-store numpy arrays for kernel usage (static mesh optimization)
-        self.vertices_np = vertices.astype(np.float32)
-        self.triangles_np = triangles.astype(np.int32)
 
         # Build BVH acceleration structure
         self._build_bvh()
@@ -264,9 +224,9 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
 
 @ti.kernel
 def lidar_cast_rays_kernel_bvh(
-    # Mesh data
-    mesh_vertices: ti.types.ndarray(ndim=2),  # [n_vertices, 3]
-    mesh_triangles: ti.types.ndarray(ndim=2),  # [n_triangles, 3]
+    # Mesh data (now using Taichi fields directly - no CPU->GPU transfer!)
+    mesh_vertices: ti.template(),  # GPU Taichi field [n_vertices, 3]
+    mesh_triangles: ti.template(),  # GPU Taichi field [n_triangles, 3]
     # BVH data structures
     bvh_nodes: ti.template(),  # The BVH node tree
     bvh_morton_codes: ti.template(),  # Maps sorted leaves to original triangle indices
@@ -281,7 +241,7 @@ def lidar_cast_rays_kernel_bvh(
     world_frame: ti.i32,
 ):
     """
-    Taichi kernel for LiDAR ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
+    Taichi kernel for LiDAR ray casting.
     """
     n_triangles = mesh_triangles.shape[0]
 
@@ -336,15 +296,10 @@ def lidar_cast_rays_kernel_bvh(
                     # We need to find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
                     original_tri_idx = bvh_morton_codes[0, sorted_leaf_idx][1]
-
-                    # Get triangle vertices
-                    v0_idx = mesh_triangles[original_tri_idx, 0]
-                    v1_idx = mesh_triangles[original_tri_idx, 1]
-                    v2_idx = mesh_triangles[original_tri_idx, 2]
-
-                    v0 = ti.math.vec3(mesh_vertices[v0_idx, 0], mesh_vertices[v0_idx, 1], mesh_vertices[v0_idx, 2])
-                    v1 = ti.math.vec3(mesh_vertices[v1_idx, 0], mesh_vertices[v1_idx, 1], mesh_vertices[v1_idx, 2])
-                    v2 = ti.math.vec3(mesh_vertices[v2_idx, 0], mesh_vertices[v2_idx, 1], mesh_vertices[v2_idx, 2])
+                    tri_indices = mesh_triangles[original_tri_idx]
+                    v0 = mesh_vertices[tri_indices[0]]
+                    v1 = mesh_vertices[tri_indices[1]]
+                    v2 = mesh_vertices[tri_indices[2]]
 
                     # Perform the expensive ray-triangle intersection test
                     hit_result = ray_triangle_intersection(lidar_position, ray_direction_world, v0, v1, v2)
@@ -413,8 +368,8 @@ class LidarKernels:
 
         # Call the BVH-accelerated kernel
         lidar_cast_rays_kernel_bvh(
-            self.mesh_data.vertices_np,
-            self.mesh_data.triangles_np,
+            self.mesh_data.vertices,
+            self.mesh_data.triangles,
             self.mesh_data.bvh.nodes,
             self.mesh_data.bvh.morton_codes,
             lidar_positions,
