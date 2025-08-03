@@ -361,6 +361,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
 
 
+@pytest.mark.required
 def test_debug_draw(show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -421,7 +422,6 @@ def test_debug_draw(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(sys.platform != "linux", reason="Madrona batch renderer only supports Linux.")
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
 @pytest.mark.parametrize("n_envs", [0, 4])
