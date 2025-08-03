@@ -95,9 +95,6 @@ class HoverEnv:
         # build scene
         self.scene.build(n_envs=num_envs)
 
-        # add the following line
-        self.drone.set_dofs_damping(torch.tensor([0.0, 0.0, 0.0, 1e-4, 1e-4, 1e-4]))  # Set d
-
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
         for name in self.reward_scales.keys():
