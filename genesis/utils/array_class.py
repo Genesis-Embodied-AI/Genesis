@@ -1609,12 +1609,19 @@ def get_edges_info(solver):
         return ClassEdgesInfo()
 
 
-# =========================================== FreeVertsState ===========================================
+# =========================================== VertsState ===========================================
 
 
 @dataclasses.dataclass
-class StructFreeVertsState:
+class StructVertsState:
     pos: V_ANNOTATION
+
+
+@ti.data_oriented
+class ClassVertsState:
+    def __init__(self, kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
 def get_free_verts_state(solver):
@@ -1624,24 +1631,9 @@ def get_free_verts_state(solver):
     }
 
     if use_ndarray:
-        return StructFreeVertsState(**kwargs)
+        return StructVertsState(**kwargs)
     else:
-
-        @ti.data_oriented
-        class ClassFreeVertsState:
-            def __init__(self):
-                for k, v in kwargs.items():
-                    setattr(self, k, v)
-
-        return ClassFreeVertsState()
-
-
-# =========================================== FixedVertsState ===========================================
-
-
-@dataclasses.dataclass
-class StructFixedVertsState:
-    pos: V_ANNOTATION
+        return ClassVertsState(kwargs)
 
 
 def get_fixed_verts_state(solver):
@@ -1651,16 +1643,9 @@ def get_fixed_verts_state(solver):
     }
 
     if use_ndarray:
-        return StructFixedVertsState(**kwargs)
+        return StructVertsState(**kwargs)
     else:
-
-        @ti.data_oriented
-        class ClassFixedVertsState:
-            def __init__(self):
-                for k, v in kwargs.items():
-                    setattr(self, k, v)
-
-        return ClassFixedVertsState()
+        return ClassVertsState(kwargs)
 
 
 # =========================================== VvertsInfo ===========================================
@@ -1948,8 +1933,7 @@ LinksState = ti.template() if not use_ndarray else StructLinksState
 LinksInfo = ti.template() if not use_ndarray else StructLinksInfo
 JointsInfo = ti.template() if not use_ndarray else StructJointsInfo
 JointsState = ti.template() if not use_ndarray else StructJointsState
-FreeVertsState = ti.template() if not use_ndarray else StructFreeVertsState
-FixedVertsState = ti.template() if not use_ndarray else StructFixedVertsState
+VertsState = ti.template() if not use_ndarray else StructVertsState
 VertsInfo = ti.template() if not use_ndarray else StructVertsInfo
 EdgesInfo = ti.template() if not use_ndarray else StructEdgesInfo
 FacesInfo = ti.template() if not use_ndarray else StructFacesInfo
@@ -1968,3 +1952,4 @@ SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
 ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
+AABBState = ti.template()

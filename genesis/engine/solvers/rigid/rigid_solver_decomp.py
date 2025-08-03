@@ -15,13 +15,13 @@ from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TEN
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.styles import colors, formats
+from genesis.utils.sdf_decomp import SDF
 import genesis.utils.array_class as array_class
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from ....utils.sdf_decomp import SDF
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -4773,8 +4773,8 @@ def kernel_update_verts_for_geom(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     _B = geoms_state.verts_updated.shape[1]
     for i_b in range(_B):
@@ -4795,20 +4795,26 @@ def kernel_update_verts_for_geom(
                 geoms_state.verts_updated[i_g, 0] = 1
 
 
-@ti.func
-def func_update_all_verts(self):
-    ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_v, i_b in ti.ndrange(self.n_verts, self._B):
-        g_pos = self.geoms_state.pos[self.verts_info.geom_idx[i_v], i_b]
-        g_quat = self.geoms_state.quat[self.verts_info.geom_idx[i_v], i_b]
-        verts_state_idx = self.verts_info.verts_state_idx[i_v]
-        if self.verts_info.is_free[i_v]:
-            self.free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                self.verts_info.init_pos[i_v], g_pos, g_quat
+@ti.kernel
+def kernel_update_all_verts(
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+):
+    n_verts = verts_info.geom_idx.shape[0]
+    _B = geoms_state.pos.shape[1]
+    for i_v, i_b in ti.ndrange(n_verts, _B):
+        g_pos = geoms_state.pos[verts_info.geom_idx[i_v], i_b]
+        g_quat = geoms_state.quat[verts_info.geom_idx[i_v], i_b]
+        verts_state_idx = verts_info.verts_state_idx[i_v]
+        if verts_info.is_free[i_v]:
+            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], g_pos, g_quat
             )
         elif i_b == 0:
-            self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                self.verts_info.init_pos[i_v], g_pos, g_quat
+            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], g_pos, g_quat
             )
 
 
