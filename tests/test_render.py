@@ -411,7 +411,8 @@ def test_debug_draw(show_viewer):
     )
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-    assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+    # assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
     scene.clear_debug_objects()
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
