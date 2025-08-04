@@ -2296,53 +2296,48 @@ class RigidSolver(Solver):
             self.fixed_verts_state,
         )
 
-    @gs.assert_built
     def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
-        n_welds = tuple(self.constraint_solver.ti_n_equalities.to_numpy())
-        n_envs = len(n_welds)
-        n_welds_max = max(n_welds) if n_welds else 0
-        out_size = n_welds_max * n_envs
+        n_eqs = tuple(self.constraint_solver.constraint_state.ti_n_equalities.to_numpy())
+        n_envs = len(n_eqs)
+        n_max = max(n_eqs) if n_eqs else 0
+
+        if as_tensor:
+            out_size = n_envs * n_max
+            splits = None
+        else:
+            cumsum = np.cumsum(n_eqs, dtype=np.int32)
+            splits = list(cumsum[:-1])
+            out_size = int(cumsum[-1]) if n_envs else 0
 
         if to_torch:
             buf = torch.full((out_size, 3), -1, dtype=gs.tc_int, device=gs.device)
         else:
             buf = np.full((out_size, 3), -1, dtype=np.int32)
 
-        if n_welds_max > 0:
-            self._kernel_collect_welds(buf)
-
-        if to_torch:
-            buf_view = buf.view(n_envs, n_welds_max, 3)
-        else:
-            buf_view = buf.reshape(n_envs, n_welds_max, 3)
-        env_idx = buf_view[..., 0]
-        obj_a = buf_view[..., 1]
-        obj_b = buf_view[..., 2]
+        if n_max > 0:
+            kernel_collect_welds(
+                as_tensor,
+                buf,
+                self.constraint_solver.constraint_state,
+                self.equalities_info,
+                self._static_rigid_sim_config,
+            )
 
         if as_tensor:
+            if n_envs > 0:
+                buf = buf.view(n_envs, n_max, 3) if to_torch else buf.reshape(n_envs, n_max, 3)
+            env_idx, obj_a, obj_b = buf[..., 0], buf[..., 1], buf[..., 2]
             return {"env": env_idx, "obj_a": obj_a, "obj_b": obj_b}
-        result_a = []
-        result_b = []
-        for e, count in enumerate(n_welds):
-            result_a.append(obj_a[e, :count].copy())
-            result_b.append(obj_b[e, :count].copy())
-        if n_envs == 1:
-            return {"obj_a": result_a[0], "obj_b": result_b[0]}
-        return {"obj_a": result_a, "obj_b": result_b}
 
-    @ti.kernel
-    def _kernel_collect_welds(self, buf: ti.types.ndarray()):
-        for env in range(self.n_envs):
-            base = env * self.n_equalities_candidate
-            out = 0
-            n_eq = self.constraint_solver.ti_n_equalities[env]
-            for j in range(n_eq):
-                rec = self.equalities_info[j, env]
-                if rec.eq_type == gs.EQUALITY_TYPE.WELD and out < self.n_equalities_candidate:
-                    buf[base + out, 0] = env
-                    buf[base + out, 1] = rec.eq_obj1id
-                    buf[base + out, 2] = rec.eq_obj2id
-                    out += 1
+        if n_envs == 0:
+            return {"obj_a": [], "obj_b": []}
+
+        parts = torch.split(buf, n_eqs) if to_torch else np.split(buf, splits)
+        a = [p[:, 1] for p in parts]
+        b = [p[:, 2] for p in parts]
+        if n_envs == 1:
+            return {"obj_a": a[0], "obj_b": b[0]}
+        return {"obj_a": a, "obj_b": b}
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -6765,3 +6760,38 @@ def kernel_delete_weld_constraint(
                         constraint_state.ti_n_equalities[i_b] - 1, i_b
                     ]
                 constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
+
+
+@ti.kernel
+def kernel_collect_welds(
+    is_padded: ti.template(),
+    buf: ti.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
+    equalities_info: array_class.EqualitiesInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    B = constraint_state.ti_n_equalities.shape[0]
+    max_eq = 0
+    for e in range(B):
+        n = constraint_state.ti_n_equalities[e]
+        if n > max_eq:
+            max_eq = n
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for e in range(B):
+        base = 0
+        if ti.static(is_padded):
+            base = e * max_eq
+        else:
+            for pe in range(e):
+                base += constraint_state.ti_n_equalities[pe]
+
+        out = 0
+        n = constraint_state.ti_n_equalities[e]
+        for i in range(n):
+            if equalities_info.eq_type[i, e] == gs.EQUALITY_TYPE.WELD and out < max_eq:
+                idx = base + out
+                buf[idx, 0] = e
+                buf[idx, 1] = equalities_info.eq_obj1id[i, e]
+                buf[idx, 2] = equalities_info.eq_obj2id[i, e]
+                out += 1
