@@ -158,6 +158,7 @@ class Collider:
             links_root_idx = links_root_idx[:, 0]
             links_parent_idx = links_parent_idx[:, 0]
             links_is_fixed = links_is_fixed[:, 0]
+        entities_is_local_collision_mask = solver.entities_info.is_local_collision_mask.to_numpy()
 
         n_possible_pairs = 0
         collision_pair_validity = np.zeros((n_geoms, n_geoms), dtype=gs.np_int)
@@ -165,6 +166,8 @@ class Collider:
             for i_gb in range(i_ga + 1, n_geoms):
                 i_la = geoms_link_idx[i_ga]
                 i_lb = geoms_link_idx[i_gb]
+                i_ea = links_entity_idx[i_la]
+                i_eb = links_entity_idx[i_lb]
 
                 # geoms in the same link
                 if i_la == i_lb:
@@ -182,7 +185,10 @@ class Collider:
                         continue
 
                 # contype and conaffinity
-                if not (
+                if (
+                    (i_ea == i_eb)
+                    or not (entities_is_local_collision_mask[i_ea] or entities_is_local_collision_mask[i_eb])
+                ) and not (
                     (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
                 ):
                     continue

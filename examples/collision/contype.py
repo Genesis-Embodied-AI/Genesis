@@ -37,8 +37,8 @@ def main():
             pos=(0.025, 0, 0.5),
             quat=(0, 0, 0, 1),
             size=(0.1, 0.1, 0.1),
-            contype=1,
-            conaffinity=1,
+            contype=0b001,
+            conaffinity=0b001,
         ),
         surface=gs.surfaces.Default(
             color=(1.0, 0.0, 0.0, 1.0),
@@ -49,8 +49,8 @@ def main():
             pos=(-0.025, 0, 1.0),
             quat=(0, 0, 0, 1),
             size=(0.1, 0.1, 0.1),
-            contype=2,
-            conaffinity=2,
+            contype=0b010,
+            conaffinity=0b010,
         ),
         surface=gs.surfaces.Default(
             color=(0.0, 1.0, 0.0, 1.0),
@@ -61,8 +61,8 @@ def main():
             pos=(0.0, 0, 1.5),
             quat=(0, 0, 0, 1),
             size=(0.1, 0.1, 0.1),
-            contype=3,
-            conaffinity=3,
+            contype=0b011,
+            conaffinity=0b011,
         ),
         surface=gs.surfaces.Default(
             color=(0.0, 0.0, 1.0, 1.0),
@@ -74,8 +74,8 @@ def main():
             scale=0.004,
             euler=(0, 0, 90),
             pos=(-0.1, 0.0, 1.0),
-            contype=4,
-            conaffinity=4,
+            contype=0b100,
+            conaffinity=0b100,
         ),
     )
 
