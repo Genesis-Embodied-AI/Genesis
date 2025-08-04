@@ -1,6 +1,7 @@
 import os
 import pickle as pkl
 
+import fast_simplification
 import numpy as np
 import numpy.typing as npt
 import pyvista as pv
@@ -14,7 +15,6 @@ import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
-import fast_simplification
 from genesis.repr_base import RBC
 
 
@@ -93,16 +93,23 @@ class Mesh(RBC):
         """
         if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > decimate_face_num:
             self._mesh.process(validate=True)
-            self._mesh = trimesh.Trimesh(
-                *fast_simplification.simplify(
-                    self._mesh.vertices,
-                    self._mesh.faces,
-                    target_count=decimate_face_num,
-                    agg=decimate_aggressiveness,
-                    # TODO: lossless option support is pending on fast_simplification package.
-                    # lossless=(decimate_aggressiveness == 0),
+            # TODO: lossless option support is pending on fast_simplification package.
+            # NOTE: https://github.com/pyvista/fast-simplification/pull/71
+            if decimate_aggressiveness == 0:
+                gs.logger.warning("Lossless simplification is not supported yet. Using not applying simplification.")
+                self._mesh = trimesh.Trimesh(
+                    vertices=self._mesh.vertices,
+                    faces=self._mesh.faces,
                 )
-            )
+            else:
+                self._mesh = trimesh.Trimesh(
+                    *fast_simplification.simplify(
+                        self._mesh.vertices,
+                        self._mesh.faces,
+                        target_count=decimate_face_num,
+                        agg=decimate_aggressiveness,
+                    )
+                )
 
             # need to run convexify again after decimation, because sometimes decimating a convex-mesh can make it non-convex...
             if convexify:
