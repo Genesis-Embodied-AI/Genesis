@@ -35,7 +35,7 @@ class Solver(RBC):
         self._B = self._sim._B
         if self._init_gravity is not None:
             g_np = np.asarray(self._init_gravity, dtype=gs.np_float)
-            g_np = np.repeat(g_np[None], self._B, axis=0)
+            g_np = np.tile(g_np, (self._B, 1))
             self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
             self._gravity.from_numpy(g_np)
 
@@ -46,7 +46,7 @@ class Solver(RBC):
         g = np.asarray(gravity, dtype=gs.np_float)
         if envs_idx is None:
             if g.ndim == 1:
-                g = np.repeat(g[None], self._B, axis=0)
+                g = np.tile(g, (self._B, 1))
             self._gravity.from_numpy(g)
         else:
             self._gravity[envs_idx] = g

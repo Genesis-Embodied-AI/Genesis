@@ -4,7 +4,7 @@ import genesis as gs
 
 
 EVENT_HANDLE_STATE = Union[Literal[True], None]
-EVENT_HANDLED = True
+EVENT_HANDLED: Literal[True] = True
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 

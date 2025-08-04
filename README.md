@@ -77,7 +77,7 @@ Install **PyTorch** first following the [official instructions](https://pytorch.
 
 Then, install Genesis via PyPI:
 ```bash
-pip install genesis-world  # Requires Python>=3.10,<3.13;
+pip install genesis-world  # Requires Python>=3.10,<3.14;
 ```
 
 For the latest version to date, make sure that `pip` is up-to-date via `pip install --upgrade pip`, then run command:
@@ -172,6 +172,7 @@ Genesis's development has been made possible thanks to these open-source project
 - [libccd](https://github.com/danfis/libccd): Reference for collision detection.
 - [PyRender](https://github.com/mmatl/pyrender): Rasterization-based renderer.
 - [LuisaCompute](https://github.com/LuisaGroup/LuisaCompute) and [LuisaRender](https://github.com/LuisaGroup/LuisaRender): Ray-tracing DSL.
+- [Madrona](https://github.com/shacklettbp/madrona) and [Madrona-mjx](https://github.com/shacklettbp/madrona_mjx): Batch renderer backend
 
 ## Associated Papers
 

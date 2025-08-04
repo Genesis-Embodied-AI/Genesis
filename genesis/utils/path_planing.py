@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
 
 
 class PathPlanner(ABC):
@@ -200,7 +201,9 @@ class PathPlanner(ABC):
         obj_geom_start: ti.i32,
         obj_geom_end: ti.i32,
     ):
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             collision_detected = self._func_check_collision(
                 ignore_geom_pairs,
                 i_b,
@@ -222,11 +225,11 @@ class PathPlanner(ABC):
         is_collision_detected = gs.ti_int(False)
         for i_c in range(self._solver.collider._collider_state.n_contacts[i_b]):
             if not is_collision_detected:
-                i_ga = self._solver.collider._collider_state.contact_data[i_c, i_b].geom_a
-                i_gb = self._solver.collider._collider_state.contact_data[i_c, i_b].geom_b
+                i_ga = self._solver.collider._collider_state.contact_data.geom_a[i_c, i_b]
+                i_gb = self._solver.collider._collider_state.contact_data.geom_b[i_c, i_b]
 
                 is_ignored = gs.ti_int(False)
-                if self._solver.collider._collider_state.contact_data[i_c, i_b].penetration < self.PENETRATION_EPS:
+                if self._solver.collider._collider_state.contact_data.penetration[i_c, i_b] < self.PENETRATION_EPS:
                     is_ignored = True
                 for i_p in range(ignore_geom_pairs.shape[0]):
                     if not is_ignored:
@@ -353,7 +356,9 @@ class RRT(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
                     [
@@ -394,7 +399,7 @@ class RRT(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    self._solver._func_forward_kinematics_entity(
+                    rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         self._solver.links_state,
@@ -407,7 +412,7 @@ class RRT(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    self._solver._func_update_geoms(
+                    rigid_solver_decomp.func_update_geoms(
                         i_b,
                         self._solver.entities_info,
                         self._solver.geoms_info,
@@ -433,7 +438,9 @@ class RRT(PathPlanner):
         - if collision is detected, remove the new node
         - if collision is not detected, check if the new node is within goal configuration
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 is_collision_detected = False
                 if not ignore_collision:
@@ -679,7 +686,9 @@ class RRTConnect(PathPlanner):
         - add new node
         - set the steer result (to prepare for collision checking)
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 random_sample = ti.Vector(
                     [
@@ -736,7 +745,7 @@ class RRTConnect(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    self._solver._func_forward_kinematics_entity(
+                    rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         self._solver.links_state,
@@ -749,7 +758,7 @@ class RRTConnect(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    self._solver._func_update_geoms(
+                    rigid_solver_decomp.func_update_geoms(
                         i_b,
                         self._solver.entities_info,
                         self._solver.geoms_info,
@@ -776,7 +785,9 @@ class RRTConnect(PathPlanner):
         - if collision is detected, remove the new node
         - if collision is not detected, check if the new node is within goal configuration
         """
-        for i_b in envs_idx:
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
             if self._rrt_is_active[i_b]:
                 is_collision_detected = False
                 if not ignore_collision:
