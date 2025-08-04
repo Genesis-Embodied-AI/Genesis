@@ -287,6 +287,10 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
 
+        try:
+            gs.utils.get_device(backend)
+        except gs.GenesisException:
+            pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
         gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
         if backend != gs.cpu and gs.backend == gs.cpu:

@@ -281,10 +281,6 @@ class Viewer(pyglet.window.Window):
             elif key in self.viewer_flags:
                 self._viewer_flags[key] = kwargs[key]
 
-        # # TODO MAC OS BUG FOR SHADOWS
-        # if sys.platform == 'darwin':
-        #     self._render_flags['shadows'] = False
-
         self._registered_keys = {}
         if registered_keys is not None:
             self._registered_keys = {ord(k.lower()): registered_keys[k] for k in registered_keys}
