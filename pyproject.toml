@@ -59,6 +59,8 @@ dependencies = [
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
     "gs-madrona>=0.0.2; platform_system == 'Linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
+    # Used for mesh simplification
+    "fast_simplification",
 ]
 
 [project.optional-dependencies]
