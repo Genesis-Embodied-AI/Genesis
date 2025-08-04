@@ -49,7 +49,14 @@ class Solver(RBC):
                 g = np.tile(g, (self._B, 1))
             self._gravity.from_numpy(g)
         else:
-            self._gravity[envs_idx] = g
+            assert g.shape == (envs_idx.shape[0], 3), "Input gravity array should match (len(envs_idx), 3)"
+            self._kernel_set_gravity(g, envs_idx)
+
+    @ti.kernel
+    def _kernel_set_gravity(self, gravity: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
+        for i_b_ in range(envs_idx.shape[0]):
+            for j in ti.static(range(3)):
+                self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
