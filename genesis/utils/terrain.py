@@ -386,15 +386,13 @@ def convert_heightfield_to_watertight_trimesh(
 
     # This is the mesh used for non-sdf purposes.
     # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
-
     # TODO: lossless option support is pending on fast_simplification package.
-    # NOTE: https://github.com/pyvista/fast-simplification/pull/71
-    gs.logger.warning("Lossless simplification is not supported yet. Using lossy simplification.")
-    v_simp, f_simp = fast_simplification.simplify(
-        sdf_mesh.vertices,
-        sdf_mesh.faces,
-        target_count=0,
-    )
+    # v_simp, f_simp = fast_simplification.simplify(
+    #     sdf_mesh.vertices,
+    #     sdf_mesh.faces,
+    #     target_count=0,
+    #     lossless=True,
+    # )
 
     if uvs is not None:
         idx_map = np.empty(len(v_simp), dtype=np.int64)
