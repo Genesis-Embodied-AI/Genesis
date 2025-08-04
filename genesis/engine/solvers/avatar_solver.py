@@ -29,7 +29,7 @@ class AvatarSolver(RigidSolver):
         self._options = options
 
     def _init_mass_mat(self):
-        self.entity_max_dofs = max([entity.n_dofs for entity in self._entities])
+        self.entity_max_dofs = max(entity.n_dofs for entity in self._entities)
 
     def _init_invweight(self):
         pass

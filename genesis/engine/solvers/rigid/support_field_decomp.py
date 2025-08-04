@@ -1,5 +1,7 @@
-from typing import TYPE_CHECKING
 from math import pi
+from typing import TYPE_CHECKING
+
+
 from dataclasses import dataclass
 
 import numpy as np

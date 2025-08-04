@@ -513,7 +513,7 @@ class Plastic(Surface):
 
 class BSDF(Surface):
     """
-    Plastic surface is the most basic type of surface.
+    Bidirectional Scattering Distribution Function.
 
     Parameters
     ----------
@@ -579,7 +579,8 @@ class BSDF(Surface):
 
 class Emission(Surface):
     """
-    Emission surface. This surface emits light. Note that in Genesis's ray tracing pipeline, lights are not a special type of objects, but simply entities with emission surfaces.
+    Emission surface. This surface emits light. Note that in Genesis's ray tracing pipeline, lights are not a special
+    type of objects, but simply entities with emission surfaces.
 
     Parameters
     ----------
@@ -597,9 +598,11 @@ class Emission(Surface):
 
 
 ############################ Handy shortcuts ############################
+
+
 class Default(BSDF):
     """
-    The default surface type used in Genesis. This is just an alias for `Plastic`.
+    The default surface type used in Genesis. This is just an alias for `BSDF`.
     """
 
     pass

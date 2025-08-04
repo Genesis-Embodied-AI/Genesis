@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import taichi as ti
 
@@ -152,34 +153,26 @@ class Simulator(RBC):
         self._entities: list[Entity] = gs.List()
 
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
-        if isinstance(material, gs.materials.Tool):
-            entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
-
+        if material is None or isinstance(material, gs.materials.Rigid):
+            entity = self.rigid_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
         elif isinstance(material, gs.materials.Avatar):
             entity = self.avatar_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
-
-        elif isinstance(material, gs.materials.Rigid):
-            entity = self.rigid_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
-
+        elif isinstance(material, gs.materials.Tool):
+            entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
         elif isinstance(material, gs.materials.MPM.Base):
             entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.SPH.Base):
             entity = self.sph_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.PBD.Base):
             entity = self.pbd_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.FEM.Base):
             entity = self.fem_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.Hybrid):
             entity = HybridEntity(
                 self.n_entities, self.scene, material, morph, surface
             )  # adding to solver is handled in the hybrid entity
-
         else:
-            gs.raise_exception(f"Material not supported.: {material}")
+            gs.raise_exception(f"Material not supported: {material}")
 
         self._entities.append(entity)
         return entity

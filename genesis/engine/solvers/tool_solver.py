@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 import taichi as ti
 
 from genesis.engine.boundaries import FloorBoundary

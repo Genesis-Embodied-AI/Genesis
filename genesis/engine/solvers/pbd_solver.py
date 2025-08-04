@@ -251,7 +251,6 @@ class PBDSolver(Solver):
                 vvert_start=self.n_vverts,
                 vface_start=self.n_vfaces,
             )
-
         elif isinstance(material, gs.materials.PBD.Elastic):
             entity = PBD3DEntity(
                 scene=self.scene,
@@ -267,7 +266,6 @@ class PBDSolver(Solver):
                 vvert_start=self.n_vverts,
                 vface_start=self.n_vfaces,
             )
-
         elif isinstance(material, gs.materials.PBD.Liquid):
             entity = PBDParticleEntity(
                 scene=self.scene,
@@ -279,7 +277,6 @@ class PBDSolver(Solver):
                 idx=idx,
                 particle_start=self.n_particles,
             )
-
         elif isinstance(material, gs.materials.PBD.Particle):
             entity = PBDFreeParticleEntity(
                 scene=self.scene,
@@ -291,9 +288,8 @@ class PBDSolver(Solver):
                 idx=idx,
                 particle_start=self.n_particles,
             )
-
         else:
-            raise NotImplementedError()
+            gs.raise_exception(f"Material not supported: {material}")
 
         self._entities.append(entity)
 

@@ -1,6 +1,7 @@
 from copy import copy
 from itertools import chain
 from typing import Literal
+from typing import TYPE_CHECKING
 
 import numpy as np
 import taichi as ti
@@ -24,6 +25,10 @@ from .rigid_equality import RigidEquality
 from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
+
+if TYPE_CHECKING:
+    from genesis.engine.solvers.base_solver import Solver
+    from genesis.engine.scene import Scene
 
 
 @ti.data_oriented
@@ -57,6 +62,9 @@ class RigidEntity(Entity):
         equality_start=0,
         visualize_contact=False,
     ):
+        if material is None:
+            material = gs.materials.Rigid()
+
         super().__init__(idx, scene, morph, solver, material, surface)
 
         self._idx_in_solver = idx_in_solver
@@ -83,36 +91,29 @@ class RigidEntity(Entity):
 
         self._is_built = False
 
-        self._load_model()
+        self._load_model(morph, material, self.surface)
 
-    def _load_model(self):
+    def _load_model(self, morph, material, surface):
         self._links = gs.List()
         self._joints = gs.List()
         self._equalities = gs.List()
 
-        if isinstance(self._morph, gs.morphs.Mesh):
-            self._load_mesh(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
-            self._load_scene(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.Primitive):
-            self._load_primitive(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.Terrain):
-            self._load_terrain(self._morph, self._surface)
+        if isinstance(morph, gs.morphs.Mesh):
+            self._load_mesh(morph, material, surface)
+        elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
+            self._load_scene(morph, material, surface)
+        elif isinstance(morph, gs.morphs.Primitive):
+            self._load_primitive(morph, material, surface)
+        elif isinstance(morph, gs.morphs.Terrain):
+            self._load_terrain(morph, material, surface)
         else:
-            gs.raise_exception(f"Unsupported morph: {self._morph}.")
+            gs.raise_exception(f"Unsupported morph: {morph}.")
 
-        self._requires_jac_and_IK = self._morph.requires_jac_and_IK
+        self._requires_jac_and_IK = morph.requires_jac_and_IK
 
         self._update_child_idxs()
 
-    def _update_child_idxs(self):
-        for link in self._links:
-            if link.parent_idx != -1:
-                parent_link = self._links[link.parent_idx_local]
-                if link.idx not in parent_link.child_idxs:
-                    parent_link.child_idxs.append(link.idx)
-
-    def _load_primitive(self, morph, surface):
+    def _load_primitive(self, morph, material, surface):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -180,7 +181,7 @@ class RigidEntity(Entity):
         link, (joint,) = self._add_by_info(
             l_info=dict(
                 is_robot=False,
-                name=f"{link_name_prefix}_baselink",
+                name=f"{link_name_prefix}_base",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
                 inertial_pos=gu.zero_pos(),
@@ -189,7 +190,7 @@ class RigidEntity(Entity):
             ),
             j_infos=[
                 dict(
-                    name=f"{link_name_prefix}_baselink_joint",
+                    name=f"{link_name_prefix}_root_joint",
                     n_qs=n_qs,
                     n_dofs=n_dofs,
                     type=joint_type,
@@ -198,10 +199,10 @@ class RigidEntity(Entity):
             ],
             g_infos=g_infos,
             morph=morph,
-            surface=surface,
+            material=material,
         )
 
-    def _load_mesh(self, morph, surface):
+    def _load_mesh(self, morph, material, surface):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -247,12 +248,13 @@ class RigidEntity(Entity):
                     )
                 )
 
-        link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
+        *_, link_name = morph.file.rsplit("/", 1)
+        link_name.replace(".", "_")
 
         link, (joint,) = self._add_by_info(
             l_info=dict(
                 is_robot=False,
-                name=f"{link_name}_baselink",
+                name=f"{link_name}_base",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
                 inertial_pos=gu.zero_pos(),
@@ -261,7 +263,7 @@ class RigidEntity(Entity):
             ),
             j_infos=[
                 dict(
-                    name=f"{link_name}_baselink_joint",
+                    name=f"{link_name}_root_joint",
                     n_qs=n_qs,
                     n_dofs=n_dofs,
                     type=joint_type,
@@ -270,10 +272,10 @@ class RigidEntity(Entity):
             ],
             g_infos=g_infos,
             morph=morph,
-            surface=surface,
+            material=material,
         )
 
-    def _load_terrain(self, morph, surface):
+    def _load_terrain(self, morph, material, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
 
@@ -300,7 +302,7 @@ class RigidEntity(Entity):
         link, (joint,) = self._add_by_info(
             l_info=dict(
                 is_robot=False,
-                name="baselink",
+                name="base",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
                 inertial_pos=None,
@@ -312,7 +314,7 @@ class RigidEntity(Entity):
             ),
             j_infos=[
                 dict(
-                    name="joint_baselink",
+                    name="root_joint",
                     n_qs=0,
                     n_dofs=0,
                     type=gs.JOINT_TYPE.FIXED,
@@ -320,10 +322,10 @@ class RigidEntity(Entity):
             ],
             g_infos=g_infos,
             morph=morph,
-            surface=surface,
+            material=material,
         )
 
-    def _load_scene(self, morph, surface):
+    def _load_scene(self, morph, material, surface):
         # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
         # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
         # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
@@ -517,7 +519,7 @@ class RigidEntity(Entity):
             # Exclude joints with 0 dofs to align with Mujoco
             link_j_infos = [j_info for j_info in link_j_infos if j_info["n_dofs"] > 0]
 
-            self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
+            self._add_by_info(l_info, link_j_infos, link_g_infos, morph, material)
 
         # Add equality constraints sequentially
         for eq_info in eqs_info:
@@ -528,6 +530,13 @@ class RigidEntity(Entity):
                 data=eq_info["data"],
                 sol_params=eq_info["sol_params"],
             )
+
+    def _update_child_idxs(self):
+        for link in self._links:
+            if link.parent_idx != -1:
+                parent_link = self._links[link.parent_idx_local]
+                if link.idx not in parent_link.child_idxs:
+                    parent_link.child_idxs.append(link.idx)
 
     def _build(self):
         for link in self._links:
@@ -600,7 +609,7 @@ class RigidEntity(Entity):
             dtype=gs.ti_float, shape=self._solver._batch_shape((self.n_dofs, self._IK_error_dim))
         )
 
-    def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
+    def _add_by_info(self, l_info, j_infos, g_infos, morph, material):
         if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
             raise ValueError(
                 "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
@@ -760,9 +769,10 @@ class RigidEntity(Entity):
 
         # Add collision geometries
         for g_info in cg_infos:
-            friction = g_info.get("friction", self.material.friction)
-            if friction is None:
-                friction = gu.default_friction()
+            if material is not None:
+                friction = material.friction
+            else:
+                friction = g_info.get("friction", self.material.friction)
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),

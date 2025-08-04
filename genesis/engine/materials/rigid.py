@@ -20,7 +20,7 @@ class Rigid(Material):
         rho : float, optional
             The density of the material used to compute mass. Default is 200.0.
         friction : float, optional
-            Friction coefficient within the rigid solver. If None, a default of 1.0 may be used or parsed from file.
+            Friction coefficient within the rigid solver. Default is 1.0.
         needs_coup : bool, optional
             Whether the material participates in coupling with other solvers. Default is True.
         coup_friction : float, optional
@@ -42,7 +42,7 @@ class Rigid(Material):
     def __init__(
         self,
         rho=200.0,
-        friction=None,
+        friction=1.0,
         needs_coup=True,
         coup_friction=0.1,
         coup_softness=0.002,
@@ -54,9 +54,8 @@ class Rigid(Material):
     ):
         super().__init__()
 
-        if friction is not None:
-            if friction < 1e-2 or friction > 5.0:
-                gs.raise_exception("`friction` must be in the range [1e-2, 5.0] for simulation stability.")
+        if friction < 1e-2 or friction > 5.0:
+            gs.raise_exception("`friction` must be in the range [1e-2, 5.0] for simulation stability.")
 
         if coup_friction < 0:
             gs.raise_exception("`coup_friction` must be non-negative.")
@@ -76,7 +75,7 @@ class Rigid(Material):
         if sdf_min_res > sdf_max_res:
             gs.raise_exception("`sdf_min_res` must be smaller than or equal to `sdf_max_res`.")
 
-        self._friction = float(friction) if friction is not None else None
+        self._friction = float(friction)
         self._needs_coup = bool(needs_coup)
         self._coup_friction = float(coup_friction)
         self._coup_softness = float(coup_softness)

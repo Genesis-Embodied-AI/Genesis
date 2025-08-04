@@ -18,15 +18,7 @@ from .mesh import Mesh
 @ti.data_oriented
 class ToolEntity(Entity):
     # Mesh-based tool body entity
-    def __init__(
-        self,
-        scene,
-        idx,
-        solver,
-        material,
-        morph,
-        surface,
-    ):
+    def __init__(self, scene, idx, solver, material, morph, surface):
         super().__init__(idx, scene, morph, solver, material, surface)
 
         self._init_pos = np.array(morph.pos, dtype=gs.np_float)

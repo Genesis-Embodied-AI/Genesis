@@ -19,6 +19,96 @@ class Entity(RBC):
         material,
         surface,
     ):
+        if isinstance(material, gs.materials.Rigid):
+            # small sdf res is sufficient for primitives regardless of size
+            if isinstance(morph, gs.morphs.Primitive):
+                material._sdf_max_res = 32
+
+        # some morph should not smooth surface normal
+        if isinstance(morph, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
+            surface.smooth = False
+
+        if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Terrain)):
+            if not isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Hybrid)):
+                gs.raise_exception(f"Unsupported material for morph: {material} and {morph}.")
+
+        if surface.double_sided is None:
+            surface.double_sided = isinstance(material, gs.materials.PBD.Cloth)
+
+        # validate and populate default surface.vis_mode considering morph type
+        if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Tool)):
+            if surface.vis_mode is None:
+                surface.vis_mode = "visual"
+
+            if surface.vis_mode not in ("visual", "collision", "sdf"):
+                gs.raise_exception(
+                    f"Invalid `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Only supporting "
+                    "'visual', 'collision' and 'sdf'."
+                )
+        elif isinstance(
+            material,
+            (
+                gs.materials.PBD.Liquid,
+                gs.materials.PBD.Particle,
+                gs.materials.MPM.Liquid,
+                gs.materials.MPM.Sand,
+                gs.materials.MPM.Snow,
+                gs.materials.SPH.Liquid,
+            ),
+        ):
+            if surface.vis_mode is None:
+                surface.vis_mode = "particle"
+
+            if surface.vis_mode not in ("particle", "recon"):
+                gs.raise_exception(
+                    f"Invalid `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Only supporting "
+                    "'particle' and 'recon'."
+                )
+        elif isinstance(material, (gs.materials.SF.Smoke)):
+            if surface.vis_mode is None:
+                surface.vis_mode = "particle"
+
+            if surface.vis_mode not in ("particle",):
+                gs.raise_exception(
+                    f"Invalid `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Only supporting "
+                    "'particle'."
+                )
+        elif isinstance(material, (gs.materials.PBD.Base, gs.materials.MPM.Base, gs.materials.SPH.Base)):
+            if surface.vis_mode is None:
+                surface.vis_mode = "visual"
+
+            if surface.vis_mode not in ("visual", "particle", "recon"):
+                gs.raise_exception(
+                    f"Invalid `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Only supporting "
+                    "'visual', 'particle' and 'recon'."
+                )
+        elif isinstance(material, (gs.materials.FEM.Base)):
+            if surface.vis_mode is None:
+                surface.vis_mode = "visual"
+
+            if surface.vis_mode not in ("visual",):
+                gs.raise_exception(
+                    f"Invalid `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Only supporting "
+                    "'visual'."
+                )
+        elif isinstance(material, (gs.materials.Hybrid)):  # determine the visual of the outer soft part
+            if surface.vis_mode is None:
+                surface.vis_mode = "particle"
+
+            if surface.vis_mode not in ["particle", "visual"]:
+                gs.raise_exception(
+                    f"Invalid `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Only supporting "
+                    "'particle' and 'visual'."
+                )
+        else:
+            gs.raise_exception(f"Material not supported.: {material}")
+
+        # Set material-dependent default options
+        if isinstance(morph, gs.morphs.FileMorph):
+            # Rigid entities will convexify geom by default
+            if morph.convexify is None:
+                morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
+
         self._uid = gs.UID()
         self._idx = idx
         self._scene = scene

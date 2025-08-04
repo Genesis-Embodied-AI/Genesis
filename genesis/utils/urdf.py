@@ -170,7 +170,6 @@ def parse_urdf(morph, surface):
                 g_info["quat"] = gu.R_to_quat(geom.origin[:3, :3])
                 g_info["contype"] = 1 if geom_is_col else 0
                 g_info["conaffinity"] = 1 if geom_is_col else 0
-                g_info["friction"] = gu.default_friction()
                 g_info["sol_params"] = gu.default_solver_params()
             link_g_infos += link_g_infos_
 
