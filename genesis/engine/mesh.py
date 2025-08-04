@@ -14,7 +14,7 @@ import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
-from genesis.ext import fast_simplification
+import fast_simplification
 from genesis.repr_base import RBC
 
 
@@ -99,7 +99,8 @@ class Mesh(RBC):
                     self._mesh.faces,
                     target_count=decimate_face_num,
                     agg=decimate_aggressiveness,
-                    lossless=(decimate_aggressiveness == 0),
+                    # TODO: lossless option support is pending on fast_simplification package.
+                    # lossless=(decimate_aggressiveness == 0),
                 )
             )
 

@@ -6,7 +6,7 @@ import numpy as np
 import trimesh
 
 import genesis as gs
-from genesis.ext import fast_simplification
+import fast_simplification
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
 
@@ -391,7 +391,8 @@ def convert_heightfield_to_watertight_trimesh(
         sdf_mesh.vertices,
         sdf_mesh.faces,
         target_count=0,
-        lossless=True,
+        # TODO: lossless option support is pending on fast_simplification package.
+        # lossless=True,
     )
 
     if uvs is not None:
