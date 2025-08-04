@@ -403,7 +403,8 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity, envs_idx=None):
         for solver in self._solvers:
-            solver.set_gravity(gravity, envs_idx)
+            if solver.is_active():
+                solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

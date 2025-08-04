@@ -42,14 +42,19 @@ class Solver(RBC):
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
         if self._gravity is None:
+            gs.logger.warning("Gravity is not initialized, skipping set_gravity.")
             return
         g = np.asarray(gravity, dtype=gs.np_float)
         if envs_idx is None:
             if g.ndim == 1:
                 g = np.tile(g, (self._B, 1))
+            assert g.shape == (self._B, 3), "Input gravity array should match (n_envs, 3)"
             self._gravity.from_numpy(g)
         else:
-            assert g.shape == (envs_idx.shape[0], 3), "Input gravity array should match (len(envs_idx), 3)"
+            envs_idx = np.atleast_1d(np.array(envs_idx, dtype=gs.np_int))
+            if g.ndim == 1:
+                g = np.tile(g, (len(envs_idx), 1))
+            assert g.shape == (len(envs_idx), 3), "Input gravity array should match (len(envs_idx), 3)"
             self._kernel_set_gravity(g, envs_idx)
 
     @ti.kernel
