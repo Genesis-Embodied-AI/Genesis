@@ -393,6 +393,7 @@ def convert_heightfield_to_watertight_trimesh(
     #     target_count=0,
     #     lossless=True,
     # )
+    v_simp, f_simp = sdf_mesh.vertices, sdf_mesh.faces
 
     if uvs is not None:
         idx_map = np.empty(len(v_simp), dtype=np.int64)
