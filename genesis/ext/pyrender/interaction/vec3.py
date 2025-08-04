@@ -2,12 +2,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Union
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 
 from genesis.utils.misc import tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 
 # If not needing runtime checks, we can just use annotated types:
 # Vec3 = Annotated[npt.NDArray[np.float32], (3,)]
@@ -62,6 +63,9 @@ class Vec3:
     def magnitude(self) -> float:
         return np.linalg.norm(self.v)
 
+    def sqr_magnitude(self) -> float:
+        return np.dot(self.v, self.v)
+
     def copy(self) -> 'Vec3':
         return Vec3(self.v.copy())
 
@@ -101,14 +105,29 @@ class Vec3:
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
 
+    @classmethod
+    def from_arraylike(cls, v: ArrayLike) -> 'Vec3':
+        if isinstance(v, np.ndarray):
+            return cls.from_array(v)
+        elif isinstance(v, torch.Tensor):
+            return cls.from_tensor(v)
+        elif isinstance(v, ArrayLike):
+            assert len(v) == 3, f"Vec3 must be initialized with a 3-element ArrayLike, got {len(v)}"
+            return cls.from_xyz(*v)
+        assert False
+
 
     @classmethod
-    def zero(cls):
+    def zero(cls) -> 'Vec3':
         return cls(np.array([0, 0, 0], dtype=np.float32))
 
     @classmethod
-    def one(cls):
+    def one(cls) -> 'Vec3':
         return cls(np.array([1, 1, 1], dtype=np.float32))
+
+    @classmethod
+    def full(cls, fill_value: float) -> 'Vec3':
+        return cls(np.full((3,), fill_value, dtype=np.float32))
 
 
 class Quat:
@@ -183,6 +202,17 @@ class Quat:
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
 
+    @classmethod
+    def from_arraylike(cls, v: ArrayLike) -> 'Quat':
+        if isinstance(v, np.ndarray):
+            return cls.from_array(v)
+        elif isinstance(v, torch.Tensor):
+            return cls.from_tensor(v)
+        elif isinstance(v, ArrayLike):
+            assert len(v) == 4, f"Quat must be initialized with a 4-element ArrayLike, got {len(v)}"
+            return cls.from_wxyz(*v)
+        assert False
+
 
 @dataclass
 class Pose:
@@ -212,12 +242,31 @@ class Pose:
         inv_pos = Vec3(-inv_pos.v[1:])
         return Pose(inv_pos, inv_rot)
 
+    def __mul__(self, other: Union['Pose', Vec3]) -> Union['Pose', Vec3]:
+        if isinstance(other, Pose):
+            return Pose(self.pos + self.rot * other.pos, self.rot * other.rot)
+        elif isinstance(other, Vec3):
+            return self.pos + self.rot * other
+        else:
+            return NotImplemented        
+
+    def __repr__(self) -> str:
+        return f"Pose(pos={self.pos}, rot={self.rot})"
+
     @classmethod
     def from_geom(cls, geom: 'RigidGeom') -> 'Pose':
         assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
         # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
         pos = Vec3.from_tensor(geom.get_pos())
         quat = Quat.from_tensor(geom.get_quat())
+        return Pose(pos, quat)
+
+    @classmethod
+    def from_link(cls, link: 'RigidLink') -> 'Pose':
+        assert link._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
+        # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
+        pos = Vec3.from_tensor(link.get_pos())
+        quat = Quat.from_tensor(link.get_quat())
         return Pose(pos, quat)
 
 
