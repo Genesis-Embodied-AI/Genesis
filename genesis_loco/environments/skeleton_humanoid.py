@@ -44,7 +44,7 @@ class SkeletonHumanoidEnv(GenesisLocoBaseEnv):
         # Initialize base environment
         super().__init__(
             num_envs=num_envs,
-            robot_file="/home/ez/Documents/Genesis/genesis_loco/skeleton/skeleton_restructured_panda_format.xml",
+            robot_file="/home/ez/Documents/Genesis/genesis_loco/skeleton/genesis_skeleton_torque.xml",
             dt=dt,
             episode_length_s=episode_length_s,
             obs_cfg=self._get_obs_config(),
@@ -88,7 +88,7 @@ class SkeletonHumanoidEnv(GenesisLocoBaseEnv):
     
     def _setup_action_spec(self):
         """Setup action specification with direct LocoMujoco action name to joint index mapping"""
-        print(f"Available DOF names: {self.dof_names}")
+        # print(f"Available DOF names: {self.dof_names}")
         
         # Direct mapping from LocoMujoco action names to Genesis joint indices
         action_to_joint_mapping = {
@@ -139,24 +139,22 @@ class SkeletonHumanoidEnv(GenesisLocoBaseEnv):
         self.action_to_joint_idx = {}
         
         for action_name, joint_name in action_to_joint_mapping.items():
-            # Check if joint exists in the model
-            # if joint_name in self.dof_names:
-            #     # Apply filtering rules
-            #     if self.use_box_feet and action_name in ["mot_subtalar_angle_l", "mot_mtp_angle_l", 
-            #                                             "mot_subtalar_angle_r", "mot_mtp_angle_r"]:
-            #         continue
-                
-            #     joint_idx = self.dof_names.index(joint_name)
-            #     self.action_spec.append(action_name)
-            #     self.action_to_joint_idx[action_name] = joint_idx
-            self.action_to_joint_idx[action_name] = self.robot.get_joint(joint_name).dof_idx_local
-            self.action_spec.append(action_name)
-        
+            if joint_name in self.dof_names:
+                # Apply filtering rules
+                if self.use_box_feet and action_name in ["mot_subtalar_angle_l", "mot_mtp_angle_l", 
+                                                        "mot_subtalar_angle_r", "mot_mtp_angle_r"]:
+                    continue
+                self.action_to_joint_idx[action_name] = self.robot.get_joint(joint_name).dof_idx_local
+                local_dof_idx = self.robot.get_joint(joint_name).dof_idx_local
+                local_joint_idx = self.robot.get_joint(joint_name).idx_local
+                # print(f"Action name: {action_name}, Joint name: {joint_name}, Joint_index: {local_joint_idx}, Dof_idx_local: {local_dof_idx}")
+                self.action_spec.append(action_name)
+            
         self.num_skeleton_actions = len(self.action_spec)
         
-        print(f"Skeleton actions: {self.num_skeleton_actions}")
-        print(f"Action spec: {self.action_spec}")
-        print(f"Action to joint mapping: {self.action_to_joint_idx}")
+        # print(f"Skeleton actions: {self.num_skeleton_actions}")
+        # print(f"Action spec: {self.action_spec}")
+        # print(f"Action to joint mapping: {self.action_to_joint_idx}")
     
     def _setup_torque_control(self):
         """Setup pure torque control using control_dofs_force"""
@@ -176,6 +174,25 @@ class SkeletonHumanoidEnv(GenesisLocoBaseEnv):
         
         # print(f"Torque control setup complete. Using control_dofs_force with limits: ±{torque_limit}")
         # print("Note: Explicitly zeroed PD gains and using control_dofs_force")
+    
+    def setup_pd_control(self):
+        """Setup PD gains for position control"""
+        print("Setting up PD control gains for control_dofs_position...")
+        
+        # Set reasonable PD gains for humanoid control
+        kp_values = torch.ones(self.num_dofs, device=self.device) * 500.0  # Position gain
+        kv_values = torch.ones(self.num_dofs, device=self.device) * 50.0   # Velocity gain
+        
+        # Lower gains for spine joints for stability
+        for joint_name in ["lumbar_extension", "lumbar_bending", "lumbar_rotation"]:
+            if joint_name in self.dof_names:
+                idx = self.dof_names.index(joint_name)
+                kp_values[idx] = 200.0
+                kv_values[idx] = 20.0
+        
+        self.robot.set_dofs_kp(kp_values)
+        self.robot.set_dofs_kv(kv_values)
+        print(f"Set PD gains: kp=500.0, kv=50.0 (spine: kp=200.0, kv=20.0)")
     
     def _init_skeleton_buffers(self):
         """Initialize skeleton-specific state buffers"""

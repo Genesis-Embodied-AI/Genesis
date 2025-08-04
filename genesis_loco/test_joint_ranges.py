@@ -51,7 +51,7 @@ def test_joint_ranges():
     # Create environment
     try:
         env = SkeletonHumanoidEnv(
-            num_envs=1,
+            num_envs=3,
             episode_length_s=20.0,
             dt=0.02,
             use_box_feet=True,
@@ -102,7 +102,7 @@ def test_joint_ranges():
         
         # Test sequence: neutral -> max -> min -> neutral
         # Use large torques like test_skeleton.py since action clamping is disabled
-        test_positions = [0.0, 100.0, -100.0, 0.0]  # Use strong torques to overcome gravity
+        test_positions = [0.0, 500.0, -500.0, 0.0]  # Use strong torques to overcome gravity
         position_names = ["Neutral", "Positive Limit", "Negative Limit", "Return to Neutral"]
         
         for pos_idx, target_action in enumerate(test_positions):
@@ -114,7 +114,7 @@ def test_joint_ranges():
             actions[0, action_idx] = target_action
             
             # Apply action for multiple steps to reach position
-            for step in range(50):  # 1.0 seconds at 50Hz - more time to move
+            for step in range(30):  # 1.0 seconds at 30Hz 
                 obs, rewards, dones, info = env.step(actions)
                 
                 # Get current joint position
