@@ -96,7 +96,7 @@ class Mesh(RBC):
             # TODO: lossless option support is pending on fast_simplification package.
             # NOTE: https://github.com/pyvista/fast-simplification/pull/71
             if decimate_aggressiveness == 0:
-                gs.logger.warning("Lossless simplification is not supported yet. Using not applying simplification.")
+                gs.logger.debug("Lossless simplification is not supported yet. Not applying simplification.")
                 self._mesh = trimesh.Trimesh(
                     vertices=self._mesh.vertices,
                     faces=self._mesh.faces,
