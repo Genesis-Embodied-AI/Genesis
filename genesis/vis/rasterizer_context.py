@@ -216,7 +216,8 @@ class RasterizerContext:
 
     def on_world_frame(self):
         if not self.world_frame_shown:
-            self.world_frame_node = self.add_node(pyrender.Mesh.from_trimesh(self.world_frame_mesh, smooth=True))
+            mesh = pyrender.Mesh.from_trimesh(self.world_frame_mesh, smooth=True, is_marker=True)
+            self.world_frame_node = self.add_node(mesh)
             self.world_frame_shown = True
 
     def off_world_frame(self):
@@ -233,13 +234,13 @@ class RasterizerContext:
                 links_quat = self.sim.rigid_solver.links_state.quat.to_numpy()
 
                 for link in links:
-                    self.link_frame_nodes[link.uid] = self.add_node(
-                        pyrender.Mesh.from_trimesh(
-                            mesh=self.link_frame_mesh,
-                            poses=gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx]),
-                            env_shared=not self.env_separate_rigid,
-                        )
+                    mesh = pyrender.Mesh.from_trimesh(
+                        mesh=self.link_frame_mesh,
+                        poses=gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx]),
+                        env_shared=not self.env_separate_rigid,
+                        is_marker=True,
                     )
+                    self.link_frame_nodes[link.uid] = self.add_node(mesh)
             self.link_frame_shown = True
 
     def off_link_frame(self):
@@ -726,7 +727,7 @@ class RasterizerContext:
         mesh = mu.create_line(
             tensor_to_array(start, dtype=np.float32), tensor_to_array(end, dtype=np.float32), radius, color
         )
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_line_{gs.UID()}")
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_line_{gs.UID()}", is_marker=True)
         self.add_external_node(node)
         return node
 
@@ -740,7 +741,7 @@ class RasterizerContext:
             pose[0, :3, 3] = tensor_to_array(pos)
             gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=pose[0, :3, :3])
 
-            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose)
+            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose, is_marker=True)
             if persistent:
                 self.add_external_node(node)
             else:
@@ -748,34 +749,21 @@ class RasterizerContext:
             return node
 
     def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
-        node = pyrender.Mesh.from_trimesh(
-            trimesh.creation.axis(
-                origin_size=origin_size,
-                axis_radius=axis_radius,
-                axis_length=axis_length,
-            ),
-            name=f"debug_frame_{gs.UID()}",
-        )
+        mesh = trimesh.creation.axis(origin_size=origin_size, axis_radius=axis_radius, axis_length=axis_length)
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", is_marker=True)
         self.add_external_node(node, pose=T)
         return node
 
     def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
-        node = pyrender.Mesh.from_trimesh(
-            trimesh.creation.axis(
-                origin_size=origin_size,
-                axis_radius=axis_radius,
-                axis_length=axis_length,
-            ),
-            name=f"debug_frame_{gs.UID()}",
-            poses=poses,
-        )
+        mesh = trimesh.creation.axis(origin_size=origin_size, axis_radius=axis_radius, axis_length=axis_length)
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", poses=poses, is_marker=True)
         self.add_external_node(node)
         return node
 
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
         if T is None:
             T = gu.trans_to_T(tensor_to_array(pos))
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_mesh_{gs.UID()}")
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_mesh_{gs.UID()}", is_marker=True)
         self.add_external_node(node, pose=T)
         return node
 
@@ -787,7 +775,9 @@ class RasterizerContext:
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
         pose = gu.trans_to_T(tensor_to_array(pos))
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_sphere_{gs.UID()}", smooth=True, poses=pose[None])
+        node = pyrender.Mesh.from_trimesh(
+            mesh, name=f"debug_sphere_{gs.UID()}", smooth=True, poses=pose[None], is_marker=True
+        )
         if persistent:
             self.add_external_node(node)
         else:
@@ -797,7 +787,9 @@ class RasterizerContext:
     def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
         poses = gu.trans_to_T(tensor_to_array(poss))
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_spheres_{gs.UID()}", smooth=True, poses=poses)
+        node = pyrender.Mesh.from_trimesh(
+            mesh, name=f"debug_spheres_{gs.UID()}", smooth=True, poses=poses, is_marker=True
+        )
         if persistent:
             self.add_external_node(node)
         else:
@@ -812,7 +804,7 @@ class RasterizerContext:
             wireframe_radius=wireframe_radius,
             color=color,
         )
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_box_{gs.UID()}")
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_box_{gs.UID()}", is_marker=True)
         self.add_external_node(node)
         return node
 
@@ -824,7 +816,7 @@ class RasterizerContext:
         elif len(colors.shape) == 2:
             assert colors.shape[0] == len(poss)
 
-        node = pyrender.Mesh.from_points(poss, name=f"debug_box_{gs.UID()}", colors=colors)
+        node = pyrender.Mesh.from_points(poss, name=f"debug_box_{gs.UID()}", colors=colors, is_marker=True)
         self.add_external_node(node)
         return node
 
