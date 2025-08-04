@@ -25,6 +25,8 @@ class StructRigidGlobalInfo:
     awake_dofs: V_ANNOTATION
     n_awake_entities: V_ANNOTATION
     awake_entities: V_ANNOTATION
+    n_awake_links: V_ANNOTATION
+    awake_links: V_ANNOTATION
     qpos0: V_ANNOTATION
     qpos: V_ANNOTATION
     links_T: V_ANNOTATION
@@ -48,6 +50,8 @@ def get_rigid_global_info(solver):
         "awake_dofs": V(dtype=gs.ti_int, shape=f_batch(solver.n_dofs_)),
         "n_awake_entities": V(dtype=gs.ti_int, shape=f_batch()),
         "awake_entities": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
+        "n_awake_links": V(dtype=gs.ti_int, shape=f_batch()),
+        "awake_links": V(dtype=gs.ti_int, shape=f_batch(solver.n_links)),
         "qpos0": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
@@ -245,6 +249,7 @@ def get_constraint_state(constraint_solver, solver):
 
 @dataclasses.dataclass
 class StructContactData:
+    # WARNING: cannot add/remove fields here without also updeating collider_decomp.py::collider_kernel_clear
     geom_a: V_ANNOTATION
     geom_b: V_ANNOTATION
     penetration: V_ANNOTATION

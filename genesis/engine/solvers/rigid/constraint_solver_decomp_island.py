@@ -7,6 +7,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 import genesis.utils.array_class as array_class
+
+from .rigid_solver_decomp_util import func_wakeup_entity
 from .contact_island import ContactIsland
 
 if TYPE_CHECKING:
@@ -222,8 +224,26 @@ class ConstraintSolverIsland:
 
             if ti.static(self._solver._use_hibernation):
                 # wake up entities
-                self._solver._func_wakeup_entity(self._solver.links_info.entity_idx[link_a_maybe_batch], i_b)
-                self._solver._func_wakeup_entity(self._solver.links_info.entity_idx[link_b_maybe_batch], i_b)
+                entity_a = self._solver.links_info.entity_idx[link_a_maybe_batch]
+                entity_b = self._solver.links_info.entity_idx[link_b_maybe_batch]
+                func_wakeup_entity(
+                    entity_a,
+                    i_b,
+                    self._solver.entities_state,
+                    self._solver.entities_info,
+                    self._solver.dofs_state,
+                    self._solver.links_state,
+                    self._solver.data_manager.rigid_global_info,
+                )
+                func_wakeup_entity(
+                    entity_b,
+                    i_b,
+                    self._solver.entities_state,
+                    self._solver.entities_info,
+                    self._solver.dofs_state,
+                    self._solver.links_state,
+                    self._solver.data_manager.rigid_global_info,
+                )
 
     @ti.func
     def add_joint_limit_constraints(self, island, i_b):
