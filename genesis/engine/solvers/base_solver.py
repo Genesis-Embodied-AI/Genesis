@@ -42,7 +42,7 @@ class Solver(RBC):
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
         if self._gravity is None:
-            gs.logger.warning("Gravity is not initialized, skipping set_gravity.")
+            gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return
         g = np.asarray(gravity, dtype=gs.np_float)
         if envs_idx is None:

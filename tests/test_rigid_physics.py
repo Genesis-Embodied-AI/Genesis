@@ -2191,22 +2191,21 @@ def test_gravity(show_viewer, tol):
     with np.testing.assert_raises(AssertionError):
         scene.sim.set_gravity(torch.tensor([[0.0, 0.0, -10.0], [0.0, 0.0, -10.0]]), envs_idx=1)
 
-    for _ in range(10):
-        scene.step()
+    scene.step()
 
     assert_allclose(
         np.array(
             [
                 [0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0],
+                [0.0, 0.0, -10.0],
+                [0.0, 0.0, 100.0],
                 [0.0, 0.0, -1.0],
-                [0.0, 0.0, 10.0],
-                [0.0, 0.0, -0.1],
-                [-0.2, 0.0, 0.0],
-                [-0.2, 0.0, 0.0],
+                [-2.0, 0.0, 0.0],
+                [-2.0, 0.0, 0.0],
             ]
         ),
-        sphere.get_vel(),
+        sphere.get_links_acc().squeeze(dim=1),
         tol=tol,
     )
 
