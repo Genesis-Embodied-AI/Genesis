@@ -294,9 +294,8 @@ class Scene(RBC):
             material = gs.materials.Rigid()
 
         if surface is None:
-            surface = (
-                gs.surfaces.Default()
-            )  # assign a local surface, otherwise modification will apply on global default surface
+            # assign a local surface, otherwise modification will apply on global default surface
+            surface = gs.surfaces.Default()
 
         if isinstance(material, gs.materials.Rigid):
             # small sdf res is sufficient for primitives regardless of size

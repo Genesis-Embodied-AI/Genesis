@@ -822,6 +822,9 @@ class RigidSolver(Solver):
             entities_gravity_compensation=np.array(
                 [entity.gravity_compensation for entity in entities], dtype=gs.np_float
             ),
+            entities_is_local_collision_mask=np.array(
+                [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
+            ),
             # taichi variables
             entities_info=self.entities_info,
             entities_state=self.entities_state,
@@ -2917,6 +2920,7 @@ def kernel_init_entity_fields(
     entities_geom_start: ti.types.ndarray(),
     entities_geom_end: ti.types.ndarray(),
     entities_gravity_compensation: ti.types.ndarray(),
+    entities_is_local_collision_mask: ti.types.ndarray(),
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
@@ -2942,6 +2946,7 @@ def kernel_init_entity_fields(
         entities_info.n_geoms[i] = entities_geom_end[i] - entities_geom_start[i]
 
         entities_info.gravity_compensation[i] = entities_gravity_compensation[i]
+        entities_info.is_local_collision_mask[i] = entities_is_local_collision_mask[i]
 
         if ti.static(static_rigid_sim_config.batch_dofs_info):
             for i_d, i_b in ti.ndrange((entities_dof_start[i], entities_dof_end[i]), _B):

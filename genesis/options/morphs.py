@@ -135,7 +135,6 @@ class Primitive(Morph):
     ----
     This class should *not* be instantiated directly.
 
-
     Parameters
     ----------
     pos : tuple, shape (3,), optional
@@ -685,13 +684,25 @@ class MJCF(FileMorph):
 
     Note
     ----
-    MJCF file always contains a worldbody, which we will skip during loading.
-    The robots/objects in MJCF come with their own baselink pose.
-    If `pos`, `euler`, or `quat` is specified, it will override the baselink pose in the MJCF file.
+    MJCF file always contains a 'world' body. Although this body is added to the kinematic tree, it is used to define
+    the initial pose of the root link. If `pos`, `euler`, or `quat` is specified, it will override the root pose that
+    was originally specified in the MJCF file.
 
-    The current version of Genesis asumes there's only one child of the worldbody.
-    However, it's possible that a MJCF file contains a scene, not just a single robot, in which case the worldbody will
-    have multiple kinematic trees. We will support such cases in the future.
+    Note
+    ----
+    Genesis currently processes MJCF as if it describing a single entity instead of an actual scene. This means that
+    there is a single gigantic kinematic chain comprising multiple physical kinematic chains connected together using
+    fee joints. The definition of kinematic chain has been stretched a bit to allow us. In particular, there must be
+    multiple root links instead of a single one. One other related limitation is global / world options defined in MJCF
+    but must be set at the scene-level in Genesis are completely ignored at the moment, e.g. the simulation timestep,
+    integrator or constraint solver. Building an actual scene hierarchy with multiple independent entities may be
+    supported in the future.
+
+    Note
+    ----
+    Collision filters defined in MJCF are considered "local", i.e. they only apply to collision pairs for which both
+    geometries along to that specific entity. This means that there is no way to filter out collision pairs between
+    primitive and MJCF entity at the moment.
 
     Parameters
     ----------

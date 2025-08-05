@@ -1862,6 +1862,7 @@ def get_entities_info(solver):
         "geom_end": V(dtype=gs.ti_int, shape=shape),
         "n_geoms": V(dtype=gs.ti_int, shape=shape),
         "gravity_compensation": V(dtype=gs.ti_float, shape=shape),
+        "is_local_collision_mask": V(dtype=gs.ti_bool, shape=shape),
     }
 
     if use_ndarray:
