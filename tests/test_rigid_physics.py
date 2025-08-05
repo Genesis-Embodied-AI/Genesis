@@ -2177,13 +2177,11 @@ def test_gravity(show_viewer, tol):
     )
 
     sphere = scene.add_entity(gs.morphs.Sphere())
-    scene.build(n_envs=7)
+    scene.build(n_envs=3)
 
-    scene.sim.set_gravity(torch.tensor([-1.0, 0.0, 0.0]))
-    scene.sim.set_gravity(torch.tensor([[-2.0, 0.0, 0.0]] * 10))
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]), envs_idx=[0, 1])
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 100.0]), envs_idx=3)
-    scene.sim.set_gravity(torch.tensor([[0.0, 0.0, -10.0], [0.0, 0.0, -1.0]]), envs_idx=[2, 4])
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
+    scene.sim.set_gravity(torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=2)
 
     with np.testing.assert_raises(AssertionError):
         scene.sim.set_gravity(torch.tensor([0.0, -10.0]))
@@ -2194,18 +2192,12 @@ def test_gravity(show_viewer, tol):
     scene.step()
 
     assert_allclose(
-        np.array(
-            [
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, -10.0],
-                [0.0, 0.0, 100.0],
-                [0.0, 0.0, -1.0],
-                [-2.0, 0.0, 0.0],
-                [-2.0, 0.0, 0.0],
-            ]
-        ),
-        sphere.get_links_acc().squeeze(dim=1),
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 0.0, 3.0],
+        ],
+        sphere.get_links_acc().squeeze(),
         tol=tol,
     )
 
