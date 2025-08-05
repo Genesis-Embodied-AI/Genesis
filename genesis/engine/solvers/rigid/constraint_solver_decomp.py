@@ -1310,6 +1310,9 @@ def func_ls_point_fn(
         active = 1
         ne = constraint_state.n_constraints_equality[i_b]
         nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
         if i_c >= ne and i_c < nef:
             f = constraint_state.efc_frictionloss[i_c, i_b]
             r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
@@ -1324,16 +1327,13 @@ def func_ls_point_fn(
                 qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
                     f * constraint_state.jv[i_c, i_b]
                 )
-                constraint_state.quad[i_c, 0, i_b] = qf_0
-                constraint_state.quad[i_c, 1, i_b] = qf_1
-                constraint_state.quad[i_c, 2, i_b] = 0.0
-
+                qf_2 = 0.0
         elif i_c >= nef:
             active = x < 0
 
-        tmp_quad_total0 += constraint_state.quad[i_c, 0, i_b] * active
-        tmp_quad_total1 += constraint_state.quad[i_c, 1, i_b] * active
-        tmp_quad_total2 += constraint_state.quad[i_c, 2, i_b] * active
+        tmp_quad_total0 += qf_0 * active
+        tmp_quad_total1 += qf_1 * active
+        tmp_quad_total2 += qf_2 * active
 
     cost = alpha * alpha * tmp_quad_total2 + alpha * tmp_quad_total1 + tmp_quad_total0
 
@@ -1583,8 +1583,6 @@ def update_bracket(
                 constraint_state.candidates[4 * i + 3, i_b],
             )
             flag = 2
-        else:
-            pass
 
     p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = p_alpha, p_cost, p_deriv_0, p_deriv_1
 
