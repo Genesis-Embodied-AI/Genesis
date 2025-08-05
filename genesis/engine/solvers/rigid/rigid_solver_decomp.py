@@ -2194,16 +2194,9 @@ class RigidSolver(Solver):
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
-        if not hasattr(self, "_rigid_global_info"):
-            super().set_gravity(gravity, envs_idx)
-            return
-        g = np.asarray(gravity, dtype=gs.np_float)
-        if envs_idx is None:
-            if g.ndim == 1:
-                g = np.tile(g, (self._B, 1))
-            self._rigid_global_info.gravity.from_numpy(g)
-        else:
-            self._rigid_global_info.gravity[envs_idx] = g
+        super().set_gravity(gravity, envs_idx)
+        if hasattr(self, "_rigid_global_info"):
+            self._rigid_global_info.gravity.copy_from(self._gravity)
 
     def rigid_entity_inverse_kinematics(
         self,
