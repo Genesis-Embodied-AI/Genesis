@@ -307,6 +307,24 @@ def double_ball_pendulum():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def hinge_slide():
+    mjcf = ET.Element("mujoco", model="hinge_slide")
+
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "joint", damping="0.01")
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    base = ET.SubElement(worldbody, "body", name="pendulum", pos="0.15 0.0 0.0")
+    ET.SubElement(base, "joint", name="hinge", type="hinge", axis="0 1 0", frictionloss="0.08")
+    ET.SubElement(base, "geom", name="geom1", type="capsule", size="0.02", fromto="0.0 0.0 0.0 0.1 0.0 0.0")
+    link1 = ET.SubElement(base, "body", name="link1", pos="0.1 0.0 0.0")
+    ET.SubElement(link1, "joint", name="slide", type="slide", axis="1 0 0", frictionloss="0.3", stiffness="200.0")
+    ET.SubElement(link1, "geom", name="geom2", type="capsule", size="0.015", fromto="-0.1 0.0 0.0 0.1 0.0 0.0")
+
+    return mjcf
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -330,6 +348,20 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_simple_kinematic_chain(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=200, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["hinge_slide"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_frictionloss(gs_sim, mj_sim, tol):
+    qvel = np.array([0.7, -0.9])
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=400, tol=1e-7)
+
+    # Check that final velocity is almost zero
+    gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()
+    assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
 # Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
@@ -2806,13 +2838,3 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
     assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
     assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
-
-
-@pytest.mark.parametrize("xml_path", ["xml/frictionloss_pendulum.xml"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler, gs.integrator.implicitfast])
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_frictionloss(gs_sim, mj_sim, tol):
-    qvel = np.array([1.0, -1.0])
-    tol = 1e-7  # TODO: I have to relax the tolerance a bit. Need to look closer why it differs from mujoco
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=1000, tol=tol)
