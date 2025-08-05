@@ -32,6 +32,7 @@ class RigidJoint(RBC):
         dofs_motion_vel,
         dofs_limit,
         dofs_invweight,
+        dofs_frictionloss,
         dofs_stiffness,
         dofs_damping,
         dofs_armature,
@@ -60,6 +61,7 @@ class RigidJoint(RBC):
         self._dofs_motion_vel = dofs_motion_vel
         self._dofs_limit = dofs_limit
         self._dofs_invweight = dofs_invweight
+        self._dofs_frictionloss = dofs_frictionloss
         self._dofs_stiffness = dofs_stiffness
         self._dofs_damping = dofs_damping
         self._dofs_armature = dofs_armature
@@ -389,6 +391,13 @@ class RigidJoint(RBC):
         Returns the invweight of the dofs of the joint.
         """
         return self._dofs_invweight
+
+    @property
+    def dofs_frictionloss(self):
+        """
+        Returns the frictionloss of the dofs of the joint.
+        """
+        return self._dofs_frictionloss
 
     @property
     def dofs_stiffness(self):
