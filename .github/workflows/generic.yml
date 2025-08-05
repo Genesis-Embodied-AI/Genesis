@@ -4,6 +4,10 @@ on:
   pull_request:
     branches:
       - main
+  release:
+    branches:
+      - main
+    types: [published]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -30,6 +34,7 @@ jobs:
       TI_ENABLE_VULKAN: "0"
 
     runs-on: ${{ matrix.OS }}
+    if: github.event_name != 'release'
 
     steps:
       - name: Print system information (Windows)
@@ -117,3 +122,32 @@ jobs:
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
           key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  publish-pypi:
+    name: Publish on PyPI
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    environment:
+      name: advance
+
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build wheels
+        run: |
+          pip wheel --no-deps . -w wheelhouse
+
+      - name: Publish the wheels on PyPI
+        uses: pypa/gh-action-pypi-publish@v1.12.4
+        with:
+          packages-dir: wheelhouse
+          verify-metadata: true
+          attestations: true
+          print-hash: true
+          skip-existing: true

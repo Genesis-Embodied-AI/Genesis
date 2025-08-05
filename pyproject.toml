@@ -3,10 +3,8 @@ requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# name = "genesis-world-nightly"
-# version = "0.0.3"
 name = "genesis-world"
-version = "0.2.1"
+version = "0.3.0"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
