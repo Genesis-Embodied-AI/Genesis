@@ -776,6 +776,7 @@ class RigidSolver(Solver):
                 vgeoms_vface_start=np.array([vgeom.vface_start for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vvert_end=np.array([vgeom.vvert_end for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vface_end=np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
+                vgeoms_color=np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
                 # taichi variables
                 vgeoms_info=self.vgeoms_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -821,6 +822,9 @@ class RigidSolver(Solver):
             entities_geom_end=np.array([entity.geom_end for entity in entities], dtype=gs.np_int),
             entities_gravity_compensation=np.array(
                 [entity.gravity_compensation for entity in entities], dtype=gs.np_float
+            ),
+            entities_is_local_collision_mask=np.array(
+                [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
             ),
             # taichi variables
             entities_info=self.entities_info,
@@ -2191,16 +2195,9 @@ class RigidSolver(Solver):
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
-        if not hasattr(self, "_rigid_global_info"):
-            super().set_gravity(gravity, envs_idx)
-            return
-        g = np.asarray(gravity, dtype=gs.np_float)
-        if envs_idx is None:
-            if g.ndim == 1:
-                g = np.tile(g, (self._B, 1))
-            self._rigid_global_info.gravity.from_numpy(g)
-        else:
-            self._rigid_global_info.gravity[envs_idx] = g
+        super().set_gravity(gravity, envs_idx)
+        if hasattr(self, "_rigid_global_info"):
+            self._rigid_global_info.gravity.copy_from(self._gravity)
 
     def rigid_entity_inverse_kinematics(
         self,
@@ -2883,6 +2880,7 @@ def kernel_init_vgeom_fields(
     vgeoms_vface_start: ti.types.ndarray(),
     vgeoms_vvert_end: ti.types.ndarray(),
     vgeoms_vface_end: ti.types.ndarray(),
+    vgeoms_color: ti.types.ndarray(),
     # taichi variables
     vgeoms_info: array_class.VGeomsInfo,
     static_rigid_sim_config: ti.template(),
@@ -2905,6 +2903,8 @@ def kernel_init_vgeom_fields(
         vgeoms_info.vface_num[i] = vgeoms_vface_end[i] - vgeoms_vface_start[i]
 
         vgeoms_info.link_idx[i] = vgeoms_link_idx[i]
+        for j in ti.static(range(4)):
+            vgeoms_info.color[i][j] = vgeoms_color[i, j]
 
 
 @ti.kernel
@@ -2916,6 +2916,7 @@ def kernel_init_entity_fields(
     entities_geom_start: ti.types.ndarray(),
     entities_geom_end: ti.types.ndarray(),
     entities_gravity_compensation: ti.types.ndarray(),
+    entities_is_local_collision_mask: ti.types.ndarray(),
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
@@ -2941,6 +2942,7 @@ def kernel_init_entity_fields(
         entities_info.n_geoms[i] = entities_geom_end[i] - entities_geom_start[i]
 
         entities_info.gravity_compensation[i] = entities_gravity_compensation[i]
+        entities_info.is_local_collision_mask[i] = entities_is_local_collision_mask[i]
 
         if ti.static(static_rigid_sim_config.batch_dofs_info):
             for i_d, i_b in ti.ndrange((entities_dof_start[i], entities_dof_end[i]), _B):
@@ -3436,7 +3438,9 @@ def kernel_rigid_entity_inverse_kinematics(
     rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
     n_error_dims = 6 * n_links
 
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         # save original qpos
         for i_q in range(rigid_entity.n_qs):
             rigid_entity._IK_qpos_orig[i_q, i_b] = rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b]
@@ -4050,7 +4054,9 @@ def kernel_forward_kinematics_links_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         func_update_cartesian_space(
             i_b=i_b,
             links_state=links_state,
@@ -4491,7 +4497,9 @@ def kernel_forward_kinematics_entity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         func_forward_kinematics_entity(
             i_e,
             i_b,
@@ -4521,7 +4529,6 @@ def func_forward_kinematics_entity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
@@ -4634,7 +4641,6 @@ def func_forward_velocity_entity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
@@ -4711,7 +4717,9 @@ def kernel_update_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    for i_b in envs_idx:
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+
         func_update_geoms(
             i_b,
             entities_info,

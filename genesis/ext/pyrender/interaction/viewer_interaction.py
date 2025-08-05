@@ -1,12 +1,13 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from typing_extensions import override
+from threading import Lock as threading_Lock
 
 import numpy as np
 
 import genesis as gs
 from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 
-from .aabb import AABB
+from .aabb import AABB, OBB
 from .mouse_spring import MouseSpring
 from .ray import Plane, Ray, RayHit
 from .vec3 import Pose, Quat, Vec3, Color
@@ -14,6 +15,7 @@ from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, 
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
 
@@ -31,7 +33,7 @@ class ViewerInteraction(ViewerInteractionBase):
         camera_yfov: float,
         log_events: bool = False,
         camera_fov: float = 60.0,
-    ):
+    ) -> None:
         super().__init__(log_events)
         self.camera: 'Node' = camera
         self.scene: 'Scene' = scene
@@ -41,12 +43,13 @@ class ViewerInteraction(ViewerInteractionBase):
         self.tan_half_fov: float = np.tan(0.5 * self.camera_yfov)
         self.prev_mouse_pos: tuple[int, int] = (viewport_size[0] // 2, viewport_size[1] // 2)
 
-        self.picked_entity: RigidEntity | None = None
+        self.picked_link: RigidLink | None = None
         self.picked_point_in_local: Vec3 | None = None
         self.mouse_drag_plane: Plane | None = None
         self.prev_mouse_3d_pos: Vec3 | None = None
 
         self.mouse_spring: MouseSpring = MouseSpring()
+        self.lock = threading_Lock()
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -57,7 +60,7 @@ class ViewerInteraction(ViewerInteractionBase):
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_drag(x, y, dx, dy, buttons, modifiers)
         self.prev_mouse_pos = (x, y)
-        if self.picked_entity:
+        if self.picked_link:
             # actual processing done in update_on_sim_step()
 
             return EVENT_HANDLED
@@ -66,27 +69,34 @@ class ViewerInteraction(ViewerInteractionBase):
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_press(x, y, button, modifiers)
         if button == 1: # left mouse button
-            (ray_hit, self.picked_entity) = self.raycast_against_entities(self.screen_position_to_ray(x, y))
-            if self.picked_entity and ray_hit:
-                temp_fwd = self.get_camera_forward()
-                temp_back = -temp_fwd
+            ray_hit = self.raycast_against_entities(self.screen_position_to_ray(x, y))
+            with self.lock:
+                if ray_hit.geom:
+                    self.picked_link = ray_hit.geom.link
+                    assert self.picked_link is not None
 
-                self.mouse_drag_plane = Plane(temp_back, ray_hit.position)
-                self.prev_mouse_3d_pos = ray_hit.position
+                    temp_fwd = self.get_camera_forward()
+                    temp_back = -temp_fwd
 
-                pose: Pose = self.get_pose_of_first_geom(self.picked_entity)
-                self.picked_point_in_local = pose.inverse_transform_point(ray_hit.position)
+                    self.mouse_drag_plane = Plane(temp_back, ray_hit.position)
+                    self.prev_mouse_3d_pos = ray_hit.position
 
-                self.mouse_spring.attach(self.picked_entity, ray_hit.position)
+                    pose: Pose = Pose.from_link(self.picked_link)
+                    self.picked_point_in_local = pose.inverse_transform_point(ray_hit.position)
+
+                    self.mouse_spring.attach(self.picked_link, ray_hit.position)
 
     @override
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_release(x, y, button, modifiers)
         if button == 1: # left mouse button
-            self.picked_entity = None
-            self.picked_point_in_local = None
+            with self.lock:
+                self.picked_link = None
+                self.picked_point_in_local = None
+                self.mouse_drag_plane = None
+                self.prev_mouse_3d_pos = None
 
-            self.mouse_spring.detach()
+                self.mouse_spring.detach()
 
     @override
     def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
@@ -96,24 +106,25 @@ class ViewerInteraction(ViewerInteractionBase):
 
     @override
     def update_on_sim_step(self) -> None:
-        if self.picked_entity:
-            mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
-            ray_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
-            assert ray_hit.is_hit
-            if ray_hit.is_hit:
-                new_mouse_3d_pos: Vec3 = ray_hit.position
-                delta_3d_pos: Vec3 = new_mouse_3d_pos - self.prev_mouse_3d_pos
-                self.prev_mouse_3d_pos = new_mouse_3d_pos
+        with self.lock:
+            if self.picked_link:
+                mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
+                ray_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
+                assert ray_hit.is_hit
+                if ray_hit.is_hit:
+                    new_mouse_3d_pos: Vec3 = ray_hit.position
+                    delta_3d_pos: Vec3 = new_mouse_3d_pos - self.prev_mouse_3d_pos
+                    self.prev_mouse_3d_pos = new_mouse_3d_pos
 
-                use_force: bool = True
-                if use_force:
-                    # apply force
-                    self.mouse_spring.apply_force(new_mouse_3d_pos, self.scene.sim.dt)
-                else:
-                    #apply displacement
-                    pos = Vec3.from_tensor(self.picked_entity.get_pos())
-                    pos = pos + delta_3d_pos
-                    self.picked_entity.set_pos(pos.as_tensor())
+                    use_force: bool = True
+                    if use_force:
+                        # apply force
+                        self.mouse_spring.apply_force(new_mouse_3d_pos, self.scene.sim.dt)
+                    else:
+                        #apply displacement
+                        pos = Vec3.from_tensor(self.picked_link.entity.get_pos())
+                        pos += delta_3d_pos
+                        self.picked_link.entity.set_pos(pos.as_tensor())
 
     @override
     def on_draw(self) -> None:
@@ -121,39 +132,32 @@ class ViewerInteraction(ViewerInteractionBase):
         if self.scene._visualizer is not None and self.scene._visualizer.viewer_lock is not None:
             self.scene.clear_debug_objects()
             mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
-            closest_hit = None
-            hit_entity: RigidEntity | None = None
 
-            ray_hit = self._raycast_against_ground_plane(mouse_ray)
-            if ray_hit.is_hit:
-                closest_hit = ray_hit
+            closest_hit = self.raycast_against_entities(mouse_ray)
+            if not closest_hit.is_hit:
+                closest_hit = self._raycast_against_ground_plane(mouse_ray)
 
-            for entity in self.get_entities():
-                ray_hit = self.raycast_against_entity_obb(entity, mouse_ray)
-                if ray_hit.is_hit:
-                    if closest_hit is None or ray_hit.distance < closest_hit.distance:
-                        closest_hit = ray_hit
-                        hit_entity = entity
+            with self.lock:
+                if self.picked_link:
+                    assert self.mouse_drag_plane is not None
+                    assert self.picked_point_in_local is not None
 
-            if closest_hit:
-                self.scene.draw_debug_sphere(closest_hit.position.v, 0.01, (0, 1, 0, 1))
-                self._draw_arrow(closest_hit.position, 0.25 * closest_hit.normal, (0, 1, 0, 1))
-            if hit_entity:
-                self._draw_entity_unrotated_obb(hit_entity)
+                    # draw held point
+                    pose: Pose = Pose.from_link(self.picked_link)
+                    held_point: Vec3 = pose.transform_point(self.picked_point_in_local)
+                    self.scene.draw_debug_sphere(held_point.v, 0.02, Color.red().tuple())
 
-            if self.picked_entity:
-                assert self.mouse_drag_plane is not None
-                assert self.picked_point_in_local is not None
+                    plane_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
+                    if plane_hit.is_hit:
+                        self.scene.draw_debug_sphere(plane_hit.position.v, 0.02, Color.red().tuple())
+                        self.scene.draw_debug_line(held_point.v, plane_hit.position.v, color=Color.red().tuple())
+                else:
+                    if closest_hit.is_hit:
+                        self.scene.draw_debug_sphere(closest_hit.position.v, 0.01, (0, 1, 0, 1))
+                        self._draw_arrow(closest_hit.position, 0.25 * closest_hit.normal, (0, 1, 0, 1))
+                    if closest_hit.geom:
+                        self._draw_entity_unrotated_obb(closest_hit.geom)
 
-                # draw held point
-                pose: Pose = self.get_pose_of_first_geom(self.picked_entity)
-                held_point: Vec3 = pose.transform_point(self.picked_point_in_local)
-                self.scene.draw_debug_sphere(held_point.v, 0.02, Color.red().tuple())
-
-                plane_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
-                if plane_hit.is_hit:
-                    self.scene.draw_debug_sphere(plane_hit.position.v, 0.02, Color.red().tuple())
-                    self.scene.draw_debug_line(held_point.v, plane_hit.position.v, color=Color.red().tuple())
 
     def screen_position_to_ray(self, x: float, y: float) -> Ray:
         # convert screen position to ray
@@ -197,30 +201,45 @@ class ViewerInteraction(ViewerInteractionBase):
 
     def raycast_against_entity_obb(self, entity: RigidEntity, ray: Ray) -> RayHit:
         if isinstance(entity.morph, gs.morphs.Box):
-            box: gs.morphs.Box = entity.morph
-            size = Vec3.from_xyz(*box.size)
-            pose = self.get_pose_of_first_geom(entity)
-            aabb = AABB.from_center_and_size(Vec3.zero(), size)
-            ray_hit = aabb.raycast_obb(pose, ray)
+            obb: OBB = self._get_box_obb(entity)
+            ray_hit = obb.raycast(ray)
+            if ray_hit.is_hit:
+                ray_hit.geom = entity.geoms[0]
             return ray_hit
-        else:
+        elif isinstance(entity.morph, gs.morphs.Plane):
+            # ignore plane
             return RayHit.no_hit()
+        else:
+            closest_hit = RayHit.no_hit()
+            for link in entity.links:
+                if not link.is_fixed: 
+                    for geom in link.geoms:
+                        obb: OBB = self._get_geom_placeholder_obb(geom)
+                        ray_hit = obb.raycast(ray)
+                        if ray_hit.distance < closest_hit.distance:
+                            ray_hit.geom = geom
+                            closest_hit = ray_hit
+            return closest_hit
 
-    def raycast_against_entities(self, ray: Ray) -> tuple[RayHit | None, RigidEntity | None]:
-        closest_hit = None
-        hit_entity: RigidEntity | None = None
-        for entity in self.get_entities():
-            ray_hit = self.raycast_against_entity_obb(entity, ray)
-            if ray_hit.is_hit and (closest_hit is None or ray_hit.distance < closest_hit.distance):
+    def raycast_against_entities(self, ray: Ray) -> RayHit:
+        closest_hit = RayHit.no_hit()
+        for entity in self.scene.sim.rigid_solver.entities:
+            rigid_entity: RigidEntity = cast(RigidEntity, entity)
+            ray_hit = self.raycast_against_entity_obb(rigid_entity, ray)
+            if ray_hit.distance < closest_hit.distance:
                 closest_hit = ray_hit
-                hit_entity = entity
-        return (closest_hit, hit_entity)
+        return closest_hit
 
-    def get_entities(self) -> list[RigidEntity]:
-        return self.scene.sim.rigid_solver.entities
+    def _get_box_obb(self, box_entity: RigidEntity) -> OBB:
+        box: gs.morphs.Box = box_entity.morph
+        pose = Pose.from_link(box_entity.links[0])
+        half_extents = 0.5 * Vec3.from_xyz(*box.size)
+        return OBB(pose, half_extents)
 
-    def get_pose_of_first_geom(self, entity: RigidEntity) -> 'Pose':
-        return Pose.from_geom(entity.geoms[0])
+    def _get_geom_placeholder_obb(self, geom: 'RigidGeom') -> OBB:
+        pose = Pose.from_geom(geom)
+        half_extents = Vec3.full(0.5 * 0.125)
+        return OBB(pose, half_extents)
 
     def _draw_arrow(
         self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
@@ -228,22 +247,14 @@ class ViewerInteraction(ViewerInteractionBase):
         self.scene.draw_debug_arrow(pos.v, dir.v, color=color)  # Only draws arrowhead -- bug?
         self.scene.draw_debug_line(pos.v, pos.v + dir.v, color=color)
 
-    def _draw_entity_unrotated_obb(self, entity: RigidEntity) -> None:
-        if self.picked_entity:
-            return
+    def _draw_entity_unrotated_obb(self, geom: 'RigidGeom') -> None:
+        obb: OBB | None = None
+        if isinstance(geom.entity.morph, gs.morphs.Box):
+            obb = self._get_box_obb(geom.entity)
+        else:
+            obb = self._get_geom_placeholder_obb(geom)
         
-        if isinstance(entity.morph, gs.morphs.Plane):
-            plane: gs.morphs.Plane = entity.morph
-            pass
-        if isinstance(entity.morph, gs.morphs.Box):
-            box: gs.morphs.Box = entity.morph
-            size = Vec3.from_xyz(*box.size)
-            geom: RigidGeom = entity.geoms[0]
-            assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
-            # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
-            pos = Vec3.from_tensor(geom.get_pos())
-            quat = Quat.from_tensor(geom.get_quat())
-            aabb = AABB.from_center_and_size(pos, size)
-            aabb.expand(0.01)
+        if obb:
+            aabb: AABB = AABB.from_center_and_half_extents(obb.pose.pos, obb.half_extents)
+            aabb.expand(padding=0.01)
             self.scene.draw_debug_box(aabb.v, color=Color.red().with_alpha(0.5).tuple(), wireframe=False)
-

@@ -2,11 +2,11 @@ import os
 import math
 import pickle
 
+import fast_simplification
 import numpy as np
 import trimesh
 
 import genesis as gs
-from genesis.ext import fast_simplification
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
 
@@ -386,13 +386,14 @@ def convert_heightfield_to_watertight_trimesh(
 
     # This is the mesh used for non-sdf purposes.
     # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
-
-    v_simp, f_simp = fast_simplification.simplify(
-        sdf_mesh.vertices,
-        sdf_mesh.faces,
-        target_count=0,
-        lossless=True,
-    )
+    # TODO: lossless option support is pending on fast_simplification package.
+    # v_simp, f_simp = fast_simplification.simplify(
+    #     sdf_mesh.vertices,
+    #     sdf_mesh.faces,
+    #     target_count=0,
+    #     lossless=True,
+    # )
+    v_simp, f_simp = sdf_mesh.vertices, sdf_mesh.faces
 
     if uvs is not None:
         idx_map = np.empty(len(v_simp), dtype=np.int64)

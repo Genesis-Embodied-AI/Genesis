@@ -29,11 +29,12 @@ class Mesh(object):
         If False, the mesh will not be rendered.
     """
 
-    def __init__(self, primitives, name=None, weights=None, is_visible=True):
+    def __init__(self, primitives, name=None, weights=None, is_visible=True, is_marker=False):
         self.primitives = primitives
         self.name = name
         self.weights = weights
         self.is_visible = is_visible
+        self.is_marker = is_marker
 
         self._bounds = None
 
@@ -47,35 +48,6 @@ class Mesh(object):
         if value is not None:
             value = str(value)
         self._name = value
-
-    @property
-    def primitives(self):
-        """list of :class:`Primitive` : The primitives associated
-        with this mesh.
-        """
-        return self._primitives
-
-    @primitives.setter
-    def primitives(self, value):
-        self._primitives = value
-
-    @property
-    def weights(self):
-        """(k,) float : Weights to be applied to morph targets."""
-        return self._weights
-
-    @weights.setter
-    def weights(self, value):
-        self._weights = value
-
-    @property
-    def is_visible(self):
-        """bool : Whether the mesh is visible."""
-        return self._is_visible
-
-    @is_visible.setter
-    def is_visible(self, value):
-        self._is_visible = value
 
     @property
     def bounds(self):
@@ -119,7 +91,7 @@ class Mesh(object):
         return False
 
     @staticmethod
-    def from_points(points, name=None, colors=None, normals=None, is_visible=True, poses=None):
+    def from_points(points, name=None, colors=None, normals=None, is_visible=True, poses=None, is_marker=False):
         """Create a Mesh from a set of points.
 
         Parameters
@@ -143,7 +115,7 @@ class Mesh(object):
             The created mesh.
         """
         primitive = Primitive(positions=points, normals=normals, color_0=colors, mode=GLTF.POINTS, poses=poses)
-        mesh = Mesh(primitives=[primitive], name=name, is_visible=is_visible)
+        mesh = Mesh(primitives=[primitive], name=name, is_visible=is_visible, is_marker=is_marker)
         return mesh
 
     @staticmethod
@@ -152,6 +124,7 @@ class Mesh(object):
         name=None,
         material=None,
         is_visible=True,
+        is_marker=False,
         poses=None,
         wireframe=False,
         smooth=False,
@@ -245,7 +218,7 @@ class Mesh(object):
                 )
             )
 
-        return Mesh(primitives=primitives, name=name, is_visible=is_visible)
+        return Mesh(primitives=primitives, name=name, is_visible=is_visible, is_marker=is_marker)
 
     @staticmethod
     def _get_trimesh_props(mesh, smooth=False, material=None):

@@ -102,6 +102,7 @@ class RigidEntity(Entity):
             gs.raise_exception(f"Unsupported morph: {self._morph}.")
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
+        self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
         self._update_child_idxs()
 
@@ -2876,3 +2877,8 @@ class RigidEntity(Entity):
     def is_free(self):
         """Whether the entity is free to move."""
         return self._is_free
+
+    @property
+    def is_local_collision_mask(self):
+        """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
+        return self._is_local_collision_mask

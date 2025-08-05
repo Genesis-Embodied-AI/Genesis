@@ -1748,7 +1748,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 
 # FIXME: GJK collision detection algorithm is failing on some platform.
 @pytest.mark.required
-@pytest.mark.parametrize("euler", [(90, 0, 90), (75, 15, 90)])
+@pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_convexify(euler, backend, show_viewer, gjk_collision):
@@ -2209,18 +2209,29 @@ def test_gravity(show_viewer, tol):
     )
 
     sphere = scene.add_entity(gs.morphs.Sphere())
-    scene.build(n_envs=2)
+    scene.build(n_envs=3)
 
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, -9.8]), envs_idx=0)
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 9.8]), envs_idx=1)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
+    scene.sim.set_gravity(torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=2)
 
-    for _ in range(200):
-        scene.step()
+    with np.testing.assert_raises(AssertionError):
+        scene.sim.set_gravity(torch.tensor([0.0, -10.0]))
 
-    first_pos = sphere.get_dofs_position()[0, 2]
-    second_pos = sphere.get_dofs_position()[1, 2]
+    with np.testing.assert_raises(AssertionError):
+        scene.sim.set_gravity(torch.tensor([[0.0, 0.0, -10.0], [0.0, 0.0, -10.0]]), envs_idx=1)
 
-    assert_allclose(first_pos * -1, second_pos, tol=tol)
+    scene.step()
+
+    assert_allclose(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 0.0, 3.0],
+        ],
+        sphere.get_links_acc().squeeze(),
+        tol=tol,
+    )
 
 
 @pytest.mark.required
