@@ -357,7 +357,7 @@ def test_simple_kinematic_chain(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_frictionloss(gs_sim, mj_sim, tol):
     qvel = np.array([0.7, -0.9])
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=400, tol=1e-7)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=2000, tol=tol)
 
     # Check that final velocity is almost zero
     gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()
@@ -394,14 +394,12 @@ def test_walker(gs_sim, mj_sim, gjk_collision, tol):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_equality_joint(gs_sim, mj_sim, gs_solver):
+def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
     # there is an equality constraint
     assert gs_sim.rigid_solver.n_equalities == 1
 
     qpos = np.array((0.0, -1.0))
     qvel = np.array((1.0, -0.3))
-    # Note that it is impossible to be more accurate than this because of the inherent stiffness of the problem.
-    tol = 2e-8 if gs_solver == gs.constraint_solver.Newton else 1e-8
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, tol=tol)
 
     # check if the two joints are equal
@@ -435,7 +433,7 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
     # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
     # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
+    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 5e-6
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
