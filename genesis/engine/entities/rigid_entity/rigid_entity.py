@@ -763,9 +763,9 @@ class RigidEntity(Entity):
 
         # Add collision geometries
         for g_info in cg_infos:
-            friction = g_info.get("friction", self.material.friction)
+            friction = self.material.friction
             if friction is None:
-                friction = gu.default_friction()
+                friction = g_info.get("friction", gu.default_friction())
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
