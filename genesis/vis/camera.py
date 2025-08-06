@@ -471,21 +471,23 @@ class Camera(Sensor):
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
         """
-        Render a partial point cloud from the camera view. Returns a (res[0], res[1], 3) numpy array representing the point cloud in each pixel.
+        Render a partial point cloud from the camera view.
+
         Parameters
         ----------
         world_frame : bool, optional
             Whether the point cloud is on camera frame or world frame.
+
         Returns
         -------
         pc : np.ndarray
-            the point cloud
+            Numpy array of shape (res[0], res[1], 3) representing the point cloud in each pixel.
         mask_arr : np.ndarray
             The valid depth mask.
         """
         self._rasterizer.update_scene()
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-            self, False, True, False, normal=False
+            self, rgb=False, depth=True, segmentation=False, normal=False
         )
 
         def opengl_projection_matrix_to_intrinsics(P: np.ndarray, width: int, height: int):
@@ -536,16 +538,11 @@ class Camera(Sensor):
             world_y = normalized_y * depth_grid / _fy
             world_z = depth_grid
 
-            pc = np.stack((world_x, world_y, world_z), axis=1)
-
-            point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
+            point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth.size,), dtype=np.float32)), axis=-1)
             if world:
-                point_cloud_world = point_cloud_h @ pose.T
-                point_cloud_world = point_cloud_world[:, :3].reshape((*depth.shape, 3))
-                return point_cloud_world, mask
-            else:
-                point_cloud = point_cloud_h[:, :3].reshape((*depth.shape, 3))
-                return point_cloud, mask
+                point_cloud = point_cloud @ pose.T
+            point_cloud = point_cloud[:, :3].reshape((*depth.shape, 3))
+            return point_cloud, mask
 
         intrinsic_K = opengl_projection_matrix_to_intrinsics(
             self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(),

@@ -272,6 +272,77 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_point_cloud(show_viewer):
+    CAMERA_DIST = 8.0
+    OBJ_OFFSET = 10.0
+    BOX_HALFSIZE = 1.0
+    SPHERE_RADIUS = 1.0
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, OBJ_OFFSET, 0.0),
+            radius=SPHERE_RADIUS,
+            fixed=True,
+        ),
+    )
+    camera_sphere = scene.add_camera(
+        pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, OBJ_OFFSET, 0.0),
+        GUI=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, -OBJ_OFFSET, 0.0),
+            size=(2.0 * BOX_HALFSIZE, 2.0 * BOX_HALFSIZE, 2.0 * BOX_HALFSIZE),
+            fixed=True,
+        )
+    )
+    camera_box_1 = scene.add_camera(
+        pos=(0.0, -OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, -OBJ_OFFSET, 0.0),
+        GUI=show_viewer,
+    )
+    camera_box_2 = scene.add_camera(
+        pos=np.array((CAMERA_DIST, CAMERA_DIST - OBJ_OFFSET, CAMERA_DIST)),
+        lookat=(0.0, -OBJ_OFFSET, 0.0),
+        GUI=show_viewer,
+    )
+    for camera in scene.visualizer.cameras:
+        camera._near = 1.0
+    scene.build()
+
+    if show_viewer:
+        for camera in scene.visualizer.cameras:
+            camera.render(rgb=True, depth=True)
+
+    point_cloud, mask = camera_box_1.render_pointcloud(world_frame=False)
+    point_cloud = point_cloud[mask]
+    assert_allclose(CAMERA_DIST - point_cloud[:, 2], BOX_HALFSIZE, atol=1e-4)
+    assert np.all(-BOX_HALFSIZE <= point_cloud[:, :2].min(axis=0))
+    assert np.all(point_cloud[:, :2].max(axis=0) <= BOX_HALFSIZE)
+
+    point_cloud, mask = camera_box_2.render_pointcloud(world_frame=False)
+    point_cloud = point_cloud[mask]
+    point_cloud = point_cloud @ gu.z_up_to_R(np.array((1.0, 1.0, 1.0)), np.array((0.0, 0.0, 1.0))).T
+    point_cloud -= np.array((CAMERA_DIST, CAMERA_DIST, CAMERA_DIST))
+    assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=1e-4)
+
+    point_cloud, mask = camera_box_2.render_pointcloud(world_frame=True)
+    point_cloud = point_cloud[mask]
+    point_cloud += np.array((0.0, OBJ_OFFSET, 0.0))
+    assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=1e-4)
+
+    # It is not possible to get higher accuracy because of tesselation
+    point_cloud, mask = camera_sphere.render_pointcloud(world_frame=False)
+    point_cloud = point_cloud[mask]
+    assert_allclose(np.linalg.norm((0.0, 0.0, CAMERA_DIST) - point_cloud, axis=-1), SPHERE_RADIUS, atol=1e-2)
+
+
+@pytest.mark.required
 def test_batched_mounted_camera_rendering(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
