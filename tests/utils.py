@@ -16,6 +16,7 @@ import numpy as np
 import mujoco
 import torch
 from huggingface_hub import snapshot_download
+from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
 import genesis as gs
@@ -27,6 +28,9 @@ from genesis.utils.misc import tensor_to_array
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
+
+MESH_EXTENSIONS = (".mtl", ".glb", ".obj", ".stl", ".usb", ".usdz", ".mdl")
+IMAGE_EXTENSIONS = (".png", ".jpg")
 
 # Get repository "root" path (actually test dir is good enough)
 TEST_DIR = os.path.dirname(__file__)
@@ -164,7 +168,9 @@ def get_git_commit_info(ref="HEAD"):
     return revision, timestamp
 
 
-def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
+def get_hf_dataset(
+    pattern, repo_name: str = "assets", local_dir: str | None = None, num_retry: int = 4, retry_delay: float = 30.0
+):
     assert num_retry >= 1
 
     for _ in range(num_retry):
@@ -173,9 +179,10 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
             # Try downloading the assets
             asset_path = snapshot_download(
                 repo_type="dataset",
-                repo_id="Genesis-Intelligence/assets",
+                repo_id=f"Genesis-Intelligence/{repo_name}",
                 allow_patterns=pattern,
                 max_workers=1,
+                local_dir=local_dir,
             )
 
             # Make sure that download was successful
@@ -183,6 +190,11 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
             for path in Path(asset_path).rglob(pattern):
                 if not path.is_file():
                     continue
+
+                ext = path.suffix.lower()
+                if not ext in (".xml", ".urdf", *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
+                    continue
+
                 has_files = True
 
                 if path.stat().st_size == 0:
@@ -193,9 +205,18 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
                         ET.parse(path)
                     except ET.ParseError as e:
                         raise HTTPError(f"Impossible to parse XML file.") from e
+                elif path.suffix.lower() in IMAGE_EXTENSIONS:
+                    try:
+                        Image.open(path)
+                    except UnidentifiedImageError as e:
+                        raise HTTPError(f"Impossible to parse Image file.") from e
+                elif path.suffix.lower() in MESH_EXTENSIONS:
+                    # TODO: Validating mesh files is more tricky. Ignoring them for now.
+                    pass
+
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except HTTPError:
+        except HTTPError as e:
             num_trials += 1
             if num_trials == num_retry:
                 raise

@@ -9,7 +9,7 @@ import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 import genesis.utils.usda as usda_utils
 
-from .utils import assert_allclose, assert_array_equal, get_hf_assets
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
 NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
@@ -248,9 +248,9 @@ def test_glb_parse_material(glb_file):
 @pytest.mark.required
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
-    asset_path = get_hf_assets(pattern=f"{usd_filename}.glb")
+    asset_path = get_hf_dataset(pattern=f"{usd_filename}.glb")
     glb_file = os.path.join(asset_path, f"{usd_filename}.glb")
-    asset_path = get_hf_assets(pattern=f"{usd_filename}.usdz")
+    asset_path = get_hf_dataset(pattern=f"{usd_filename}.usdz")
     usd_file = os.path.join(asset_path, f"{usd_filename}.usdz")
 
     gs_glb_meshes = gltf_utils.parse_mesh_glb(

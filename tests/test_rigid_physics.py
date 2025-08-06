@@ -21,7 +21,7 @@ from .utils import (
     build_mujoco_sim,
     check_mujoco_data_consistency,
     check_mujoco_model_consistency,
-    get_hf_assets,
+    get_hf_dataset,
     init_simulators,
     simulate_and_check_mujoco_consistency,
 )
@@ -548,7 +548,7 @@ def test_urdf_rope(
     dof_damping,
     show_viewer,
 ):
-    asset_path = get_hf_assets(pattern="linear_deformable.urdf")
+    asset_path = get_hf_dataset(pattern="linear_deformable.urdf")
     xml_path = os.path.join(asset_path, "linear_deformable.urdf")
 
     mj_sim = build_mujoco_sim(
@@ -1705,7 +1705,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = get_hf_assets(pattern="work_table.glb")
+    asset_path = get_hf_dataset(pattern="work_table.glb")
     table = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
@@ -1714,7 +1714,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         ),
         vis_mode="collision",
     )
-    asset_path = get_hf_assets(pattern="spoon.glb")
+    asset_path = get_hf_dataset(pattern="spoon.glb")
     obj = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
@@ -1787,7 +1787,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
     )
     objs = []
     for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
-        asset_path = get_hf_assets(pattern=f"{asset_name}/*")
+        asset_path = get_hf_dataset(pattern=f"{asset_name}/*")
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/output.xml",
@@ -1896,7 +1896,7 @@ def test_collision_plane_convex(show_viewer, tol):
 
         scene.add_entity(morph)
 
-        asset_path = get_hf_assets(pattern="image_0000_segmented.glb")
+        asset_path = get_hf_dataset(pattern="image_0000_segmented.glb")
         asset = scene.add_entity(
             gs.morphs.Mesh(
                 file=f"{asset_path}/image_0000_segmented.glb",
@@ -2078,7 +2078,7 @@ def test_urdf_parsing(show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = get_hf_assets(pattern="microwave/*")
+    asset_path = get_hf_dataset(pattern="microwave/*")
     entities = {}
     for i, (fixed, merge_fixed_links) in enumerate(
         ((False, False), (False, True), (True, False), (True, True)),
@@ -2340,7 +2340,7 @@ def test_drone_advanced(show_viewer):
         show_FPS=False,
     )
     plane = scene.add_entity(gs.morphs.Plane())
-    asset_path = get_hf_assets(pattern="drone_sus/*")
+    asset_path = get_hf_dataset(pattern="drone_sus/*")
     drones = []
     for offset, merge_fixed_links in ((-0.3, False), (0.3, True)):
         drone = scene.add_entity(
