@@ -541,10 +541,10 @@ class Camera(Sensor):
             point_cloud_h = np.concatenate((pc, np.ones((len(pc), 1), dtype=np.float32)), axis=1)
             if world:
                 point_cloud_world = point_cloud_h @ pose.T
-                point_cloud_world = point_cloud_world[:, :3].reshape((*depth, 3))
+                point_cloud_world = point_cloud_world[:, :3].reshape((*depth.shape, 3))
                 return point_cloud_world, mask
             else:
-                point_cloud = point_cloud_h[:, :3].reshape((*depth, 3))
+                point_cloud = point_cloud_h[:, :3].reshape((*depth.shape, 3))
                 return point_cloud, mask
 
         intrinsic_K = opengl_projection_matrix_to_intrinsics(
