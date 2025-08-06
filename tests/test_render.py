@@ -1,19 +1,21 @@
 import queue
 import sys
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
+from syrupy.location import PyTestLocation
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter
 
-from .utils import assert_allclose, assert_array_equal
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 
 IMG_STD_ERR_THR = 0.8
@@ -429,6 +431,9 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     CAM_RES = (256, 256)
 
     pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+
+    snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=png_snapshot.test_location))
+    get_hf_dataset(pattern=f"{snapshot_dir.name}/*", repo_name="snapshots", local_dir=snapshot_dir.parent)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
