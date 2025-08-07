@@ -36,6 +36,7 @@ from .solvers import (
 )
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+from genesis.sensors.sensor_manager import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -151,6 +152,9 @@ class Simulator(RBC):
         # entities
         self._entities: list[Entity] = gs.List()
 
+        # sensors
+        self._sensor_manager = SensorManager()
+
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
@@ -205,6 +209,8 @@ class Simulator(RBC):
 
         if self.n_envs > 0 and self.sf_solver.is_active():
             gs.raise_exception("Batching is not supported for SF solver as of now.")
+
+        self._sensor_manager.build()
 
         # hybrid
         for entity in self._entities:
