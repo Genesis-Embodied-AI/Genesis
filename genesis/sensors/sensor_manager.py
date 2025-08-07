@@ -19,7 +19,6 @@ class SensorManager:
         self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
         self._sensors_metadata: dict[Type["Sensor"], dict[str, Any]] = {}
         self._cache: dict[Type["Sensor"], torch.Tensor] = {}
-        self._cache_size_map: dict[Type["Sensor"], int] = {}
         self._cache_last_updated_step_map: dict[Type["Sensor"], int] = {}
 
     def create_sensor(self, sensor_options: SensorOptions):
