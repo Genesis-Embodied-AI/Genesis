@@ -153,7 +153,7 @@ class Simulator(RBC):
         self._entities: list[Entity] = gs.List()
 
         # sensors
-        self._sensor_manager = SensorManager()
+        self._sensor_manager = SensorManager(self)
 
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
