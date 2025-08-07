@@ -12,18 +12,73 @@ def func_wakeup_entity(
     dofs_state: array_class.DofsState,
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    contact_island: ti.template()
 ):
+    island_idx = contact_island.entity_island[i_e, i_b]
+    if island_idx != -1 and contact_island.island_hibernated[island_idx, i_b]:
+        print(f"Internal error!?: Island {island_idx} hibernated but calling awake.")
+
+    # Warning: can't run it as is -- this is run 30 timers for a stack of 4 boxes
     if entities_state.hibernated[i_e, i_b]:
-        entities_state.hibernated[i_e, i_b] = False
-        n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-        rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
 
-        for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            dofs_state.hibernated[i_d, i_b] = False
-            n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
-            rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+        # check how many objects in the island
+        island_idx = contact_island.entity_island[i_e, i_b]
+        if island_idx != -1:
+            print(f"Wake up: island_idx: {island_idx} of {contact_island.island_entity[island_idx, i_b].n} entities")
 
-        for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-            links_state.hibernated[i_l, i_b] = False
-            n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
-            rigid_global_info.awake_links[n_awake_links, i_b] = i_l
+            # check if either all hibernated or all awake
+            all_hibernated = True
+            all_awake = True
+            for i in range(contact_island.island_entity[island_idx, i_b].n):
+                entity_ref = contact_island.island_entity[island_idx, i_b].start + i
+                entity_idx = contact_island.entity_id[entity_ref, i_b]
+                is_entity_awake = not entities_state.hibernated[entity_idx, i_b]
+                all_hibernated &= not is_entity_awake
+                all_awake &= is_entity_awake
+            if all_hibernated or all_awake:
+                print(f"Internal error!?: All entities in island {island_idx} are already all hibernated or awake")
+
+            for i in range(contact_island.island_entity[island_idx, i_b].n):
+                entity_ref = contact_island.island_entity[island_idx, i_b].start + i
+                entity_idx = contact_island.entity_id[entity_ref, i_b]
+
+                if entities_state.hibernated[entity_idx, i_b]:
+                    i_e = entity_idx
+                    if entities_state.hibernated[i_e, i_b]:
+                        entities_state.hibernated[i_e, i_b] = False
+                        n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+                        rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
+
+                        # todo: do single atomic add
+                        for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                            dofs_state.hibernated[i_d, i_b] = False
+                            n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
+                            rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+
+                        # todo: do single atomic add
+                        for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+                            links_state.hibernated[i_l, i_b] = False
+                            n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
+                            rigid_global_info.awake_links[n_awake_links, i_b] = i_l
+        else:
+            # check if entity is free or fixed
+
+            # !? how to check if entity is fixed? looking at n_dofs only? or iterating through links and checking if their info is StructLinksInfo.is_fixed
+            if entities_info.n_dofs[i_e] > 0:
+                print(f"Entity {i_e} is not in any island")
+
+    # if entities_state.hibernated[i_e, i_b]:
+    #     entities_state.hibernated[i_e, i_b] = False
+    #     n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+    #     rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
+
+    #     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+    #         dofs_state.hibernated[i_d, i_b] = False
+    #         n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
+    #         rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+
+    #     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+    #         links_state.hibernated[i_l, i_b] = False
+    #         n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
+    #         rigid_global_info.awake_links[n_awake_links, i_b] = i_l
+
