@@ -223,9 +223,12 @@ class SAPCoupler(RBC):
         offset = 0
         for geom in self.rigid_solver.geoms:
             if geom.contype or geom.conaffinity:
+                volume = geom.get_trimesh().volume
+                tet_cfg = {"nobisect": False, "maxvolume": volume / 500}
                 verts, elems = eu.split_all_surface_tets(
                     *eu.mesh_to_elements(
                         file=geom.get_trimesh(),
+                        tet_cfg=tet_cfg,
                     )
                 )
                 rigid_volume_verts.append(verts)
@@ -1270,7 +1273,6 @@ class SAPCoupler(RBC):
         if ti.static(self.fem_solver.is_active()):
             self.compute_fem_energy_alpha(f, self.linesearch_state.energy)
             self.compute_fem_gradient_alpha(f)
-
         if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_energy_alpha(f, self.linesearch_state.energy)
             self.compute_rigid_gradient_alpha(f)
@@ -2880,7 +2882,7 @@ class RigidFloorTetContact(RigidContact):
     def __init__(
         self,
         simulator: "Simulator",
-        eps: float = 1e-8,
+        eps: float = 1e-6,
     ) -> None:
         super().__init__(simulator)
         self.name = "RigidFloorTetContact"
@@ -2991,12 +2993,10 @@ class RigidFloorTetContact(RigidContact):
                 + barycentric[3] * tet_pressures[3]
             )
 
-            deformable_g = self.coupler._hydroelastic_stiffness
             rigid_g = self.coupler.rigid_pressure_gradient[i_b, i_e].z
-            # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
             if total_area < self.eps or rigid_g < self.eps:
                 continue
-            g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
+            g = rigid_g  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
