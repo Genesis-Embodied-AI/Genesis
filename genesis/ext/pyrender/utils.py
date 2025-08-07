@@ -87,7 +87,8 @@ def format_texture_source(texture, target_channels="RGB"):
             if texture.shape[2] == 1:
                 texture = np.repeat(texture, 3, axis=2)
             elif texture.shape[2] == 2:
-                raise ValueError("Cannot reformat 2-channel texture into RGB")
+                l = texture[:, :, 0]
+                texture = np.stack([l, l, l], axis=2)
             else:
                 texture = texture[:, :, (0, 1, 2)]
         elif target_channels == "RGBA":
@@ -95,7 +96,14 @@ def format_texture_source(texture, target_channels="RGB"):
                 texture = np.repeat(texture, 4, axis=2)
                 texture[:, :, 3] = 255
             elif texture.shape[2] == 2:
-                raise ValueError("Cannot reformat 2-channel texture into RGBA")
+                l = texture[:, :, 0]
+                a = texture[:, :, 1]
+                tx = np.empty((texture.shape[0], texture.shape[1], 4), dtype=texture.dtype)
+                tx[:, :, 0] = l
+                tx[:, :, 1] = l
+                tx[:, :, 2] = l
+                tx[:, :, 3] = a
+                texture = tx
             elif texture.shape[2] == 3:
                 tx = np.empty((texture.shape[0], texture.shape[1], 4), dtype=np.uint8)
                 tx[:, :, :3] = texture
