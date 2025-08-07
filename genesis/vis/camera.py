@@ -358,7 +358,7 @@ class Camera(Sensor):
         force_render : bool, optional
             Whether to force rendering even if the scene has not changed.
         antialiasing : bool, optional
-            Whether to apply anti-aliasing.
+            Whether to apply anti-aliasing. Only supported by 'BatchRenderer' for now.
 
         Returns
         -------
@@ -485,77 +485,45 @@ class Camera(Sensor):
         mask_arr : np.ndarray
             The valid depth mask.
         """
+        # Compute the (denormalized) depth map using PyRender systematically
+        # TODO: Add support of BatchRendered (requires access to projection matrix)
         self._rasterizer.update_scene()
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
             self, rgb=False, depth=True, segmentation=False, normal=False
         )
 
-        def opengl_projection_matrix_to_intrinsics(P: np.ndarray, width: int, height: int):
-            """Convert OpenGL projection matrix to camera intrinsics.
-            Args:
-                P (np.ndarray): OpenGL projection matrix.
-                width (int): Image width.
-                height (int): Image height
-            Returns:
-                np.ndarray: Camera intrinsics. [3, 3]
-            """
+        # Convert OpenGL projection matrix to camera intrinsics
+        P = self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix()
+        height, width = depth_arr.shape
+        fx = P[0, 0] * width / 2.0
+        fy = P[1, 1] * height / 2.0
+        cx = (1.0 - P[0, 2]) * width / 2.0
+        cy = (1.0 + P[1, 2]) * height / 2.0
 
-            fx = P[0, 0] * width / 2
-            fy = P[1, 1] * height / 2
-            cx = (1.0 - P[0, 2]) * width / 2
-            cy = (1.0 + P[1, 2]) * height / 2
+        # Extract camera pose if needed
+        if world_frame:
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
+            cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
 
-            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-            return K
+        # Mask out invalid depth
+        mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
 
-        def backproject_depth_to_pointcloud(K: np.ndarray, depth: np.ndarray, pose, world, znear, zfar):
-            """Convert depth image to pointcloud given camera intrinsics.
-            Args:
-                depth (np.ndarray): Depth image.
-            Returns:
-                np.ndarray: (x, y, z) Point cloud. [n, m, 3]
-            """
-            _fx = K[0, 0]
-            _fy = K[1, 1]
-            _cx = K[0, 2]
-            _cy = K[1, 2]
+        # Compute normalized pixel coordinates
+        v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+        u = u.reshape((-1,))
+        v = v.reshape((-1,))
 
-            # Mask out invalid depth
-            mask = np.where((depth > znear) & (depth < zfar * 0.99))
-            # zfar * 0.99 for filtering out precision error of float
-            height, width = depth.shape
-            y, x = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
-            x = x.reshape((-1,))
-            y = y.reshape((-1,))
+        # Convert to world coordinates
+        depth_grid = depth_arr[v, u]
+        world_x = depth_grid * (u + 0.5 - cx) / fx
+        world_y = depth_grid * (v + 0.5 - cy) / fy
+        world_z = depth_grid
 
-            # Normalize pixel coordinates
-            normalized_x = x - _cx
-            normalized_y = y - _cy
-
-            # Convert to world coordinates
-            depth_grid = depth[y, x]
-            world_x = normalized_x * depth_grid / _fx
-            world_y = normalized_y * depth_grid / _fy
-            world_z = depth_grid
-
-            point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth.size,), dtype=np.float32)), axis=-1)
-            if world:
-                point_cloud = point_cloud @ pose.T
-            point_cloud = point_cloud[:, :3].reshape((*depth.shape, 3))
-            return point_cloud, mask
-
-        intrinsic_K = opengl_projection_matrix_to_intrinsics(
-            self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix(),
-            width=self.res[0],
-            height=self.res[1],
-        )
-
-        T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
-        cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
-
-        pc, mask = backproject_depth_to_pointcloud(intrinsic_K, depth_arr, cam_pose, world_frame, self.near, self.far)
-
-        return pc, mask
+        point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth_arr.size,), dtype=np.float32)), axis=-1)
+        if world_frame:
+            point_cloud = point_cloud @ cam_pose.T
+        point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
+        return point_cloud, mask
 
     @gs.assert_built
     def setup_initial_env_poses(self):
