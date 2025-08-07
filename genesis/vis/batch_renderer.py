@@ -23,7 +23,7 @@ class IMAGE_TYPE(enum.IntEnum):
 class Light:
     def __init__(self, pos, dir, intensity, directional, castshadow, cutoff):
         self._pos = pos
-        self._dir = dir
+        self._dir = dir / np.linalg.norm(dir)
         self._intensity = intensity
         self._directional = directional
         self._castshadow = castshadow
@@ -129,7 +129,7 @@ class BatchRenderer(RBC):
     def update_scene(self):
         self._visualizer._context.update()
 
-    def render(self, rgb=True, depth=False, normal=False, segmentation=False, force_render=False, aliasing=False):
+    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False, aliasing=False):
         """
         Render all cameras in the batch.
 
@@ -156,8 +156,8 @@ class BatchRenderer(RBC):
             The sequence of depth images associated with each camera.
         normal_arr : tuple of tensors
             The sequence of normal images associated with each camera.
-        segementation_arr : tuple of tensors
-            The sequence of segementation images associated with each camera.
+        segmentation_arr : tuple of tensors
+            The sequence of segmentation images associated with each camera.
         """
 
         # Clear cache if requested or necessary
@@ -187,13 +187,13 @@ class BatchRenderer(RBC):
         # Render frame
         cameras_pos = torch.stack([camera.get_pos() for camera in self._visualizer._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._visualizer._cameras], dim=1)
-        render_options = np.array((rgb_, depth_, False, False, aliasing), dtype=np.uint32)
-        rgba_arr_all, depth_arr_all = self._renderer.render(
+        render_options = np.array((rgb_, depth_, normal_, segmentation_, aliasing), dtype=np.uint32)
+        rgba_arr_all, depth_arr_all, normal_arr_all, segmentation_arr_all = self._renderer.render(
             self._visualizer.scene.rigid_solver, cameras_pos, cameras_quat, render_options
         )
 
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
-        buffers = [rgba_arr_all[..., :3], depth_arr_all]
+        buffers = [rgba_arr_all[..., :3], depth_arr_all, normal_arr_all[..., :3], segmentation_arr_all]
         for i, data in enumerate(buffers):
             if data is not None:
                 data = data.swapaxes(0, 1)

@@ -1133,10 +1133,10 @@ class Scene(RBC):
             Whether to render the rgb image.
         depth : bool, optional
             Whether to render the depth image.
-        normal : bool, optional
-            Whether to render the normal image.
         segmentation : bool, optional
             Whether to render the segmentation image.
+        normal : bool, optional
+            Whether to render the normal image.
         force_render : bool, optional
             Whether to force render the scene.
 
