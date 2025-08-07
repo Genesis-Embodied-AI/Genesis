@@ -73,7 +73,7 @@ class FrameImageExporter:
             depth_max - depth_min > gs.EPS, ((depth_max - depth) / (depth_max - depth_min) * 255).to(torch.uint8), 0
         )
 
-    def export_frame_all_cameras(self, i_step, camera_idx=None, rgb=None, depth=None, segmentation=None, normal=None):
+    def export_frame_all_cameras(self, i_step, camera_idx=None, rgb=None, depth=None, normal=None, segmentation=None):
         """
         Export frames for all cameras.
 
@@ -97,7 +97,7 @@ class FrameImageExporter:
         if camera_idx is None:
             camera_idx = range(len(depth or rgb))
         for i_cam in camera_idx:
-            rgb_cam, depth_cam = None, None
+            rgb_cam, depth_cam, normal_cam, segmentation_cam = None, None, None, None
             if rgb is not None:
                 rgb_cam = rgb[i_cam]
             if depth is not None:
@@ -108,7 +108,7 @@ class FrameImageExporter:
                 segmentation_cam = segmentation[i_cam]
             self.export_frame_single_camera(i_step, i_cam, rgb_cam, depth_cam, normal_cam, segmentation_cam)
 
-    def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, segmentation=None, normal=None):
+    def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, normal=None, segmentation=None):
         """
         Export frames for a single camera.
 
