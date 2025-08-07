@@ -915,6 +915,13 @@ class RigidSolver(Solver):
     def substep(self):
         # from genesis.utils.tools import create_timer
 
+
+        if not hasattr(self, "optional_contact_island"):
+            if hasattr(self, "constraint_solver") and hasattr(self.constraint_solver, "contact_island"):
+                self.optional_contact_island = self.constraint_solver.contact_island
+            else:
+                self.optional_contact_island = ContactIsland(self.collider)
+
         # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         kernel_step_1(
             links_state=self.links_state,
@@ -929,7 +936,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island=self.optional_contact_island,
         )
         # timer.stamp("kernel_step_1")
         self._func_constraint_force()
@@ -951,7 +958,7 @@ class RigidSolver(Solver):
             # contact_island=getattr(self.constraint_solver, "contact_island", None),
 
             # xxx: enable this and get things compiling
-            contact_island=self.constraint_solver.contact_island,
+            contact_island=self.optional_contact_island,
         )
         # timer.stamp("kernel_step_2")
 
