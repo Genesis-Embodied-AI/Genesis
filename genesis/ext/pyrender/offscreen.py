@@ -148,7 +148,7 @@ class OffscreenRenderer(object):
         if shadow and not self._is_software:
             flags |= RenderFlags.SHADOWS_ALL
 
-        if depth and not rgb and not seg and not normal:
+        if depth and not (rgb or seg):
             flags |= RenderFlags.DEPTH_ONLY
 
         if plane_reflection and not self._is_software:
@@ -166,22 +166,25 @@ class OffscreenRenderer(object):
         if depth:
             flags |= RenderFlags.RET_DEPTH
 
-        if self._platform.supports_framebuffers():
-            flags |= RenderFlags.OFFSCREEN
-            retval = renderer.render(scene, flags, seg_node_map)
-        else:
-            if flags & RenderFlags.ENV_SEPARATE:
-                gs.raise_exception("'env_separate_rigid=True' not supported on this platform.")
-            if normal:
-                gs.raise_exception("'normal=True' not supported on this platform.")
-            renderer.render(scene, flags, seg_node_map)
-            if depth:
-                depth = renderer.read_depth_buf()
-            if flags & RenderFlags.DEPTH_ONLY:
-                retval = (depth,)
+        if rgb or depth or seg:
+            if self._platform.supports_framebuffers():
+                flags |= RenderFlags.OFFSCREEN
+                retval = renderer.render(scene, flags, seg_node_map)
             else:
-                color = renderer.read_color_buf()
-                retval = (color, depth)
+                if flags & RenderFlags.ENV_SEPARATE:
+                    gs.raise_exception("'env_separate_rigid=True' not supported on this platform.")
+                if normal:
+                    gs.raise_exception("'normal=True' not supported on this platform.")
+                renderer.render(scene, flags, seg_node_map)
+                if depth:
+                    depth = renderer.read_depth_buf()
+                if flags & RenderFlags.DEPTH_ONLY:
+                    retval = (depth,)
+                else:
+                    color = renderer.read_color_buf()
+                    retval = (color, depth)
+        else:
+            retval = ()
 
         if normal:
             class CustomShaderCache:
@@ -204,7 +207,7 @@ class OffscreenRenderer(object):
             if env_separate_rigid:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
+            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
             retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache

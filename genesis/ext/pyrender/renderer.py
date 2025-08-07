@@ -115,7 +115,7 @@ class Renderer(object):
     def point_size(self, value):
         self._point_size = float(value)
 
-    def render(self, scene, flags, seg_node_map=None, is_first_pass=True):
+    def render(self, scene, flags, seg_node_map=None, *, is_first_pass=True, force_skip_shadows=False):
         """Render a scene with the given set of flags.
 
         Parameters
@@ -159,7 +159,7 @@ class Renderer(object):
             env_idx = i if use_env_idx else -1
 
             # Render necessary shadow maps
-            if not (flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
+            if not (force_skip_shadows or flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
                 for ln in scene.light_nodes:
                     take_pass = False
                     if isinstance(ln.light, DirectionalLight) and flags & RenderFlags.SHADOWS_DIRECTIONAL:
@@ -873,7 +873,7 @@ class Renderer(object):
         # If using offscreen render, bind main framebuffer
         if flags & RenderFlags.OFFSCREEN:
             self._configure_main_framebuffer()
-            if (flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
+            if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY:
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb)
             else:
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb_ms)

@@ -84,7 +84,7 @@ class Rasterizer(RBC):
                 )
 
             if segmentation:
-                seg_idxc_rgb_arr, _ = self._renderer.render(
+                seg_idxc_rgb_arr, *_ = self._renderer.render(
                     self._context._scene,
                     self._camera_targets[camera.uid],
                     camera_node=self._camera_nodes[camera.uid],
@@ -112,7 +112,7 @@ class Rasterizer(RBC):
                 )
 
             if segmentation:
-                seg_idxc_rgb_arr, _ = self._viewer.render_offscreen(
+                seg_idxc_rgb_arr, *_ = self._viewer.render_offscreen(
                     self._camera_nodes[camera.uid],
                     self._camera_targets[camera.uid],
                     rgb=False,
@@ -129,7 +129,7 @@ class Rasterizer(RBC):
         if depth:
             depth_arr = retval[int(rgb)]
         if normal:
-            normal_arr = retval[int(rgb + rgb_arr)]
+            normal_arr = retval[int(rgb + depth)]
         return rgb_arr, depth_arr, seg_idxc_arr, normal_arr
 
     def update_scene(self):

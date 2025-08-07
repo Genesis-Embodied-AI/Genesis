@@ -371,10 +371,6 @@ class Camera(Sensor):
         normal_arr : np.ndarray
             The rendered surface normal(s).
         """
-
-        if (rgb or depth or segmentation or normal) is False:
-            gs.raise_exception("Nothing to render.")
-
         rgb_arr, depth_arr, seg_arr, seg_color_arr, normal_arr = None, None, None, None, None
 
         if self._batch_renderer is not None:
@@ -485,7 +481,7 @@ class Camera(Sensor):
         mask_arr : np.ndarray
             The valid depth mask.
         """
-        # Compute the (denormalized) depth map using PyRender systematically
+        # Compute the (denormalized) depth map using PyRender systematically.
         # TODO: Add support of BatchRendered (requires access to projection matrix)
         self._rasterizer.update_scene()
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(

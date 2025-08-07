@@ -1138,10 +1138,13 @@ class Viewer(pyglet.window.Window):
 
         if self.render_flags["depth"]:
             flags |= RenderFlags.RET_DEPTH
-            if not (self.render_flags["rgb"] or self.render_flags["seg"] or normal):
+            if not (self.render_flags["rgb"] or self.render_flags["seg"]):
                 flags |= RenderFlags.DEPTH_ONLY
 
-        retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+        if self.render_flags["rgb"] or self.render_flags["depth"] or self.render_flags["seg"]:
+            retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+        else:
+            retval = ()
 
         if normal:
             class CustomShaderCache:
@@ -1164,8 +1167,8 @@ class Viewer(pyglet.window.Window):
             if self.render_flags["env_separate_rigid"]:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
-            retval = retval + (normal_arr,)
+            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False)
+            retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache
 
