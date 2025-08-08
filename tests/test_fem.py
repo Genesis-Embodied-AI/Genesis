@@ -516,3 +516,44 @@ def test_box_soft_vertex_constraint(show_viewer):
     assert_allclose(
         positions, target_poss, tol=5e-5
     ), "Vertices should be near target positions with strong soft constraints"
+
+
+def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+    )
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.2),
+            radius=0.2,
+        ),
+        material=fem_material_linear_corotated_soft,
+    )
+
+    asset_path = get_hf_assets(pattern="heavy_three_joint_link.xml")
+    link = scene.add_entity(
+        gs.morphs.MJCF(file=f"{asset_path}/heavy_three_joint_link.xml", scale=0.5, pos=(-0.5, -0.5, 0.4)),
+    )
+
+    # Build the scene
+    scene.build()
+    for _ in range(200):
+        scene.step()
+
+    state = sphere.get_state()
+    min_pos_z = state.pos[..., 2].min()
+    # The contact requires some penetration to generate enough contact force to cancel out gravity
+    assert_allclose(min_pos_z, -1.0e-3, atol=1e-4), f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3."
+
+    link_verts = link.get_verts()
+    min_pos_z = link_verts[..., 2].min()
+    assert_allclose(min_pos_z, -1.0e-4, atol=5e-5), f"Link minimum Z position {min_pos_z} is not close to -1.0e-4."
