@@ -519,10 +519,12 @@ class Scene(RBC):
         self,
         pos,
         dir,
-        intensity,
-        directional,
-        castshadow,
-        cutoff,
+        color=(1.0, 1.0, 1.0),
+        intensity=1.0,
+        directional=0,
+        castshadow=True,
+        cutoff=180.0,
+        attenuation=0.0,
     ):
         """
         Add a light to the scene for batch renderer.
@@ -533,6 +535,8 @@ class Scene(RBC):
             The position of the light, specified as (x, y, z).
         dir : tuple of float, shape (3,)
             The direction of the light, specified as (x, y, z).
+        color : tuple of float, shape (3,)
+            The color of the light, specified as (x, y, z).
         intensity : float
             The intensity of the light.
         directional : bool
@@ -541,6 +545,9 @@ class Scene(RBC):
             Whether the light casts shadows.
         cutoff : float
             The cutoff angle of the light in degrees.
+        attenuation : float
+            The attenuation factor of the light.
+            Light intensity will attenuate by distance with (1 / (1 + attenuation * distance ^ 2))
         """
         if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
             gs.logger.warning(
@@ -549,7 +556,7 @@ class Scene(RBC):
             )
             return
 
-        self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+        self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
     def add_camera(

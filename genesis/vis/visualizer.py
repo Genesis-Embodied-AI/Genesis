@@ -134,9 +134,9 @@ class Visualizer(RBC):
         self._cameras.append(camera)
         return camera
 
-    def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
+    def add_light(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         if self._batch_renderer is not None:
-            self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+            self._batch_renderer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     def reset(self):
         self._t = -1

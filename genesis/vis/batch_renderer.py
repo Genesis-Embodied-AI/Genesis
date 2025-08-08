@@ -21,13 +21,15 @@ class IMAGE_TYPE(enum.IntEnum):
 
 
 class Light:
-    def __init__(self, pos, dir, intensity, directional, castshadow, cutoff):
+    def __init__(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         self._pos = pos
         self._dir = dir / np.linalg.norm(dir)
+        self._color = color
         self._intensity = intensity
         self._directional = directional
         self._castshadow = castshadow
         self._cutoff = cutoff
+        self._attenuation = attenuation
 
     @property
     def pos(self):
@@ -36,6 +38,10 @@ class Light:
     @property
     def dir(self):
         return self._dir
+
+    @property
+    def color(self):
+        return self._color
 
     @property
     def intensity(self):
@@ -57,6 +63,10 @@ class Light:
     def cutoffDeg(self):
         return self._cutoff
 
+    @property
+    def attenuation(self):
+        return self._attenuation
+
 
 class BatchRenderer(RBC):
     """
@@ -72,8 +82,8 @@ class BatchRenderer(RBC):
         self._data_cache = {}
         self._t = -1
 
-    def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
-        self._lights.append(Light(pos, dir, intensity, directional, castshadow, cutoff))
+    def add_light(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
+        self._lights.append(Light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation))
 
     def build(self):
         """
@@ -106,10 +116,12 @@ class BatchRenderer(RBC):
         n_lights = len(lights)
         light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
         light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
-        light_intensity = torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
+        light_rgb = torch.tensor([light.color for light in self._lights], dtype=gs.tc_float)
         light_directional = torch.tensor([light.directional for light in self._lights], dtype=gs.tc_int)
         light_castshadow = torch.tensor([light.castshadow for light in self._lights], dtype=gs.tc_int)
         light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=gs.tc_float)
+        light_attenuation = torch.tensor([light.attenuation for light in self._lights], dtype=gs.tc_float)
+        light_intensity = torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
 
         self._renderer = MadronaBatchRendererAdapter(
             rigid, gpu_id, n_envs, n_cameras, n_lights, cameras_fov, cameras_near, cameras_far, *res, False, use_rasterizer
@@ -120,10 +132,12 @@ class BatchRenderer(RBC):
             cameras_quat,
             light_pos,
             light_dir,
-            light_intensity,
+            light_rgb,
             light_directional,
             light_castshadow,
             light_cutoff,
+            light_attenuation,
+            light_intensity,
         )
 
     def update_scene(self):
