@@ -15,6 +15,7 @@ def main():
     parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
     parser.add_argument("-o", "--output_dir", type=str, default="img_output/test")
     parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
+    parser.add_argument("-d", "--debug", action="store_true", default=False)
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -37,6 +38,14 @@ def main():
     )
 
     ########################## cameras ##########################
+    debug_cam = scene.add_camera(
+        res=(720, 1280),
+        pos=(1.5, -0.5, 1.0),
+        lookat=(0.0, 0.0, 0.5),
+        fov=60,
+        GUI=args.vis,
+        debug=True,
+    )
     cam_0 = scene.add_camera(
         res=(512, 512),
         pos=(1.5, 0.5, 1.5),
@@ -75,14 +84,20 @@ def main():
     # Create an image exporter
     exporter = FrameImageExporter(args.output_dir)
 
+    if args.debug:
+        debug_cam.start_recording()
     for i in range(args.n_steps):
         scene.step()
+        if args.debug:
+            debug_cam.render()
         if args.render_all_cameras:
             rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
             exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
             rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
             exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
+    if args.debug:
+        debug_cam.stop_recording("debug_cam.mp4")
 
 
 if __name__ == "__main__":
