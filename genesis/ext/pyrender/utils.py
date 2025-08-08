@@ -96,12 +96,12 @@ def format_texture_source(texture, target_channels="RGB"):
                 texture = np.repeat(texture, 4, axis=2)
                 texture[:, :, 3] = 255
             elif texture.shape[2] == 2:
+                # Convert 2-channel texture (luminance + alpha) to RGBA by duplicating luminance to RGB
                 luminance = texture[:, :, 0]
                 alpha = texture[:, :, 1]
-                rgba = np.empty((texture.shape[0], texture.shape[1], 4), dtype=texture.dtype)
-                rgba[:, :, :3] = luminance[:, :, None]
-                rgba[:, :, 3] = alpha
-                texture = rgba
+                texture = np.empty((texture.shape[0], texture.shape[1], 4), dtype=texture.dtype)
+                texture[:, :, :3] = luminance[:, :, None]  # Broadcast luminance to RGB channels
+                texture[:, :, 3] = alpha
             elif texture.shape[2] == 3:
                 tx = np.empty((texture.shape[0], texture.shape[1], 4), dtype=np.uint8)
                 tx[:, :, :3] = texture
