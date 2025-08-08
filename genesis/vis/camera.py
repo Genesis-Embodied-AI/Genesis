@@ -11,6 +11,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.sensors import Sensor
 from genesis.utils.misc import tensor_to_array
+from genesis.constants import CAMERA_TYPE
 
 
 # quat for Madrona needs to be transformed to y-forward
@@ -66,6 +67,10 @@ class Camera(Sensor):
         The far plane of the camera.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
+    env_idx : int, optional
+        The index of the environment to track the camera.
+    camera_type : CAMERA_TYPE
+        The type of camera. Options are CAMERA_TYPE.RASTERIZER, CAMERA_TYPE.RAYTRACER, CAMERA_TYPE.BATCH_RENDERER.
     """
 
     def __init__(
@@ -87,6 +92,7 @@ class Camera(Sensor):
         far=100.0,
         transform=None,
         env_idx=None,
+        camera_type=CAMERA_TYPE.RASTERIZER,
     ):
         self._idx = idx
         self._uid = gs.UID()
@@ -111,6 +117,7 @@ class Camera(Sensor):
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
+        self._camera_type = camera_type
 
         self._env_idx = env_idx
         self._envs_offset = None
@@ -373,21 +380,25 @@ class Camera(Sensor):
         """
         rgb_arr, depth_arr, seg_arr, seg_color_arr, normal_arr = None, None, None, None, None
 
-        if self._batch_renderer is not None:
+        if self._camera_type == CAMERA_TYPE.BATCH_RENDERER:
+            assert self._batch_renderer is not None, "Batch renderer is not initialized."
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
                 rgb, depth, segmentation, normal, force_render, antialiasing
             )
-        elif self._raytracer is not None:
+        elif self._camera_type == CAMERA_TYPE.RAYTRACER:
             if rgb:
+                assert self._raytracer is not None, "Ray tracer is not initialized."
                 self._raytracer.update_scene()
                 rgb_arr = self._raytracer.render_camera(self)
 
             if depth or segmentation or normal:
+                assert self._rasterizer is not None, "Rasterizer is not initialized"
                 self._rasterizer.update_scene()
                 _, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                     self, False, depth, segmentation, normal=normal
                 )
-        else:
+        elif self._camera_type == CAMERA_TYPE.RASTERIZER:
+            assert self._rasterizer is not None, "Rasterizer is not initialized"
             self._rasterizer.update_scene()
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                 self, rgb, depth, segmentation, normal=normal
@@ -848,6 +859,11 @@ class Camera(Sensor):
     def env_idx(self):
         """Index of the environment being tracked by the camera."""
         return self._env_idx
+
+    @property
+    def camera_type(self):
+        """The type of camera."""
+        return self._camera_type
 
     @property
     def pos(self):

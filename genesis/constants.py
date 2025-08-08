@@ -23,6 +23,12 @@ class IntEnum(enum.IntEnum):
         return f"<{self.name}: {self.value}>"
 
 
+class CAMERA_TYPE(IntEnum):
+    RASTERIZER = 0
+    RAYTRACER = 1
+    BATCH_RENDERER = 2
+
+
 # geom type in rigid solver
 class GEOM_TYPE(IntEnum):
     # Beware PLANE must be the first geometry type as this is assumed by MPR collision detection.
