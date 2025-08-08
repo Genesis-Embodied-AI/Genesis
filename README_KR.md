@@ -19,8 +19,13 @@
 
 ## 🔥 새 소식
 
-- [2024-12-25] 레이 트레이싱 렌더러를 지원하는 [docker](#docker) 추가
-- [2024-12-24] [제네시스 기여](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) 가이드라인 추가
+  - [2025-08-05] v0.3.0 릴리스 🎊 🎉
+  - [2025-07-02] 이제 [Genesis AI](https://genesis-ai.company/)가 Genesis의 개발을 공식적으로 지원합니다.
+  - [2025-01-09] Genesis의 성능에 대한 자세한 [벤치마킹 및 비교 보고서](https://github.com/zhouxian/genesis-speed-benchmark)를 모든 테스트 스크립트와 함께 공개했습니다.
+  - [2025-01-08] v0.2.1 릴리스 🎊 🎉
+  - [2025-01-08] [Discord](https://discord.gg/nukCuhB47p) 및 [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) 그룹을 생성했습니다.
+  - [2024-12-25] 레이 트레이싱 렌더러를 지원하는 [docker](https://www.google.com/search?q=%23docker) 추가
+  - [2024-12-24] [제네시스 기여](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) 가이드라인 추가
 
 ## Table of Contents
 
@@ -39,7 +44,7 @@
 
 Genesis는 *로보틱스/임베디드 AI/물리 AI* 애플리케이션을 위해 설계된 범용 물리 플랫폼입니다. 그리고 다음과 같은 기능을 제공합니다:
 
-1. 폭넓은 재료와 물리 현상을 시뮬레이션할 수 있도록 처음부터 다시 구축된 **범용 물리 엔진**.
+1. 다양한 물성 (Material) 과 물리 현상을 시뮬레이션할 수 있도록 처음부터 다시 구축된 **범용 물리 엔진**.
 2. **가볍고**, **매우 빠르며**, **파이썬 친화적이고**, **사용자 친화적인** 로보틱스 시뮬레이션 플랫폼.
 3. 강력하고 빠른 **실사 렌더링 시스템**.
 4. 사용자의 자연어 설명을 다양한 형태의 데이터로 변환하는 **생성형 데이터 엔진**.
@@ -47,7 +52,7 @@ Genesis는 *로보틱스/임베디드 AI/물리 AI* 애플리케이션을 위해
 Genesis의 목표:
 
 - **물리 시뮬레이션의 진입 장벽을 낮춰** 누구나 로보틱스 연구에 접근할 수 있도록 합니다. [사명 선언문](https://genesis-world.readthedocs.io/en/latest/user_guide/overview/mission.html)을 확인하세요.
-- 단일 프레임워크로 **통합된 다양한 물리 솔버**를 통해 최상의 정확도로 물리적 세계를 재현합니다.
+- 단일 프레임워크로 **통합된 다양한 물리 솔버 (Physics Solver)**를 통해 최상의 정확도로 물리적 세계를 재현합니다.
 - **데이터 생성을 자동화**하여 사람의 수고를 줄이고 데이터 플라이휠이 스스로 순환하도록 합니다.
 
 프로젝트 페이지: <https://genesis-embodied-ai.github.io/>
@@ -56,25 +61,32 @@ Genesis의 목표:
 
 - **속도**: 단일 RTX 4090에서 Franka 로봇 팔을 시뮬레이션하는 경우, 4300만 FPS 이상(실시간보다 430,000 배 빠름).
 - **크로스 플랫폼**: Linux, macOS, Windows에서 실행 가능 및 다양한 연산 백엔드(CPU, Nvidia/AMD GPU, Apple Metal) 지원.
-- **다양한 물리 솔버 통합**: Rigid body, MPM, SPH, FEM, PBD, Stable Fluid.
-- **폭넓은 재료 모델**: 강체, 액체, 기체, 변형 가능한 오브젝트, 얇은 쉘 오브젝트 및 입상 재료의 시뮬레이션 및 결합.
+- **다양한 물리 솔버 (Physics Solver) 통합**: Rigid body, MPM, SPH, FEM, PBD, Stable Fluid.
+- **다양한 물성 (Material) 모델**: 강체, 액체, 기체, 변형 가능한 오브젝트, 얇은 쉘 오브젝트 및 입상 재료의 시뮬레이션 및 결합.
 - **다양한 로봇 호환성**: 로봇 팔, 보행 로봇, 드론, *소프트 로봇* 및 다양한 파일 형식(`MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl` 등) 로드 지원.
 - **실사 렌더링**: 네이티브 레이 트레이싱 기반 렌더링.
-- **미분 가능성**: Genesis는 완전히 미분 가능하도록 설계되었습니다. 현재 MPM 솔버와 Tool 솔버가 미분 가능하며, 다른 솔버는 향후 버전에서는 강체 및 관절체 솔버를 시작으로 다른 솔버들도 지원할 예정입니다.
-- **물리 기반 촉각 시뮬레이션**: 미분 가능한 [촉각 센서 시뮬레이션](https://github.com/Genesis-Embodied-AI/DiffTactile) 출시 예정(버전 0.3.0 예상).
+- **미분 가능성 (Differentiability)**: Genesis는 완전히 미분 가능하도록 설계되었습니다. 현재 MPM 솔버와 Tool 솔버가 미분 가능하며, 다른 솔버는 향후 버전에서는 강체 (Rigid body) 및 관절체 (Articulated body) 솔버를 시작으로 다른 솔버들도 지원할 예정입니다.
 - **사용자 친화성**: 직관적인 설치 및 API로 간편하게 사용 가능.
 
 ## 빠른 설치
 
-Genesis는 PyPI를 통해 설치할 수 있습니다:
+먼저 [공식 안내](https://pytorch.org/get-started/locally/)에 따라 **PyTorch**를 설치하세요.
+
+그 다음, PyPI를 통해 Genesis를 설치합니다:
 
 ```bash
-pip install genesis-world  # Python>=3.10,<3.14 필요
+pip install genesis-world  # Python>=3.10,<3.14 버전 필요;
 ```
 
-또한, [공식 설명서](https://pytorch.org/get-started/locally/)에 따라 **PyTorch**를 설치해야 합니다.
+최신 버전을 설치하려면, `pip install --upgrade pip`를 통해 `pip`를 최신 상태로 업데이트한 후 다음 명령어를 실행하세요:
 
-최신 버전을 사용하려면 저장소를 복제한 후 로컬에서 설치하세요:
+```bash
+pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
+```
+
+참고로, main 브랜치와 동기화하려면 패키지를 계속 수동으로 업데이트해야 합니다.
+
+Genesis 소스 코드를 직접 수정하고 싶은 사용자는 편집 가능 모드(editable mode)로 설치하는 것을 권장합니다. 먼저 `genesis-world`가 제거되었는지 확인한 후, 저장소를 복제(clone)하고 로컬에 설치하세요:
 
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
@@ -84,16 +96,16 @@ pip install -e ".[dev]"
 
 ## Docker
 
-Docker를 사용하여 Genesis를 실행하려면 먼저 Docker 이미지를 빌드하세요:
+Docker에서 Genesis를 사용하려면, 먼저 다음과 같이 Docker 이미지를 빌드할 수 있습니다:
 
 ```bash
 docker build -t genesis -f docker/Dockerfile docker
 ```
 
-그런 다음 Docker 이미지(`/workspace/examples`에 마운트된) 내에서 예제를 실행할 수 있습니다:
+그 다음, Docker 이미지 내에서 예제를 실행할 수 있습니다 (예제는 `/workspace/examples`에 마운트됩니다):
 
 ```bash
-xhost +local:root # 컨테이너가 디스플레이에 접근할 수 있도록 허용
+xhost +local:root # 컨테이너가 디스플레이에 접근하도록 허용
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
@@ -103,6 +115,32 @@ docker run --gpus all --rm -it \
 genesis
 ```
 
+### AMD 사용자
+
+AMD 사용자는 `docker/Dockerfile.amdgpu` 파일을 사용하여 Genesis를 이용할 수 있으며, 다음 명령어를 실행하여 빌드합니다:
+
+```
+docker build -t genesis-amd -f docker/Dockerfile.amdgpu docker
+```
+
+그리고 다음 명령어를 실행하여 사용할 수 있습니다:
+
+```xhost +local:docker \
+docker run -it --network=host \
+ --device=/dev/kfd \
+ --device=/dev/dri \
+ --group-add=video \
+ --ipc=host \
+ --cap-add=SYS_PTRACE \
+ --security-opt seccomp=unconfined \
+ --shm-size 8G \
+ -v $PWD:/workspace \
+ -e DISPLAY=$DISPLAY \
+ genesis-amd
+```
+
+예제는 `/workspace/examples` 경로에서 접근할 수 있습니다. 참고: AMD 사용자는 Vulkan 백엔드를 사용해야 합니다. 즉, Genesis를 초기화하려면 `gs.init(vulkan)`을 호출해야 합니다.
+
 ## 문서
 
 전체 문서는 [영어](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html)와 [중국어](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html)로 제공됩니다. 이 문서에는 자세한 설치 단계, 튜토리얼 및 API 참조가 포함되어 있습니다.
@@ -111,9 +149,9 @@ genesis
 
 Genesis 프로젝트는 오픈 소스 및 협력 프로젝트입니다. 다음을 포함하여 커뮤니티의 모든 형태의 기여를 환영합니다:
 
-- 새로운 기능이나 버그 수정을 위한 **풀 리퀘스트**.
-- GitHub Issues를 통한 **버그 리포트**.
-- Genesis의 사용성을 향상시키기 위한 **제안**.
+- 새로운 기능이나 버그 수정을 위한 **풀 리퀘스트 (Pull Requests)**.
+- GitHub Issues를 통한 **버그 리포트 (Bug Reports)**.
+- Genesis의 사용성을 향상시키기 위한 **제안 (Suggestions)**.
 
 자세한 내용은 [기여 가이드](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)를 참조하세요.
 

@@ -102,6 +102,7 @@ class RigidEntity(Entity):
             gs.raise_exception(f"Unsupported morph: {self._morph}.")
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
+        self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
         self._update_child_idxs()
 
@@ -409,6 +410,7 @@ class RigidEntity(Entity):
             j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
             j_info["dofs_stiffness"] = np.zeros(6)
             j_info["dofs_invweight"] = np.zeros(6)
+            j_info["dofs_frictionloss"] = np.zeros(6)
             j_info["dofs_damping"] = np.zeros(6)
             if isinstance(morph, gs.morphs.Drone):
                 mass_tot = sum(l_info["inertial_mass"] for l_info in l_infos)
@@ -696,6 +698,7 @@ class RigidEntity(Entity):
                 dofs_motion_vel=dofs_motion_vel,
                 dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
                 dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
+                dofs_frictionloss=j_info.get("dofs_frictionloss", np.zeros(n_dofs)),
                 dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
                 dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
                 dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
@@ -760,9 +763,9 @@ class RigidEntity(Entity):
 
         # Add collision geometries
         for g_info in cg_infos:
-            friction = g_info.get("friction", self.material.friction)
+            friction = self.material.friction
             if friction is None:
-                friction = gu.default_friction()
+                friction = g_info.get("friction", gu.default_friction())
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
@@ -2900,3 +2903,8 @@ class RigidEntity(Entity):
     def is_free(self):
         """Whether the entity is free to move."""
         return self._is_free
+
+    @property
+    def is_local_collision_mask(self):
+        """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
+        return self._is_local_collision_mask

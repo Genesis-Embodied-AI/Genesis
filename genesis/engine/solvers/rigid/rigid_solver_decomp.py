@@ -562,6 +562,7 @@ class RigidSolver(Solver):
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
+                dofs_frictionloss=np.concatenate([joint.dofs_frictionloss for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
                 dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
@@ -821,6 +822,9 @@ class RigidSolver(Solver):
             entities_geom_end=np.array([entity.geom_end for entity in entities], dtype=gs.np_int),
             entities_gravity_compensation=np.array(
                 [entity.gravity_compensation for entity in entities], dtype=gs.np_float
+            ),
+            entities_is_local_collision_mask=np.array(
+                [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
             ),
             # taichi variables
             entities_info=self.entities_info,
@@ -2191,16 +2195,9 @@ class RigidSolver(Solver):
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
-        if not hasattr(self, "_rigid_global_info"):
-            super().set_gravity(gravity, envs_idx)
-            return
-        g = np.asarray(gravity, dtype=gs.np_float)
-        if envs_idx is None:
-            if g.ndim == 1:
-                g = np.tile(g, (self._B, 1))
-            self._rigid_global_info.gravity.from_numpy(g)
-        else:
-            self._rigid_global_info.gravity[envs_idx] = g
+        super().set_gravity(gravity, envs_idx)
+        if hasattr(self, "_rigid_global_info"):
+            self._rigid_global_info.gravity.copy_from(self._gravity)
 
     def rigid_entity_inverse_kinematics(
         self,
@@ -2561,6 +2558,7 @@ def kernel_init_dof_fields(
     dofs_invweight: ti.types.ndarray(),
     dofs_stiffness: ti.types.ndarray(),
     dofs_damping: ti.types.ndarray(),
+    dofs_frictionloss: ti.types.ndarray(),
     dofs_armature: ti.types.ndarray(),
     dofs_kp: ti.types.ndarray(),
     dofs_kv: ti.types.ndarray(),
@@ -2589,6 +2587,7 @@ def kernel_init_dof_fields(
         dofs_info.invweight[I] = dofs_invweight[i]
         dofs_info.stiffness[I] = dofs_stiffness[i]
         dofs_info.damping[I] = dofs_damping[i]
+        dofs_info.frictionloss[I] = dofs_frictionloss[i]
         dofs_info.kp[I] = dofs_kp[i]
         dofs_info.kv[I] = dofs_kv[i]
 
@@ -2964,6 +2963,7 @@ def kernel_init_entity_fields(
     entities_geom_start: ti.types.ndarray(),
     entities_geom_end: ti.types.ndarray(),
     entities_gravity_compensation: ti.types.ndarray(),
+    entities_is_local_collision_mask: ti.types.ndarray(),
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
@@ -2989,6 +2989,7 @@ def kernel_init_entity_fields(
         entities_info.n_geoms[i] = entities_geom_end[i] - entities_geom_start[i]
 
         entities_info.gravity_compensation[i] = entities_gravity_compensation[i]
+        entities_info.is_local_collision_mask[i] = entities_is_local_collision_mask[i]
 
         if ti.static(static_rigid_sim_config.batch_dofs_info):
             for i_d, i_b in ti.ndrange((entities_dof_start[i], entities_dof_end[i]), _B):

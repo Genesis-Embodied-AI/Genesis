@@ -1,6 +1,7 @@
 import os
 import pickle as pkl
 
+import fast_simplification
 import numpy as np
 import numpy.typing as npt
 import pyvista as pv
@@ -14,7 +15,6 @@ import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
-from genesis.ext import fast_simplification
 from genesis.repr_base import RBC
 
 
