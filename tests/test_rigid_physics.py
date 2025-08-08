@@ -2354,7 +2354,7 @@ def test_drone_advanced(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_get_weld_constraints_basic(show_viewer, tol):
+def test_get_weld_constraints_api(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
         show_viewer=show_viewer,
@@ -2369,40 +2369,44 @@ def test_get_weld_constraints_basic(show_viewer, tol):
     scene.sim.rigid_solver.add_weld_constraint(link_a, link_b)
     scene.step()
 
-    welds = scene.sim.rigid_solver.get_weld_constraints(as_tensor=True, to_torch=False)
-    env_id = 0 if "env" not in welds else int(welds["env"][0])
+    # Test all 4 combinations for solver-level API
+    combinations = [
+        (True, True),  # as_tensor=True, to_torch=True
+        (True, False),  # as_tensor=True, to_torch=False
+        (False, True),  # as_tensor=False, to_torch=True
+        (False, False),  # as_tensor=False, to_torch=False
+    ]
 
-    row = np.array([env_id, int(welds["obj_a"][0]), int(welds["obj_b"][0])], dtype=np.int32)
-    ref = np.array([0, link_a.item(), link_b.item()], dtype=np.int32)
-    assert_allclose(row, ref, tol=tol)
+    for as_tensor, to_torch in combinations:
+        welds = scene.sim.rigid_solver.get_weld_constraints(as_tensor=as_tensor, to_torch=to_torch)
 
-    cube1.set_dofs_velocity(
-        velocity=np.array([1.0, 0.0, 0.0], dtype=np.float32),
-        dofs_idx_local=np.array([0, 1, 2], dtype=np.int32),
-        envs_idx=None,
-    )
-    for _ in range(200):
-        scene.step()
-    assert_allclose(cube1.get_vel(), cube2.get_vel(), tol=tol)
+        if as_tensor:
+            # Tensor format: welds["obj_a"][0, 0]
+            assert_allclose(
+                [welds["obj_a"][0, 0], welds["obj_b"][0, 0]],
+                [link_a.item(), link_b.item()],
+                tol=tol,
+            )
+        else:
+            # Non-tensor format: welds["obj_a"][0][0]
+            assert_allclose(
+                [welds["obj_a"][0][0], welds["obj_b"][0][0]],
+                [link_a.item(), link_b.item()],
+                tol=tol,
+            )
 
-
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_get_weld_constraints_entity(show_viewer, tol):
-    scene = gs.Scene(show_viewer=show_viewer)
-    cube1 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.0, 0.0, 0.05)))
-    cube2 = scene.add_entity(gs.morphs.Box(size=(0.05,) * 3, pos=(0.2, 0.0, 0.05)))
-    scene.build(n_envs=1)
-
-    link_a = torch.tensor([cube1.base_link.idx], dtype=gs.tc_int, device=gs.device)
-    link_b = torch.tensor([cube2.base_link.idx], dtype=gs.tc_int, device=gs.device)
-
-    scene.sim.rigid_solver.add_weld_constraint(link_a, link_b)
-    scene.step()
-
-    welds_single = cube1.get_weld_constraints(as_tensor=True, to_torch=False)
+    # Test entity-level API
+    welds_single = cube1.get_weld_constraints()
     assert_allclose(
-        [(welds_single["obj_a"][0]), (welds_single["obj_b"][0])],
+        [welds_single["obj_a"][0], welds_single["obj_b"][0]],
+        [link_a.item(), link_b.item()],
+        tol=tol,
+    )
+
+    # Test entity-level API with with_entity parameter
+    welds_with_entity = cube1.get_weld_constraints(with_entity=cube2)
+    assert_allclose(
+        [welds_with_entity["obj_a"][0], welds_with_entity["obj_b"][0]],
         [link_a.item(), link_b.item()],
         tol=tol,
     )

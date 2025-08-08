@@ -1835,29 +1835,29 @@ class RigidEntity(Entity):
             self.zero_all_dofs_velocity(envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
-        welds = self.scene.sim.rigid_solver.get_weld_constraints(as_tensor=as_tensor, to_torch=to_torch)
+    def get_weld_constraints(self, with_entity=None, exclude_self_contact=False):
+        welds = self._solver.get_weld_constraints(as_tensor=True, to_torch=True)
         obj_a = welds["obj_a"]
         obj_b = welds["obj_b"]
-        if as_tensor:
-            mask = (obj_a == self.idx) | (obj_b == self.idx)
-            if self._solver.n_envs > 0:
-                welds["valid_mask"] = mask
-            for k in ("obj_a", "obj_b"):
-                welds[k] = welds[k][mask]
-            if "env" in welds:
-                welds["env"] = welds["env"][mask]
-        else:
-            obj_a_new, obj_b_new, env_new = [], [], []
-            for ea, eb, env in zip(obj_a, obj_b, welds.get("env", [0] * len(obj_a))):
-                keep = (ea == self.idx) | (eb == self.idx)
-                obj_a_new.append(ea[keep])
-                obj_b_new.append(eb[keep])
-                if "env" in welds:
-                    env_new.append(env[keep])
-            welds["obj_a"], welds["obj_b"] = obj_a_new, obj_b_new
-            if "env" in welds:
-                welds["env"] = env_new
+
+        # Create mask for filtering welds involving this entity
+        mask = (obj_a == self.idx) | (obj_b == self.idx)
+
+        # Additional filtering if with_entity is specified
+        if with_entity is not None:
+            if self.idx == with_entity.idx:
+                if exclude_self_contact:
+                    gs.raise_exception("`with_entity` is self but `exclude_self_contact` is True.")
+                # For self-contact, keep only self-welds
+                mask = mask & ((obj_a == self.idx) & (obj_b == self.idx))
+            else:
+                # For cross-entity, keep welds between this entity and with_entity
+                mask = mask & ((obj_a == with_entity.idx) | (obj_b == with_entity.idx))
+
+        # Apply filtering
+        for k in ("obj_a", "obj_b"):
+            welds[k] = welds[k][mask]
+
         return welds
 
     @gs.assert_built

@@ -2303,10 +2303,8 @@ class RigidSolver(Solver):
 
         if as_tensor:
             out_size = n_envs * n_max
-            splits = None
         else:
             cumsum = np.cumsum(n_eqs, dtype=np.int32)
-            splits = list(cumsum[:-1])
             out_size = int(cumsum[-1]) if n_envs else 0
 
         if to_torch:
@@ -2323,21 +2321,27 @@ class RigidSolver(Solver):
                 self._static_rigid_sim_config,
             )
 
-        if as_tensor:
-            if n_envs > 0:
-                buf = buf.view(n_envs, n_max, 3) if to_torch else buf.reshape(n_envs, n_max, 3)
-            env_idx, obj_a, obj_b = buf[..., 0], buf[..., 1], buf[..., 2]
-            return {"env": env_idx, "obj_a": obj_a, "obj_b": obj_b}
+        if n_envs > 0:
+            if as_tensor:
+                buf = buf.reshape((n_envs, n_max, 3))
+                obj_a = buf[..., 1]
+                obj_b = buf[..., 2]
+            else:
+                if to_torch:
+                    data_chunks = torch.split(buf, n_eqs)
+                else:
+                    splits = list(np.cumsum(n_eqs, dtype=np.int32)[:-1])
+                    data_chunks = np.split(buf, splits)
+                obj_a, obj_b = tuple(zip(*((data[:, 1], data[:, 2]) for data in data_chunks)))
+        else:
+            if to_torch:
+                obj_a = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
+                obj_b = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
+            else:
+                obj_a = []
+                obj_b = []
 
-        if n_envs == 0:
-            return {"obj_a": [], "obj_b": []}
-
-        parts = torch.split(buf, n_eqs) if to_torch else np.split(buf, splits)
-        a = [p[:, 1] for p in parts]
-        b = [p[:, 2] for p in parts]
-        if n_envs == 1:
-            return {"obj_a": a[0], "obj_b": b[0]}
-        return {"obj_a": a, "obj_b": b}
+        return {"obj_a": obj_a, "obj_b": obj_b}
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
