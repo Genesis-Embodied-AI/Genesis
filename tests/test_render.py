@@ -655,3 +655,11 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
             assert f.read() == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_fridge_asset_loading(show_viewer):
+    scene = gs.Scene(show_viewer=show_viewer)
+    fridge = scene.add_entity(gs.morphs.URDF(file="urdf/fridge/fridge.urdf"))
+    scene.build()

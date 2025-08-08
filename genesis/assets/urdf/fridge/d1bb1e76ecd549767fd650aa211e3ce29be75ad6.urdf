@@ -1,0 +1,523 @@
+<?xml version="1.0" ?>
+<robot name="fridge0015_ARMATURE">
+	<link name="root"/>
+	<joint name="root_rotation" type="fixed">
+		<origin rpy="-1.570796 -0.000000 0.000000" xyz="0.000000 0.000000 0.000000"/>
+		<parent link="root"/>
+		<child link="fridge0015"/>
+	</joint>
+	<!--LINKS-->
+	<link name="fridge0015">
+		<inertia ixx="1.0" ixy="0" ixz="0" iyy="1.0" iyz="0" izz="1.0"/>
+		<mass value="1.000000"/>
+		<visual>
+			<origin xyz="0 0 0" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="fridge0015.glb" scale="1.0 1.0 1.0"/>
+			</geometry>
+		</visual>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.001912 0.024476 1.823079"/>
+			<geometry>
+				<box size="0.6735000014305115 0.5771999955177307 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.001117 0.049498 1.778713"/>
+			<geometry>
+				<box size="0.6704999804496765 0.5232999920845032 0.02759999968111515"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.001117 0.028891 0.747690"/>
+			<geometry>
+				<box size="0.6152999997138977 0.4821000099182129 0.05979999899864197"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.001117 0.049499 0.061445"/>
+			<geometry>
+				<box size="0.6704999804496765 0.5232999920845032 0.028599999845027924"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.001912 0.025916 0.029185"/>
+			<geometry>
+				<box size="0.6735000014305115 0.5742999911308289 0.03060000017285347"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.320341 0.049499 0.920203"/>
+			<geometry>
+				<box size="0.02759999968111515 0.5232999920845032 1.6921000480651855"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.322575 0.049499 0.919971"/>
+			<geometry>
+				<box size="0.02759999968111515 0.5232999920845032 1.6912000179290771"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.001264 0.290529 0.920501"/>
+			<geometry>
+				<box size="0.6189000010490417 0.041200000792741776 1.6929999589920044"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.117628" xyz="-0.282499 -0.265689 1.823079"/>
+			<geometry>
+				<box size="0.0966000035405159 0.017000000923871994 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.085609" xyz="-0.184787 -0.270794 1.823079"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.036101" xyz="-0.085167 -0.275787 1.823079"/>
+			<geometry>
+				<box size="0.1005999892950058 0.028699999675154686 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.008774 -0.277450 1.823079"/>
+			<geometry>
+				<box size="0.09030000120401382 0.028699999675154686 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.118014" xyz="0.283502 -0.266010 1.823080"/>
+			<geometry>
+				<box size="0.0908999890089035 0.017000000923871994 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.085609" xyz="0.188652 -0.270794 1.823080"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.036101" xyz="0.089033 -0.275787 1.823080"/>
+			<geometry>
+				<box size="0.1005999967455864 0.028699999675154686 0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.117628" xyz="-0.279772 -0.266011 0.029143"/>
+			<geometry>
+				<box size="0.09120000898838043 0.017000000923871994 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.085609" xyz="-0.184787 -0.270794 0.029143"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.036101" xyz="-0.085167 -0.275787 0.029143"/>
+			<geometry>
+				<box size="0.1005999892950058 0.028699999675154686 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.008774 -0.277450 0.029143"/>
+			<geometry>
+				<box size="0.09030000120401382 0.028699999675154686 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.118014" xyz="0.283394 -0.266023 0.029143"/>
+			<geometry>
+				<box size="0.09070000052452087 0.017000000923871994 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.085609" xyz="0.188652 -0.270794 0.029144"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.036101" xyz="0.089033 -0.275787 0.029144"/>
+			<geometry>
+				<box size="0.1005999967455864 0.028699999675154686 0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.324317 -0.258754 0.029143"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.328284 -0.258754 0.029143"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="0.030700000002980232"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.324317 -0.258754 1.823079"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.328284 -0.258754 1.823079"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="0.05380000174045563"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.315612 -0.254068 0.000936"/>
+			<geometry>
+				<cylinder radius="0.005900000222027302" length="0.0019000000320374966"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.315679 -0.254076 0.008076"/>
+			<geometry>
+				<cylinder radius="0.002199999988079071" length="0.013199999928474426"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.315612 0.281555 0.000936"/>
+			<geometry>
+				<cylinder radius="0.005900000222027302" length="0.0019000000320374966"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.315679 0.281547 0.008076"/>
+			<geometry>
+				<cylinder radius="0.002199999988079071" length="0.013199999928474426"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.321442 -0.254068 0.000936"/>
+			<geometry>
+				<cylinder radius="0.005900000222027302" length="0.0019000000320374966"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.321376 -0.254076 0.008076"/>
+			<geometry>
+				<cylinder radius="0.002199999988079071" length="0.013199999928474426"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.321442 0.281555 0.000936"/>
+			<geometry>
+				<cylinder radius="0.005900000222027302" length="0.0019000000320374966"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="0.321376 0.281547 0.008076"/>
+			<geometry>
+				<cylinder radius="0.002199999988079071" length="0.013199999928474426"/>
+			</geometry>
+		</collision>
+	</link>
+	<link name="fridge0015_door01">
+		<inertia ixx="1.0" ixy="0" ixz="0" iyy="1.0" iyz="0" izz="1.0"/>
+		<mass value="1.000000"/>
+		<visual>
+			<origin xyz="0 0 0" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="fridge0015_door01.glb" scale="1.0 1.0 1.0"/>
+			</geometry>
+		</visual>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.336674 -0.021674 0.012772"/>
+			<geometry>
+				<box size="0.6735000014305115 0.04349999874830246 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.117628" xyz="-0.618254 -0.046319 0.012783"/>
+			<geometry>
+				<box size="0.09120000898838043 0.018799999728798866 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.085609" xyz="-0.523372 -0.051981 0.012775"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.036101" xyz="-0.423717 -0.056000 0.012779"/>
+			<geometry>
+				<box size="0.1005999892950058 0.03060000017285347 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.336617 -0.057727 0.012779"/>
+			<geometry>
+				<box size="0.07670000195503235 0.030500000342726707 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.118014" xyz="-0.055259 -0.046638 0.012787"/>
+			<geometry>
+				<box size="0.09070000052452087 0.018200000748038292 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.085609" xyz="-0.149933 -0.051981 0.012779"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.036101" xyz="-0.249588 -0.055999 0.012783"/>
+			<geometry>
+				<box size="0.1005999967455864 0.03060000017285347 1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.673203 -0.041535 -0.433109"/>
+			<geometry>
+				<box size="0.008100000210106373 0.042500000447034836 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.074732" xyz="-0.584214 -0.083161 -0.433109"/>
+			<geometry>
+				<box size="0.14569999277591705 0.006500000134110451 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.259920" xyz="-0.672301 -0.065462 -0.433109"/>
+			<geometry>
+				<box size="0.008100000210106373 0.008100000210106373 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.722292" xyz="-0.669767 -0.070918 -0.433109"/>
+			<geometry>
+				<box size="0.007200000341981649 0.008299999870359898 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 1.125836" xyz="-0.664216 -0.075190 -0.433109"/>
+			<geometry>
+				<box size="0.006899999920278788 0.009199999272823334 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 1.411038" xyz="-0.658684 -0.077255 -0.433109"/>
+			<geometry>
+				<box size="0.0066999997943639755 0.0052000004798173904 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.022035" xyz="-0.454802 -0.089822 -0.433109"/>
+			<geometry>
+				<box size="0.11479999125003815 0.0064999996684491634 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.041472" xyz="-0.369359 -0.089884 -0.433109"/>
+			<geometry>
+				<box size="0.0575999990105629 0.006500000134110451 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.103101" xyz="-0.313273 -0.085748 -0.433109"/>
+			<geometry>
+				<box size="0.05570000037550926 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.236191" xyz="-0.280250 -0.081476 -0.433109"/>
+			<geometry>
+				<box size="0.012600000016391277 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.390448" xyz="-0.269127 -0.077884 -0.433109"/>
+			<geometry>
+				<box size="0.01209999993443489 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.662149" xyz="-0.259304 -0.072074 -0.433109"/>
+			<geometry>
+				<box size="0.013100000098347664 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.662902 -0.039940 0.012767"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="1.0418000221252441"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.010302 -0.039940 0.012767"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="1.0418000221252441"/>
+			</geometry>
+		</collision>
+	</link>
+	<link name="fridge0015_door02">
+		<inertia ixx="1.0" ixy="0" ixz="0" iyy="1.0" iyz="0" izz="1.0"/>
+		<mass value="1.000000"/>
+		<visual>
+			<origin xyz="0 0 0" rpy="0 0 0"/>
+			<geometry>
+				<mesh filename="fridge0015_door02.glb" scale="1.0 1.0 1.0"/>
+			</geometry>
+		</visual>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.336747 -0.021231 -0.011842"/>
+			<geometry>
+				<box size="0.6735000014305115 0.04270000010728836 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.117628" xyz="-0.618311 -0.046139 -0.011840"/>
+			<geometry>
+				<box size="0.09120000898838043 0.019099999219179153 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.085609" xyz="-0.523446 -0.051946 -0.011845"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.036101" xyz="-0.423791 -0.055965 -0.011843"/>
+			<geometry>
+				<box size="0.1005999892950058 0.03060000017285347 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.336691 -0.057692 -0.011843"/>
+			<geometry>
+				<box size="0.07670000195503235 0.030500000342726707 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.118014" xyz="-0.055362 -0.046356 -0.011838"/>
+			<geometry>
+				<box size="0.09070000052452087 0.01860000006854534 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.085609" xyz="-0.150007 -0.051946 -0.011843"/>
+			<geometry>
+				<box size="0.1005999892950058 0.026499997824430466 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="-0.000001 3.141593 0.036101" xyz="-0.249662 -0.055964 -0.011841"/>
+			<geometry>
+				<box size="0.1005999967455864 0.03060000017285347 0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.673277 -0.041500 0.278567"/>
+			<geometry>
+				<box size="0.008100000210106373 0.042500000447034836 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.074732" xyz="-0.584287 -0.083126 0.278567"/>
+			<geometry>
+				<box size="0.14569999277591705 0.006500000134110451 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.259920" xyz="-0.672375 -0.065428 0.278567"/>
+			<geometry>
+				<box size="0.008100000210106373 0.008100000210106373 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.722292" xyz="-0.669841 -0.070884 0.278567"/>
+			<geometry>
+				<box size="0.007200000341981649 0.008299999870359898 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 1.125836" xyz="-0.664290 -0.075155 0.278567"/>
+			<geometry>
+				<box size="0.006899999920278788 0.009199999272823334 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 1.411038" xyz="-0.658757 -0.077221 0.278567"/>
+			<geometry>
+				<box size="0.0066999997943639755 0.0052000004798173904 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 -0.022035" xyz="-0.454875 -0.089787 0.278567"/>
+			<geometry>
+				<box size="0.11479999125003815 0.0064999996684491634 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.041472" xyz="-0.369433 -0.089849 0.278567"/>
+			<geometry>
+				<box size="0.0575999990105629 0.006500000134110451 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.103101" xyz="-0.313347 -0.085713 0.278567"/>
+			<geometry>
+				<box size="0.05570000037550926 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.236191" xyz="-0.280323 -0.081441 0.278567"/>
+			<geometry>
+				<box size="0.012600000016391277 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.390448" xyz="-0.269201 -0.077849 0.278567"/>
+			<geometry>
+				<box size="0.01209999993443489 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.662149" xyz="-0.259378 -0.072039 0.278567"/>
+			<geometry>
+				<box size="0.013100000098347664 0.0066999997943639755 0.041999999433755875"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.662976 -0.039906 -0.011851"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="0.6966999769210815"/>
+			</geometry>
+		</collision>
+		<collision>
+			<origin rpy="0.000000 -0.000000 0.000000" xyz="-0.010375 -0.039906 -0.011851"/>
+			<geometry>
+				<cylinder radius="0.010499999858438969" length="0.6966999769210815"/>
+			</geometry>
+		</collision>
+	</link>
+	<!--JOINTS-->
+	<joint name="fridge0015_door01" type="revolute">
+		<parent link="fridge0015"/>
+		<child link="fridge0015_door01"/>
+		<axis xyz="0.000000 0.000000 1.000000"/>
+		<limit effort="100.0000" lower="-0.0" upper="2.7052602767944336" velocity="3.0000"/>
+		<origin rpy="0 0 0" xyz="0.338585 -0.218814 1.258467"/>
+	</joint>
+	<joint name="fridge0015_door02" type="revolute">
+		<parent link="fridge0015"/>
+		<child link="fridge0015_door02"/>
+		<axis xyz="0.000000 0.000000 1.000000"/>
+		<limit effort="100.0000" lower="-0.0" upper="2.7052602767944336" velocity="3.0000"/>
+		<origin rpy="0 0 0" xyz="0.338659 -0.218848 0.408640"/>
+	</joint>
+</robot>
