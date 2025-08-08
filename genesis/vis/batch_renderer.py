@@ -6,7 +6,6 @@ import torch
 
 import genesis as gs
 from genesis.repr_base import RBC
-from genesis.constants import CAMERA_TYPE
 
 try:
     from gs_madrona.renderer_gs import MadronaBatchRendererAdapter
@@ -86,9 +85,7 @@ class BatchRenderer(RBC):
         if gs.backend != gs.cuda:
             gs.raise_exception("BatchRenderer requires CUDA backend.")
 
-        self._cameras = gs.List(
-            [camera for camera in self._visualizer._cameras if camera.camera_type == CAMERA_TYPE.BATCH_RENDERER]
-        )
+        self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
         lights = self._lights
         rigid = self._visualizer.scene.rigid_solver
         n_envs = max(self._visualizer.scene.n_envs, 1)
@@ -220,3 +217,7 @@ class BatchRenderer(RBC):
     @property
     def lights(self):
         return self._lights
+
+    @property
+    def cameras(self):
+        return self._cameras

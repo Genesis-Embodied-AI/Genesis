@@ -16,7 +16,6 @@ from genesis.engine.materials.base import Material
 from genesis.engine.entities import Emitter
 from genesis.engine.states.solvers import SimState
 from genesis.engine.simulator import Simulator
-from genesis.constants import CAMERA_TYPE
 from genesis.options import (
     AvatarOptions,
     BaseCouplerOptions,
@@ -529,7 +528,7 @@ class Scene(RBC):
         spp=256,
         denoise=True,
         env_idx=None,
-        camera_type=CAMERA_TYPE.RASTERIZER,
+        debug=False,
     ):
         """
         Add a camera to the scene.
@@ -568,8 +567,8 @@ class Scene(RBC):
             Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
             to True. If OptiX denoiser is not available in your platform, consider enabling the OIDN denoiser option
             when building the RayTracer.
-        camera_type : CAMERA_TYPE
-            The type of camera to add. Options are CAMERA_TYPE.RASTERIZER, CAMERA_TYPE.RAYTRACER, CAMERA_TYPE.BATCH_RENDERER.
+        debug : bool
+            Whether to use the debug camera (Rasterizer). Effective for BatchRenderer and RayTracer settings. Defaults to False.
 
         Returns
         -------
@@ -577,7 +576,7 @@ class Scene(RBC):
             The created camera object.
         """
         return self._visualizer.add_camera(
-            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, camera_type
+            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug
         )
 
     @gs.assert_unbuilt

@@ -2,6 +2,7 @@ import inspect
 import os
 import time
 import math
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -11,7 +12,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.sensors import Sensor
 from genesis.utils.misc import tensor_to_array
-from genesis.constants import CAMERA_TYPE
 
 
 # quat for Madrona needs to be transformed to y-forward
@@ -92,7 +92,7 @@ class Camera(Sensor):
         far=100.0,
         transform=None,
         env_idx=None,
-        camera_type=CAMERA_TYPE.RASTERIZER,
+        debug=False,
     ):
         self._idx = idx
         self._uid = gs.UID()
@@ -117,7 +117,7 @@ class Camera(Sensor):
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
-        self._camera_type = camera_type
+        self._debug = debug
 
         self._env_idx = env_idx
         self._envs_offset = None
@@ -318,13 +318,13 @@ class Camera(Sensor):
         # If n_envs == 0, the second dimension of the output is camera.
         # Only return the current camera's image
         if rgb_arr:
-            rgb_arr = rgb_arr[self._idx]
+            rgb_arr = rgb_arr[self.b_idx]
         if depth:
-            depth_arr = depth_arr[self._idx]
+            depth_arr = depth_arr[self.b_idx]
         if segmentation:
-            seg_arr = seg_arr[self._idx]
+            seg_arr = seg_arr[self.b_idx]
         if normal:
-            normal_arr = normal_arr[self._idx]
+            normal_arr = normal_arr[self.b_idx]
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
@@ -380,25 +380,22 @@ class Camera(Sensor):
         """
         rgb_arr, depth_arr, seg_arr, seg_color_arr, normal_arr = None, None, None, None, None
 
-        if self._camera_type == CAMERA_TYPE.BATCH_RENDERER:
-            assert self._batch_renderer is not None, "Batch renderer is not initialized."
+        if not self._debug and self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
                 rgb, depth, segmentation, normal, force_render, antialiasing
             )
-        elif self._camera_type == CAMERA_TYPE.RAYTRACER:
+        elif self._debug and self._raytracer is not None:
             if rgb:
-                assert self._raytracer is not None, "Ray tracer is not initialized."
                 self._raytracer.update_scene()
                 rgb_arr = self._raytracer.render_camera(self)
 
             if depth or segmentation or normal:
-                assert self._rasterizer is not None, "Rasterizer is not initialized"
                 self._rasterizer.update_scene()
                 _, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                     self, False, depth, segmentation, normal=normal
                 )
-        elif self._camera_type == CAMERA_TYPE.RASTERIZER:
-            assert self._rasterizer is not None, "Rasterizer is not initialized"
+        else:
+            print("Camera is debug camera")
             self._rasterizer.update_scene()
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                 self, rgb, depth, segmentation, normal=normal
@@ -716,7 +713,7 @@ class Camera(Sensor):
                 + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
             )
 
-        if self._rgb_stacked:
+        if not self._debug and self._rgb_stacked:
             for env_idx in self._visualizer._context.rendered_envs_idx:
                 env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
                 env_name, env_ext = os.path.splitext(save_to_filename)
@@ -774,8 +771,17 @@ class Camera(Sensor):
 
     @property
     def idx(self):
-        """The integer index of the camera."""
+        """The global integer index of the camera."""
         return self._idx
+
+    @property
+    @lru_cache(maxsize=1)
+    def b_idx(self):
+        """The index of the camera in the batch renderer."""
+        assert self._batch_renderer is not None, "Batch renderer is not initialized."
+        print(f"{[c.uid for c in self._batch_renderer.cameras]}")
+        print(f"self: {self.uid}")
+        return self._batch_renderer.cameras.index(self)
 
     @property
     def uid(self):
@@ -861,9 +867,9 @@ class Camera(Sensor):
         return self._env_idx
 
     @property
-    def camera_type(self):
-        """The type of camera."""
-        return self._camera_type
+    def debug(self):
+        """Whether the camera is a debug camera."""
+        return self._debug
 
     @property
     def pos(self):
