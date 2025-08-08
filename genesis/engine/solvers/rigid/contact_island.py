@@ -10,6 +10,9 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
+INVALID_HIBERNATED_ISLAND_ID = -1  # -1 is reserved for "no island", i.e. active or fixed entities
+FIRST_HIBERNATED_ISLAND_ID = 1  # start at 1, leave 0 unused, use -1 for "no island"
+
 @ti.data_oriented
 class ContactIsland:
     def __init__(self, collider: "Collider"):
@@ -78,6 +81,18 @@ class ContactIsland:
         # description: entity_idx_to_island_idx
         self.entity_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
         self.stack = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+
+        # Persistent hibernated islands:
+        #
+
+        # Used to make islands persist through hibernation:
+        self.unused__entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+
+        # Warning: do not mistake island_id for island_idx
+        self.next_hibernated_island_id = ti.field(dtype=gs.ti_int, shape=self.solver._B)
+        self.next_hibernated_island_id.fill(FIRST_HIBERNATED_ISLAND_ID)
+        self.hibernated_entity_idx_to_hibernated_island_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+        self.hibernated_entity_idx_to_hibernated_island_id.fill(INVALID_HIBERNATED_ISLAND_ID)
 
     @ti.kernel
     def clear_island_mapping(self):

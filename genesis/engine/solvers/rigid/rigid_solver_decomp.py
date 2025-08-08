@@ -4999,12 +4999,19 @@ def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
 
             # perform hibernation
             if not was_island_hibernated and is_island_hibernated:
-                # print(f"Hibernate: island_idx: {island_idx} of {entity_ref_range.n} entities")
+                prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
+                prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
+                hibernated_island_id = ci.next_hibernated_island_id[i_b]
+                ci.next_hibernated_island_id[i_b] = hibernated_island_id + 1
+                print(f"Hibernated island id: {hibernated_island_id} of {entity_ref_range.n} entities")
                 for i in range(entity_ref_range.n):
                     entity_ref = entity_ref_range.start + i
                     entity_idx = ci.entity_id[entity_ref, i_b]
                     # skip if already hibernated or fixed
-                    if (not entities_state.hibernated[entity_idx, i_b] and entities_info.n_dofs[entity_idx] > 0):
+                    if not (not entities_state.hibernated[entity_idx, i_b] and entities_info.n_dofs[entity_idx] > 0):
+                        print(f"Internal error:Entity re-hibernating a RigidEntity, or hibernating a fixed entity")
+                    # if (not entities_state.hibernated[entity_idx, i_b] and entities_info.n_dofs[entity_idx] > 0):
+                    if True:
                         func_mark_entity_for_hibernation_and_zero_dof_velocities(
                             entity_idx,
                             i_b,
@@ -5014,6 +5021,16 @@ def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
                             links_state=links_state,
                             geoms_state=geoms_state,
                         )
+
+                    # store entities in the hibernated islands by daisy chaining them
+                    ci.unused__entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
+
+                    prev_entity_idx = entity_idx
+                    ci.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] = hibernated_island_id
+
+                    print(f"\\\\Hibernated entity {entity_idx}")
+
+
                 
 
     # ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)

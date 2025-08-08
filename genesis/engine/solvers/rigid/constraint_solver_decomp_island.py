@@ -226,6 +226,9 @@ class ConstraintSolverIsland:
                 # wake up entities
                 entity_a = self._solver.links_info.entity_idx[link_a_maybe_batch]
                 entity_b = self._solver.links_info.entity_idx[link_b_maybe_batch]
+
+                print(f"Adding collision between {entity_a} and {entity_b}")
+
                 func_wakeup_entity(
                     entity_a,
                     i_b,
