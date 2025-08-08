@@ -136,15 +136,40 @@ class ContactIsland:
                 link_b = self.collider._collider_state.contact_data.link_b[i_col, i_b]
                 self.add_edge(link_a, link_b, i_b)
 
+    @ti.kernel
+    def temp_hack__add_all_hibernated_island_edges(self):
+        n_entities = self.solver.n_entities
+        # INSERT_YOUR_CODE
+        for i_b in range(self.solver._B):
+            for i_e in range(n_entities):
+                print(f"  entity {i_e} hibernated: {INVALID_HIBERNATED_ISLAND_ID != self.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b]}")
+
+        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(self.solver._B):
+            for i_e in range(n_entities):
+                for i_e2 in range(i_e + 1, n_entities):
+                    if self.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b] != INVALID_HIBERNATED_ISLAND_ID \
+                        and self.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b] == self.hibernated_entity_idx_to_hibernated_island_id[i_e2, i_b]:
+                        any_link_a = self.solver.entities_info.link_start[i_e]
+                        any_link_b = self.solver.entities_info.link_start[i_e2]
+                        self.add_edge(any_link_a, any_link_b, i_b)
+                        print(f"Added hibernated edge between {i_e} and {i_e2}")
+
     def construct(self):
+        print("-- frame --")
         self.clear_island_mapping()
         self.add_all_contact_edges()
+        self.temp_hack__add_all_hibernated_island_edges()
         self.preprocess_island__map_entities_to_edges()
         self.construct_islands()
-        self.postprocess_island()
+        self.postprocess_island__assign_collisions_to_temp_islands()
 
     @ti.kernel
-    def postprocess_island(self):
+    def postprocess_island__assign_collisions_to_temp_islands(self):
+        # INSERT_YOUR_CODE
+        for i_b in range(self.solver._B):
+            print(f"num islands in batch {i_b}: {self.n_islands[i_b]}")
+            
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
