@@ -153,7 +153,7 @@ class Visualizer(RBC):
         if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
         else:
-            gs.logger.warning("`add_light` is specifically for batch renderer.")
+            gs.raise_exception("`add_light` is specifically for batch renderer.")
 
     def reset(self):
         self._t = -1
