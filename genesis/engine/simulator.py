@@ -281,6 +281,8 @@ class Simulator(RBC):
         if self.rigid_solver.is_active():
             self.rigid_solver.clear_external_force()
 
+        self._sensor_manager.step()
+
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
 

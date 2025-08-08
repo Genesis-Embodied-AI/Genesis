@@ -19,7 +19,6 @@ class SensorManager:
         self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
         self._sensors_metadata: dict[Type["Sensor"], dict[str, Any]] = {}
         self._cache: dict[Type["Sensor"], torch.Tensor] = {}
-        self._cache_last_updated_step_map: dict[Type["Sensor"], int] = {}
 
     def create_sensor(self, sensor_options: SensorOptions):
         sensor_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
@@ -32,21 +31,19 @@ class SensorManager:
     def build(self):
         for sensor_cls, sensors in self._sensors_by_type.items():
             total_cache_length = 0
-            self._cache_last_updated_step_map[sensor_cls] = -1
             self._sensors_metadata[sensor_cls] = {}
             for sensor in sensors:
                 sensor.build()
                 sensor._cache_idx = total_cache_length
-                total_cache_length += sensor.cache_length
+                total_cache_length += sensor._get_cache_length()
 
-            cache_dtype, cache_shape = SensorManager.SENSOR_CACHE_METADATA_MAP[sensor_cls]
-            self._cache[sensor_cls] = torch.zeros((self._sim._B, total_cache_length, *cache_shape), dtype=cache_dtype)
+            self._cache[sensor_cls] = torch.zeros(
+                (self._sim._B, total_cache_length, sensor_cls._get_cache_size()), dtype=sensor_cls._get_cache_dtype()
+            )
 
-    def is_cache_updated(self, sensor_cls: Type["Sensor"]) -> bool:
-        return self._cache_last_updated_step_map[sensor_cls] == self._sim.cur_step_global
-
-    def set_cache_updated(self, sensor_cls: Type["Sensor"]):
-        self._cache_last_updated_step_map[sensor_cls] = self._sim.cur_step_global
+    def step(self):
+        for sensor_cls, sensors in self._sensors_by_type.items():
+            sensors[0]._update_shared_cache()
 
     @property
     def sensors(self):
@@ -56,7 +53,6 @@ class SensorManager:
 def register_sensor(sensor_cls: Type["Sensor"]):
     def _impl(options_cls: Type[SensorOptions]):
         SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls
-        SensorManager.SENSOR_CACHE_METADATA_MAP[sensor_cls] = (sensor_cls.CACHE_DTYPE, sensor_cls.CACHE_SHAPE)
         return options_cls
 
     return _impl
