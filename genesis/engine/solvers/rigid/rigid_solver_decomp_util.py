@@ -11,6 +11,7 @@ def func_wakeup_entity(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     links_state: array_class.LinksState,
+    geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     contact_island: ti.template()
 ):
@@ -74,6 +75,9 @@ def func_wakeup_entity(
                             links_state.hibernated[i_l, i_b] = False
                             n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
                             rigid_global_info.awake_links[n_awake_links, i_b] = i_l
+
+                        for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
+                            geoms_state.hibernated[i_g, i_b] = False
 
                         # validation only: un-hibernate the island
                         non_persistent_hibernated_island_idx = contact_island.entity_island[entity_idx, i_b]
