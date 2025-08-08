@@ -395,7 +395,6 @@ class Camera(Sensor):
                     self, False, depth, segmentation, normal=normal
                 )
         else:
-            print("Camera is debug camera")
             self._rasterizer.update_scene()
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                 self, rgb, depth, segmentation, normal=normal
