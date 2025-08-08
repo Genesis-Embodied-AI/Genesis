@@ -52,21 +52,24 @@ def main():
         fov=45,
         GUI=args.vis,
     )
+
     scene.add_light(
-        pos=[0.0, 0.0, 1.5],
-        dir=[1.0, 1.0, -2.0],
+        pos=(0.0, 0.0, 1.5),
+        dir=(1.0, 1.0, -2.0),
+        color=(1.0, 0.0, 0.0),
         directional=1,
         castshadow=1,
         cutoff=45.0,
         intensity=0.5,
     )
     scene.add_light(
-        pos=[4, -4, 4],
-        dir=[-1, 1, -1],
+        pos=(4, -4, 4),
+        dir=(0, 0, -1),
         directional=0,
         castshadow=1,
-        cutoff=45.0,
-        intensity=0.5,
+        cutoff=180.0,
+        intensity=2.0,
+        attenuation=0.1,
     )
 
     ########################## build ##########################
@@ -78,11 +81,15 @@ def main():
     for i in range(args.n_steps):
         scene.step()
         if args.render_all_cameras:
-            rgba, depth, _, _ = scene.render_all_cameras(rgb=True, depth=True)
-            exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
+            rgba, depth, normal, segmentation = scene.render_all_cameras(
+                rgb=True, depth=i % 2 == 1, normal=True, segmentation=i % 2 == 1
+            )
+            exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth, normal=normal, segmentation=segmentation)
         else:
-            rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
-            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
+            rgba, depth, normal, segmentation = cam_1.render(
+                rgb=i % 2 == 1, depth=True, normal=i % 2 == 1, segmentation=True
+            )
+            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth, normal=normal, segmentation=segmentation)
 
 
 if __name__ == "__main__":
