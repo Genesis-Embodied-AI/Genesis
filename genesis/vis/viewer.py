@@ -164,8 +164,8 @@ class Viewer(RBC):
         if self._max_FPS is not None:
             self.rate.sleep()
 
-    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
-        return self._pyrender_viewer.render_offscreen(camera_node, render_target, depth, seg, normal)
+    def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
+        return self._pyrender_viewer.render_offscreen(camera_node, render_target, rgb, depth, seg, normal)
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
         """
