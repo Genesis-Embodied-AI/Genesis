@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -427,7 +427,7 @@ class Custom(ForceField):
 
     Parameters:
     -----------
-    func: A callable taichi func (a python function wrapped by `@ti.func`)
+    func: A callable gstaichi func (a python function wrapped by `@ti.func`)
         The acceleration function. Must have the signature `f(pos: ti.types.vector(3), vel: ti.types.vector(3), t: ti.f32) -> ti.types.vector(3)`.
     """
 

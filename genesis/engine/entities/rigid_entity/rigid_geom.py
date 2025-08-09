@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import igl
 import numpy as np
 import skimage
-import taichi as ti
+import gstaichi as ti
 import torch
 import trimesh
 

@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 
@@ -50,7 +50,7 @@ class Base(Material):
         self.hessian_invariant = hessian_invariant
         self.hessian_ready = False
 
-        # lame parameters: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
+        # lame parameters: https://github.com/taichi-dev/gstaichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
         self._mu = E / (2.0 * (1.0 + nu))
         self._lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
 

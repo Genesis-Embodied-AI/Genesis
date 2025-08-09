@@ -166,9 +166,9 @@ Le code source de Genesis est sous licence Apache 2.0.
 
 Le développement de Genesis a été rendu possible grâce à ces projets open-source :
 
-- [Taichi](https://github.com/taichi-dev/taichi) : Backend de calcul multiplateforme haute performance. Merci à l'équipe de Taichi pour leur support technique !
+- [GsTaichi](https://github.com/taichi-dev/gstaichi) : Backend de calcul multiplateforme haute performance. Merci à l'équipe de GsTaichi pour leur support technique !
 - [FluidLab](https://github.com/zhouxian/FluidLab) : Implémentation de référence du solveur MPM.
-- [SPH_Taichi](https://github.com/erizmr/SPH_Taichi) : Implémentation de référence du solveur SPH.
+- [SPH_GsTaichi](https://github.com/erizmr/SPH_GsTaichi) : Implémentation de référence du solveur SPH.
 - [Ten Minute Physics](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) et [PBF3D](https://github.com/WASD4959/PBF3D) : Implémentations de référence des solveurs PBD.
 - [MuJoCo](https://github.com/google-deepmind/mujoco) : Référence pour la dynamique des corps rigides.
 - [libccd](https://github.com/danfis/libccd) : Référence pour la détection des collisions.

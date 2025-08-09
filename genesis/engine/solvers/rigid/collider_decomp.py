@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -121,7 +121,7 @@ class Collider:
         self._init_max_contact_pairs(n_possible_pairs)
         self._init_terrain_state()
 
-        # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state / info.
+        # [contacts_info_cache] is not used in GsTaichi kernels, so keep it outside of the collider state / info.
         self._contacts_info_cache = {}
 
         # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
@@ -1102,7 +1102,7 @@ def func_broad_phase(
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to taichi
+    # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to gstaichi
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
 ):

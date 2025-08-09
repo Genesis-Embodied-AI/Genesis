@@ -31,7 +31,7 @@ DURATION_RECORD = 15.0
 
 pytestmark = [
     pytest.mark.benchmarks,
-    pytest.mark.taichi_offline_cache(False),
+    pytest.mark.gstaichi_offline_cache(False),
 ]
 
 

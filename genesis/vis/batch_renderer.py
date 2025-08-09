@@ -99,8 +99,8 @@ class BatchRenderer(RBC):
         cameras_quat = torch.stack([camera.get_quat() for camera in cameras], dim=1)
         cameras_fov = torch.tensor([camera.fov for camera in cameras], dtype=gs.tc_float, device=gs.device)
 
-        # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
-        # consider storing light properties as taichi fields in Genesis.
+        # Build gstaichi arrays to store light properties once. If later we need to support dynamic lights, we should
+        # consider storing light properties as gstaichi fields in Genesis.
         n_lights = len(lights)
         light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
         light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)

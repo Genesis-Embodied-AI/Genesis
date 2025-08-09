@@ -1,5 +1,5 @@
 import genesis as gs
-import taichi as ti
+import gstaichi as ti
 from genesis.repr_base import RBC
 import numpy as np
 
@@ -9,15 +9,15 @@ class AABB(RBC):
     """
     AABB (Axis-Aligned Bounding Box) class for managing collections of bounding boxes in batches.
 
-    This class defines an axis-aligned bounding box (AABB) structure and provides a Taichi dataclass
+    This class defines an axis-aligned bounding box (AABB) structure and provides a GsTaichi dataclass
     for efficient computation and intersection testing on the GPU. Each AABB is represented by its
     minimum and maximum 3D coordinates. The class supports batch processing of multiple AABBs.
 
     Attributes:
         n_batches (int): Number of batches of AABBs.
         n_aabbs (int): Number of AABBs per batch.
-        ti_aabb (taichi.dataclass): Taichi dataclass representing an individual AABB with min and max vectors.
-        aabbs (taichi.field): Taichi field storing all AABBs in the specified batches.
+        ti_aabb (gstaichi.dataclass): GsTaichi dataclass representing an individual AABB with min and max vectors.
+        aabbs (gstaichi.field): GsTaichi field storing all AABBs in the specified batches.
 
     Args:
         n_batches (int): Number of batches to allocate.

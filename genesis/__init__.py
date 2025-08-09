@@ -8,13 +8,13 @@ import traceback
 from platform import system
 from contextlib import redirect_stdout
 
-# Import taichi while collecting its output without printing directly
+# Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
 
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    import taichi as ti
+    import gstaichi as ti
 
 try:
     import torch
@@ -163,20 +163,20 @@ def init(
     global EPS
     EPS = max(eps, np.finfo(np_float).eps)
 
-    taichi_kwargs = {}
+    gstaichi_kwargs = {}
     if gs.logger.level == _logging.CRITICAL:
-        taichi_kwargs.update(log_level=ti.CRITICAL)
+        gstaichi_kwargs.update(log_level=ti.CRITICAL)
     elif gs.logger.level == _logging.ERROR:
-        taichi_kwargs.update(log_level=ti.ERROR)
+        gstaichi_kwargs.update(log_level=ti.ERROR)
     elif gs.logger.level == _logging.WARNING:
-        taichi_kwargs.update(log_level=ti.WARN)
+        gstaichi_kwargs.update(log_level=ti.WARN)
     elif gs.logger.level == _logging.INFO:
-        taichi_kwargs.update(log_level=ti.INFO)
+        gstaichi_kwargs.update(log_level=ti.INFO)
     elif gs.logger.level == _logging.DEBUG:
-        taichi_kwargs.update(log_level=ti.INFO)
+        gstaichi_kwargs.update(log_level=ti.INFO)
     if debug:
         if backend == gs_backend.cpu:
-            taichi_kwargs.update(cpu_max_num_threads=1)
+            gstaichi_kwargs.update(cpu_max_num_threads=1)
         else:
             logger.warning("CPU backend is strongly recommended in debug mode.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -195,16 +195,16 @@ def init(
         global SEED
         SEED = seed
         set_random_seed(SEED)
-        taichi_kwargs.update(
+        gstaichi_kwargs.update(
             random_seed=seed,
         )
 
-    # It is necessary to disable Metal backend manually because it is not working at taichi-level due to a bug
+    # It is necessary to disable Metal backend manually because it is not working at gstaichi-level due to a bug
     ti_arch = TI_ARCH[platform][backend]
     if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
         ti_arch = TI_ARCH[platform][gs_backend.cpu]
 
-    # init taichi
+    # init gstaichi
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=ti_arch,
@@ -220,10 +220,10 @@ def init(
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
-            **taichi_kwargs,
+            **gstaichi_kwargs,
         )
 
-    # Make sure that taichi arch is matching requirement
+    # Make sure that gstaichi arch is matching requirement
     ti_runtime = ti.lang.impl.get_runtime()
     ti_arch = ti_runtime.prog.config().arch
     if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
@@ -290,7 +290,7 @@ def destroy():
         del scene
     global_scene_list.clear()
 
-    # Reset taichi
+    # Reset gstaichi
     ti.reset()
 
     # Delete logger

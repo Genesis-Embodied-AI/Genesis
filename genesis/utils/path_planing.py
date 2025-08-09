@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import time
 
-import taichi as ti
+import gstaichi as ti
 import torch
 import torch.nn.functional as F
 

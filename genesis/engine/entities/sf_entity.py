@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 from scipy.spatial import KDTree
 
 import genesis as gs

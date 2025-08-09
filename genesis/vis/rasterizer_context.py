@@ -1,7 +1,7 @@
 import numpy as np
 import trimesh
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

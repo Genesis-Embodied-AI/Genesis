@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 
@@ -52,7 +52,7 @@ class Liquid(Base):
 
     @ti.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        # NOTE: class member function inheritance will still introduce redundant computation graph in taichi
+        # NOTE: class member function inheritance will still introduce redundant computation graph in gstaichi
         stress = 2 * self._mu * (F_tmp - U @ V.transpose()) @ F_tmp.transpose() + ti.Matrix.identity(
             gs.ti_float, 3
         ) * self._lam * J * (J - 1)

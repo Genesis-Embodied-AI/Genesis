@@ -27,7 +27,7 @@ jobs:
       GS_CACHE_FILE_PATH: ".cache/genesis"
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
-      TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
+      TI_OFFLINE_CACHE_FILE_PATH: ".cache/gstaichi"
       TI_ENABLE_CUDA: "0"
       TI_ENABLE_METAL: "0"
       TI_ENABLE_OPENGL: "0"
@@ -55,7 +55,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Restore Taichi Kernel Cache
+      - name: Restore GsTaichi Kernel Cache
         if: always()
         uses: actions/cache/restore@v4
         with:
@@ -114,7 +114,7 @@ jobs:
         run: |
           pytest -v --logical --forked -m required ./tests
 
-      - name: Save Updated Taichi Kernel Cache
+      - name: Save Updated GsTaichi Kernel Cache
         if: always()
         uses: actions/cache/save@v4
         with:

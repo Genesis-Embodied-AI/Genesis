@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import torch
 
 import genesis as gs
@@ -225,7 +225,7 @@ class MPMSolver(Solver):
             for entity in self._entities:
                 entity._add_to_solver()
 
-            # reference: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L84
+            # reference: https://github.com/taichi-dev/gstaichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L84
             suggested_dt = 2e-2 * self._dx
             if self.substep_dt > suggested_dt:
                 gs.logger.warning(
@@ -358,7 +358,7 @@ class MPMSolver(Solver):
 
                 # B. compute stress
                 # NOTE:
-                # 1. Here we pass in both F_tmp and the updated F_new because in the official taichi example, F_new is used for stress computation. However, although this works for both elastic and elasto-plastic materials, it is mathematically incorrect for liquid material with non-zero viscosity (mu). In the latter case, stress computation needs to be based on the F_tmp (deformation gradient before resetting to identity).
+                # 1. Here we pass in both F_tmp and the updated F_new because in the official gstaichi example, F_new is used for stress computation. However, although this works for both elastic and elasto-plastic materials, it is mathematically incorrect for liquid material with non-zero viscosity (mu). In the latter case, stress computation needs to be based on the F_tmp (deformation gradient before resetting to identity).
                 # 2. Jp is only used by Snow material, and it uses Jp from the previous frame, not the updated one.
                 stress = ti.Matrix.zero(gs.ti_float, 3, 3)
                 for mat_idx in ti.static(self._mats_idx):
@@ -746,7 +746,7 @@ class MPMSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                # Read from the Taichi field (batch-last) and write into ndarray (batch-first).
+                # Read from the GsTaichi field (batch-last) and write into ndarray (batch-first).
                 pos_grad[i_b, i_p, k] = self.particles.grad[f, i_global, i_b].pos[k]
 
     @ti.kernel
@@ -760,7 +760,7 @@ class MPMSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                # Write vel from ndarray (batch-first) into Taichi field (batch-last).
+                # Write vel from ndarray (batch-first) into GsTaichi field (batch-last).
                 self.particles[f, i_global, i_b].vel[k] = vel[i_b, i_p, k]
 
     @ti.kernel
@@ -774,7 +774,7 @@ class MPMSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                # Read from Taichi grad field into ndarray.
+                # Read from GsTaichi grad field into ndarray.
                 vel_grad[i_b, i_p, k] = self.particles.grad[f, i_global, i_b].vel[k]
 
     @ti.kernel

@@ -100,7 +100,7 @@ def pytest_xdist_auto_num_workers(config):
         vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
-    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
+    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because GsTaichi
     # does not completely release memory between each test.
     if sys.platform in ("darwin", "win32"):
         ram_memory_per_worker = 3.0
@@ -257,20 +257,20 @@ def dof_damping(request):
 
 
 @pytest.fixture
-def taichi_offline_cache(request):
-    taichi_offline_cache = None
-    for mark in request.node.iter_markers("taichi_offline_cache"):
+def gstaichi_offline_cache(request):
+    gstaichi_offline_cache = None
+    for mark in request.node.iter_markers("gstaichi_offline_cache"):
         if mark.args:
-            if taichi_offline_cache is not None:
-                pytest.fail("'taichi_offline_cache' can only be specified once.")
-            (taichi_offline_cache,) = mark.args
-    if taichi_offline_cache is None:
-        taichi_offline_cache = True
-    return taichi_offline_cache
+            if gstaichi_offline_cache is not None:
+                pytest.fail("'gstaichi_offline_cache' can only be specified once.")
+            (gstaichi_offline_cache,) = mark.args
+    if gstaichi_offline_cache is None:
+        gstaichi_offline_cache = True
+    return gstaichi_offline_cache
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend, taichi_offline_cache):
+def initialize_genesis(request, backend, gstaichi_offline_cache):
     import pyglet
     import genesis as gs
     from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
@@ -284,7 +284,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         debug = False
 
     try:
-        if not taichi_offline_cache:
+        if not gstaichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
 
         try:
