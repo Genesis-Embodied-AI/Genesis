@@ -5,6 +5,7 @@ import torch
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
+    from genesis.options.sensors import SensorOptions
     from .base_sensor import Sensor
 
 
@@ -18,7 +19,7 @@ class SensorManager:
         self._gt_cache: dict[Type["Sensor"], torch.Tensor] = {}
         self._cache: dict[Type["Sensor"], TensorRingBuffer] = {}
 
-    def create_sensor(self, sensor_options: SensorOptions):
+    def create_sensor(self, sensor_options: "SensorOptions"):
         sensor_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         if sensor_cls not in self._sensors_by_type:
             self._sensors_by_type[sensor_cls] = []
@@ -55,7 +56,7 @@ class SensorManager:
 
 
 def register_sensor(sensor_cls: Type["Sensor"]):
-    def _impl(options_cls: Type[SensorOptions]):
+    def _impl(options_cls: Type["SensorOptions"]):
         SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls
         return options_cls
 
