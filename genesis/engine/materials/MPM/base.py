@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 
@@ -50,7 +50,7 @@ class Base(Material):
         self._sampler = sampler
         self._default_Jp = 1.0
 
-        # lame parameters: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
+        # lame parameters: https://github.com/taichi-dev/gstaichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
         if mu is None:
             self._mu = E / (2.0 * (1.0 + nu))
         else:
@@ -74,7 +74,7 @@ class Base(Material):
 
     @ti.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        # NOTE: class member function inheritance will still introduce redundant computation graph in taichi
+        # NOTE: class member function inheritance will still introduce redundant computation graph in gstaichi
         stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + ti.Matrix.identity(
             gs.ti_float, 3
         ) * self._lam * J * (J - 1)

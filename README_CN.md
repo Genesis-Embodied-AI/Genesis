@@ -163,9 +163,9 @@ Genesis 项目的目标是构建一个完全透明、用户友好的生态系统
 Genesis 源代码根据 Apache 2.0 许可证授权。
 没有这些令人惊叹的开源项目，Genesis 的开发是不可能的：
 
-- [Taichi](https://github.com/taichi-dev/taichi)：提供高性能跨平台计算后端。感谢 taichi 的所有成员提供的技术支持！
+- [GsTaichi](https://github.com/taichi-dev/gstaichi)：提供高性能跨平台计算后端。感谢 gstaichi 的所有成员提供的技术支持！
 - [FluidLab](https://github.com/zhouxian/FluidLab) 提供参考 MPM 求解器实现
-- [SPH_Taichi](https://github.com/erizmr/SPH_Taichi) 提供参考 SPH 求解器实现
+- [SPH_GsTaichi](https://github.com/erizmr/SPH_GsTaichi) 提供参考 SPH 求解器实现
 - [Ten Minute Physics](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) 和 [PBF3D](https://github.com/WASD4959/PBF3D) 提供参考 PBD 求解器实现
 - [MuJoCo](https://github.com/google-deepmind/mujoco) 和 [Brax](https://github.com/google/brax) 提供刚体动力学参考
 - [libccd](https://github.com/danfis/libccd) 提供碰撞检测参考

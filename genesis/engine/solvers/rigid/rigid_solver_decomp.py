@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import numpy.typing as npt
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -599,7 +599,7 @@ class RigidSolver(Solver):
             links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
             links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
             links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
-            # taichi variables
+            # gstaichi variables
             links_info=self.links_info,
             links_state=self.links_state,
             rigid_global_info=self._rigid_global_info,
@@ -623,7 +623,7 @@ class RigidSolver(Solver):
                 joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
                 joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
                 joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
-                # taichi variables
+                # gstaichi variables
                 joints_info=self.joints_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
@@ -677,7 +677,7 @@ class RigidSolver(Solver):
                     dtype=gs.np_int,
                 ),
                 is_free=np.concatenate([np.full(geom.n_verts, geom.is_free) for geom in geoms], dtype=gs.np_int),
-                # taichi variables
+                # gstaichi variables
                 verts_info=self.verts_info,
                 faces_info=self.faces_info,
                 edges_info=self.edges_info,
@@ -697,7 +697,7 @@ class RigidSolver(Solver):
                 vverts_vgeom_idx=np.concatenate(
                     [np.full(vgeom.n_vverts, vgeom.idx) for vgeom in vgeoms], dtype=gs.np_int
                 ),
-                # taichi variables
+                # gstaichi variables
                 vverts_info=self.vverts_info,
                 vfaces_info=self.vfaces_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -753,7 +753,7 @@ class RigidSolver(Solver):
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
                 geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
                 geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_int),
-                # taichi variables
+                # gstaichi variables
                 geoms_info=self.geoms_info,
                 geoms_state=self.geoms_state,
                 verts_info=self.verts_info,
@@ -777,7 +777,7 @@ class RigidSolver(Solver):
                 vgeoms_vvert_end=np.array([vgeom.vvert_end for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_vface_end=np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
                 vgeoms_color=np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
-                # taichi variables
+                # gstaichi variables
                 vgeoms_info=self.vgeoms_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
@@ -826,7 +826,7 @@ class RigidSolver(Solver):
             entities_is_local_collision_mask=np.array(
                 [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
             ),
-            # taichi variables
+            # gstaichi variables
             entities_info=self.entities_info,
             entities_state=self.entities_state,
             dofs_info=self.dofs_info,
@@ -853,7 +853,7 @@ class RigidSolver(Solver):
                 equalities_eq_data=np.array([equality.eq_data for equality in equalities], dtype=gs.np_float),
                 equalities_eq_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
                 equalities_sol_params=equalities_sol_params,
-                # taichi variables
+                # gstaichi variables
                 equalities_info=self.equalities_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
@@ -2430,7 +2430,7 @@ class RigidSolver(Solver):
 
 @ti.kernel
 def kernel_compute_mass_matrix(
-    # taichi variables
+    # gstaichi variables
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     dofs_state: array_class.DofsState,
@@ -2465,7 +2465,7 @@ def kernel_compute_mass_matrix(
 def kernel_init_invweight(
     links_invweight: ti.types.ndarray(),
     dofs_invweight: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     links_info: array_class.LinksInfo,
     dofs_info: array_class.DofsInfo,
 ):
@@ -2481,7 +2481,7 @@ def kernel_init_invweight(
 
 @ti.kernel
 def kernel_init_meaninertia(
-    # taichi variables
+    # gstaichi variables
     rigid_global_info: array_class.RigidGlobalInfo,
     entities_info: array_class.EntitiesInfo,
     static_rigid_sim_config: ti.template(),
@@ -2516,10 +2516,10 @@ def kernel_init_dof_fields(
     dofs_kp: ti.types.ndarray(),
     dofs_kv: ti.types.ndarray(),
     dofs_force_range: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
-    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
+    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to gstaichi
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -2578,7 +2578,7 @@ def kernel_init_link_fields(
     links_inertial_i: ti.types.ndarray(),
     links_inertial_mass: ti.types.ndarray(),
     links_entity_idx: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -2652,7 +2652,7 @@ def kernel_init_joint_fields(
     joints_q_end: ti.types.ndarray(),
     joints_dof_end: ti.types.ndarray(),
     joints_pos: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     joints_info: array_class.JointsInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -2682,7 +2682,7 @@ def kernel_init_vert_fields(
     init_center_pos: ti.types.ndarray(),
     verts_state_idx: ti.types.ndarray(),
     is_free: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     edges_info: array_class.EdgesInfo,
@@ -2724,7 +2724,7 @@ def kernel_init_vvert_fields(
     vfaces: ti.types.ndarray(),
     vnormals: ti.types.ndarray(),
     vverts_vgeom_idx: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     vverts_info: array_class.VVertsInfo,
     vfaces_info: array_class.VFacesInfo,
     static_rigid_sim_config: ti.template(),
@@ -2773,7 +2773,7 @@ def kernel_init_geom_fields(
     geoms_coup_restitution: ti.types.ndarray(),
     geoms_is_free: ti.types.ndarray(),
     geoms_is_decomp: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
@@ -2881,7 +2881,7 @@ def kernel_init_vgeom_fields(
     vgeoms_vvert_end: ti.types.ndarray(),
     vgeoms_vface_end: ti.types.ndarray(),
     vgeoms_color: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     vgeoms_info: array_class.VGeomsInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -2917,7 +2917,7 @@ def kernel_init_entity_fields(
     entities_geom_end: ti.types.ndarray(),
     entities_gravity_compensation: ti.types.ndarray(),
     entities_is_local_collision_mask: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
     dofs_info: array_class.DofsInfo,
@@ -2970,7 +2970,7 @@ def kernel_init_equality_fields(
     equalities_eq_data: ti.types.ndarray(),
     equalities_eq_type: ti.types.ndarray(),
     equalities_sol_params: ti.types.ndarray(),
-    # taichi variables
+    # gstaichi variables
     equalities_info: array_class.EqualitiesInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -3044,7 +3044,7 @@ def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksSt
 @ti.func
 def func_compute_mass_matrix(
     implicit_damping: ti.template(),
-    # taichi variables
+    # gstaichi variables
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     dofs_state: array_class.DofsState,

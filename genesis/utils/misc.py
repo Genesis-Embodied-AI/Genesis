@@ -17,12 +17,12 @@ import cpuinfo
 import psutil
 import torch
 
-import taichi as ti
-from taichi.lang.util import to_pytorch_type
-from taichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
-from taichi.lang import impl
-from taichi.types import primitive_types
-from taichi.lang.exception import handle_exception_from_cpp
+import gstaichi as ti
+from gstaichi.lang.util import to_pytorch_type
+from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
+from gstaichi.lang import impl
+from gstaichi.types import primitive_types
+from gstaichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
@@ -149,7 +149,7 @@ def assert_built(method):
 
 
 def set_random_seed(seed):
-    # Note: we don't set seed for taichi, since taichi doesn't support stochastic operations in gradient computation. Therefore, we only allow deterministic taichi operations.
+    # Note: we don't set seed for gstaichi, since gstaichi doesn't support stochastic operations in gradient computation. Therefore, we only allow deterministic gstaichi operations.
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -315,7 +315,7 @@ def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
 
 
-# -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
+# -------------------------------------- GSTAICHI SPECIALIZATION --------------------------------------
 
 ALLOCATE_TENSOR_WARNING = (
     "Tensor had to be re-allocated because of incorrect dtype/device or non-contiguous memory. This may "
@@ -390,7 +390,7 @@ def _launch_kernel(self, t_kernel, *args):
                 )
             if not v.grad.is_contiguous():
                 raise ValueError(
-                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() before passing it into taichi kernel."
+                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() before passing it into gstaichi kernel."
                 )
 
         launch_ctx.set_arg_external_array_with_shape(
@@ -430,7 +430,7 @@ def ti_field_to_torch(
     *,
     unsafe=False,
 ) -> torch.Tensor:
-    """Converts a Taichi field instance to a PyTorch tensor.
+    """Converts a GsTaichi field instance to a PyTorch tensor.
 
     Args:
         field (ti.Field): Field to convert to Pytorch tensor.
@@ -469,7 +469,7 @@ def ti_field_to_torch(
                 # Slices are always valid by default. Nothing to check.
                 is_out_of_bounds = False
             elif isinstance(mask, (int, np.integer)):
-                # Do not allow negative indexing for consistency with Taichi
+                # Do not allow negative indexing for consistency with GsTaichi
                 is_out_of_bounds = not (0 <= mask < _field_shape[i])
             elif isinstance(mask, torch.Tensor):
                 if not mask.ndim <= 1:
@@ -503,7 +503,7 @@ def ti_field_to_torch(
 
     # Extract field as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.
-    # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
+    # The implementation is based on `gstaichi.lang.(ScalarField | MatrixField).to_torch`.
     is_metal = gs.device.type == "mps"
     tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
     if isinstance(field, ti.lang.ScalarField):

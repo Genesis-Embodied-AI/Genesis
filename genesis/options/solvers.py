@@ -393,7 +393,7 @@ class MPMOptions(Options):
     # Sparse computation parameter. Don't touch unless you know what you are doing.
     use_sparse_grid: bool = False
     leaf_block_size: int = (
-        8  # NOTE: taichi_elements uses 4, which in our case will hang and crash. Probably due to some memory access issue.
+        8  # NOTE: gstaichi_elements uses 4, which in our case will hang and crash. Probably due to some memory access issue.
     )
 
     def __init__(self, **data):

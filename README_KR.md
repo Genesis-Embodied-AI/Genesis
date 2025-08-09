@@ -166,9 +166,9 @@ Genesis 소스 코드는 Apache 2.0 라이선스를 따릅니다.
 
 Genesis 개발은 다음 오픈 소스 프로젝트 덕분에 가능했습니다:
 
-- [Taichi](https://github.com/taichi-dev/taichi): 고성능 크로스 플랫폼 연산 백엔드. Taichi 팀의 기술 지원에 감사드립니다!
+- [GsTaichi](https://github.com/taichi-dev/gstaichi): 고성능 크로스 플랫폼 연산 백엔드. GsTaichi 팀의 기술 지원에 감사드립니다!
 - [FluidLab](https://github.com/zhouxian/FluidLab): MPM 솔버 구현 참고.
-- [SPH_Taichi](https://github.com/erizmr/SPH_Taichi): SPH 솔버 구현 참고.
+- [SPH_GsTaichi](https://github.com/erizmr/SPH_GsTaichi): SPH 솔버 구현 참고.
 - [Ten Minute Physics](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) 및 [PBF3D](https://github.com/WASD4959/PBF3D): PBD 솔버 구현 참고.
 - [MuJoCo](https://github.com/google-deepmind/mujoco): 강체 역학 참고.
 - [libccd](https://github.com/danfis/libccd): 충돌 감지 참고.

@@ -167,9 +167,9 @@ GenesisのソースコードはApache 2.0ライセンスで提供されていま
 
 Genesisの開発は以下のオープンソースプロジェクトのおかげで可能になりました：
 
-- [Taichi](https://github.com/taichi-dev/taichi): 高性能でクロスプラットフォーム対応の計算バックエンド。Taichiチームの技術サポートに感謝します！
+- [GsTaichi](https://github.com/taichi-dev/gstaichi): 高性能でクロスプラットフォーム対応の計算バックエンド。GsTaichiチームの技術サポートに感謝します！
 - [FluidLab](https://github.com/zhouxian/FluidLab): 参照用のMPMソルバー実装。
-- [SPH_Taichi](https://github.com/erizmr/SPH_Taichi): 参照用のSPHソルバー実装。
+- [SPH_GsTaichi](https://github.com/erizmr/SPH_GsTaichi): 参照用のSPHソルバー実装。
 - [Ten Minute Physics](https://matthias-research.github.io/pages/tenMinutePhysics/index.html) と [PBF3D](https://github.com/WASD4959/PBF3D): 参照用のPBD（粒子ベースの物理）ソルバー実装。
 - [MuJoCo](https://github.com/google-deepmind/mujoco): 剛体ダイナミクスの参照用実装。
 - [libccd](https://github.com/danfis/libccd): 衝突検出の参照用実装。

@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import numpy.typing as npt
 
 import genesis as gs

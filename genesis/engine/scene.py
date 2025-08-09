@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import torch
-import taichi as ti
+import gstaichi as ti
 from numpy.typing import ArrayLike
 
 import genesis as gs
@@ -1129,7 +1129,7 @@ class Scene(RBC):
     def _backward(self):
         """
         At this point, all the scene states the simulation run should have been filled with gradients.
-        Next, we run backward from scene state back to scene's internal taichi variables, then back through time.
+        Next, we run backward from scene state back to scene's internal gstaichi variables, then back through time.
         """
 
         if not self._backward_ready:
@@ -1144,7 +1144,7 @@ class Scene(RBC):
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         """
-        Collect every Taichi field in the **scene and its active solvers** and
+        Collect every GsTaichi field in the **scene and its active solvers** and
         return them as a flat ``{key: ndarray}`` dictionary.
 
         Returns

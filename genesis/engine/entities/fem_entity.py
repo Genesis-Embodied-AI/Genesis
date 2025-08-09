@@ -1,6 +1,6 @@
 import igl
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import torch
 
 import genesis as gs
