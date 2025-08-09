@@ -85,19 +85,19 @@ class BatchRenderer(RBC):
         if gs.backend != gs.cuda:
             gs.raise_exception("BatchRenderer requires CUDA backend.")
 
-        cameras = self._visualizer._cameras
+        self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
         lights = self._lights
         rigid = self._visualizer.scene.rigid_solver
         n_envs = max(self._visualizer.scene.n_envs, 1)
-        res = cameras[0].res
+        res = self._cameras[0].res
         gpu_id = gs.device.index
         use_rasterizer = self._renderer_options.use_rasterizer
 
         # Cameras
-        n_cameras = len(cameras)
-        cameras_pos = torch.stack([camera.get_pos() for camera in cameras], dim=1)
-        cameras_quat = torch.stack([camera.get_quat() for camera in cameras], dim=1)
-        cameras_fov = torch.tensor([camera.fov for camera in cameras], dtype=gs.tc_float, device=gs.device)
+        n_cameras = len(self._cameras)
+        cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
+        cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+        cameras_fov = torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
 
         # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
         # consider storing light properties as taichi fields in Genesis.
@@ -179,8 +179,8 @@ class BatchRenderer(RBC):
         self.update_scene()
 
         # Render frame
-        cameras_pos = torch.stack([camera.get_pos() for camera in self._visualizer._cameras], dim=1)
-        cameras_quat = torch.stack([camera.get_quat() for camera in self._visualizer._cameras], dim=1)
+        cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
+        cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
         render_options = np.array((rgb_, depth_, False, False, aliasing), dtype=np.uint32)
         rgba_arr_all, depth_arr_all = self._renderer.render(
             self._visualizer.scene.rigid_solver, cameras_pos, cameras_quat, render_options
@@ -217,3 +217,7 @@ class BatchRenderer(RBC):
     @property
     def lights(self):
         return self._lights
+
+    @property
+    def cameras(self):
+        return self._cameras
