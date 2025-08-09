@@ -659,7 +659,16 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_fridge_asset_loading(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
-    fridge = scene.add_entity(gs.morphs.URDF(file="urdf/fridge/fridge.urdf"))
+def test_2_channels_luminance_alpha_textures(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = get_hf_dataset(pattern="fridge/*")
+    fridge = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/fridge/fridge.urdf",
+            fixed=True,
+        )
+    )
     scene.build()
