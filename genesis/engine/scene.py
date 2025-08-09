@@ -25,6 +25,7 @@ from genesis.options import (
     PBDOptions,
     ProfilingOptions,
     RigidOptions,
+    SensorOptions,
     SFOptions,
     SimOptions,
     SPHOptions,
@@ -512,6 +513,10 @@ class Scene(RBC):
             )
         else:
             gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
+
+    @gs.assert_unbuilt
+    def add_sensor(self, sensor_options: SensorOptions):
+        return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt
     def add_camera(
