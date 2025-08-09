@@ -103,7 +103,6 @@ class Visualizer(RBC):
             self._renderer = self._rasterizer
 
         self._cameras = gs.List()
-        self._debug_cameras = gs.List()
 
     def __del__(self):
         self.destroy()
@@ -129,7 +128,9 @@ class Visualizer(RBC):
         self._renderer = None
 
     def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug):
-        cam_idx = len(self._cameras) if not debug else len(self._debug_cameras)
+        cam_idx = (
+            len([c for c in self._cameras if not c.debug]) if not debug else len([c for c in self._cameras if c.debug])
+        )
         camera = Camera(
             self,
             cam_idx,
@@ -147,10 +148,7 @@ class Visualizer(RBC):
             env_idx=0 if debug else env_idx,
             debug=debug,
         )
-        if debug:
-            self._debug_cameras.append(camera)
-        else:
-            self._cameras.append(camera)
+        self._cameras.append(camera)
         return camera
 
     def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
@@ -192,9 +190,6 @@ class Visualizer(RBC):
             self._raytracer.build(self._scene)
 
         for camera in self._cameras:
-            camera.build()
-
-        for camera in self._debug_cameras:
             camera.build()
 
         # Batch renderer needs to be built after cameras are built
@@ -298,7 +293,3 @@ class Visualizer(RBC):
     @property
     def cameras(self):
         return self._cameras
-
-    @property
-    def debug_cameras(self):
-        return self._debug_cameras
