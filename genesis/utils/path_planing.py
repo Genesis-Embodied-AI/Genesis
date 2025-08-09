@@ -617,12 +617,11 @@ class RRT(PathPlanner):
 
 @ti.data_oriented
 class RRTConnect(PathPlanner):
-    def _init_rrt_connect_fields(self, goal_bias=0.1, max_nodes=4000, pos_tol=5e-3, max_step_size=0.05):
+    def _init_rrt_connect_fields(self, goal_bias=0.1, max_nodes=4000, max_step_size=0.05):
         self._is_rrt_connect_init = getattr(self, "_is_rrt_connect_init", False)
         if not self._is_rrt_connect_init:
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
-            self._rrt_pos_tol = pos_tol
             self._rrt_max_step_size = max_step_size
             self._rrt_start_configuration = ti.field(
                 dtype=gs.ti_float, shape=self._solver._batch_shape(self._entity.n_qs)
