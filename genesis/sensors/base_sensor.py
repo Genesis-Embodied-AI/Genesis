@@ -109,7 +109,9 @@ class Sensor(RBC):
             return {
                 key: self._cache.get(self._read_delay_steps)[
                     envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx
-                ].squeeze()
+                ]
+                .squeeze()
+                .clone()
                 for key, (start_idx, end_idx) in return_format.items()
             }
 
@@ -127,9 +129,9 @@ class Sensor(RBC):
         else:
             cache_length = self._get_cache_length()
             return {
-                key: self._gt_cache[
-                    envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx
-                ].squeeze()
+                key: self._gt_cache[envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx]
+                .squeeze()
+                .clone()
                 for key, (start_idx, end_idx) in return_format.items()
             }
 
