@@ -570,9 +570,9 @@ class Scene(RBC):
         debug : bool
             Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
             simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
-            systematically, no matter if BatchRender and RayTracer is enabled.
-            This way, it is possible to record the simulation with arbitrary resolution and camera pose,
-            without interfering with what robots can perceive from their environment. Defaults to False.
+            systematically, no matter if BatchRender and RayTracer is enabled. This way, it is possible to record the
+            simulation with arbitrary resolution and camera pose, without interfering with what robots can perceive
+            from their environment. Defaults to False.
 
         Returns
         -------

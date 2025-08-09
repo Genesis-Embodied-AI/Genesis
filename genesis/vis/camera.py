@@ -69,8 +69,12 @@ class Camera(Sensor):
         The transform matrix of the camera.
     env_idx : int, optional
         The index of the environment to track the camera.
-    camera_type : CAMERA_TYPE
-        The type of camera. Options are CAMERA_TYPE.RASTERIZER, CAMERA_TYPE.RAYTRACER, CAMERA_TYPE.BATCH_RENDERER.
+    debug : bool, optional
+        Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
+        simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
+        systematically, no matter if BatchRender and RayTracer is enabled. This way, it is possible to record the
+        simulation with arbitrary resolution and camera pose, without interfering with what robots can perceive
+        from their environment. Defaults to False.
     """
 
     def __init__(
