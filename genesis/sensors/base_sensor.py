@@ -21,10 +21,10 @@ class Sensor(RBC):
     A sensor must have a read() method that returns the sensor data.
     """
 
-    def __init__(self, sensor_options: SensorOptions, sensor_idx: int, sensor_manager: SensorManager):
-        self._options: SensorOptions = sensor_options
+    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
+        self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
-        self._manager: SensorManager = sensor_manager
+        self._manager: "SensorManager" = sensor_manager
         self._cache_idx: int = -1  # cache_idx is set by the SensorManager during the scene build phase
         self._read_delay_steps: int = 0
         self._cache_buffer_length: int = 0
