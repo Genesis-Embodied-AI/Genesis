@@ -699,9 +699,14 @@ class Scene(RBC):
             self._is_built = True
 
         if compile_kernels:
+            ti.sync()
+            start = time.time()
             with gs.logger.timer("Compiling simulation kernels..."):
                 self._sim.step()
                 self._reset()
+            ti.sync()
+            elapsed = time.time() - start
+            print("compile time", elapsed)
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):
