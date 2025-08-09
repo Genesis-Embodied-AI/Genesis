@@ -246,6 +246,7 @@ class Viewer(pyglet.window.Window):
             "cull_faces": True,
             "offscreen": False,
             "point_size": 1.0,
+            "rgb": True,
             "seg": False,
             "depth": False,
         }
@@ -629,11 +630,12 @@ class Viewer(pyglet.window.Window):
 
         self._offscreen_result_semaphore.release()
 
-    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
-        if seg:
-            self.render_flags["seg"] = True
-        if depth:
-            self.render_flags["depth"] = True
+    def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
+        if rgb and seg:
+            gs.raise_exception("RGB and segmentation map cannot be rendered in the same forward pass.")
+        self.render_flags["rgb"] = rgb
+        self.render_flags["seg"] = seg
+        self.render_flags["depth"] = depth
         self.pending_offscreen_camera = (camera_node, render_target, normal)
         if self._run_in_thread:
             # send_offscreen_request
@@ -643,10 +645,9 @@ class Viewer(pyglet.window.Window):
         else:
             # Force offscreen rendering synchronously
             self.draw_offscreen()
-        if seg:
-            self.render_flags["seg"] = False
-        if depth:
-            self.render_flags["depth"] = False
+        self.render_flags["rgb"] = True
+        self.render_flags["seg"] = False
+        self.render_flags["depth"] = False
         return self.offscreen_result
 
     def wait_until_initialized(self):
@@ -671,7 +672,7 @@ class Viewer(pyglet.window.Window):
         camera, target, normal = self.pending_offscreen_camera
         self.clear()
         retval = self._render(camera, target, normal)
-        self.offscreen_result = retval if retval else [None, None]
+        self.offscreen_result = retval if retval else (None, None)
         self.pending_offscreen_camera = None
         self.render_flags["offscreen"] = False
         self._offscreen_result_semaphore.release()
@@ -1137,8 +1138,13 @@ class Viewer(pyglet.window.Window):
 
         if self.render_flags["depth"]:
             flags |= RenderFlags.RET_DEPTH
+            if not (self.render_flags["rgb"] or self.render_flags["seg"]):
+                flags |= RenderFlags.DEPTH_ONLY
 
-        retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+        if self.render_flags["rgb"] or self.render_flags["depth"] or self.render_flags["seg"]:
+            retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+        else:
+            retval = ()
 
         if normal:
             class CustomShaderCache:
@@ -1161,8 +1167,8 @@ class Viewer(pyglet.window.Window):
             if self.render_flags["env_separate_rigid"]:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
-            retval = retval + (normal_arr,)
+            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False)
+            retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache
 

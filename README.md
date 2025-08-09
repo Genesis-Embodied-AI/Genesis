@@ -18,6 +18,7 @@
 # Genesis
 
 ## 🔥 News
+- [2025-08-05] Released v0.3.0 🎊 🎉
 - [2025-07-02] The development of Genesis is now officially supported by [Genesis AI](https://genesis-ai.company/).
 - [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
 - [2025-01-08] Released v0.2.1 🎊 🎉
@@ -68,7 +69,6 @@ Project Page: <https://genesis-embodied-ai.github.io/>
 - **Compatibility with various robots**: Robotic arms, legged robots, drones, *soft robots*, and support for loading `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, and more.
 - **Photo-realistic rendering**: Native ray-tracing-based rendering.
 - **Differentiability**: Genesis is designed to be fully differentiable. Currently, our MPM solver and Tool Solver support differentiability, with other solvers planned for future versions (starting with rigid & articulated body solver).
-- **Physics-based tactile simulation**: Differentiable [tactile sensor simulation](https://github.com/Genesis-Embodied-AI/DiffTactile) coming soon (expected in version 0.3.0).
 - **User-friendliness**: Designed for simplicity, with intuitive installation and APIs.
 
 ## Quick Installation

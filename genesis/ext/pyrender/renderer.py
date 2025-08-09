@@ -115,7 +115,7 @@ class Renderer(object):
     def point_size(self, value):
         self._point_size = float(value)
 
-    def render(self, scene, flags, seg_node_map=None, is_first_pass=True):
+    def render(self, scene, flags, seg_node_map=None, *, is_first_pass=True, force_skip_shadows=False):
         """Render a scene with the given set of flags.
 
         Parameters
@@ -144,7 +144,7 @@ class Renderer(object):
             self._update_context(scene, flags)
             self.jit.update(scene)
 
-        if flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.SEG or flags & RenderFlags.FLAT:
+        if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.FLAT:
             flags &= ~RenderFlags.REFLECTIVE_FLOOR
 
         if flags & RenderFlags.ENV_SEPARATE and flags & RenderFlags.OFFSCREEN:
@@ -159,7 +159,7 @@ class Renderer(object):
             env_idx = i if use_env_idx else -1
 
             # Render necessary shadow maps
-            if not (flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.SEG):
+            if not (force_skip_shadows or flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
                 for ln in scene.light_nodes:
                     take_pass = False
                     if isinstance(ln.light, DirectionalLight) and flags & RenderFlags.SHADOWS_DIRECTIONAL:
@@ -180,37 +180,28 @@ class Renderer(object):
                 self._floor_pass(scene, flags, env_idx=env_idx)
 
             retval = self._forward_pass(scene, flags, seg_node_map=seg_node_map, env_idx=env_idx)
-            if isinstance(retval, tuple):
+            if retval is not None:
                 if retval_list is None:
-                    retval_list = tuple([[val] for val in retval])
+                    retval_list = tuple([val] for val in retval)
                 else:
                     for idx, val in enumerate(retval):
                         retval_list[idx].append(val)
-            elif retval is not None:
-                if retval_list is None:
-                    retval_list = [retval]
-                else:
-                    retval_list.append(retval)
 
             # If necessary, make normals pass
             if flags & (RenderFlags.VERTEX_NORMALS | RenderFlags.FACE_NORMALS):
-                self._normals_pass(scene, flags, env_idx=env_idx)
-
-        if use_env_idx:
-            if isinstance(retval_list, list):
-                retval_list = np.stack(retval_list, axis=0)
-            elif isinstance(retval_list, tuple):
-                retval_list = tuple([np.stack(val_list, axis=0) for val_list in retval_list])
-        else:
-            if isinstance(retval_list, list):
-                retval_list = retval_list[0]
-            elif isinstance(retval_list, tuple):
-                retval_list = tuple([val_list[0] for val_list in retval_list])
+                self._normal_pass(scene, flags, env_idx=env_idx)
 
         # Update camera settings for retrieving depth buffers
         self._latest_znear = scene.main_camera_node.camera.znear
         self._latest_zfar = scene.main_camera_node.camera.zfar
 
+        if retval_list is None:
+            return
+
+        if use_env_idx:
+            retval_list = tuple(np.stack(val_list, axis=0) for val_list in retval_list)
+        else:
+            retval_list = tuple([val_list[0] for val_list in retval_list])
         return retval_list
 
     def render_text(
@@ -313,114 +304,6 @@ class Renderer(object):
         for i, text in enumerate(texts):
             font.render_string(text, x, int(y - i * font_pt * 1.1), scale, TextAlign.TOP_LEFT)
 
-    def read_depth_buf(self):
-        """Read and return the current viewport's color buffer.
-
-        Returns
-        -------
-        depth_im : (h, w) float32
-            The depth buffer in linear units.
-        """
-        width, height = self.viewport_width, self.viewport_height
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
-        glReadBuffer(GL_FRONT)
-        depth_buf = glReadPixels(
-            0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT
-        )
-
-        depth_im = np.frombuffer(depth_buf, dtype=np.float32)
-        depth_im = depth_im.reshape((height, width))
-        depth_im = np.flip(depth_im, axis=0)
-
-        inf_inds = (depth_im == 1.0)
-        depth_im = 2.0 * depth_im - 1.0
-        z_near, z_far = self._latest_znear, self._latest_zfar
-        noninf = np.logical_not(inf_inds)
-        if z_far is None:
-            depth_im[noninf] = 2 * z_near / (1.0 - depth_im[noninf])
-        else:
-            depth_im[noninf] = ((2.0 * z_near * z_far) /
-                                (z_far + z_near - depth_im[noninf] *
-                                (z_far - z_near)))
-        depth_im[inf_inds] = 0.0
-
-        # Resize for macos if needed
-        if sys.platform == 'darwin':
-            depth_im = self._resize_image(depth_im)
-
-        return depth_im
-
-    def read_color_buf(self):
-        """Read and return the current viewport's color buffer.
-
-        Alpha cannot be computed for an on-screen buffer.
-
-        Returns
-        -------
-        color_im : (h, w, 3) uint8
-            The color buffer in RGB byte format.
-        """
-        # Extract color image from frame buffer
-        width, height = self.viewport_width, self.viewport_height
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
-        glReadBuffer(GL_FRONT)
-        color_buf = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
-
-        # Re-format them into numpy arrays
-        color_im = np.frombuffer(color_buf, dtype=np.uint8)
-        color_im = color_im.reshape((height, width, 3))
-        color_im = np.flip(color_im, axis=0)
-
-        # Resize for macos if needed
-        if sys.platform == "darwin":
-            color_im = self._resize_image(color_im, True)
-
-        return color_im
-
-    def get_tex_image(self, tex_id, bind_target=GL_TEXTURE_2D, read_target=GL_TEXTURE_2D, width=None, height=None):
-        """Read and return the current viewport's color buffer.
-
-        Returns
-        -------
-        depth_im : (h, w) float32
-            The depth buffer in linear units.
-        """
-        # width, height = self.viewport_width, self.viewport_height
-        # width, height = 8192, 8192
-        # glBindFramebuffer(GL_READ_FRAMEBUFFER, self._shadow_fb)
-        # glReadBuffer(GL_NONE)
-        # depth_buf = glReadPixels(
-        #     0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT
-        # )
-
-        glBindTexture(bind_target, tex_id)
-        depth_buf = glGetTexImage(read_target, 0, GL_RGB, GL_FLOAT)
-
-        depth_im = np.frombuffer(depth_buf, dtype=np.float32)
-        if width is None:
-            height = int(depth_im.size**0.5)
-            width = height
-        depth_im = depth_im.reshape((height, width, 3))
-        depth_im = np.flip(depth_im, axis=0)
-
-        return depth_im
-
-        inf_inds = depth_im == 1.0
-        depth_im = 2.0 * depth_im - 1.0
-        z_near, z_far = self._latest_znear, self._latest_zfar
-        noninf = np.logical_not(inf_inds)
-        if z_far is None:
-            depth_im[noninf] = 2 * z_near / (1.0 - depth_im[noninf])
-        else:
-            depth_im[noninf] = (2.0 * z_near * z_far) / (z_far + z_near - depth_im[noninf] * (z_far - z_near))
-        depth_im[inf_inds] = 0.0
-
-        # # Resize for macos if needed
-        # if sys.platform == 'darwin':
-        #     depth_im = self._resize_image(depth_im)
-
-        return depth_im
-
     def delete(self):
         """Free all allocated OpenGL resources."""
         # Free shaders
@@ -505,7 +388,7 @@ class Renderer(object):
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        if flags & RenderFlags.SEG:
+        if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY:
             glDisable(GL_MULTISAMPLE)
         else:
             glEnable(GL_MULTISAMPLE)
@@ -569,7 +452,7 @@ class Renderer(object):
 
         self.jit.shadow_mapping_pass(self, V, P, flags, ProgramFlags.NONE, env_idx=env_idx)
 
-    def _normals_pass(self, scene, flags, env_idx=-1):
+    def _normal_pass(self, scene, flags, env_idx=-1):
         # Set up viewport for render
         self._configure_forward_pass_viewport(flags)
         program = None
@@ -990,7 +873,7 @@ class Renderer(object):
         # If using offscreen render, bind main framebuffer
         if flags & RenderFlags.OFFSCREEN:
             self._configure_main_framebuffer()
-            if flags & RenderFlags.SEG:
+            if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY:
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb)
             else:
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb_ms)
@@ -1149,7 +1032,7 @@ class Renderer(object):
     def _read_main_framebuffer(self, scene, flags):
         width, height = self._main_fb_dims
 
-        if not flags & RenderFlags.SEG:
+        if not (flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
             # Bind framebuffer and blit buffers
             glBindFramebuffer(GL_READ_FRAMEBUFFER, self._main_fb_ms)
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb)
@@ -1167,11 +1050,9 @@ class Renderer(object):
 
             # Resize
             depth_im = self._resize_image(depth_im, antialias=False)
-        else:
-            depth_im = None
 
         if flags & RenderFlags.DEPTH_ONLY:
-            return depth_im
+            return (depth_im,)
 
         # Read color
         color_im = self.jit.read_color_buf(width, height, flags & RenderFlags.RGBA)
@@ -1179,7 +1060,9 @@ class Renderer(object):
         # Resize
         color_im = self._resize_image(color_im, antialias=not flags & RenderFlags.SEG)
 
-        return color_im, depth_im
+        if flags & RenderFlags.RET_DEPTH:
+            return color_im, depth_im
+        return (color_im,)
 
     def _resize_image(self, value, antialias):
         """Rescale the generated image if necessary."""

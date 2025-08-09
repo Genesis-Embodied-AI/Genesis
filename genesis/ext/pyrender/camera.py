@@ -109,11 +109,7 @@ class PerspectiveCamera(Camera):
     """
 
     def __init__(self, yfov, znear=DEFAULT_Z_NEAR, zfar=None, aspectRatio=None, name=None):
-        super(PerspectiveCamera, self).__init__(
-            znear=znear,
-            zfar=zfar,
-            name=name,
-        )
+        super(PerspectiveCamera, self).__init__(znear=znear, zfar=zfar, name=name)
 
         self.yfov = yfov
         self.aspectRatio = aspectRatio
@@ -213,11 +209,7 @@ class OrthographicCamera(Camera):
     """
 
     def __init__(self, xmag, ymag, znear=DEFAULT_Z_NEAR, zfar=DEFAULT_Z_FAR, name=None):
-        super(OrthographicCamera, self).__init__(
-            znear=znear,
-            zfar=zfar,
-            name=name,
-        )
+        super(OrthographicCamera, self).__init__(znear=znear, zfar=zfar, name=name)
 
         self.xmag = xmag
         self.ymag = ymag
@@ -313,11 +305,7 @@ class IntrinsicsCamera(Camera):
     """
 
     def __init__(self, fx, fy, cx, cy, znear=DEFAULT_Z_NEAR, zfar=DEFAULT_Z_FAR, name=None):
-        super(IntrinsicsCamera, self).__init__(
-            znear=znear,
-            zfar=zfar,
-            name=name,
-        )
+        super(IntrinsicsCamera, self).__init__(znear=znear, zfar=zfar, name=name)
 
         self.fx = fx
         self.fy = fy

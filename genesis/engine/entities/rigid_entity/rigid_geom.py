@@ -106,7 +106,7 @@ class RigidGeom(RBC):
         if len(self._sdf_faces) > 50000:
             mesh_descr = f"({mesh.metadata['mesh_path']})" if "mesh_path" in mesh.metadata else ""
             gs.logger.warning(
-                "Beware that SDF pre-processing of mesh {mesh_descr} having more than 50000 vertices may take a very "
+                f"Beware that SDF pre-processing of mesh {mesh_descr} having more than 50000 vertices may take a very "
                 "long time (>10min) and require large RAM allocation (>20Gb). Please either enable convexify or "
                 "decimation. (see FileMorph options)"
             )

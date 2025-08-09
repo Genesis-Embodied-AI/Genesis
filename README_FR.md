@@ -19,8 +19,13 @@
 
 ## 🔥 Nouveautés
 
-- [2024-12-25] Ajout d’un [docker](#docker) incluant la prise en charge du moteur de rendu par ray-tracing.
-- [2024-12-24] Ajout de directives pour [contribuer à Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md).
+  - [2025-08-05] Sortie de la v0.3.0 🎊 🎉
+  - [2025-07-02] Le développement de Genesis est désormais officiellement soutenu par [Genesis AI](https://genesis-ai.company/).
+  - [2025-01-09] Nous avons publié un [rapport détaillé d'analyse comparative des performances](https://github.com/zhouxian/genesis-speed-benchmark) de Genesis, accompagné de tous les scripts de test.
+  - [2025-01-08] Sortie de la v0.2.1 🎊 🎉
+  - [2025-01-08] Création des groupes [Discord](https://discord.gg/nukCuhB47p) et [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ).
+  - [2024-12-25] Ajout d’un [docker](https://www.google.com/search?q=%23docker) incluant la prise en charge du moteur de rendu par lancer de rayon (ray-tracing).
+  - [2024-12-24] Ajout de directives pour [contribuer à Genesis](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md).
 
 ## Table des Matières
 
@@ -61,26 +66,28 @@ Page du projet : <https://genesis-embodied-ai.github.io/>
 - **Compatibilité avec divers robots** : Bras robotiques, robots à pattes, drones, *robots mous*, et support pour charger `MJCF (.xml)`, `URDF`, `.obj`, `.glb`, `.ply`, `.stl`, et plus encore.
 - **Rendu photo-réaliste** : Rendu natif basé sur le lancer de rayons.
 - **Différentiabilité** : Genesis est conçu pour être entièrement différentiable. Actuellement, notre solveur MPM et Tool Solver prennent en charge la différentiabilité, avec d'autres solveurs prévus dans les prochaines versions (à commencer par le solveur de corps rigides et articulés).
-- **Simulation tactile basée sur la physique** : Simulation de capteur tactile différentiable [en cours de développement](https://github.com/Genesis-Embodied-AI/DiffTactile) (prévue pour la version 0.3.0).
 - **Facilité d'utilisation** : Conçu pour être simple, avec une installation intuitive et des API conviviales.
 
 ## Installation Rapide
 
-Genesis est disponible via PyPI :
+Installez d'abord **PyTorch** en suivant les [instructions officielles](https://pytorch.org/get-started/locally/).
+
+Ensuite, installez Genesis via PyPI :
 
 ```bash
 pip install genesis-world  # Nécessite Python>=3.10,<3.14;
 ```
 
-Vous devez également installer **PyTorch** en suivant [les instructions officielles](https://pytorch.org/get-started/locally/).
+Pour obtenir la version la plus récente, assurez-vous que `pip` est à jour via `pip install --upgrade pip`, puis exécutez la commande :
 
-Pour la dernière version disponible à ce jour, assurez-vous que `pip` is à jour via `pip install --upgrade pip`, puis executez la commande:
 ```bash
 pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
 ```
-A noter que le module doit malgré tout être mis à jour manuellement pour rester synchroniser avec la branche principale.
 
-Les utilisateur souhaitant éditer le code source de Genesis sont encouragés à l'installer en mode developpeur/éditable. Assurez vous que `genesis-world` est bien désinstallée, puis clonez le dépôt et installez localement :
+Notez que le paquet doit toujours être mis à jour manuellement pour se synchroniser avec la branche principale (main).
+
+Les utilisateurs souhaitant modifier le code source de Genesis sont encouragés à l'installer en mode éditable. D'abord, assurez-vous que `genesis-world` a été désinstallé, puis clonez le dépôt et installez-le localement :
+
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
@@ -89,13 +96,13 @@ pip install -e ".[dev]"
 
 ## Docker
 
-Si vous souhaitez utiliser Genesis avec Docker, vous pouvez d'abord construire l'image Docker comme suit :
+Si vous souhaitez utiliser Genesis depuis Docker, vous pouvez d'abord construire l'image Docker comme suit :
 
 ```bash
 docker build -t genesis -f docker/Dockerfile docker
 ```
 
-Ensuite, vous pouvez exécuter les exemples à l'intérieur de l'image Docker (montés sur `/workspace/examples`) :
+Vous pouvez ensuite exécuter les exemples à l'intérieur de l'image Docker (montés dans `/workspace/examples`) :
 
 ```bash
 xhost +local:root # Autoriser le conteneur à accéder à l'affichage
@@ -106,8 +113,33 @@ docker run --gpus all --rm -it \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
 -v $PWD:/workspace \
 genesis
+```
+
+### Utilisateurs AMD
+
+Les utilisateurs AMD peuvent utiliser Genesis avec le fichier `docker/Dockerfile.amdgpu`, qui se construit en exécutant :
 
 ```
+docker build -t genesis-amd -f docker/Dockerfile.amdgpu docker
+```
+
+et peut ensuite être utilisé en exécutant :
+
+```xhost +local:docker \
+docker run -it --network=host \
+ --device=/dev/kfd \
+ --device=/dev/dri \
+ --group-add=video \
+ --ipc=host \
+ --cap-add=SYS_PTRACE \
+ --security-opt seccomp=unconfined \
+ --shm-size 8G \
+ -v $PWD:/workspace \
+ -e DISPLAY=$DISPLAY \
+ genesis-amd
+```
+
+Les exemples seront accessibles depuis `/workspace/examples`. Note : Les utilisateurs AMD doivent utiliser le backend Vulkan. Cela signifie que vous devrez appeler `gs.init(vulkan)` pour initialiser Genesis.
 
 ## Documentation
 
