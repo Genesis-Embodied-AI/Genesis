@@ -318,13 +318,13 @@ class Camera(Sensor):
         # If n_envs == 0, the second dimension of the output is camera.
         # Only return the current camera's image
         if rgb_arr:
-            rgb_arr = rgb_arr[self.b_idx]
+            rgb_arr = rgb_arr[self.idx]
         if depth:
-            depth_arr = depth_arr[self.b_idx]
+            depth_arr = depth_arr[self.idx]
         if segmentation:
-            seg_arr = seg_arr[self.b_idx]
+            seg_arr = seg_arr[self.idx]
         if normal:
-            normal_arr = normal_arr[self.b_idx]
+            normal_arr = normal_arr[self.idx]
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
@@ -772,15 +772,6 @@ class Camera(Sensor):
     def idx(self):
         """The global integer index of the camera."""
         return self._idx
-
-    @property
-    @lru_cache(maxsize=1)
-    def b_idx(self):
-        """The index of the camera in the batch renderer."""
-        assert self._batch_renderer is not None, "Batch renderer is not initialized."
-        print(f"{[c.uid for c in self._batch_renderer.cameras]}")
-        print(f"self: {self.uid}")
-        return self._batch_renderer.cameras.index(self)
 
     @property
     def uid(self):
