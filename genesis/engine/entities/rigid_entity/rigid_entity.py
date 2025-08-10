@@ -63,6 +63,7 @@ class RigidEntity(Entity):
         vface_start=0,
         equality_start=0,
         visualize_contact: bool = False,
+        morph_heterogeneous: list[Morph] | None = None,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
 
@@ -89,24 +90,52 @@ class RigidEntity(Entity):
         self._is_free: bool = morph.is_free
 
         self._is_built: bool = False
+        self._morph_heterogeneous = morph_heterogeneous
+        self._is_heterogeneous = morph_heterogeneous is not None
 
         self._load_model()
+
+    def load_morph(self, morph: Morph):
+        if isinstance(morph, gs.morphs.Mesh):
+            self._load_mesh(morph, self._surface)
+        elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
+            self._load_scene(morph, self._surface)
+        elif isinstance(morph, gs.morphs.Primitive):
+            self._load_primitive(morph, self._surface)
+        elif isinstance(morph, gs.morphs.Terrain):
+            self._load_terrain(morph, self._surface)
+        else:
+            gs.raise_exception(f"Unsupported morph: {morph}.")
 
     def _load_model(self):
         self._links = gs.List()
         self._joints = gs.List()
         self._equalities = gs.List()
 
-        if isinstance(self._morph, gs.morphs.Mesh):
-            self._load_mesh(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
-            self._load_scene(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.Primitive):
-            self._load_primitive(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.Terrain):
-            self._load_terrain(self._morph, self._surface)
-        else:
-            gs.raise_exception(f"Unsupported morph: {self._morph}.")
+        self.load_morph(self._morph)
+
+        self.link_start_initial = self._link_start
+        self.link_end_initial = self._link_start + len(self._links)
+        self.n_links_initial = self.link_end_initial - self.link_start_initial
+
+        if self._is_heterogeneous:
+            self.list_link_start_heterogeneous = gs.List()
+            self.list_link_end_heterogeneous = gs.List()
+            self.list_n_links_heterogeneous = gs.List()
+            self.list_link_start_heterogeneous.append(self.link_start_initial)
+            self.list_n_links_heterogeneous.append(self.n_links_initial)
+            self.list_link_end_heterogeneous.append(self.link_end_initial)
+
+            if isinstance(self._morph, gs.morphs.Terrain):
+                gs.raise_exception("Terrain is not supported for heterogeneous morphs.")
+            for morph in self._morph_heterogeneous:
+                self.load_morph(morph)
+
+                self.list_link_start_heterogeneous.append(self.list_link_end_heterogeneous[-1])
+                self.list_link_end_heterogeneous.append(self._link_start + len(self._links))
+                self.list_n_links_heterogeneous.append(
+                    self.list_link_end_heterogeneous[-1] - self.list_link_start_heterogeneous[-1]
+                )
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)

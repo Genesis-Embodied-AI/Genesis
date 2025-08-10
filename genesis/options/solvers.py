@@ -287,6 +287,7 @@ class RigidOptions(Options):
     IK_max_targets: int = 6
 
     # batching info
+    batch_entities_info: Optional[bool] = False
     batch_links_info: Optional[bool] = False
     batch_joints_info: Optional[bool] = False
     batch_dofs_info: Optional[bool] = False

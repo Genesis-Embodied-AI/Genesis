@@ -187,7 +187,11 @@ class Collider:
                 # contype and conaffinity
                 if (
                     (i_ea == i_eb)
-                    or not (entities_is_local_collision_mask[i_ea] or entities_is_local_collision_mask[i_eb])
+                    # entities_is_local_collision_mask[i_ea].all() becaues it could be batched.
+                    # Consider using same ndim for batch/non-batch arrays?
+                    or not (
+                        entities_is_local_collision_mask[i_ea].all() or entities_is_local_collision_mask[i_eb].all()
+                    )
                 ) and not (
                     (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
                 ):
@@ -594,7 +598,6 @@ def func_point_in_geom_aabb(
     i_g,
     i_b,
     geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     point: ti.types.vector(3),
 ):
     return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
@@ -606,7 +609,6 @@ def func_is_geom_aabbs_overlap(
     i_gb,
     i_b,
     geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
 ):
     return not (
         (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
@@ -620,7 +622,6 @@ def func_find_intersect_midpoint(
     i_gb,
     i_b,
     geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
 ):
     # return the center of the intersecting AABB of AABBs of two geoms
     intersect_lower = ti.max(geoms_state.aabb_min[i_ga, i_b], geoms_state.aabb_min[i_gb, i_b])
@@ -679,7 +680,7 @@ def func_contact_vertex_sdf(
 
     for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
         vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, geoms_info, vertex_pos):
+        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, vertex_pos):
             new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, vertex_pos, i_gb, i_b)
             if new_penetration > penetration:
                 is_col = True
@@ -1217,7 +1218,7 @@ def func_broad_phase(
                         ):
                             continue
 
-                        if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                        if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state):
                             # Clear collision normal cache if not in contact
                             if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                 # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
@@ -1270,7 +1271,7 @@ def func_broad_phase(
                             ):
                                 continue
 
-                            if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                            if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state):
                                 # Clear collision normal cache if not in contact
                                 if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
@@ -1303,7 +1304,7 @@ def func_broad_phase(
                                 ):
                                     continue
 
-                                if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                                if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state):
                                     # Clear collision normal cache if not in contact
                                     # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
                                     collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(

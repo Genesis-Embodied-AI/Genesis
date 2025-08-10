@@ -1862,7 +1862,7 @@ class StructEntitiesInfo:
 
 
 def get_entities_info(solver):
-    shape = solver.n_entities_
+    shape = solver._batch_shape(solver.n_entities_) if solver._options.batch_entities_info else solver.n_entities_
     kwargs = {
         "dof_start": V(dtype=gs.ti_int, shape=shape),
         "dof_end": V(dtype=gs.ti_int, shape=shape),

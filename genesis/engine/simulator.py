@@ -155,7 +155,14 @@ class Simulator(RBC):
         # sensors
         self._sensor_manager = SensorManager(self)
 
-    def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
+    def _add_entity(
+        self,
+        morph: Morph,
+        material,
+        surface,
+        visualize_contact=False,
+        morph_heterogeneous: list[Morph] | None = None,
+    ):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
 
@@ -163,7 +170,9 @@ class Simulator(RBC):
             entity = self.avatar_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
 
         elif isinstance(material, gs.materials.Rigid):
-            entity = self.rigid_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
+            entity = self.rigid_solver.add_entity(
+                self.n_entities, material, morph, surface, visualize_contact, morph_heterogeneous
+            )
 
         elif isinstance(material, gs.materials.MPM.Base):
             entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface)

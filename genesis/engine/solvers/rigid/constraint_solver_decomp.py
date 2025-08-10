@@ -1217,8 +1217,9 @@ def func_nt_hessian_direct(
             constraint_state.nt_H[i_d1, i_d2, i_b] = constraint_state.nt_H[i_d2, i_d1, i_b]
 
     for i_e in range(n_entities):
-        for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+        I_e = [i_e, i_b] if ti.static(static_rigid_sim_config.batch_entities_info) else i_e
+        for i_d1 in range(entities_info.dof_start[I_e], entities_info.dof_end[I_e]):
+            for i_d2 in range(entities_info.dof_start[I_e], entities_info.dof_end[I_e]):
                 constraint_state.nt_H[i_d1, i_d2, i_b] = (
                     constraint_state.nt_H[i_d1, i_d2, i_b] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                 )
@@ -1386,9 +1387,10 @@ def func_ls_init(
     n_entities = entities_info.dof_start.shape[0]
     # mv and jv
     for i_e in range(n_entities):
-        for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+        I_e = [i_e, i_b] if ti.static(static_rigid_sim_config.batch_entities_info) else i_e
+        for i_d1 in range(entities_info.dof_start[I_e], entities_info.dof_end[I_e]):
             mv = gs.ti_float(0.0)
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+            for i_d2 in range(entities_info.dof_start[I_e], entities_info.dof_end[I_e]):
                 mv += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
 
@@ -1970,10 +1972,11 @@ def initialize_Ma(
     n_entities = entities_info.n_links.shape[0]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_e, i_b in ti.ndrange(n_entities, _B):
-        for i_d1_ in range(entities_info.n_dofs[i_e]):
-            i_d1 = entities_info.dof_start[i_e] + i_d1_
+        I_e = [i_e, i_b] if ti.static(static_rigid_sim_config.batch_entities_info) else i_e
+        for i_d1_ in range(entities_info.n_dofs[I_e]):
+            i_d1 = entities_info.dof_start[I_e] + i_d1_
             Ma_ = gs.ti_float(0.0)
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+            for i_d2 in range(entities_info.dof_start[I_e], entities_info.dof_end[I_e]):
                 Ma_ += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
             Ma[i_d1, i_b] = Ma_
 
