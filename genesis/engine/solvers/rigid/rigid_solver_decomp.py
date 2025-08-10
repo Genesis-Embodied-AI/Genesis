@@ -2293,6 +2293,53 @@ class RigidSolver(Solver):
             self.fixed_verts_state,
         )
 
+    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        n_eqs = tuple(self.constraint_solver.constraint_state.ti_n_equalities.to_numpy())
+        n_envs = len(n_eqs)
+        n_max = max(n_eqs) if n_eqs else 0
+
+        if as_tensor:
+            out_size = n_envs * n_max
+        else:
+            cumsum = np.cumsum(n_eqs, dtype=np.int32)
+            out_size = int(cumsum[-1]) if n_envs else 0
+
+        if to_torch:
+            buf = torch.full((out_size, 3), -1, dtype=gs.tc_int, device=gs.device)
+        else:
+            buf = np.full((out_size, 3), -1, dtype=np.int32)
+
+        if n_max > 0:
+            kernel_collect_welds(
+                as_tensor,
+                buf,
+                self.constraint_solver.constraint_state,
+                self.equalities_info,
+                self._static_rigid_sim_config,
+            )
+
+        if n_envs > 0:
+            if as_tensor:
+                buf = buf.reshape((n_envs, n_max, 3))
+                obj_a = buf[..., 1]
+                obj_b = buf[..., 2]
+            else:
+                if to_torch:
+                    data_chunks = torch.split(buf, n_eqs)
+                else:
+                    splits = list(np.cumsum(n_eqs, dtype=np.int32)[:-1])
+                    data_chunks = np.split(buf, splits)
+                obj_a, obj_b = tuple(zip(*((data[:, 1], data[:, 2]) for data in data_chunks)))
+        else:
+            if to_torch:
+                obj_a = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
+                obj_b = torch.empty((0,), dtype=gs.tc_int, device=gs.device)
+            else:
+                obj_a = []
+                obj_b = []
+
+        return {"obj_a": obj_a, "obj_b": obj_b}
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -6718,3 +6765,38 @@ def kernel_delete_weld_constraint(
                         constraint_state.ti_n_equalities[i_b] - 1, i_b
                     ]
                 constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
+
+
+@ti.kernel
+def kernel_collect_welds(
+    is_padded: ti.template(),
+    buf: ti.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
+    equalities_info: array_class.EqualitiesInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    B = constraint_state.ti_n_equalities.shape[0]
+    max_eq = 0
+    for e in range(B):
+        n = constraint_state.ti_n_equalities[e]
+        if n > max_eq:
+            max_eq = n
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for e in range(B):
+        base = 0
+        if ti.static(is_padded):
+            base = e * max_eq
+        else:
+            for pe in range(e):
+                base += constraint_state.ti_n_equalities[pe]
+
+        out = 0
+        n = constraint_state.ti_n_equalities[e]
+        for i in range(n):
+            if equalities_info.eq_type[i, e] == gs.EQUALITY_TYPE.WELD and out < max_eq:
+                idx = base + out
+                buf[idx, 0] = e
+                buf[idx, 1] = equalities_info.eq_obj1id[i, e]
+                buf[idx, 2] = equalities_info.eq_obj2id[i, e]
+                out += 1
