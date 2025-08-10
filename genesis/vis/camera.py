@@ -308,8 +308,8 @@ class Camera(Sensor):
         depth=False,
         segmentation=False,
         normal=False,
+        antialiasing=True,
         force_render=False,
-        antialiasing=False,
     ):
         """
         Render the camera view with batch renderer.
