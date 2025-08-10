@@ -130,6 +130,13 @@ class Camera(Sensor):
             self._focus_dist = np.linalg.norm(np.asarray(lookat) - np.asarray(pos))
 
     def build(self):
+        n_envs = max(self._visualizer.scene.n_envs, 1)
+        self._multi_env_pos_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_lookat_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_up_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_transform_tensor = torch.empty((n_envs, 4, 4), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_quat_tensor = torch.empty((n_envs, 4), dtype=gs.tc_float, device=gs.device)
+
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
         self._batch_renderer = self._visualizer.batch_renderer
@@ -154,7 +161,12 @@ class Camera(Sensor):
                 self._other_stacked = self._visualizer._context.env_separate_rigid
 
         self._is_built = True
-        self.setup_initial_env_poses()
+        self.set_pose(
+            transform=self._initial_transform, pos=self._initial_pos, lookat=self._initial_lookat, up=self._initial_up
+        )
+        # FIXME: For some reason, it is necessary to update the camera twice...
+        if self._raytracer is not None:
+            self._raytracer.update_camera(self)
 
     def attach(self, rigid_link, offset_T):
         """
@@ -371,7 +383,7 @@ class Camera(Sensor):
         normal_arr : np.ndarray
             The rendered surface normal(s).
         """
-        rgb_arr, depth_arr, seg_arr, seg_color_arr, normal_arr = None, None, None, None, None
+        rgb_arr, depth_arr, seg_arr, seg_color_arr, seg_idxc_arr, normal_arr = None, None, None, None, None, None
 
         if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
@@ -520,28 +532,6 @@ class Camera(Sensor):
             point_cloud = point_cloud @ cam_pose.T
         point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
-
-    @gs.assert_built
-    def setup_initial_env_poses(self):
-        """
-        Setup the camera poses for multiple environments.
-        """
-        if self._initial_transform is not None:
-            assert self._initial_transform.shape == (4, 4)
-            self._initial_pos, self._initial_lookat, self._initial_up = gu.T_to_pos_lookat_up(self._initial_transform)
-        else:
-            self._initial_transform = gu.pos_lookat_up_to_T(self._initial_pos, self._initial_lookat, self._initial_up)
-
-        n_envs = max(self._visualizer.scene.n_envs, 1)
-        self._multi_env_pos_tensor = self._initial_pos.repeat((n_envs, 1))
-        self._multi_env_lookat_tensor = self._initial_lookat.repeat((n_envs, 1))
-        self._multi_env_up_tensor = self._initial_up.repeat((n_envs, 1))
-        self._multi_env_transform_tensor = self._initial_transform.repeat((n_envs, 1, 1))
-        self._multi_env_quat_tensor = _T_to_quat_for_madrona(self._multi_env_transform_tensor)
-
-        self._rasterizer.update_camera(self)
-        if self._raytracer is not None:
-            self._raytracer.update_camera(self)
 
     @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
