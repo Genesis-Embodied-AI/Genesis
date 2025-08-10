@@ -13,12 +13,16 @@ from .textures import ColorTexture, ImageTexture, Texture
 class Surface(Options):
     """
     Base class for all surfaces types in Genesis.
-    A ``Surface`` object encapsulates all visual information used for rendering an entity or its sub-components (links, geoms, etc.)
-    The surface contains different types textures: diffuse_texture, specular_texture, roughness_texture, metallic_texture, transmission_texture, normal_texture, and emissive_texture. Each one of them is a `gs.textures.Texture` object.
+
+    A ``Surface`` object encapsulates all visual information used for rendering an entity or its sub-components (links,
+    geoms, ...). The surface contains different types textures: diffuse_texture, specular_texture, roughness_texture,
+    metallic_texture, transmission_texture, normal_texture, and emissive_texture. Each one of them is a
+    `gs.textures.Texture` object.
 
     Tip
     ---
-    If any of the textures only has single value (instead of a map), you can use the shortcut attribute (e.g., `color`, `roughness`, `metallic`, `emissive`) instead of creating a texture object.
+    If any of the textures only has single value (instead of a map), you can use the shortcut attribute (e.g., `color`,
+    `roughness`, `metallic`, `emissive`) instead of creating a texture object.
 
     Note
     ----
@@ -49,26 +53,26 @@ class Surface(Options):
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
     default_roughness : float, optional
-        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults to 1.0.
+        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults
+        to 1.0.
     vis_mode : str | None, optional
-        How the entity should be visualized. Possible values are ['visual', 'particle', 'collision', 'sdf', 'recon'].
-
+        How the entity should be visualized, e.g.
         - 'visual': Render the entity's visual geometry.
         - 'collision': Render the entity's collision geometry.
         - 'particle': Render the entity's particle representation (if applicable).
         - 'sdf': Render the reconstructed surface mesh of the entity's sdf.
         - 'recon': Render the reconstructed surface mesh of the entity's particle representation.
-
     smooth : bool, optional
         Whether to smooth face normals by interpolating vertex normals.
     double_sided : bool | None, optional
-        Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth material and False for others.
+        Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth
+        material and False for others.
     beam_angle : float
         The beam angle of emission. Defaults to 180.0.
     normal_diff_clamp : float, optional
         Controls the threshold for computing surface normals by interpolating vertex normals.
     recon_backend : str, optional
-        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb'].
+        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb']. Defaults to 'splashsurf'.
     generate_foam : bool, optional
         Whether to generate foam particles for visual effects for particle-based entities.
     foam_options : gs.options.FoamOptions, optional
@@ -92,14 +96,12 @@ class Surface(Options):
 
     default_roughness: float = 1.0
 
-    vis_mode: Optional[str] = None  # ['visual', 'particle', 'collision', 'sdf', 'recon']
-    smooth: bool = True  # whether to smooth face normals by interpolating vertex normals
-    double_sided: Optional[bool] = (
-        None  # whether to render both sides of the surface. Defaults to True for Cloth material and False for others.
-    )
+    vis_mode: Optional[str] = None
+    smooth: bool = True
+    double_sided: Optional[bool] = None
     beam_angle: float = 180
     normal_diff_clamp: float = 180
-    recon_backend: str = "splashsurf"  # backend for surface recon
+    recon_backend: str = "splashsurf"
     generate_foam: bool = False
     foam_options: Optional[FoamOptions] = None
 
