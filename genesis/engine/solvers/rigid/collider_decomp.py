@@ -545,6 +545,8 @@ def collider_kernel_get_contacts(
 ):
     _B = collider_state.active_buffer.shape[1]
     n_contacts_max = gs.ti_int(0)
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         n_contacts = collider_state.n_contacts[i_b]
         if n_contacts > n_contacts_max:

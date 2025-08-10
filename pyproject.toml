@@ -75,6 +75,7 @@ dev = [
     "syrupy",
     "huggingface_hub",
     "wandb",
+    "ipython",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
