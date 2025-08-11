@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
+INVALID_NEXT_HIBERNATED_ENTITY_IDX = -1
 INVALID_HIBERNATED_ISLAND_ID = -1  # -1 is reserved for "no island", i.e. active or fixed entities
 FIRST_HIBERNATED_ISLAND_ID = 1  # start at 1, leave 0 unused, use -1 for "no island"
 
@@ -87,6 +88,7 @@ class ContactIsland:
 
         # Used to make islands persist through hibernation:
         self.unused__entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+        self.unused__entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
 
         # Warning: do not mistake island_id for island_idx
         self.next_hibernated_island_id = ti.field(dtype=gs.ti_int, shape=self.solver._B)
@@ -138,9 +140,10 @@ class ContactIsland:
 
     @ti.kernel
     def temp_hack__add_all_hibernated_island_edges(self):
+        _B = self.solver._B
         n_entities = self.solver.n_entities
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(self.solver._B):
+        for i_b in range(_B):
             for i_e in range(n_entities):
                 for i_e2 in range(i_e + 1, n_entities):
                     if self.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b] != INVALID_HIBERNATED_ISLAND_ID \
@@ -155,10 +158,10 @@ class ContactIsland:
         self.temp_hack__add_all_hibernated_island_edges()
         self.preprocess_island__map_entities_to_edges()
         self.construct_islands()
-        self.postprocess_island__assign_collisions_to_temp_islands()
+        self.postprocess_island__assign_contact_data_to_temp_islands()
 
     @ti.kernel
-    def postprocess_island__assign_collisions_to_temp_islands(self):
+    def postprocess_island__assign_contact_data_to_temp_islands(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):

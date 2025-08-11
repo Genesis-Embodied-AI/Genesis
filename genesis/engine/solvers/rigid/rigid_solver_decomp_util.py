@@ -9,7 +9,7 @@ from genesis.engine.solvers.rigid.rigid_validate import validate_temp_island_con
 
 
 @ti.func
-def func_wakeup_entity_and_its_island(
+def func_wakeup_entity_and_its_temp_island(
     i_e,
     i_b,
     entities_state: array_class.EntitiesState,

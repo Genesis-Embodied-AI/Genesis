@@ -8,7 +8,7 @@ import genesis.utils.geom as gu
 
 import genesis.utils.array_class as array_class
 
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_island
+from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 from .contact_island import ContactIsland
 from genesis.engine.solvers.rigid.rigid_debug import Debug
 
@@ -127,7 +127,7 @@ class ConstraintSolverIsland:
                 if ti.static(self._solver._use_hibernation):
                     is_active = not self.contact_island.island_hibernated[i_island, i_b]
                 if is_active:
-                    self.add_collision_constraints(i_island, i_b)
+                    self.add_collision_constraints__and_wakeup_entities(i_island, i_b)
                     self.add_joint_limit_constraints(i_island, i_b)
                     self._func_init_solver(i_island, i_b)
                     self._func_solve(i_island, i_b)
@@ -139,7 +139,7 @@ class ConstraintSolverIsland:
         self.resolve()
 
     @ti.func
-    def add_collision_constraints(self, i_island: int, i_b: int):
+    def add_collision_constraints__and_wakeup_entities(self, i_island: int, i_b: int):
         self.n_constraints[i_b] = 0
         for i_island_col in range(self.contact_island.island_col[i_island, i_b].n):
             i_col_ = self.contact_island.island_col[i_island, i_b].start + i_island_col
@@ -233,9 +233,9 @@ class ConstraintSolverIsland:
                     # wake up entities
                     any_hibernated_entity_idx = entity_idx_a if is_entity_a_hibernated else entity_idx_b
                     temp_island_idx = self.contact_island.entity_island[any_hibernated_entity_idx, i_b]
-                    Debug.assertf(0x0ad00004, temp_island_idx == i_island)  # Temp island indices don't match
+                    Debug.assertf(0x7ad00004, temp_island_idx == i_island)  # Temp island indices don't match
                     
-                    func_wakeup_entity_and_its_island(
+                    func_wakeup_entity_and_its_temp_island(
                         any_hibernated_entity_idx,
                         i_b,
                         self._solver.entities_state,

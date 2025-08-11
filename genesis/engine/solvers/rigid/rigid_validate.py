@@ -23,7 +23,7 @@ def validate_entity_hibernation_state_for_all_entities_in_temp_island(
         all_okay = all_okay and entities_state.hibernated[entity_idx, i_b] == expected_hibernation_state
         if entities_state.hibernated[entity_idx, i_b] != expected_hibernation_state:
             error_count += 1
-    Debug.assertf(0x0ad0000a, all_okay)  # Entity expected to be matching the expected hibernation state
+    Debug.assertf(0x7ad0000a, all_okay)  # Entity expected to be matching the expected hibernation state
     if not all_okay:
         print(f"Entity hibernation state mismatch for temp island {temp_island_idx} of {entity_ref_range.n} entities, expected: {expected_hibernation_state}, error_count: {error_count}")
 
@@ -47,4 +47,4 @@ def validate_temp_island_contains_both_hibernated_and_awake_entities(
         all_awake = ti.u1(all_awake and not is_entity_hibernated)
         all_hibernated = ti.u1(all_hibernated and is_entity_hibernated)
 
-    Debug.assertf(0x0ad00009, not (all_hibernated or all_awake))  # Island being woken up is expected to contain both hibernated and awake entities
+    Debug.assertf(0x7ad00009, not (all_hibernated or all_awake))  # Island being woken up is expected to contain both hibernated and awake entities

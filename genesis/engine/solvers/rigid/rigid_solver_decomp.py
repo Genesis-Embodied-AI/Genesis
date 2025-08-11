@@ -24,7 +24,7 @@ from ..base_solver import Solver
 from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_island
+from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 from ....utils.sdf_decomp import SDF
 
 if TYPE_CHECKING:
@@ -4039,7 +4039,7 @@ def kernel_step_2(
     )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
-        func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
+        func_check_all_awake_islands_for_hibernation_or_update_aabb_sort_buffer(
             dofs_state=dofs_state,
             entities_state=entities_state,
             entities_info=entities_info,
@@ -4920,7 +4920,7 @@ def kernel_update_vgeoms(
 
 
 @ti.func
-def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
+def func_check_all_awake_islands_for_hibernation_or_update_aabb_sort_buffer(
     dofs_state: array_class.DofsState,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
@@ -4956,7 +4956,7 @@ def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
                     entity_idx = ci.entity_id[entity_ref, i_b]
 
                     is_entity_fixed = entities_info.n_dofs[entity_idx] == 0
-                    Debug.assertf(0x0ad00005, not is_entity_fixed)  # Fixed entity should not belong to an island
+                    Debug.assertf(0x7ad00005, not is_entity_fixed)  # Fixed entity should not belong to an island
 
                     # we can ignore entitiy_hibernated flag -> cos it implies dofs_state.vel/acc are zero
                     is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
@@ -5006,8 +5006,8 @@ def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
 
                         # store entities in the hibernated islands by daisy chaining them
                         ci.unused__entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
-
                         prev_entity_idx = entity_idx
+
                         ci.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] = hibernated_island_id
 
 
@@ -5280,7 +5280,7 @@ def func_torque_and_passive_force(
                         wakeup = True
 
         if ti.static(static_rigid_sim_config.use_hibernation) and entities_state.hibernated[i_e, i_b] and wakeup:
-            func_wakeup_entity_and_its_island(i_e, i_b, entities_state, entities_info, dofs_state, links_state, geoms_state, rigid_global_info, contact_island)
+            func_wakeup_entity_and_its_temp_island(i_e, i_b, entities_state, entities_info, dofs_state, links_state, geoms_state, rigid_global_info, contact_island)
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
