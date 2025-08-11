@@ -1162,18 +1162,20 @@ def _np_z_up_to_R(z, up=None, out=None):
             z[:] = 0.0, 1.0, 0.0
 
         if up is not None:
-            x[:] = np.cross(up[i], z)
+            a = up[i]
         else:
-            x[0] = z[1]
-            x[1] = -z[0]
-            x[2] = 0.0
+            a = np.array([0.0, 1.0, 0.0], dtype=z.dtype)
 
+        x[:] = np.cross(a, z)
         x_norm = np.linalg.norm(x)
-        if x_norm > gs.EPS:
-            x /= x_norm
-            y[:] = np.cross(z, x)
-        else:
-            R[:] = np.eye(3, dtype=R.dtype)
+
+        if x_norm <= gs.EPS:
+            a_fallback = np.array([1.0, 0.0, 0.0], dtype=z.dtype)
+            x[:] = np.cross(a_fallback, z)
+            x_norm = np.linalg.norm(x)
+
+        x /= x_norm
+        y[:] = np.cross(z, x)
 
     return out_
 
