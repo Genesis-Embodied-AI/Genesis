@@ -270,6 +270,14 @@ def get_remesh_cache_dir():
     return os.path.join(get_cache_dir(), "rm")
 
 
+def get_exr_cache_dir():
+    return os.path.join(get_cache_dir(), "exr")
+
+
+def get_usd_cache_dir():
+    return os.path.join(get_cache_dir(), "usd")
+
+
 def clean_cache_files():
     folder = gs.utils.misc.get_cache_dir()
     try:
