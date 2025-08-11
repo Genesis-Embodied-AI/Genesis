@@ -256,13 +256,11 @@ class ContactIsland:
                     self.n_stack[i_b] = 0
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
+                    self.entity_island[i_v, i_b] = self.n_islands[i_b]
 
                     while self.n_stack[i_b] > 0:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
                         v = self.stack[self.n_stack[i_b], i_b]
-                        if self.entity_island[v, i_b] != -1:
-                            continue
-                        self.entity_island[v, i_b] = self.n_islands[i_b]
 
                         for i_edge in range(self.entity_edge[v, i_b].n):
                             _id = self.entity_edge[v, i_b].start + i_edge  # half-edge index
@@ -271,9 +269,10 @@ class ContactIsland:
                             if next_v == v:
                                 next_v = self.ci_edges[edge, 1, i_b]
 
-                            if self.solver.entities_info.n_dofs[next_v] > 0 and next_v != v:  # 2nd condition must not happen ?
+                            if self.solver.entities_info.n_dofs[next_v] > 0 and next_v != v and self.entity_island[next_v, i_b] == -1:  # 2nd condition must not happen ?
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
+                                self.entity_island[next_v, i_b] = self.n_islands[i_b]
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 
