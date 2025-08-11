@@ -280,6 +280,7 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         precision = "64"
         debug = True
     else:
+        # Disabling debug mode on GPU because we are likely needing maximum performance, notably for benchmarks
         precision = "32"
         debug = False
 
