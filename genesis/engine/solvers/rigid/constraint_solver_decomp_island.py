@@ -8,8 +8,9 @@ import genesis.utils.geom as gu
 
 import genesis.utils.array_class as array_class
 
-from .rigid_solver_decomp_util import func_wakeup_entity
+from .rigid_solver_decomp_util import func_wakeup_entity_and_its_island
 from .contact_island import ContactIsland
+from genesis.engine.solvers.rigid.rigid_debug import Debug
 
 if TYPE_CHECKING:
     from genesis.engine.colliders.collider import Collider
@@ -223,34 +224,28 @@ class ConstraintSolverIsland:
                 self.efc_D[n_con, i_b] = 1 / ti.max(diag, gs.EPS)
 
             if ti.static(self._solver._use_hibernation):
-                # wake up entities
-                entity_a = self._solver.links_info.entity_idx[link_a_maybe_batch]
-                entity_b = self._solver.links_info.entity_idx[link_b_maybe_batch]
+                entity_idx_a = self._solver.links_info.entity_idx[link_a_maybe_batch]
+                entity_idx_b = self._solver.links_info.entity_idx[link_b_maybe_batch]
 
-                print(f"Adding collision between {entity_a} and {entity_b}")
-
-                func_wakeup_entity(
-                    entity_a,
-                    i_b,
-                    self._solver.entities_state,
-                    self._solver.entities_info,
-                    self._solver.dofs_state,
-                    self._solver.links_state,
-                    self._solver.geoms_state,
-                    self._solver.data_manager.rigid_global_info,
-                    self.contact_island,
-                )
-                func_wakeup_entity(
-                    entity_b,
-                    i_b,
-                    self._solver.entities_state,
-                    self._solver.entities_info,
-                    self._solver.dofs_state,
-                    self._solver.links_state,
-                    self._solver.geoms_state,
-                    self._solver.data_manager.rigid_global_info,
-                    self.contact_island,
-                )
+                is_entity_a_hibernated = self._solver.entities_state.hibernated[entity_idx_a, i_b]
+                is_entity_b_hibernated = self._solver.entities_state.hibernated[entity_idx_b, i_b]
+                if is_entity_a_hibernated or is_entity_b_hibernated:
+                    # wake up entities
+                    any_hibernated_entity_idx = entity_idx_a if is_entity_a_hibernated else entity_idx_b
+                    temp_island_idx = self.contact_island.entity_island[any_hibernated_entity_idx, i_b]
+                    Debug.assertf(0x0ad00004, temp_island_idx == i_island)  # Temp island indices don't match
+                    
+                    func_wakeup_entity_and_its_island(
+                        any_hibernated_entity_idx,
+                        i_b,
+                        self._solver.entities_state,
+                        self._solver.entities_info,
+                        self._solver.dofs_state,
+                        self._solver.links_state,
+                        self._solver.geoms_state,
+                        self._solver.data_manager.rigid_global_info,
+                        self.contact_island,
+                    )
 
     @ti.func
     def add_joint_limit_constraints(self, i_island: int, i_b: int):

@@ -17,12 +17,14 @@ from genesis.engine.states.solvers import RigidSolverState
 from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
+from genesis.engine.solvers.rigid.rigid_debug import Debug
+from genesis.engine.solvers.rigid.rigid_validate import validate_entity_hibernation_state_for_all_entities_in_temp_island
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .rigid_solver_decomp_util import func_wakeup_entity
+from .rigid_solver_decomp_util import func_wakeup_entity_and_its_island
 from ....utils.sdf_decomp import SDF
 
 if TYPE_CHECKING:
@@ -4939,85 +4941,59 @@ def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b in range(_B):
-
         for island_idx in range(ci.n_islands[i_b]):
             was_island_hibernated = ci.island_hibernated[island_idx, i_b]
-            entity_ref_range = ci.island_entity[island_idx, i_b]
 
-            # check if all entities are hibernated, or quialify for hibernation this frame
-            is_island_hibernated = True
-            # print(f"--------------------------------")
-            # print(f"thresholds: acc: {static_rigid_sim_config.hibernation_thresh_acc}, vel: {static_rigid_sim_config.hibernation_thresh_vel}")
-            # print(f"island_idx: {island_idx}, entity_ref_range.n: {entity_ref_range.n}")
-            for i in range(entity_ref_range.n):
-                entity_ref = entity_ref_range.start + i
-                entity_idx = ci.entity_id[entity_ref, i_b]
-                
-                # print(f"entity_idx: {entity_idx}, is_hibernated: {entities_state.hibernated[entity_idx, i_b]}, n_dofs: {entities_info.n_dofs[entity_idx]}")
-                # skip if already hibernated or fixed
-                if (not entities_state.hibernated[entity_idx, i_b] and entities_info.n_dofs[entity_idx] > 0):
+            if ti.static(Debug.validate):
+                validate_entity_hibernation_state_for_all_entities_in_temp_island( \
+                    island_idx, i_b, entities_state, contact_island, expected_hibernation_state=was_island_hibernated)
+            
+            if not was_island_hibernated:
+                are_all_entities_okay_for_hibernation = True
+                entity_ref_range = ci.island_entity[island_idx, i_b]
+                for i in range(entity_ref_range.n):
+                    entity_ref = entity_ref_range.start + i
+                    entity_idx = ci.entity_id[entity_ref, i_b]
+
+                    is_entity_fixed = entities_info.n_dofs[entity_idx] == 0
+                    Debug.assertf(0x0ad00005, not is_entity_fixed)  # Fixed entity should not belong to an island
+
+                    # we can ignore entitiy_hibernated flag -> cos it implies dofs_state.vel/acc are zero
+                    is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
+                    if is_entity_hibernated:
+                        continue
+
                     for i_d in range(entities_info.dof_start[entity_idx], entities_info.dof_end[entity_idx]):
-                        # print(f"i_d: {i_d}, acc: {dofs_state.acc[i_d, i_b]}, vel: {dofs_state.vel[i_d, i_b]}")
-                        if (
-                            ti.abs(dofs_state.acc[i_d, i_b]) > static_rigid_sim_config.hibernation_thresh_acc
-                            or ti.abs(dofs_state.vel[i_d, i_b]) > static_rigid_sim_config.hibernation_thresh_vel
-                        ):
-                            is_island_hibernated = False
+                        acc_threshold = static_rigid_sim_config.hibernation_thresh_acc
+                        vel_threshold = static_rigid_sim_config.hibernation_thresh_vel
+                        if ti.abs(dofs_state.acc[i_d, i_b]) > acc_threshold or ti.abs(dofs_state.vel[i_d, i_b]) > vel_threshold:
+                            are_all_entities_okay_for_hibernation = False
                             break
 
-                    if not is_island_hibernated:
+                    if not are_all_entities_okay_for_hibernation:
                         break
 
-            # not needed?:
-            # ci.island_hibernated[island_idx, i_b] = is_island_hibernated
-            if was_island_hibernated and not is_island_hibernated:
-                print(f"Island hibernation corrupted")
-                pass
+                if not are_all_entities_okay_for_hibernation:
+                    # update collider sort_buffer with aabb extents along x-axis
+                    for i in range(entity_ref_range.n):
+                        entity_ref = entity_ref_range.start + i
+                        entity_idx = ci.entity_id[entity_ref, i_b]
+                        for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
+                            min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
+                            max_idx, max_val = geoms_state.max_buffer_idx[i_g, i_b], geoms_state.aabb_max[i_g, i_b][0]
+                            collider_state.sort_buffer.value[min_idx, i_b] = min_val
+                            collider_state.sort_buffer.value[max_idx, i_b] = max_val
+                else:
+                    # perform hibernation
+                    prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
+                    prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
+                    hibernated_island_id = ci.next_hibernated_island_id[i_b]
+                    ci.next_hibernated_island_id[i_b] = hibernated_island_id + 1
+                    # print(f"Hibernated island id: {hibernated_island_id} of {entity_ref_range.n} entities")
+                    for i in range(entity_ref_range.n):
+                        entity_ref = entity_ref_range.start + i
+                        entity_idx = ci.entity_id[entity_ref, i_b]
 
-            # verify that in a non-hibernated island all entities are not hibernated
-            if not is_island_hibernated:
-                for i in range(entity_ref_range.n):
-                    entity_ref = entity_ref_range.start + i
-                    entity_idx = ci.entity_id[entity_ref, i_b]
-                    if entities_state.hibernated[entity_idx, i_b]:
-                        print(f"Entity {entity_idx} hibernation state corrupted (1)")
-                        pass
-
-            # verify that in a non-hibernated island all entities are not hibernated
-            if was_island_hibernated:
-                for i in range(entity_ref_range.n):
-                    entity_ref = entity_ref_range.start + i
-                    entity_idx = ci.entity_id[entity_ref, i_b]
-                    if not entities_state.hibernated[entity_idx, i_b]:
-                        print(f"Entity {entity_idx} hibernation state corrupted (2))")
-                        pass
-
-            # update collider sort_buffer with aabb extents along x-axis
-            if not is_island_hibernated:
-                for i in range(entity_ref_range.n):
-                    entity_ref = entity_ref_range.start + i
-                    entity_idx = ci.entity_id[entity_ref, i_b]
-                    for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
-                        min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
-                        max_idx, max_val = geoms_state.max_buffer_idx[i_g, i_b], geoms_state.aabb_max[i_g, i_b][0]
-                        collider_state.sort_buffer.value[min_idx, i_b] = min_val
-                        collider_state.sort_buffer.value[max_idx, i_b] = max_val
-
-            # perform hibernation
-            if not was_island_hibernated and is_island_hibernated:
-                prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
-                prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
-                hibernated_island_id = ci.next_hibernated_island_id[i_b]
-                ci.next_hibernated_island_id[i_b] = hibernated_island_id + 1
-                print(f"Hibernated island id: {hibernated_island_id} of {entity_ref_range.n} entities")
-                for i in range(entity_ref_range.n):
-                    entity_ref = entity_ref_range.start + i
-                    entity_idx = ci.entity_id[entity_ref, i_b]
-                    # skip if already hibernated or fixed
-                    if not (not entities_state.hibernated[entity_idx, i_b] and entities_info.n_dofs[entity_idx] > 0):
-                        print(f"Internal error:Entity re-hibernating a RigidEntity, or hibernating a fixed entity")
-                    # if (not entities_state.hibernated[entity_idx, i_b] and entities_info.n_dofs[entity_idx] > 0):
-                    if True:
                         func_mark_entity_for_hibernation_and_zero_dof_velocities(
                             entity_idx,
                             i_b,
@@ -5028,50 +5004,11 @@ def func_mark_all_entities_for_hibernation_or_update_aabb_sort_buffer(
                             geoms_state=geoms_state,
                         )
 
-                    # store entities in the hibernated islands by daisy chaining them
-                    ci.unused__entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
+                        # store entities in the hibernated islands by daisy chaining them
+                        ci.unused__entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
 
-                    prev_entity_idx = entity_idx
-                    ci.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] = hibernated_island_id
-
-                    print(f"\\\\Hibernated entity {entity_idx}")
-
-
-                
-
-    # ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    # for i_e, i_b in ti.ndrange(n_entities, _B):
-    #     if (
-    #         not entities_state.hibernated[i_e, i_b] and entities_info.n_dofs[i_e] > 0
-    #     ):  # We do not hibernate fixed entity
-    #         hibernate = True
-    #         for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-    #             if (
-    #                 ti.abs(dofs_state.acc[i_d, i_b]) > static_rigid_sim_config.hibernation_thresh_acc
-    #                 or ti.abs(dofs_state.vel[i_d, i_b]) > static_rigid_sim_config.hibernation_thresh_vel
-    #             ):
-    #                 hibernate = False
-    #                 break
-
-    #         if hibernate:
-    #             func_mark_entity_for_hibernation_and_zero_dof_velocities(
-    #                 i_e,
-    #                 i_b,
-    #                 entities_state=entities_state,
-    #                 entities_info=entities_info,
-    #                 dofs_state=dofs_state,
-    #                 links_state=links_state,
-    #                 geoms_state=geoms_state,
-    #             )
-    #         else:
-    #             # update collider sort_buffer with aabb extents along x-axis
-    #             for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
-    #                 collider_state.sort_buffer.value[geoms_state.min_buffer_idx[i_g, i_b], i_b] = geoms_state.aabb_min[
-    #                     i_g, i_b
-    #                 ][0]
-    #                 collider_state.sort_buffer.value[geoms_state.max_buffer_idx[i_g, i_b], i_b] = geoms_state.aabb_max[
-    #                     i_g, i_b
-    #                 ][0]
+                        prev_entity_idx = entity_idx
+                        ci.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] = hibernated_island_id
 
 
 @ti.func
@@ -5342,9 +5279,8 @@ def func_torque_and_passive_force(
                     if ti.abs(force) > gs.EPS:
                         wakeup = True
 
-        if ti.static(static_rigid_sim_config.use_hibernation):
-            if wakeup:
-                func_wakeup_entity(i_e, i_b, entities_state, entities_info, dofs_state, links_state, geoms_state, rigid_global_info, contact_island)
+        if ti.static(static_rigid_sim_config.use_hibernation) and entities_state.hibernated[i_e, i_b] and wakeup:
+            func_wakeup_entity_and_its_island(i_e, i_b, entities_state, entities_info, dofs_state, links_state, geoms_state, rigid_global_info, contact_island)
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
