@@ -1,10 +1,14 @@
 import taichi as ti
 
 import genesis.utils.array_class as array_class
-from genesis.engine.solvers.rigid.contact_island import INVALID_HIBERNATED_ISLAND_ID
-from genesis.engine.solvers.rigid.rigid_debug import Debug
-from genesis.engine.solvers.rigid.rigid_validate import validate_temp_island_contains_both_hibernated_and_awake_entities
 
+from genesis.engine.solvers.rigid.contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
+from genesis.engine.solvers.rigid.rigid_debug import Debug
+from genesis.engine.solvers.rigid.rigid_validate import (
+    validate_temp_island_contains_both_hibernated_and_awake_entities,
+    validate_entity_hibernation_state_for_all_entities_in_temp_island,
+    validate_next_hibernated_entity_indices_in_entire_scene,
+)
 
 
 
@@ -23,51 +27,54 @@ def func_wakeup_entity_and_its_temp_island(
     # Note: Original function handled non-hibernated & fixed entities.
     # Now, we require a properly hibernated entity to be passed in.
     island_idx = contact_island.entity_island[i_e, i_b]
-    is_entity_fixed = island_idx == -1
-    Debug.assertf(0x0ad00007, not is_entity_fixed)  # Fixed entities are excluded from hibernation logic
-    Debug.assertf(0x0ad0000b, entities_state.hibernated[i_e, i_b])
+    Debug.assertf(0x7ad00008, not contact_island.island_hibernated[island_idx, i_b])  # Island already expected to be marked as not hibernated
 
-    # Note: temporarily, we have duplicated logic for hibernation: the entity_state.hibernated,
-    # and the new contact_island's arrays that are used to store persistent_hibernated_island_id.
-    hibernated_island_id = contact_island.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b]
-    is_entity_hibernated = hibernated_island_id != INVALID_HIBERNATED_ISLAND_ID
-    Debug.assertf(0x0ad0000c, is_entity_hibernated)  # Entityt must belong to a persistent hibernated island
+    is_entity_fixed = island_idx == -1
+    Debug.assertf(0x7ad00007, not is_entity_fixed)  # Fixed entities are excluded from hibernation logic
+    Debug.assertf(0x7ad0000b, entities_state.hibernated[i_e, i_b])
 
     if ti.static(Debug.validate):
         validate_temp_island_contains_both_hibernated_and_awake_entities(island_idx, i_b, entities_state, contact_island)
 
-    n_entities = entities_info.n_links.shape[0]
-    for entity_idx in range(n_entities): 
+    entity_ref_range = contact_island.island_entity[island_idx, i_b]
+    for ei in range(entity_ref_range.n):
+        entity_ref = entity_ref_range.start + ei
+        entity_idx = contact_island.entity_id[entity_ref, i_b]
+        Debug.assertf(0x7ad0000d, contact_island.entity_island[entity_idx, i_b] == island_idx)  # Unexpected entity from outside of island
 
+        is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
+        next_hibernated_entity_idx = contact_island.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b]
+        Debug.assertf(0x7ad0000e, is_entity_hibernated == (next_hibernated_entity_idx != INVALID_NEXT_HIBERNATED_ENTITY_IDX))  # Inconsistent entity state
 
-        if contact_island.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] == hibernated_island_id:
-            Debug.assertf(0x0ad0000b, entities_state.hibernated[entity_idx, i_b])  # Entity expected to be hibernated
+        if is_entity_hibernated:
+            contact_island.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = INVALID_NEXT_HIBERNATED_ENTITY_IDX
 
-            contact_island.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] = INVALID_HIBERNATED_ISLAND_ID
+            entities_state.hibernated[entity_idx, i_b] = False
+            n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+            rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
 
-            if entities_state.hibernated[entity_idx, i_b]:
-                entities_state.hibernated[entity_idx, i_b] = False
-                n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-                rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
+            n_dofs = entities_info.n_dofs[entity_idx]
+            base_entity_dof_idx = entities_info.dof_start[entity_idx]
+            base_awake_dof_idx = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
+            for i in range(n_dofs):
+                i_d = base_entity_dof_idx + i
+                dofs_state.hibernated[i_d, i_b] = False
+                rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
 
-                # todo: do single atomic add
-                for i_d in range(entities_info.dof_start[entity_idx], entities_info.dof_end[entity_idx]):
-                    dofs_state.hibernated[i_d, i_b] = False
-                    n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
-                    rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+            n_links = entities_info.n_links[entity_idx]
+            base_entity_link_idx = entities_info.link_start[entity_idx]
+            base_awake_link_idx = ti.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
+            for i in range(n_links):
+                i_l = base_entity_link_idx + i
+                links_state.hibernated[i_l, i_b] = False
+                rigid_global_info.awake_links[base_awake_link_idx + i, i_b] = i_l
 
-                # todo: do single atomic add
-                for i_l in range(entities_info.link_start[entity_idx], entities_info.link_end[entity_idx]):
-                    links_state.hibernated[i_l, i_b] = False
-                    n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
-                    rigid_global_info.awake_links[n_awake_links, i_b] = i_l
+            for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
+                geoms_state.hibernated[i_g, i_b] = False
 
-                for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
-                    geoms_state.hibernated[i_g, i_b] = False
-
-                # validation only: un-hibernate the island
-                non_persistent_hibernated_island_idx = contact_island.entity_island[entity_idx, i_b]
-                Debug.assertf(0x0ad00008, non_persistent_hibernated_island_idx != -1)  # Entity being hibernated has invalid temp island index
-                Debug.assertf(0x0ad00009, non_persistent_hibernated_island_idx == island_idx)  # Not matching island indices
-
-                contact_island.island_hibernated[non_persistent_hibernated_island_idx, i_b] = False
+    # contact_island.island_hibernated[island_idx, i_b] = False
+    if ti.static(Debug.validate):
+        validate_entity_hibernation_state_for_all_entities_in_temp_island( \
+            island_idx, i_b, entities_state, contact_island, expected_hibernation_state=False)
+        validate_next_hibernated_entity_indices_in_entire_scene(i_b, entities_state, contact_island)
+        

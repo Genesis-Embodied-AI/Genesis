@@ -9,6 +9,10 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
+from .rigid_validate import (
+    validate_entity_hibernation_state_for_all_entities_in_temp_island,
+    validate_next_hibernated_entity_indices_in_entire_scene,
+)
 from .contact_island import ContactIsland
 from genesis.engine.solvers.rigid.rigid_debug import Debug
 
@@ -246,6 +250,12 @@ class ConstraintSolverIsland:
                         self._solver.data_manager.rigid_global_info,
                         self.contact_island,
                     )
+
+        # after all collisions added for the island
+        if ti.static(Debug.validate):
+            validate_entity_hibernation_state_for_all_entities_in_temp_island( \
+                i_island, i_b, self._solver.entities_state, self.contact_island, expected_hibernation_state=False)
+
 
     @ti.func
     def add_joint_limit_constraints(self, i_island: int, i_b: int):

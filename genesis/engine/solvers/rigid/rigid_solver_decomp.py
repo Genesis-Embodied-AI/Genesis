@@ -18,7 +18,10 @@ from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.engine.solvers.rigid.rigid_debug import Debug
-from genesis.engine.solvers.rigid.rigid_validate import validate_entity_hibernation_state_for_all_entities_in_temp_island
+from genesis.engine.solvers.rigid.rigid_validate import (
+    validate_entity_hibernation_state_for_all_entities_in_temp_island,
+    validate_next_hibernated_entity_indices_in_entire_scene,
+)
 
 from ..base_solver import Solver
 from .collider_decomp import Collider
@@ -26,6 +29,7 @@ from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
 from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 from ....utils.sdf_decomp import SDF
+from .contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -4039,7 +4043,7 @@ def kernel_step_2(
     )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
-        func_check_all_awake_islands_for_hibernation_or_update_aabb_sort_buffer(
+        func_for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
             dofs_state=dofs_state,
             entities_state=entities_state,
             entities_info=entities_info,
@@ -4050,7 +4054,7 @@ def kernel_step_2(
             static_rigid_sim_config=static_rigid_sim_config,
             contact_island=contact_island,
         )
-        nondeterministic__func_aggregate_awake_entities(
+        func_aggregate_awake_entities(
             entities_state=entities_state,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
@@ -4920,7 +4924,7 @@ def kernel_update_vgeoms(
 
 
 @ti.func
-def func_check_all_awake_islands_for_hibernation_or_update_aabb_sort_buffer(
+def func_for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
     dofs_state: array_class.DofsState,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
@@ -4987,14 +4991,12 @@ def func_check_all_awake_islands_for_hibernation_or_update_aabb_sort_buffer(
                     # perform hibernation
                     prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
                     prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
-                    hibernated_island_id = ci.next_hibernated_island_id[i_b]
-                    ci.next_hibernated_island_id[i_b] = hibernated_island_id + 1
-                    # print(f"Hibernated island id: {hibernated_island_id} of {entity_ref_range.n} entities")
+
                     for i in range(entity_ref_range.n):
                         entity_ref = entity_ref_range.start + i
                         entity_idx = ci.entity_id[entity_ref, i_b]
 
-                        func_mark_entity_for_hibernation_and_zero_dof_velocities(
+                        func_hibernate_entity_and_zero_dof_velocities(
                             entity_idx,
                             i_b,
                             entities_state=entities_state,
@@ -5005,14 +5007,13 @@ def func_check_all_awake_islands_for_hibernation_or_update_aabb_sort_buffer(
                         )
 
                         # store entities in the hibernated islands by daisy chaining them
-                        ci.unused__entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
+                        Debug.assertf(0x7ad00014, ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] == INVALID_NEXT_HIBERNATED_ENTITY_IDX)
+                        ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
                         prev_entity_idx = entity_idx
-
-                        ci.hibernated_entity_idx_to_hibernated_island_id[entity_idx, i_b] = hibernated_island_id
 
 
 @ti.func
-def nondeterministic__func_aggregate_awake_entities(
+def func_aggregate_awake_entities(
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -5032,21 +5033,21 @@ def nondeterministic__func_aggregate_awake_entities(
         next_awake_entity_idx = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
         rigid_global_info.awake_entities[next_awake_entity_idx, i_b] = i_e
 
-        dof_start: ti.int32 = entities_info.dof_start[i_e]
         n_dofs = entities_info.n_dofs[i_e]
+        entity_dofs_base_idx: ti.int32 = entities_info.dof_start[i_e]
         awake_dofs_base_idx = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
         for i in range(n_dofs):
-            rigid_global_info.awake_dofs[awake_dofs_base_idx + i, i_b] = dof_start + i
+            rigid_global_info.awake_dofs[awake_dofs_base_idx + i, i_b] = entity_dofs_base_idx + i
 
-        link_start: ti.int32 = entities_info.link_start[i_e]
         n_links = entities_info.n_links[i_e]
+        entity_links_base_idx: ti.int32 = entities_info.link_start[i_e]
         awake_links_base_idx = ti.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
         for i in range(n_links):
-            rigid_global_info.awake_links[awake_links_base_idx + i, i_b] = link_start + i
+            rigid_global_info.awake_links[awake_links_base_idx + i, i_b] = entity_links_base_idx + i
 
 
 @ti.func
-def func_mark_entity_for_hibernation_and_zero_dof_velocities(
+def func_hibernate_entity_and_zero_dof_velocities(
     i_e: int,
     i_b: int,
     entities_state: array_class.EntitiesState,

@@ -5,14 +5,18 @@ import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.solvers.rigid.rigid_debug import Debug
+
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 INVALID_NEXT_HIBERNATED_ENTITY_IDX = -1
-INVALID_HIBERNATED_ISLAND_ID = -1  # -1 is reserved for "no island", i.e. active or fixed entities
-FIRST_HIBERNATED_ISLAND_ID = 1  # start at 1, leave 0 unused, use -1 for "no island"
+
+
+from genesis.engine.solvers.rigid.rigid_validate import validate_next_hibernated_entity_indices_in_entire_scene
+
 
 @ti.data_oriented
 class ContactIsland:
@@ -87,14 +91,8 @@ class ContactIsland:
         #
 
         # Used to make islands persist through hibernation:
-        self.unused__entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
-        self.unused__entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
-
-        # Warning: do not mistake island_id for island_idx
-        self.next_hibernated_island_id = ti.field(dtype=gs.ti_int, shape=self.solver._B)
-        self.next_hibernated_island_id.fill(FIRST_HIBERNATED_ISLAND_ID)
-        self.hibernated_entity_idx_to_hibernated_island_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
-        self.hibernated_entity_idx_to_hibernated_island_id.fill(INVALID_HIBERNATED_ISLAND_ID)
+        self.entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+        self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
 
     @ti.kernel
     def clear_island_mapping(self):
@@ -139,23 +137,27 @@ class ContactIsland:
                 self.add_edge(link_a, link_b, i_b)
 
     @ti.kernel
-    def temp_hack__add_all_hibernated_island_edges(self):
+    def add_all_hibernated_island_edges(self):
         _B = self.solver._B
         n_entities = self.solver.n_entities
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_e in range(n_entities):
-                for i_e2 in range(i_e + 1, n_entities):
-                    if self.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b] != INVALID_HIBERNATED_ISLAND_ID \
-                        and self.hibernated_entity_idx_to_hibernated_island_id[i_e, i_b] == self.hibernated_entity_idx_to_hibernated_island_id[i_e2, i_b]:
-                        any_link_a = self.solver.entities_info.link_start[i_e]
-                        any_link_b = self.solver.entities_info.link_start[i_e2]
-                        self.add_edge(any_link_a, any_link_b, i_b)
+                next_entity_idx = self.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
+                if next_entity_idx != INVALID_NEXT_HIBERNATED_ENTITY_IDX and next_entity_idx != i_e:
+                    if ti.static(Debug.validate):
+                        island_idx_a = self.entity_island[i_e, i_b]
+                        island_idx_b = self.entity_island[next_entity_idx, i_b]
+                        Debug.assertf(0x7ad00012, island_idx_a == island_idx_b)
+                    
+                    any_link_a = self.solver.entities_info.link_start[i_e]
+                    any_link_b = self.solver.entities_info.link_start[next_entity_idx]
+                    self.add_edge(any_link_a, any_link_b, i_b)
 
     def construct(self):
         self.clear_island_mapping()
         self.add_all_contact_edges()
-        self.temp_hack__add_all_hibernated_island_edges()
+        self.add_all_hibernated_island_edges()
         self.preprocess_island__map_entities_to_edges()
         self.construct_islands()
         self.postprocess_island__assign_contact_data_to_temp_islands()
@@ -257,6 +259,8 @@ class ContactIsland:
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
+                    if ti.static(Debug.validate) and self.n_stack[i_b] > self.stack.shape[0]:
+                        print(f"danger: stack overflow: capacity and size: {self.stack.shape[0]} {self.n_stack[i_b]}")
 
                     while self.n_stack[i_b] > 0:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
@@ -273,6 +277,8 @@ class ContactIsland:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
+                                if ti.static(Debug.validate) and self.n_stack[i_b] > self.stack.shape[0]:
+                                    print(f"danger: stack overflow: capacity and size: {self.stack.shape[0]} {self.n_stack[i_b]}")
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 
