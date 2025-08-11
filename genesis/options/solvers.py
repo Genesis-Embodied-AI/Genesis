@@ -154,6 +154,8 @@ class SAPCouplerOptions(BaseCouplerOptions):
         Vert would be preferable when the mesh is very coarse, such as a single cube or a tetrahedron.
     rigid_fem : bool, optional
         Whether to enable coupling between rigid and FEM solvers. Defaults to True.
+    rigid_rigid_type : str, optional
+        Type of contact between rigid bodies. Defaults to "hydroelastic". Can be "hydroelastic", "vert", or "none".
     Note
     ----
     Paper reference: https://arxiv.org/abs/2110.10107
@@ -177,6 +179,7 @@ class SAPCouplerOptions(BaseCouplerOptions):
     fem_self_tet: bool = True
     rigid_floor_type: str = "tet"
     rigid_fem: bool = True
+    rigid_rigid_type: str = "hydroelastic"
 
 
 ############################ Solvers inside simulator ############################

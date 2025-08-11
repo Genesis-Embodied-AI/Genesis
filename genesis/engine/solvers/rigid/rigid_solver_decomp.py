@@ -1038,6 +1038,10 @@ class RigidSolver(Solver):
     def _func_update_all_verts(self):
         func_update_all_verts(self)
 
+    @ti.kernel
+    def _kernel_update_all_verts(self):
+        self._func_update_all_verts()
+
     # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
     # right now, a python-scope function is more convenient since .fill(0) only works on python scope for ndarray
     # @ti.kernel
