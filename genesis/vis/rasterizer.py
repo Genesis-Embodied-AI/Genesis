@@ -69,36 +69,37 @@ class Rasterizer(RBC):
             self._context.buffer.clear()
 
             # Render
-            if rgb or depth or normal:
-                retval = self._renderer.render(
-                    self._context._scene,
-                    self._camera_targets[camera.uid],
-                    camera_node=self._camera_nodes[camera.uid],
-                    env_separate_rigid=self._context.env_separate_rigid,
-                    rgb=rgb,
-                    normal=normal,
-                    seg=False,
-                    depth=depth,
-                    plane_reflection=rgb and self._context.plane_reflection,
-                    shadow=rgb and self._context.shadow,
-                )
+            try:
+                if rgb or depth or normal:
+                    retval = self._renderer.render(
+                        self._context._scene,
+                        self._camera_targets[camera.uid],
+                        camera_node=self._camera_nodes[camera.uid],
+                        env_separate_rigid=self._context.env_separate_rigid,
+                        rgb=rgb,
+                        normal=normal,
+                        seg=False,
+                        depth=depth,
+                        plane_reflection=rgb and self._context.plane_reflection,
+                        shadow=rgb and self._context.shadow,
+                    )
 
-            if segmentation:
-                seg_idxc_rgb_arr, *_ = self._renderer.render(
-                    self._context._scene,
-                    self._camera_targets[camera.uid],
-                    camera_node=self._camera_nodes[camera.uid],
-                    env_separate_rigid=self._context.env_separate_rigid,
-                    rgb=False,
-                    normal=False,
-                    seg=True,
-                    depth=False,
-                    plane_reflection=False,
-                    shadow=False,
-                )
-
-            # Unset the context
-            self._renderer.make_uncurrent()
+                if segmentation:
+                    seg_idxc_rgb_arr, *_ = self._renderer.render(
+                        self._context._scene,
+                        self._camera_targets[camera.uid],
+                        camera_node=self._camera_nodes[camera.uid],
+                        env_separate_rigid=self._context.env_separate_rigid,
+                        rgb=False,
+                        normal=False,
+                        seg=True,
+                        depth=False,
+                        plane_reflection=False,
+                        shadow=False,
+                    )
+            finally:
+                # Unset the context
+                self._renderer.make_uncurrent()
         else:
             # Render
             if rgb or depth or normal:
