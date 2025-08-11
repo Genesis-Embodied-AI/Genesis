@@ -155,6 +155,8 @@ class RigidSolver(Solver):
             else:
                 EntityClass = RigidEntity
 
+        if hasattr(morph, "fixed"):
+            morph.is_free = not morph.fixed
         if morph.is_free:
             verts_state_start = self.n_free_verts
         else:
@@ -4812,10 +4814,12 @@ def kernel_update_all_verts(
             free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
                 verts_info.init_pos[i_v], g_pos, g_quat
             )
+            print("free", verts_state_idx, free_verts_state.pos[verts_state_idx, i_b])
         elif i_b == 0:
             fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                 verts_info.init_pos[i_v], g_pos, g_quat
             )
+            print("fixed", verts_state_idx, fixed_verts_state.pos[verts_state_idx])
 
 
 @ti.kernel

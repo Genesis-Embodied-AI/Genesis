@@ -59,6 +59,7 @@ def setup_environment_with_obstacles(scene, n_envs=1):
     # Create a circular arrangement of obstacles around the robot
     # Robot is at (0, 0, 1), Genesis will handle environment spacing automatically
 
+    is_fixed = True
     # Inner circle of pillars at radius 3m
     inner_radius = 3.0
     n_inner_pillars = 8
@@ -68,7 +69,7 @@ def setup_environment_with_obstacles(scene, n_envs=1):
         y = inner_radius * np.sin(angle)
 
         # Genesis will replicate this obstacle to all environments
-        obstacle = scene.add_entity(gs.morphs.Box(size=(0.3, 0.3, 1.5), pos=(x, y, 0.75), fixed=True))
+        obstacle = scene.add_entity(gs.morphs.Box(size=(0.3, 0.3, 1.5), pos=(x, y, 0.75), fixed=is_fixed))
         obstacles.append(obstacle)
 
     # Outer circle of larger obstacles at radius 5m
@@ -80,7 +81,7 @@ def setup_environment_with_obstacles(scene, n_envs=1):
         y = outer_radius * np.sin(angle)
 
         # Genesis will replicate this obstacle to all environments
-        obstacle = scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0), fixed=True))
+        obstacle = scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0), fixed=is_fixed))
         obstacles.append(obstacle)
 
     # Add some random spheres at medium distance for variety
@@ -96,7 +97,7 @@ def setup_environment_with_obstacles(scene, n_envs=1):
     for pos in sphere_positions:
         # Genesis will replicate this obstacle to all environments
         obstacle = scene.add_entity(
-            gs.morphs.Sphere(radius=0.2 + np.random.random() * 0.2, pos=pos, fixed=True)  # Random radius 0.2-0.4
+            gs.morphs.Sphere(radius=0.2 + np.random.random() * 0.2, pos=pos, fixed=is_fixed)  # Random radius 0.2-0.4
         )
         obstacles.append(obstacle)
 
@@ -110,7 +111,7 @@ def setup_environment_with_obstacles(scene, n_envs=1):
 
     for config in close_obstacles:
         # Genesis will replicate this obstacle to all environments
-        obstacle = scene.add_entity(gs.morphs.Box(size=config["size"], pos=config["pos"], fixed=True))
+        obstacle = scene.add_entity(gs.morphs.Box(size=config["size"], pos=config["pos"], fixed=is_fixed))
         obstacles.append(obstacle)
 
     total_obstacles = n_inner_pillars + n_outer_obstacles + len(sphere_positions) + len(close_obstacles)
