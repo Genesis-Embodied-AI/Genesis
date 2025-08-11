@@ -25,9 +25,11 @@ class Sensor(RBC):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
-        self._cache_idx: int = -1  # cache_idx is set by the SensorManager during the scene build phase
+
+        # initialized during build
+        self._cache_idx: int = -1  # set by the SensorManager during build
         self._read_delay_steps: int = 0
-        self._cache_buffer_length: int = 0
+        self._cache_size: int = 0
 
     # =============================== implementable methods ===============================
 
@@ -44,51 +46,53 @@ class Sensor(RBC):
                 f"Read delay should be a multiple of the simulation time step. Got {self._options.read_delay} and "
                 f"{self._manager._sim.dt}. Actual read delay will be {1/self._read_delay_steps}."
             )
-        self._cache_buffer_length = self._read_delay_steps + 1
 
-    def _get_return_format(self) -> dict[str, tuple[int, int]] | tuple[int, int] | None:
+        return_format = self._get_return_format()
+        return_length = 0
+        if isinstance(return_format, dict):
+            return_length = sum(return_format.values())
+        elif isinstance(return_format, tuple):
+            return_length = sum(return_format)
+        else:
+            raise ValueError(f"Invalid sensor return format: {return_format}, should be tuple or dict")
+
+        self._cache_size = self._get_cache_length() * return_length
+
+    def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
         Data format of the read() return value.
-        dict: a dictionary with string keys and tensor values will be returned.
-              The tuple (start_idx, end_idx) will be used to get a slice of the values from the cache.
-        tuple: the slice of the cache will be returned.
-        None: the entire tensor (B, cache_length, cache_shape) will be returned.
+
+        Returns
+        -------
+        return_format : dict | tuple
+            - If tuple, the final shape of the read() return value.
+                e.g. (2, 3) means read() will return a tensor of shape (2, 3).
+            - If dict a dictionary with string keys and tensor values will be returned.
+                e.g. {"pos": (3,), "quat": (4,)} returns a dict of tensors [0:3] and [3:7] from the cache.
         """
         raise NotImplementedError("Sensors must implement `return_format()`.")
 
-    @gs.assert_built
-    def _update_shared_gt_cache(self):
+    def _update_shared_ground_truth_cache(self):
         """
-        Update the shared sensor ground truth cache for all sensors of this class.
-        Shared information is stored in SensorManager
+        Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
         """
-        raise NotImplementedError("Sensors must implement `update_shared_gt_cache()`.")
+        raise NotImplementedError("Sensors must implement `update_shared_ground_truth_cache()`.")
 
-    @gs.assert_built
     def _update_shared_cache(self):
         """
-        Update the shared sensor cache for all sensors of this class using information stored in shared metadata.
+        Update the shared sensor cache for all sensors of this class using metadata in SensorManager.
         """
         raise NotImplementedError("Sensors must implement `update_shared_cache()`.")
 
     def _get_cache_length(self) -> int:
         """
-        The length (first dimension of cache shape) of the cache for this sensor instance.
-        The sum of cache_length for all sensors of this type determines the length of the cache.
+        The length of the cache for this sensor instance, e.g. number of points for a Lidar point cloud.
         """
         raise NotImplementedError("Sensors must implement `cache_length()`.")
 
-    @classmethod
-    def _get_cache_size(cls) -> int:
+    def _get_cache_dtype(self) -> torch.dtype:
         """
-        The length (second dimension of cache shape) of the cache for this sensor type.
-        """
-        raise NotImplementedError("Sensors must implement `get_cache_size()`.")
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        """
-        The dtype of the cache for this sensor type.
+        The dtype of the cache for this sensor.
         """
         raise NotImplementedError("Sensors must implement `get_cache_dtype()`.")
 
@@ -97,35 +101,37 @@ class Sensor(RBC):
     @gs.assert_built
     def read(self, envs_idx: List[int] | None = None):
         """
-        Read the sensor data (with noise applied if applicable) from SensorManager._cache.
+        Read the sensor data (with noise applied if applicable).
         """
         return self._get_return_data_from_tensor(self._cache.get(self._read_delay_steps), envs_idx)
 
     @gs.assert_built
     def read_ground_truth(self, envs_idx: List[int] | None = None):
         """
-        Read the ground truth sensor data (without noise) from SensorManager._gt_cache.
+        Read the ground truth sensor data (without noise).
         """
-        return self._get_return_data_from_tensor(self._gt_cache, envs_idx)
+        return self._get_return_data_from_tensor(self._ground_truth_cache, envs_idx)
 
     def _get_return_data_from_tensor(self, tensor: torch.Tensor, envs_idx: List[int] | None) -> torch.Tensor:
         if envs_idx is None:
             envs_idx = 0 if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
 
         return_format = self._get_return_format()
-        if return_format is None:
-            return tensor[envs_idx, self._cache_idx, :].squeeze()
-
-        cache_length = self._get_cache_length()
 
         if isinstance(return_format, tuple):
-            return (tensor[envs_idx, self._cache_idx : self._cache_idx + cache_length, return_format]).squeeze().clone()
+            return (
+                tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
+                .clone()
+                .reshape(return_format)
+                .squeeze()
+            )
         elif isinstance(return_format, dict):
             return {
-                key: tensor[envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx]
-                .squeeze()
+                key: tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
                 .clone()
-                for key, (start_idx, end_idx) in return_format.items()
+                .reshape(shape)
+                .squeeze()
+                for key, shape in return_format.items()
             }
         else:
             raise ValueError(f"Invalid sensor return format: {return_format}")
@@ -136,11 +142,11 @@ class Sensor(RBC):
 
     @property
     def _cache(self) -> "TensorRingBuffer":
-        return self._manager._cache[self.__class__]
+        return self._manager._cache[self._get_cache_dtype()]
 
     @property
-    def _gt_cache(self) -> torch.Tensor:
-        return self._manager._gt_cache[self.__class__]
+    def _ground_truth_cache(self) -> torch.Tensor:
+        return self._manager._ground_truth_cache[self._get_cache_dtype()]
 
     @property
     def _shared_metadata(self) -> dict[str, Any]:
