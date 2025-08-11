@@ -1,16 +1,16 @@
-from typing import Any, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, List
 
 import numpy as np
 import taichi as ti
 import torch
 
 import genesis as gs
-from genesis.options.sensors import SensorOptions
 from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
-    from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.options.sensors import SensorOptions
+    from genesis.utils.ring_buffer import TensorRingBuffer
+
     from .sensor_manager import SensorManager
 
 
@@ -46,11 +46,12 @@ class Sensor(RBC):
             )
         self._cache_buffer_length = self._read_delay_steps + 1
 
-    def _get_return_format(self) -> dict[str, tuple[int, int]] | None:
+    def _get_return_format(self) -> dict[str, tuple[int, int]] | tuple[int, int] | None:
         """
         Data format of the read() return value.
         dict: a dictionary with string keys and tensor values will be returned.
               The tuple (start_idx, end_idx) will be used to get a slice of the values from the cache.
+        tuple: the slice of the cache will be returned.
         None: the entire tensor (B, cache_length, cache_shape) will be returned.
         """
         raise NotImplementedError("Sensors must implement `return_format()`.")
@@ -94,46 +95,40 @@ class Sensor(RBC):
     # =============================== shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx: Optional[List[int]] = None):
+    def read(self, envs_idx: List[int] | None = None):
         """
         Read the sensor data (with noise applied if applicable) from SensorManager._cache.
         """
-        if envs_idx is None:
-            envs_idx = 0 if self._manager._sim.n_envs == 0 else np.arange(self._cache.shape[0])
-
-        return_format = self._get_return_format()
-        if return_format is None:
-            return self._cache[envs_idx, self._cache_idx, :].squeeze()
-        else:
-            cache_length = self._get_cache_length()
-            return {
-                key: self._cache.get(self._read_delay_steps)[
-                    envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx
-                ]
-                .squeeze()
-                .clone()
-                for key, (start_idx, end_idx) in return_format.items()
-            }
+        return self._get_return_data_from_tensor(self._cache.get(self._read_delay_steps), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx: Optional[List[int]] = None):
+    def read_ground_truth(self, envs_idx: List[int] | None = None):
         """
         Read the ground truth sensor data (without noise) from SensorManager._gt_cache.
         """
+        return self._get_return_data_from_tensor(self._gt_cache, envs_idx)
+
+    def _get_return_data_from_tensor(self, tensor: torch.Tensor, envs_idx: List[int] | None) -> torch.Tensor:
         if envs_idx is None:
-            envs_idx = 0 if self._manager._sim.n_envs == 0 else np.arange(self._gt_cache.shape[0])
+            envs_idx = 0 if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
 
         return_format = self._get_return_format()
         if return_format is None:
-            return self._gt_cache[envs_idx, self._cache_idx, :].squeeze()
-        else:
-            cache_length = self._get_cache_length()
+            return tensor[envs_idx, self._cache_idx, :].squeeze()
+
+        cache_length = self._get_cache_length()
+
+        if isinstance(return_format, tuple):
+            return (tensor[envs_idx, self._cache_idx : self._cache_idx + cache_length, return_format]).squeeze().clone()
+        elif isinstance(return_format, dict):
             return {
-                key: self._gt_cache[envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx]
+                key: tensor[envs_idx, self._cache_idx : self._cache_idx + cache_length, start_idx:end_idx]
                 .squeeze()
                 .clone()
                 for key, (start_idx, end_idx) in return_format.items()
             }
+        else:
+            raise ValueError(f"Invalid sensor return format: {return_format}")
 
     @property
     def is_built(self) -> bool:
