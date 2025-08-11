@@ -1,13 +1,16 @@
 import hashlib
+import json
 import math
 import os
 import pickle as pkl
 from functools import lru_cache
-
+from pathlib import Path
 
 import numpy as np
 import trimesh
 from PIL import Image
+import OpenEXR
+import Imath
 
 import coacd
 import igl
@@ -20,10 +23,12 @@ from . import geom as gu
 from .misc import (
     get_assets_dir,
     get_cvx_cache_dir,
+    get_exr_cache_dir,
     get_gsd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
+    get_usd_cache_dir,
     get_tet_cache_dir,
 )
 
@@ -128,6 +133,26 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
         verts.tobytes(), faces.tobytes(), str(edge_len_abs).encode(), str(edge_len_ratio).encode(), str(fix).encode()
     )
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
+
+
+def get_exr_path(file_path):
+    hashkey = get_file_hashkey(file_path)
+    return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
+
+
+def get_usd_zip_path(file_path):
+    hashkey = get_file_hashkey(file_path)
+    return os.path.join(get_usd_cache_dir(), "zip", hashkey)
+
+
+def get_usd_bake_path(file_path):
+    hashkey = get_file_hashkey(file_path)
+    return os.path.join(get_usd_cache_dir(), "bake", hashkey)
+
+
+def get_file_hashkey(file):
+    file_obj = Path(file)
+    return get_hashkey(file_obj.resolve().as_posix().encode(), str(file_obj.stat().st_size).encode())
 
 
 def get_hashkey(*args):
@@ -987,3 +1012,29 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
             plotter.add_mesh(pv_data, "r", "wireframe")
             plotter.add_legend([[" Input Mesh ", "r"], [" Tessellated Mesh ", "black"]])
             plotter.show()
+
+
+def check_exr_compression(exr_path):
+    exr_file = OpenEXR.InputFile(exr_path)
+    exr_header = exr_file.header()
+    if exr_header["compression"].v > Imath.Compression.PIZ_COMPRESSION:
+        new_exr_path = get_exr_path(exr_path)
+        if os.path.exists(new_exr_path):
+            gs.logger.info(f"Assets of fixed compression detected and used: {new_exr_path}.")
+        else:
+            gs.logger.warning(
+                f"EXR image {exr_path}'s compression type {exr_header['compression']} is not supported. "
+                f"Converting to compression type ZIP_COMPRESSION and saving to {new_exr_path}."
+            )
+
+            channel_data = {channel: exr_file.channel(channel) for channel in exr_header["channels"]}
+            exr_header["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
+
+            os.makedirs(os.path.dirname(new_exr_path), exist_ok=True)
+            new_exr_file = OpenEXR.OutputFile(new_exr_path, exr_header)
+            new_exr_file.writePixels(channel_data)
+            new_exr_file.close()
+
+        exr_path = new_exr_path
+
+    exr_file.close()
