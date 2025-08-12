@@ -1045,14 +1045,22 @@ class Viewer(pyglet.window.Window):
             "all": ("all files", "*"),
         }
         filetypes = [file_types[x] for x in file_exts]
+        save_dir = self.viewer_flags["save_directory"]
+        if save_dir is None:
+            save_dir = os.getcwd()
         try:
-            save_dir = self.viewer_flags["save_directory"]
-            if save_dir is None:
-                save_dir = os.getcwd()
-            filename = filedialog.asksaveasfilename(
-                initialdir=save_dir, title="Select file save location", filetypes=filetypes
+            master = None
+            if self._run_in_thread:
+                master = Tk()
+                master.withdraw()
+            dialog = filedialog.SaveAs(
+                master=master, initialdir=save_dir, title="Select file save location", filetypes=filetypes
             )
+            filename = dialog.show()
+            if self._run_in_thread:
+                master.destroy()
         except Exception:
+            gs.logger.warning("Failed to open file save location dialog.")
             return None
 
         if not filename:
