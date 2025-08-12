@@ -50,7 +50,7 @@ class Sensor(RBC):
         return_format = self._get_return_format()
         return_length = 0
         if isinstance(return_format, dict):
-            return_length = sum(return_format.values())
+            return_length = sum(sum(shape) for shape in return_format.values())
         elif isinstance(return_format, tuple):
             return_length = sum(return_format)
         else:
@@ -126,13 +126,18 @@ class Sensor(RBC):
                 .squeeze()
             )
         elif isinstance(return_format, dict):
-            return {
-                key: tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
-                .clone()
-                .reshape(shape)
-                .squeeze()
-                for key, shape in return_format.items()
-            }
+            data_dict = {}
+            tensor_idx = 0
+            for key, data_shape in return_format.items():
+                data_size = np.prod(data_shape)
+                data_dict[key] = (
+                    tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
+                    .clone()[tensor_idx : tensor_idx + data_size]
+                    .reshape(data_shape)
+                    .squeeze()
+                )
+                tensor_idx += data_size
+            return data_dict
         else:
             raise ValueError(f"Invalid sensor return format: {return_format}")
 
