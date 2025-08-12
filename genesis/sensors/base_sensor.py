@@ -25,17 +25,12 @@ class Sensor(RBC):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
-        self._class: Type[Sensor] = self.__class__
 
         # initialized during build
-        self._cache_idx: int = -1  # set by the SensorManager during build
         self._read_delay_steps: int = 0
         # initialized by SceneManager during build
         self._shape_indices: list[tuple[int, int]] = []
-        self._cache_size: int = 0
-        self._cache: torch.Tensor | None = None
-        self._ground_truth_cache: torch.Tensor | None = None
-        self._shared_metadata: dict[str, Any] = {}
+        self._shared_metadata: dict[str, Any] | None = None
 
     # =============================== implementable methods ===============================
 
@@ -52,18 +47,6 @@ class Sensor(RBC):
                 f"Read delay should be a multiple of the simulation time step. Got {self._options.read_delay} and "
                 f"{self._manager._sim.dt}. Actual read delay will be {1/self._read_delay_steps}."
             )
-
-        return_format = self._get_return_format()
-        return_length = 0
-        if isinstance(return_format, dict):
-            return_length = sum(sum(shape) for shape in return_format.values())
-        elif isinstance(return_format, tuple):
-            return_length = sum(return_format)
-        else:
-            raise ValueError(f"Invalid sensor return format: {return_format}, should be tuple or dict")
-
-        self._cache_size = self._get_cache_length() * return_length
-        self._shared_metadata = self._manager._sensors_metadata[self._class]
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
@@ -117,18 +100,25 @@ class Sensor(RBC):
         """
         Read the sensor data (with noise applied if applicable).
         """
-        return self._get_return_data_from_tensor(self._cache.get(self._read_delay_steps), envs_idx)
+        return self._get_formatted_data(
+            self._manager.get_cloned_from_cache(self).get(self._read_delay_steps),
+            envs_idx,
+        )
 
     @gs.assert_built
     def read_ground_truth(self, envs_idx: List[int] | None = None):
         """
         Read the ground truth sensor data (without noise).
         """
-        return self._get_return_data_from_tensor(self._ground_truth_cache, envs_idx)
+        return self._get_formatted_data(self._manager.get_cloned_from_ground_truth_cache(self), envs_idx)
 
-    def _get_return_data_from_tensor(self, tensor: torch.Tensor, envs_idx: List[int] | None) -> torch.Tensor:
+    def _get_formatted_data(
+        self, tensor: torch.Tensor, envs_idx: list[int] | None
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        # Note: This method does not clone the data tensor, it should have been cloned by the caller.
+
         if envs_idx is None:
-            envs_idx = [0] if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
+            envs_idx = self._manager._sim._scene._envs_idx
 
         return_format = self._get_return_format()
         return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
@@ -144,7 +134,7 @@ class Sensor(RBC):
         if isinstance(return_format, dict):
             return dict(zip(return_format.keys(), return_values))
         else:
-            raise ValueError(f"Invalid sensor return format: {return_format}")
+            return return_values[0]
 
     @property
     def is_built(self) -> bool:

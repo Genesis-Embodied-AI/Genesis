@@ -28,6 +28,11 @@ class TensorRingBuffer:
         """
         return self.buffer[(self._idx_ptr - idx) % self.N]
 
+    def clone(self):
+        return TensorRingBuffer(
+            self.N, self.buffer.shape[1:], dtype=self.buffer.dtype, buffer=self.buffer.clone(), idx_ptr=self._idx_ptr
+        )
+
     def __getitem__(self, key: int | slice | tuple):
         """
         Enable slicing of the tensor ring buffer.
