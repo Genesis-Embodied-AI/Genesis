@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import numpy.typing as npt
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -2508,7 +2508,7 @@ def kernel_init_dof_fields(
     # taichi variables
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
-    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
+    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to gstaichi
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):

@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 import torch
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -1104,7 +1104,7 @@ def func_broad_phase(
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to taichi
+    # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to gstaichi
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
 ):

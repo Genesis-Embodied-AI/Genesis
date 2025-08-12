@@ -58,7 +58,7 @@ def test_warn_once_with_empty_message(clear_seen_fixture):
 
 
 def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
-    import taichi as ti
+    import gstaichi as ti
 
     if num_inputs == 1 and num_outputs == 1:
 
@@ -107,7 +107,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
 
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
-    import taichi as ti
+    import gstaichi as ti
 
     for ti_func, py_func, shapes_in, shapes_out in (
         (gu.ti_xyz_to_quat, gu.xyz_to_quat, [[3]], [[4]]),
@@ -194,7 +194,7 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
 
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_inverse(batch_shape):
-    import taichi as ti
+    import gstaichi as ti
 
     for ti_func, ti_func_inv, shapes_value_args, shapes_transform_args in (
         (gu.ti_transform_by_T, gu.ti_inv_transform_by_T, [[3]], [[4, 4]]),
@@ -239,7 +239,7 @@ def test_utils_geom_taichi_inverse(batch_shape):
 
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_identity(batch_shape):
-    import taichi as ti
+    import gstaichi as ti
 
     for ti_funcs, shape_args in (
         ((gu.ti_xyz_to_quat, gu.ti_quat_to_xyz), ([3], [4])),
@@ -264,7 +264,7 @@ def test_utils_geom_taichi_identity(batch_shape):
 
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_tensor_identity(batch_shape):
-    import taichi as ti
+    import gstaichi as ti
 
     for py_funcs, shape_args in (
         ((gu.R_to_rot6d, gu.rot6d_to_R), ([3, 3], [6])),

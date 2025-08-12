@@ -8,13 +8,13 @@ import traceback
 from platform import system
 from contextlib import redirect_stdout
 
-# Import taichi while collecting its output without printing directly
+# Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
 
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    import taichi as ti
+    import gstaichi as ti
 
 try:
     import torch
@@ -207,7 +207,7 @@ def init(
     if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
         ti_arch = TI_ARCH[platform][gs_backend.cpu]
 
-    # init taichi
+    # init gstaichi
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=ti_arch,
@@ -226,7 +226,7 @@ def init(
             **taichi_kwargs,
         )
 
-    # Make sure that taichi arch is matching requirement
+    # Make sure that gstaichi arch is matching requirement
     ti_runtime = ti.lang.impl.get_runtime()
     ti_arch = ti_runtime.prog.config().arch
     if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
@@ -293,7 +293,7 @@ def destroy():
         del scene
     global_scene_list.clear()
 
-    # Reset taichi
+    # Reset gstaichi
     ti.reset()
 
     # Delete logger
