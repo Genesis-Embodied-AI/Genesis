@@ -128,9 +128,7 @@ class Visualizer(RBC):
         self._renderer = None
 
     def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug):
-        cam_idx = (
-            len([c for c in self._cameras if not c.debug]) if not debug else len([c for c in self._cameras if c.debug])
-        )
+        cam_idx = len([camera for camera in self._cameras if camera.debug == debug])
         camera = Camera(
             self,
             cam_idx,
@@ -145,7 +143,7 @@ class Visualizer(RBC):
             GUI,
             spp,
             denoise,
-            env_idx=0 if debug else env_idx,
+            env_idx=env_idx,
             debug=debug,
         )
         self._cameras.append(camera)

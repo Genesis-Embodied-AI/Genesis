@@ -150,11 +150,10 @@ class Camera(Sensor):
 
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
-        self._batch_renderer = self._visualizer.batch_renderer
         self._rasterizer = self._visualizer.rasterizer
-        self._raytracer = self._visualizer.raytracer
+        self._raytracer = self._visualizer.raytracer if not self._debug else None
+        self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
 
-        self._rasterizer.add_camera(self)
         if self._batch_renderer is not None:
             self._rgb_stacked = True
             self._other_stacked = True
@@ -168,6 +167,7 @@ class Camera(Sensor):
                 self._rgb_stacked = False
                 self._other_stacked = False
             else:
+                self._rasterizer.add_camera(self)
                 self._rgb_stacked = self._visualizer._context.env_separate_rigid
                 self._other_stacked = self._visualizer._context.env_separate_rigid
 
@@ -396,11 +396,11 @@ class Camera(Sensor):
         """
         rgb_arr, depth_arr, seg_arr, seg_color_arr, seg_idxc_arr, normal_arr = None, None, None, None, None, None
 
-        if not self._debug and self._batch_renderer is not None:
+        if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
                 rgb, depth, segmentation, normal, force_render, antialiasing
             )
-        elif self._debug and self._raytracer is not None:
+        elif self._raytracer is not None:
             if rgb:
                 self._raytracer.update_scene()
                 rgb_arr = self._raytracer.render_camera(self)
@@ -544,7 +544,6 @@ class Camera(Sensor):
         point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
         """
         Set the pose of the camera.
@@ -619,9 +618,10 @@ class Camera(Sensor):
         self._multi_env_transform_tensor[env_idx] = transform
         self._multi_env_quat_tensor[env_idx] = _T_to_quat_for_madrona(transform)
 
-        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+        elif self._batch_renderer is None:
+            self._rasterizer.update_camera(self)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
@@ -662,9 +662,10 @@ class Camera(Sensor):
             else:
                 self._fov = intrinsics_fov
 
-        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+        elif self._batch_renderer is None:
+            self._rasterizer.update_camera(self)
 
     @gs.assert_built
     def start_recording(self):
@@ -706,7 +707,7 @@ class Camera(Sensor):
                 + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
             )
 
-        if not self._debug and self._rgb_stacked:
+        if self._rgb_stacked:
             for env_idx in self._visualizer._context.rendered_envs_idx:
                 env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
                 env_name, env_ext = os.path.splitext(save_to_filename)
