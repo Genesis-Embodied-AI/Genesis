@@ -23,9 +23,7 @@ class SensorManager:
         self._cache: dict[Type[torch.dtype], TensorRingBuffer] = {}
         self._cache_slices_by_type: dict[Type["Sensor"], slice] = {}
 
-        self._last_cache_cloned_step: int = -1
         self._last_ground_truth_cache_cloned_step: int = -1
-        self._cloned_cache: dict[Type[torch.dtype], TensorRingBuffer] = {}
         self._cloned_ground_truth_cache: dict[Type[torch.dtype], torch.Tensor] = {}
 
     def create_sensor(self, sensor_options: "SensorOptions"):
@@ -80,11 +78,7 @@ class SensorManager:
             dtype = sensor_cls._get_cache_dtype()
             for sensor in sensors:
                 sensor._shared_metadata = self._sensors_metadata[sensor_cls]
-
-                cache_slice = slice(sensor._cache_idx, sensor._cache_idx + sensor._cache_size)
-                sensor._cache = self._cache[dtype][cache_slice]
-                sensor._ground_truth_cache = self._ground_truth_cache[dtype][cache_slice]
-
+                sensor._cache = self._cache[dtype][sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
                 sensor.build()
 
     def step(self):
@@ -99,13 +93,6 @@ class SensorManager:
                 self._ground_truth_cache[dtype][cache_slice],
                 self._cache[dtype][cache_slice],
             )
-
-    def get_cloned_from_cache(self, sensor: "Sensor") -> "TensorRingBuffer":
-        dtype = sensor._get_cache_dtype()
-        if self._last_cache_cloned_step != self._sim.cur_step_global:
-            self._last_cache_cloned_step = self._sim.cur_step_global
-            self._cloned_cache[dtype] = self._cache[dtype].clone()
-        return self._cloned_cache[dtype][:, sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
 
     def get_cloned_from_ground_truth_cache(self, sensor: "Sensor") -> torch.Tensor:
         dtype = sensor._get_cache_dtype()

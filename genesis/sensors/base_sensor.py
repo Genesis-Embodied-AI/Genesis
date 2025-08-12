@@ -29,6 +29,7 @@ class Sensor(RBC):
         self._read_delay_steps: int = 0
         self._shape_indices: list[tuple[int, int]] = []
         self._shared_metadata: dict[str, Any] | None = None
+        self._cache: "TensorRingBuffer" | None = None
 
     # =============================== implementable methods ===============================
 
@@ -91,10 +92,7 @@ class Sensor(RBC):
         """
         Read the sensor data (with noise applied if applicable).
         """
-        return self._get_formatted_data(
-            self._manager.get_cloned_from_cache(self).get(self._read_delay_steps),
-            envs_idx,
-        )
+        return self._get_formatted_data(self._cache.get(self._read_delay_steps), envs_idx)
 
     @gs.assert_built
     def read_ground_truth(self, envs_idx: List[int] | None = None):

@@ -29,14 +29,17 @@ class TensorRingBuffer:
         self.buffer[self._idx_ptr.value].copy_(tensor)
         self._idx_ptr.value = (self._idx_ptr.value + 1) % self.N
 
-    def get(self, idx: int):
+    def get(self, idx: int, clone: bool = True):
         """
         Parameters
         ----------
         idx : int
             Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
+        clone : bool
+            Whether to clone the tensor.
         """
-        return self.buffer[(self._idx_ptr.value - idx) % self.N]
+        tensor = self.buffer[(self._idx_ptr.value - idx) % self.N]
+        return tensor.clone() if clone else tensor
 
     def clone(self):
         return TensorRingBuffer(
