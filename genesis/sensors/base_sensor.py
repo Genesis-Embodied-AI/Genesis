@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 class Sensor(RBC):
     """
     Base class for all types of sensors.
-    A sensor must have a read() method that returns the sensor data.
     """
 
     def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
