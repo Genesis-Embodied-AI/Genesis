@@ -90,7 +90,9 @@ class ContactIsland:
         #
 
         # Used to make islands persist through hibernation:
-        self.entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+        self.entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(
+            dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities)
+        )
         self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
 
     @ti.kernel
@@ -147,8 +149,8 @@ class ContactIsland:
                     if ti.static(Debug.validate):
                         island_idx_a = self.entity_island[i_e, i_b]
                         island_idx_b = self.entity_island[next_entity_idx, i_b]
-                        Debug.assertf(0x7ad00012, island_idx_a == island_idx_b)
-                    
+                        Debug.assertf(0x7AD00012, island_idx_a == island_idx_b)
+
                     any_link_a = self.solver.entities_info.link_start[i_e]
                     any_link_b = self.solver.entities_info.link_start[next_entity_idx]
                     self.add_edge(any_link_a, any_link_b, i_b)
@@ -244,9 +246,9 @@ class ContactIsland:
 
     @ti.kernel
     def construct_islands(self):
-        '''
+        """
         This assigns entities to islands, by setting their entity_island[entity_idx, batch_idx] = island_idx.
-        '''
+        """
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_v in range(self.solver.n_entities):
@@ -259,7 +261,8 @@ class ContactIsland:
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
                     if ti.static(Debug.validate) and self.n_stack[i_b] > self.stack.shape[0]:
-                        print(f"danger: stack overflow: capacity and size: {self.stack.shape[0]} {self.n_stack[i_b]}")
+                        capacity = self.stack.shape[0]
+                        print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
 
                     while self.n_stack[i_b] > 0:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
@@ -272,12 +275,17 @@ class ContactIsland:
                             if next_v == v:
                                 next_v = self.ci_edges[edge, 1, i_b]
 
-                            if self.solver.entities_info.n_dofs[next_v] > 0 and next_v != v and self.entity_island[next_v, i_b] == -1:  # 2nd condition must not happen ?
+                            if (
+                                self.solver.entities_info.n_dofs[next_v] > 0
+                                and next_v != v
+                                and self.entity_island[next_v, i_b] == -1
+                            ):  # 2nd condition must not happen ?
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
                                 if ti.static(Debug.validate) and self.n_stack[i_b] > self.stack.shape[0]:
-                                    print(f"danger: stack overflow: capacity and size: {self.stack.shape[0]} {self.n_stack[i_b]}")
+                                    capacity = self.stack.shape[0]
+                                    print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 

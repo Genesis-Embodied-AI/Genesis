@@ -237,8 +237,8 @@ class ConstraintSolverIsland:
                     # wake up entities
                     any_hibernated_entity_idx = entity_idx_a if is_entity_a_hibernated else entity_idx_b
                     temp_island_idx = self.contact_island.entity_island[any_hibernated_entity_idx, i_b]
-                    Debug.assertf(0x7ad00004, temp_island_idx == i_island)  # Temp island indices don't match
-                    
+                    Debug.assertf(0x7AD00004, temp_island_idx == i_island)  # Temp island indices don't match
+
                     func_wakeup_entity_and_its_temp_island(
                         any_hibernated_entity_idx,
                         i_b,
@@ -253,9 +253,9 @@ class ConstraintSolverIsland:
 
         # after all collisions added for the island
         if ti.static(Debug.validate):
-            validate_entity_hibernation_state_for_all_entities_in_temp_island( \
-                i_island, i_b, self._solver.entities_state, self.contact_island, expected_hibernation_state=False)
-
+            validate_entity_hibernation_state_for_all_entities_in_temp_island(
+                i_island, i_b, self._solver.entities_state, self.contact_island, expected_hibernation_state=False
+            )
 
     @ti.func
     def add_joint_limit_constraints(self, i_island: int, i_b: int):

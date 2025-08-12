@@ -494,7 +494,6 @@ def collider_kernel_reset(
                 collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
-
 # only used with hibernation ??
 @ti.kernel
 def kernel_collider_clear(
@@ -504,6 +503,17 @@ def kernel_collider_clear(
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
 ):
+    cd_geom_a = ti.static(collider_state.contact_data.geom_a)
+    cd_geom_b = ti.static(collider_state.contact_data.geom_b)
+    cd_penetration = ti.static(collider_state.contact_data.penetration)
+    cd_normal = ti.static(collider_state.contact_data.normal)
+    cd_pos = ti.static(collider_state.contact_data.pos)
+    cd_friction = ti.static(collider_state.contact_data.friction)
+    cd_sol_params = ti.static(collider_state.contact_data.sol_params)
+    cd_force = ti.static(collider_state.contact_data.force)
+    cd_link_a = ti.static(collider_state.contact_data.link_a)
+    cd_link_b = ti.static(collider_state.contact_data.link_b)
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -528,16 +538,16 @@ def kernel_collider_clear(
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
                         # note: copying all fields of class StructContactData:
-                        collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
-                        collider_state.contact_data.geom_b[i_c_hibernated, i_b] = collider_state.contact_data.geom_b[i_c, i_b]
-                        collider_state.contact_data.penetration[i_c_hibernated, i_b] = collider_state.contact_data.penetration[i_c, i_b]
-                        collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
-                        collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
-                        collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
-                        collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
-                        collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
-                        collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
-                        collider_state.contact_data.link_b[i_c_hibernated, i_b] = collider_state.contact_data.link_b[i_c, i_b]
+                        cd_geom_a[i_c_hibernated, i_b] = cd_geom_a[i_c, i_b]
+                        cd_geom_b[i_c_hibernated, i_b] = cd_geom_b[i_c, i_b]
+                        cd_penetration[i_c_hibernated, i_b] = cd_penetration[i_c, i_b]
+                        cd_normal[i_c_hibernated, i_b] = cd_normal[i_c, i_b]
+                        cd_pos[i_c_hibernated, i_b] = cd_pos[i_c, i_b]
+                        cd_friction[i_c_hibernated, i_b] = cd_friction[i_c, i_b]
+                        cd_sol_params[i_c_hibernated, i_b] = cd_sol_params[i_c, i_b]
+                        cd_force[i_c_hibernated, i_b] = cd_force[i_c, i_b]
+                        cd_link_a[i_c_hibernated, i_b] = cd_link_a[i_c, i_b]
+                        cd_link_b[i_c_hibernated, i_b] = cd_link_b[i_c, i_b]
 
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 

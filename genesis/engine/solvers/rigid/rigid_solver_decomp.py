@@ -4007,7 +4007,7 @@ def kernel_step_2(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template() # ContactIsland #  Union['ContactIsland', None], 
+    contact_island: ti.template(),  # ContactIsland
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4932,7 +4932,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     collider_state: array_class.ColliderState,
     unused__rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(), # ContactIsland,
+    contact_island: ti.template(),  # ContactIsland,
 ) -> None:
 
     n_entities = entities_state.hibernated.shape[0]
@@ -4945,9 +4945,10 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
             was_island_hibernated = ci.island_hibernated[island_idx, i_b]
 
             if ti.static(Debug.validate):
-                validate_entity_hibernation_state_for_all_entities_in_temp_island( \
-                    island_idx, i_b, entities_state, contact_island, expected_hibernation_state=was_island_hibernated)
-            
+                validate_entity_hibernation_state_for_all_entities_in_temp_island(
+                    island_idx, i_b, entities_state, contact_island, expected_hibernation_state=was_island_hibernated
+                )
+
             if not was_island_hibernated:
                 are_all_entities_okay_for_hibernation = True
                 entity_ref_range = ci.island_entity[island_idx, i_b]
@@ -4956,7 +4957,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     entity_idx = ci.entity_id[entity_ref, i_b]
 
                     is_entity_fixed = entities_info.n_dofs[entity_idx] == 0
-                    Debug.assertf(0x7ad00005, not is_entity_fixed)  # Fixed entity should not belong to an island
+                    Debug.assertf(0x7AD00005, not is_entity_fixed)  # Fixed entity should not belong to an island
 
                     # Hibernated entities already have zero dofs_state.acc/vel
                     is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
@@ -4964,9 +4965,9 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                         continue
 
                     for i_d in range(entities_info.dof_start[entity_idx], entities_info.dof_end[entity_idx]):
-                        acc_threshold = static_rigid_sim_config.hibernation_thresh_acc
-                        vel_threshold = static_rigid_sim_config.hibernation_thresh_vel
-                        if ti.abs(dofs_state.acc[i_d, i_b]) > acc_threshold or ti.abs(dofs_state.vel[i_d, i_b]) > vel_threshold:
+                        max_acc = static_rigid_sim_config.hibernation_thresh_acc
+                        max_vel = static_rigid_sim_config.hibernation_thresh_vel
+                        if ti.abs(dofs_state.acc[i_d, i_b]) > max_acc or ti.abs(dofs_state.vel[i_d, i_b]) > max_vel:
                             are_all_entities_okay_for_hibernation = False
                             break
 
@@ -5003,7 +5004,11 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                         )
 
                         # store entities in the hibernated islands by daisy chaining them
-                        Debug.assertf(0x7ad00014, ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] == INVALID_NEXT_HIBERNATED_ENTITY_IDX)
+                        Debug.assertf(
+                            0x7AD00014,
+                            ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b]
+                            == INVALID_NEXT_HIBERNATED_ENTITY_IDX,
+                        )
                         ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
                         prev_entity_idx = entity_idx
 
@@ -5052,10 +5057,10 @@ def func_hibernate_entity_and_zero_dof_velocities(
     links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
 ) -> None:
-    '''
+    """
     Mark RigidEnity, individual DOFs in DofsState, RigidLinks, and RigidGeoms as hibernated.
     Zero out DOF velocitities and accelerations.
-    '''
+    """
 
     entities_state.hibernated[i_e, i_b] = True
 
@@ -5277,7 +5282,17 @@ def func_torque_and_passive_force(
                         wakeup = True
 
         if ti.static(static_rigid_sim_config.use_hibernation) and entities_state.hibernated[i_e, i_b] and wakeup:
-            func_wakeup_entity_and_its_temp_island(i_e, i_b, entities_state, entities_info, dofs_state, links_state, geoms_state, rigid_global_info, contact_island)
+            func_wakeup_entity_and_its_temp_island(
+                i_e,
+                i_b,
+                entities_state,
+                entities_info,
+                dofs_state,
+                links_state,
+                geoms_state,
+                rigid_global_info,
+                contact_island,
+            )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)

@@ -10,7 +10,7 @@ class Debug:
 
     @classmethod
     @ti.func
-    def _assert_impl(cls, id: ti.u32, condition: bool):#, message):
+    def _assert_impl(cls, id: ti.u32, condition: bool):
         if not condition:
             print(f"Assertion ({id:#x}) failed")
 
