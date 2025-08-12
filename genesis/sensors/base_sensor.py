@@ -114,7 +114,7 @@ class Sensor(RBC):
 
     def _get_return_data_from_tensor(self, tensor: torch.Tensor, envs_idx: List[int] | None) -> torch.Tensor:
         if envs_idx is None:
-            envs_idx = 0 if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
+            envs_idx = [0] if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
 
         return_format = self._get_return_format()
 
@@ -122,18 +122,18 @@ class Sensor(RBC):
             return (
                 tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
                 .clone()
-                .reshape(return_format)
+                .reshape(len(envs_idx), *return_format)
                 .squeeze()
             )
         elif isinstance(return_format, dict):
             data_dict = {}
+            data_tensor = tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size].clone()
             tensor_idx = 0
             for key, data_shape in return_format.items():
                 data_size = np.prod(data_shape)
                 data_dict[key] = (
-                    tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
-                    .clone()[tensor_idx : tensor_idx + data_size]
-                    .reshape(data_shape)
+                    data_tensor[0 : len(envs_idx), tensor_idx : tensor_idx + data_size]
+                    .reshape(len(envs_idx), *data_shape)
                     .squeeze()
                 )
                 tensor_idx += data_size
