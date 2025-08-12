@@ -1237,7 +1237,7 @@ class Viewer(pyglet.window.Window):
         except OpenGL.error.Error:
             # Invalid OpenGL context. Closing before raising.
             self.close()
-            return
+            raise
 
         # At this point, we are all set to display the graphical window, finally!
         self.set_visible(True)
