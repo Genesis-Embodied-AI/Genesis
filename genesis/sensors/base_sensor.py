@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, List, Type
 
 import numpy as np
 import taichi as ti
@@ -25,16 +25,17 @@ class Sensor(RBC):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
-        self._class = self.__class__
-        self._dtype: torch.dtype = self._get_cache_dtype()
+        self._class: Type[Sensor] = self.__class__
 
         # initialized during build
+        self._cache_idx: int = -1  # set by the SensorManager during build
         self._read_delay_steps: int = 0
-        self._cache_size: int = 0
-        self._shape_indices: list[tuple[int, int]] = []  # precomputed (start, end) indices for each shape
         # initialized by SceneManager during build
-        self._cache_start_idx: int = -1
-        self._cache_end_idx: int = -1
+        self._shape_indices: list[tuple[int, int]] = []
+        self._cache_size: int = 0
+        self._cache: torch.Tensor | None = None
+        self._ground_truth_cache: torch.Tensor | None = None
+        self._shared_metadata: dict[str, Any] = {}
 
     # =============================== implementable methods ===============================
 
@@ -46,24 +47,23 @@ class Sensor(RBC):
         """
         delay_steps_float = self._options.read_delay / self._manager._sim.dt
         self._read_delay_steps = round(delay_steps_float)
-        if not np.isclose(delay_steps_float, self._read_delay_steps, atol=1e-6):
+        if not np.isclose(delay_steps_float, self._read_delay_steps):
             gs.logger.warn(
                 f"Read delay should be a multiple of the simulation time step. Got {self._options.read_delay} and "
-                f"{self._manager._sim.dt}. Actual read delay will be {self._read_delay_steps * self._manager._sim.dt}."
+                f"{self._manager._sim.dt}. Actual read delay will be {1/self._read_delay_steps}."
             )
 
         return_format = self._get_return_format()
-        return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
+        return_length = 0
+        if isinstance(return_format, dict):
+            return_length = sum(sum(shape) for shape in return_format.values())
+        elif isinstance(return_format, tuple):
+            return_length = sum(return_format)
+        else:
+            raise ValueError(f"Invalid sensor return format: {return_format}, should be tuple or dict")
 
-        self._shape_indices = []
-        tensor_idx = 0
-        for shape in return_shapes:
-            data_size = np.prod(shape)
-            self._shape_indices.append((tensor_idx, tensor_idx + data_size))
-            tensor_idx += data_size
-
-        return_size = tensor_idx
-        self._cache_size = self._get_cache_length() * return_size
+        self._cache_size = self._get_cache_length() * return_length
+        self._shared_metadata = self._manager._sensors_metadata[self._class]
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
@@ -79,25 +79,32 @@ class Sensor(RBC):
         """
         raise NotImplementedError("Sensors must implement `return_format()`.")
 
-    def _update_shared_ground_truth_cache(self):
-        """
-        Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
-        """
-        raise NotImplementedError("Sensors must implement `update_shared_ground_truth_cache()`.")
-
-    def _update_shared_cache(self):
-        """
-        Update the shared sensor cache for all sensors of this class using metadata in SensorManager.
-        """
-        raise NotImplementedError("Sensors must implement `update_shared_cache()`.")
-
     def _get_cache_length(self) -> int:
         """
         The length of the cache for this sensor instance, e.g. number of points for a Lidar point cloud.
         """
         raise NotImplementedError("Sensors must implement `cache_length()`.")
 
-    def _get_cache_dtype(self) -> torch.dtype:
+    @classmethod
+    def _update_shared_ground_truth_cache(
+        cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor
+    ):
+        """
+        Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
+        """
+        raise NotImplementedError("Sensors must implement `update_shared_ground_truth_cache()`.")
+
+    @classmethod
+    def _update_shared_cache(
+        cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor, shared_cache: "TensorRingBuffer"
+    ):
+        """
+        Update the shared sensor cache for all sensors of this class using metadata in SensorManager.
+        """
+        raise NotImplementedError("Sensors must implement `update_shared_cache()`.")
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
         """
         The dtype of the cache for this sensor.
         """
@@ -106,36 +113,30 @@ class Sensor(RBC):
     # =============================== shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx: list[int] | None = None):
+    def read(self, envs_idx: List[int] | None = None):
         """
         Read the sensor data (with noise applied if applicable).
         """
-        return self._get_formatted_data(self._shared_cache.get(self._read_delay_steps), envs_idx)
+        return self._get_return_data_from_tensor(self._cache.get(self._read_delay_steps), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx: list[int] | None = None):
+    def read_ground_truth(self, envs_idx: List[int] | None = None):
         """
         Read the ground truth sensor data (without noise).
         """
-        return self._get_formatted_data(self._shared_ground_truth_cache, envs_idx)
+        return self._get_return_data_from_tensor(self._ground_truth_cache, envs_idx)
 
-    def _get_formatted_data(
-        self, tensor: torch.Tensor, envs_idx: list[int] | None
-    ) -> torch.Tensor | dict[str, torch.Tensor]:
-        # Note: This method does not clone the data tensor, it should have been cloned by the caller.
-
+    def _get_return_data_from_tensor(self, tensor: torch.Tensor, envs_idx: List[int] | None) -> torch.Tensor:
         if envs_idx is None:
-            envs_idx = self._manager._sim._scene._envs_idx
+            envs_idx = [0] if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
 
         return_format = self._get_return_format()
         return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
         return_values = []
 
-        data_tensor = tensor[envs_idx, self._cache_start_idx : self._cache_end_idx]
-
         for i, shape in enumerate(return_shapes):
             start_idx, end_idx = self._shape_indices[i]
-            value = data_tensor[0 : len(envs_idx), start_idx:end_idx].reshape(len(envs_idx), *shape).squeeze()
+            value = tensor[envs_idx, start_idx:end_idx].reshape(len(envs_idx), *shape).squeeze()
             if self._manager._sim.n_envs == 0:
                 value = value.squeeze(0)
             return_values.append(value)
@@ -143,20 +144,8 @@ class Sensor(RBC):
         if isinstance(return_format, dict):
             return dict(zip(return_format.keys(), return_values))
         else:
-            return return_values[0]
+            raise ValueError(f"Invalid sensor return format: {return_format}")
 
     @property
     def is_built(self) -> bool:
         return self._manager._sim._scene._is_built
-
-    @property
-    def _shared_cache(self) -> "TensorRingBuffer":
-        return self._manager._cache[self._dtype]
-
-    @property
-    def _shared_ground_truth_cache(self) -> torch.Tensor:
-        return self._manager._ground_truth_cache[self._dtype]
-
-    @property
-    def _shared_metadata(self) -> dict[str, Any]:
-        return self._manager._sensors_metadata[self._class]
