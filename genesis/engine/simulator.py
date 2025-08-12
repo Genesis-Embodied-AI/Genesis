@@ -103,9 +103,9 @@ class Simulator(RBC):
         self._dt: float = options.dt
         self._substep_dt: float = options.dt / options.substeps
         self._substeps: int = options.substeps
-        self._substeps_local: int | None = options.substeps_local  # todo change it ? None -> zero
+        self._substeps_local: int | None = options.substeps_local
         self._requires_grad: bool = options.requires_grad
-        self._steps_local: int | None = options._steps_local  # todo change it ? None -> zero
+        self._steps_local: int | None = options._steps_local
 
         self._cur_substep_global = 0
         self._gravity = np.array(options.gravity, dtype=gs.np_float)

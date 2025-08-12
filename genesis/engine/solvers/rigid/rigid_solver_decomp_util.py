@@ -77,4 +77,3 @@ def func_wakeup_entity_and_its_temp_island(
         validate_entity_hibernation_state_for_all_entities_in_temp_island( \
             island_idx, i_b, entities_state, contact_island, expected_hibernation_state=False)
         validate_next_hibernated_entity_indices_in_entire_scene(i_b, entities_state, contact_island)
-        

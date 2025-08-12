@@ -921,7 +921,9 @@ class RigidSolver(Solver):
     def substep(self):
         # from genesis.utils.tools import create_timer
 
-
+        # Note: ContactIsland param is needed when supporting hibernation. But the attribute does not exist
+        # in the solver when hibernation is disabled. In that case, we create a dummy ContactIsland object
+        # needed for compilation, but not being used in the kernel.
         if not hasattr(self, "optional_contact_island"):
             if hasattr(self, "constraint_solver") and hasattr(self.constraint_solver, "contact_island"):
                 self.optional_contact_island = self.constraint_solver.contact_island
@@ -961,9 +963,6 @@ class RigidSolver(Solver):
             collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            # contact_island=getattr(self.constraint_solver, "contact_island", None),
-
-            # xxx: enable this and get things compiling
             contact_island=self.optional_contact_island,
         )
         # timer.stamp("kernel_step_2")
@@ -4043,7 +4042,7 @@ def kernel_step_2(
     )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
-        func_for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
+        func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
             dofs_state=dofs_state,
             entities_state=entities_state,
             entities_info=entities_info,
@@ -4924,7 +4923,7 @@ def kernel_update_vgeoms(
 
 
 @ti.func
-def func_for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
+def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
     dofs_state: array_class.DofsState,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
@@ -4938,10 +4937,7 @@ def func_for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
 
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
-
     ci = contact_island
-    # entity_ref_range_from_island_idx = ci.island_entity
-    # entity_idx_from_entity_ref = ci.entity_id
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b in range(_B):
@@ -4962,7 +4958,7 @@ def func_for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
                     is_entity_fixed = entities_info.n_dofs[entity_idx] == 0
                     Debug.assertf(0x7ad00005, not is_entity_fixed)  # Fixed entity should not belong to an island
 
-                    # we can ignore entitiy_hibernated flag -> cos it implies dofs_state.vel/acc are zero
+                    # Hibernated entities already have zero dofs_state.acc/vel
                     is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
                     if is_entity_hibernated:
                         continue
@@ -5666,23 +5662,14 @@ def func_integrate(
                 i_l = rigid_global_info.awake_links[i_l_, i_b]
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
-
-                # why not links_info.dof_start, q_start, q_end ? 
                 for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     dof_start = joints_info.dof_start[I_j]
                     q_start = joints_info.q_start[I_j]
                     q_end = joints_info.q_end[I_j]
 
-                # can we just do that ? 
-                # if True:
-                #     dof_start = links_info.dof_start[I_l]
-                #     q_start = links_info.q_start[I_l]
-                #     q_end = links_info.q_end[I_l]
-
                     joint_type = joints_info.type[I_j]
 
-                    # TODO: consider copying from no-hibernation version below
                     if joint_type == gs.JOINT_TYPE.FREE:
                         rot = ti.Vector(
                             [

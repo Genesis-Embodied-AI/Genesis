@@ -272,7 +272,6 @@ class Collider:
         )
         self._contacts_info_cache = {}
 
-    # ?? only used with hibernation ??
     def clear(self, envs_idx=None):
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
