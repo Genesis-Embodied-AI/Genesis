@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, List
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import taichi as ti
@@ -25,11 +25,16 @@ class Sensor(RBC):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
+        self._class = self.__class__
+        self._dtype: torch.dtype = self._get_cache_dtype()
 
         # initialized during build
-        self._cache_idx: int = -1  # set by the SensorManager during build
         self._read_delay_steps: int = 0
         self._cache_size: int = 0
+        self._shape_indices: list[tuple[int, int]] = []  # precomputed (start, end) indices for each shape
+        # initialized by SceneManager during build
+        self._cache_start_idx: int = -1
+        self._cache_end_idx: int = -1
 
     # =============================== implementable methods ===============================
 
@@ -41,22 +46,24 @@ class Sensor(RBC):
         """
         delay_steps_float = self._options.read_delay / self._manager._sim.dt
         self._read_delay_steps = round(delay_steps_float)
-        if not np.isclose(delay_steps_float, self._read_delay_steps):
+        if not np.isclose(delay_steps_float, self._read_delay_steps, atol=1e-6):
             gs.logger.warn(
                 f"Read delay should be a multiple of the simulation time step. Got {self._options.read_delay} and "
-                f"{self._manager._sim.dt}. Actual read delay will be {1/self._read_delay_steps}."
+                f"{self._manager._sim.dt}. Actual read delay will be {self._read_delay_steps * self._manager._sim.dt}."
             )
 
         return_format = self._get_return_format()
-        return_length = 0
-        if isinstance(return_format, dict):
-            return_length = sum(sum(shape) for shape in return_format.values())
-        elif isinstance(return_format, tuple):
-            return_length = sum(return_format)
-        else:
-            raise ValueError(f"Invalid sensor return format: {return_format}, should be tuple or dict")
+        return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
 
-        self._cache_size = self._get_cache_length() * return_length
+        self._shape_indices = []
+        tensor_idx = 0
+        for shape in return_shapes:
+            data_size = np.prod(shape)
+            self._shape_indices.append((tensor_idx, tensor_idx + data_size))
+            tensor_idx += data_size
+
+        return_size = tensor_idx
+        self._cache_size = self._get_cache_length() * return_size
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
@@ -99,60 +106,57 @@ class Sensor(RBC):
     # =============================== shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx: List[int] | None = None):
+    def read(self, envs_idx: list[int] | None = None):
         """
         Read the sensor data (with noise applied if applicable).
         """
-        return self._get_return_data_from_tensor(self._cache.get(self._read_delay_steps), envs_idx)
+        return self._get_formatted_data(self._shared_cache.get(self._read_delay_steps), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx: List[int] | None = None):
+    def read_ground_truth(self, envs_idx: list[int] | None = None):
         """
         Read the ground truth sensor data (without noise).
         """
-        return self._get_return_data_from_tensor(self._ground_truth_cache, envs_idx)
+        return self._get_formatted_data(self._shared_ground_truth_cache, envs_idx)
 
-    def _get_return_data_from_tensor(self, tensor: torch.Tensor, envs_idx: List[int] | None) -> torch.Tensor:
+    def _get_formatted_data(
+        self, tensor: torch.Tensor, envs_idx: list[int] | None
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        # Note: This method does not clone the data tensor, it should have been cloned by the caller.
+
         if envs_idx is None:
-            envs_idx = [0] if self._manager._sim.n_envs == 0 else np.arange(tensor.shape[0])
+            envs_idx = self._manager._sim._scene._envs_idx
 
         return_format = self._get_return_format()
+        return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
+        return_values = []
 
-        if isinstance(return_format, tuple):
-            return (
-                tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size]
-                .clone()
-                .reshape(len(envs_idx), *return_format)
-                .squeeze()
-            )
-        elif isinstance(return_format, dict):
-            data_dict = {}
-            data_tensor = tensor[envs_idx, self._cache_idx : self._cache_idx + self._cache_size].clone()
-            tensor_idx = 0
-            for key, data_shape in return_format.items():
-                data_size = np.prod(data_shape)
-                data_dict[key] = (
-                    data_tensor[0 : len(envs_idx), tensor_idx : tensor_idx + data_size]
-                    .reshape(len(envs_idx), *data_shape)
-                    .squeeze()
-                )
-                tensor_idx += data_size
-            return data_dict
+        data_tensor = tensor[envs_idx, self._cache_start_idx : self._cache_end_idx]
+
+        for i, shape in enumerate(return_shapes):
+            start_idx, end_idx = self._shape_indices[i]
+            value = data_tensor[0 : len(envs_idx), start_idx:end_idx].reshape(len(envs_idx), *shape).squeeze()
+            if self._manager._sim.n_envs == 0:
+                value = value.squeeze(0)
+            return_values.append(value)
+
+        if isinstance(return_format, dict):
+            return dict(zip(return_format.keys(), return_values))
         else:
-            raise ValueError(f"Invalid sensor return format: {return_format}")
+            return return_values[0]
 
     @property
     def is_built(self) -> bool:
         return self._manager._sim._scene._is_built
 
     @property
-    def _cache(self) -> "TensorRingBuffer":
-        return self._manager._cache[self._get_cache_dtype()]
+    def _shared_cache(self) -> "TensorRingBuffer":
+        return self._manager._cache[self._dtype]
 
     @property
-    def _ground_truth_cache(self) -> torch.Tensor:
-        return self._manager._ground_truth_cache[self._get_cache_dtype()]
+    def _shared_ground_truth_cache(self) -> torch.Tensor:
+        return self._manager._ground_truth_cache[self._dtype]
 
     @property
     def _shared_metadata(self) -> dict[str, Any]:
-        return self._manager._sensors_metadata[self.__class__]
+        return self._manager._sensors_metadata[self._class]

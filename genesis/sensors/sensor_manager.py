@@ -15,50 +15,48 @@ class SensorManager:
 
     def __init__(self, sim):
         self._sim = sim
-        self._sensors: list["Sensor"] = []
+        self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
         self._sensors_metadata: dict[Type["Sensor"], dict[str, Any]] = {}
         self._ground_truth_cache: dict[Type[torch.dtype], torch.Tensor] = {}
         self._cache: dict[Type[torch.dtype], TensorRingBuffer] = {}
-        self._first_sensor_per_type: dict[Type["Sensor"], "Sensor"] = {}
 
     def create_sensor(self, sensor_options: "SensorOptions"):
         sensor_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
-        sensor = sensor_cls(sensor_options, len(self._sensors), self)
-        self._sensors.append(sensor)
+        self._sensors_by_type.setdefault(sensor_cls, [])
+        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
+        self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
 
     def build(self):
         max_cache_buf_len = 0
         cache_size_per_dtype = {}
-        for sensor in self._sensors:
-            if sensor.__class__ not in self._sensors_metadata:
-                self._sensors_metadata[sensor.__class__] = {}
-            if sensor.__class__ not in self._first_sensor_per_type:
-                self._first_sensor_per_type[sensor.__class__] = sensor
+        for sensor_cls, sensors in self._sensors_by_type.items():
+            self._sensors_metadata[sensor_cls] = {}
 
-            sensor.build()
+            for sensor in sensors:
+                sensor.build()
 
-            if sensor._get_cache_dtype() not in cache_size_per_dtype:
-                cache_size_per_dtype[sensor._get_cache_dtype()] = 0
+                cache_size_per_dtype.setdefault(sensor._dtype, 0)
 
-            sensor._cache_idx = cache_size_per_dtype[sensor._get_cache_dtype()]
-            cache_size_per_dtype[sensor._get_cache_dtype()] += sensor._cache_size
+                sensor._cache_start_idx = cache_size_per_dtype[sensor._dtype]
+                sensor._cache_end_idx = sensor._cache_start_idx + sensor._cache_size
+                cache_size_per_dtype[sensor._dtype] += sensor._cache_size
 
-            max_cache_buf_len = max(max_cache_buf_len, sensor._read_delay_steps + 1)
+                max_cache_buf_len = max(max_cache_buf_len, sensor._read_delay_steps + 1)
 
-        for dtype in cache_size_per_dtype.keys():
-            cache_shape = (self._sim._B, cache_size_per_dtype[dtype])
-            self._ground_truth_cache[dtype] = torch.zeros(cache_shape, dtype=dtype)
-            self._cache[dtype] = TensorRingBuffer(max_cache_buf_len, cache_shape, dtype=dtype)
+            for dtype in cache_size_per_dtype.keys():
+                cache_shape = (self._sim._B, cache_size_per_dtype[dtype])
+                self._ground_truth_cache[dtype] = torch.zeros(cache_shape, dtype=dtype)
+                self._cache[dtype] = TensorRingBuffer(max_cache_buf_len, cache_shape, dtype=dtype)
 
     def step(self):
-        for sensor in self._first_sensor_per_type.values():
-            sensor._update_shared_ground_truth_cache()
-            sensor._update_shared_cache()
+        for sensor_cls, sensors in self._sensors_by_type.items():
+            sensors[0]._update_shared_ground_truth_cache()
+            sensors[0]._update_shared_cache()
 
     @property
     def sensors(self):
-        return [sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list]
+        return tuple([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
 
 
 def register_sensor(sensor_cls: Type["Sensor"]):
