@@ -42,9 +42,9 @@ class RigidLink(RBC):
         vface_start: int,
         pos: ArrayLike,
         quat: ArrayLike,
-        inertial_pos: ArrayLike,
-        inertial_quat: ArrayLike,
-        inertial_i: NDArray[np.float32] | None,  # may be None, eg. for plane; NDArray is 3x3 matrix
+        inertial_pos: ArrayLike | None,
+        inertial_quat: ArrayLike | None,
+        inertial_i: ArrayLike | None,  # may be None, eg. for plane; NDArray is 3x3 matrix
         inertial_mass: float | None,  # may be None, eg. for plane
         parent_idx: int,
         root_idx: int | None,
@@ -87,7 +87,7 @@ class RigidLink(RBC):
             inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
         self._inertial_quat: ArrayLike | None = inertial_quat
         self._inertial_mass: float | None = inertial_mass
-        self._inertial_i: NDArray[np.float32] | None = inertial_i
+        self._inertial_i: ArrayLike | None = inertial_i
 
         self._visualize_contact = visualize_contact
 
@@ -606,28 +606,28 @@ class RigidLink(RBC):
         return self._quat
 
     @property
-    def inertial_pos(self) -> NDArray[np.float32]:
+    def inertial_pos(self) -> ArrayLike | None:
         """
         The initial position of the link's inertial frame.
         """
         return self._inertial_pos
 
     @property
-    def inertial_quat(self) -> NDArray[np.float32]:
+    def inertial_quat(self) -> ArrayLike | None:
         """
         The initial quaternion of the link's inertial frame.
         """
         return self._inertial_quat
 
     @property
-    def inertial_mass(self) -> float:
+    def inertial_mass(self) -> float | None:
         """
         The initial mass of the link.
         """
         return self._inertial_mass
 
     @property
-    def inertial_i(self) -> NDArray[np.float32]:
+    def inertial_i(self) -> ArrayLike | None:
         """
         The inerial matrix of the link.
         """

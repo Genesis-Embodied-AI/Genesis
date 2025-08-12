@@ -8,13 +8,13 @@ import genesis.utils.geom as gu
 
 import genesis.utils.array_class as array_class
 
+from .contact_island import ContactIsland
+from .rigid_debug import Debug
 from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 from .rigid_validate import (
     validate_entity_hibernation_state_for_all_entities_in_temp_island,
     validate_next_hibernated_entity_indices_in_entire_scene,
 )
-from .contact_island import ContactIsland
-from genesis.engine.solvers.rigid.rigid_debug import Debug
 
 if TYPE_CHECKING:
     from genesis.engine.colliders.collider import Collider
@@ -131,7 +131,7 @@ class ConstraintSolverIsland:
                 if ti.static(self._solver._use_hibernation):
                     is_active = not self.contact_island.island_hibernated[i_island, i_b]
                 if is_active:
-                    self.add_collision_constraints__and_wakeup_entities(i_island, i_b)
+                    self.add_collision_constraints_and_wakeup_entities(i_island, i_b)
                     self.add_joint_limit_constraints(i_island, i_b)
                     self._func_init_solver(i_island, i_b)
                     self._func_solve(i_island, i_b)
@@ -143,7 +143,7 @@ class ConstraintSolverIsland:
         self.resolve()
 
     @ti.func
-    def add_collision_constraints__and_wakeup_entities(self, i_island: int, i_b: int):
+    def add_collision_constraints_and_wakeup_entities(self, i_island: int, i_b: int):
         self.n_constraints[i_b] = 0
         for i_island_col in range(self.contact_island.island_col[i_island, i_b].n):
             i_col_ = self.contact_island.island_col[i_island, i_b].start + i_island_col
@@ -155,8 +155,8 @@ class ConstraintSolverIsland:
             link_a_maybe_batch = [link_a, i_b] if ti.static(self._solver._options.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if ti.static(self._solver._options.batch_links_info) else link_b
 
-            contact_data__normal = self._collider._collider_state.contact_data.normal[i_col, i_b]
-            d1, d2 = gu.ti_orthogonals(contact_data__normal)
+            contact_normal = self._collider._collider_state.contact_data.normal[i_col, i_b]
+            d1, d2 = gu.ti_orthogonals(contact_normal)
 
             invweight = self._solver.links_info.invweight[link_a_maybe_batch][0] + self._solver.links_info.invweight[
                 link_b_maybe_batch
@@ -164,8 +164,8 @@ class ConstraintSolverIsland:
 
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                contact_data__friction = self._collider._collider_state.contact_data.friction[i_col, i_b]
-                n = d * contact_data__friction - contact_data__normal
+                contact_friction = self._collider._collider_state.contact_data.friction[i_col, i_b]
+                n = d * contact_friction - contact_normal
 
                 n_con = ti.atomic_add(self.n_constraints[i_b], 1)
                 if ti.static(self.sparse_solve):
@@ -196,8 +196,8 @@ class ConstraintSolverIsland:
                             cdot_vel = self._solver.dofs_state.cdof_vel[i_d, i_b]
 
                             t_quat = gu.ti_identity_quat()
-                            contact_data__pos = self._collider._collider_state.contact_data.pos[i_col, i_b]
-                            t_pos = contact_data__pos - self._solver.links_state.COM[link, i_b]
+                            contact_pos = self._collider._collider_state.contact_data.pos[i_col, i_b]
+                            t_pos = contact_pos - self._solver.links_state.COM[link, i_b]
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
@@ -213,14 +213,12 @@ class ConstraintSolverIsland:
                 if ti.static(self.sparse_solve):
                     self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
 
-                contact_data__sol_params = self._collider._collider_state.contact_data.sol_params[i_col, i_b]
-                contact_data__penetration = self._collider._collider_state.contact_data.penetration[i_col, i_b]
-                imp, aref = gu.imp_aref(
-                    contact_data__sol_params, -contact_data__penetration, jac_qvel, -contact_data__penetration
-                )
+                contact_sol_params = self._collider._collider_state.contact_data.sol_params[i_col, i_b]
+                contact_penetration = self._collider._collider_state.contact_data.penetration[i_col, i_b]
+                imp, aref = gu.imp_aref(contact_sol_params, -contact_penetration, jac_qvel, -contact_penetration)
 
-                diag = invweight + contact_data__friction * contact_data__friction * invweight
-                diag *= 2 * contact_data__friction * contact_data__friction * (1 - imp) / ti.max(imp, gs.EPS)
+                diag = invweight + contact_friction * contact_friction * invweight
+                diag *= 2 * contact_friction * contact_friction * (1 - imp) / ti.max(imp, gs.EPS)
 
                 self.diag[n_con, i_b] = diag
                 self.aref[n_con, i_b] = aref
@@ -562,14 +560,14 @@ class ConstraintSolverIsland:
             i_col_ = self.contact_island.island_col[i_island, i_b].start + i_island_col
             i_col = self.contact_island.constraint_id[i_col_, i_b]
 
-            contact_data__normal = self._collider._collider_state.contact_data.normal[i_col, i_b]
-            contact_data__friction = self._collider._collider_state.contact_data.friction[i_col, i_b]
+            contact_normal = self._collider._collider_state.contact_data.normal[i_col, i_b]
+            contact_friction = self._collider._collider_state.contact_data.friction[i_col, i_b]
 
             force = ti.Vector.zero(gs.ti_float, 3)
-            d1, d2 = gu.ti_orthogonals(contact_data__normal)
+            d1, d2 = gu.ti_orthogonals(contact_normal)
             for i in range(4):
                 d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                n = d * contact_data__friction - contact_data__normal
+                n = d * contact_friction - contact_normal
                 force += n * self.efc_force[i_island_col * 4 + i, i_b]
             self._collider._collider_state.contact_data.force[i_col, i_b] = force
 

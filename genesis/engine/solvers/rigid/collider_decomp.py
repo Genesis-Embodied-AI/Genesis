@@ -537,7 +537,7 @@ def kernel_collider_clear(
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
-                        # note: copying all fields of class StructContactData:
+                        # Copying all fields of class StructContactData:
                         cd_geom_a[i_c_hibernated, i_b] = cd_geom_a[i_c, i_b]
                         cd_geom_b[i_c_hibernated, i_b] = cd_geom_b[i_c, i_b]
                         cd_penetration[i_c_hibernated, i_b] = cd_penetration[i_c, i_b]

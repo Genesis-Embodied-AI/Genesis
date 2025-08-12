@@ -76,7 +76,6 @@ def _sanitize_sol_params(
 
 @ti.data_oriented
 class RigidSolver(Solver):
-
     # override typing
     _entities: list[RigidEntity] = gs.List()
 
@@ -262,7 +261,9 @@ class RigidSolver(Solver):
 
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
-        # invalid inertitance of AvatarSolver <- doesn't support hibernation params
+        # Note optional hibernation_threshold_acc/vel params at the bottom of the initialization list.
+        # This is caused by this code being also run by AvatarSolver, which inherits from this class
+        # but does not have all the attributes of the base class.
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
             use_hibernation=getattr(self, "_use_hibernation", False),
@@ -5049,9 +5050,9 @@ def func_hibernate_entity_and_zero_dof_velocities(
 ) -> None:
     """
     Mark RigidEnity, individual DOFs in DofsState, RigidLinks, and RigidGeoms as hibernated.
-    Zero out DOF velocitities and accelerations.
-    """
 
+    Also, zero out DOF velocitities and accelerations.
+    """
     entities_state.hibernated[i_e, i_b] = True
 
     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):

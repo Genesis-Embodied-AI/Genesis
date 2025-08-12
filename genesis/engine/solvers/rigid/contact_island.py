@@ -5,7 +5,9 @@ import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.rigid_debug import Debug
+
+from .rigid_debug import Debug
+from .rigid_validate import validate_next_hibernated_entity_indices_in_entire_scene
 
 
 if TYPE_CHECKING:
@@ -15,16 +17,11 @@ if TYPE_CHECKING:
 INVALID_NEXT_HIBERNATED_ENTITY_IDX = -1
 
 
-from genesis.engine.solvers.rigid.rigid_validate import validate_next_hibernated_entity_indices_in_entire_scene
-
-
 @ti.data_oriented
 class ContactIsland:
     def __init__(self, collider: "Collider"):
         self.solver: "RigidSolver" = collider._solver
         self.collider: "Collider" = collider
-
-        # todo: mark fields as being tempoarary for island generation only?
 
         struct_agg_list = ti.types.struct(
             curr=gs.ti_int,
@@ -32,25 +29,25 @@ class ContactIsland:
             start=gs.ti_int,
         )
 
-        max_num_contact_pairs = self.collider._collider_info._max_contact_pairs[None]
-        max_num_contact_pairs = max(max_num_contact_pairs, 1)  # can't create 0-sized fields
+        max_contact_pairs = self.collider._collider_info._max_contact_pairs[None]
+        max_contact_pairs = max(max_contact_pairs, 1)  # can't create 0-sized fields
 
-        self.ci_edges = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_num_contact_pairs, 2)))
+        self.ci_edges = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs, 2)))
 
         # maps half-edges (half-edges are referenced by entity_edge range) to actual edge index
         # description: half_edge_ref_to_edge_idx
         self.edge_id = ti.field(
             dtype=gs.ti_int,
-            shape=self.solver._batch_shape((max_num_contact_pairs * 2)),
+            shape=self.solver._batch_shape((max_contact_pairs * 2)),
         )
 
         # maps collider_state.contact_data index to island idx
-        self.constraint_list = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_num_contact_pairs)))
+        self.constraint_list = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs)))
 
         # analogous to edge_id: maps island's constraint local-index to world's contact index
         self.constraint_id = ti.field(
             dtype=gs.ti_int,
-            shape=self.solver._batch_shape((max_num_contact_pairs * 2)),
+            shape=self.solver._batch_shape((max_contact_pairs * 2)),
         )
 
         # per-entity range of half-edges (indexing into edge_id)
@@ -84,9 +81,6 @@ class ContactIsland:
         # description: entity_idx_to_island_idx
         self.entity_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
         self.stack = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
-
-        # Persistent hibernated islands:
-        #
 
         # Used to make islands persist through hibernation:
         self.entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(
@@ -259,9 +253,10 @@ class ContactIsland:
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
-                    if ti.static(Debug.validate) and self.n_stack[i_b] > self.stack.shape[0]:
-                        capacity = self.stack.shape[0]
-                        print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
+                    if ti.static(Debug.validate):
+                        if self.n_stack[i_b] > self.stack.shape[0]:
+                            capacity = self.stack.shape[0]
+                            print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
 
                     while self.n_stack[i_b] > 0:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
@@ -282,9 +277,10 @@ class ContactIsland:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
-                                if ti.static(Debug.validate) and self.n_stack[i_b] > self.stack.shape[0]:
-                                    capacity = self.stack.shape[0]
-                                    print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
+                                if ti.static(Debug.validate):
+                                    if self.n_stack[i_b] > self.stack.shape[0]:
+                                        capacity = self.stack.shape[0]
+                                        print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 
