@@ -1,3 +1,5 @@
+import ctypes
+
 import torch
 
 import genesis as gs
@@ -5,7 +7,12 @@ import genesis as gs
 
 class TensorRingBuffer:
     def __init__(
-        self, N: int, shape: tuple[int, ...], dtype=torch.float32, buffer: torch.Tensor | None = None, idx_ptr: int = 0
+        self,
+        N: int,
+        shape: tuple[int, ...],
+        dtype=torch.float32,
+        buffer: torch.Tensor | None = None,
+        idx_ptr: int | ctypes.c_int = 0,
     ):
         if buffer is None:
             self.buffer = torch.empty((N, *shape), dtype=dtype, device=gs.device)
@@ -13,11 +20,14 @@ class TensorRingBuffer:
             assert buffer.shape == (N, *shape)
             self.buffer = buffer
         self.N = N
-        self._idx_ptr = idx_ptr  # idx_ptr points to the next free slot
+        if isinstance(idx_ptr, int):
+            self._idx_ptr = ctypes.c_int(idx_ptr)
+        else:
+            self._idx_ptr = idx_ptr
 
     def append(self, tensor: torch.Tensor):
-        self.buffer[self._idx_ptr].copy_(tensor)
-        self._idx_ptr = (self._idx_ptr + 1) % self.N
+        self.buffer[self._idx_ptr.value].copy_(tensor)
+        self._idx_ptr.value = (self._idx_ptr.value + 1) % self.N
 
     def get(self, idx: int):
         """
@@ -26,11 +36,15 @@ class TensorRingBuffer:
         idx : int
             Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
         """
-        return self.buffer[(self._idx_ptr - idx) % self.N]
+        return self.buffer[(self._idx_ptr.value - idx) % self.N]
 
     def clone(self):
         return TensorRingBuffer(
-            self.N, self.buffer.shape[1:], dtype=self.buffer.dtype, buffer=self.buffer.clone(), idx_ptr=self._idx_ptr
+            self.N,
+            self.buffer.shape[1:],
+            dtype=self.buffer.dtype,
+            buffer=self.buffer.clone(),
+            idx_ptr=self._idx_ptr,
         )
 
     def __getitem__(self, key: int | slice | tuple):
@@ -58,5 +72,9 @@ class TensorRingBuffer:
             raise TypeError(f"Unsupported key type: {type(key)}")
 
         return TensorRingBuffer(
-            self.N, sliced_buffer.shape[1:], dtype=sliced_buffer.dtype, buffer=sliced_buffer, idx_ptr=self._idx_ptr
+            self.N,
+            sliced_buffer.shape[1:],
+            dtype=sliced_buffer.dtype,
+            buffer=sliced_buffer,
+            idx_ptr=self._idx_ptr,
         )

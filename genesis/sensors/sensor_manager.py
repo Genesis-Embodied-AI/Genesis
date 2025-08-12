@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any, Type
 import numpy as np
 import torch
 
+import genesis as gs
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
@@ -53,6 +54,14 @@ class SensorManager:
                     sensor._shape_indices.append((tensor_size, tensor_size + data_size))
                     tensor_size += data_size
 
+                delay_steps_float = sensor._options.read_delay / self._sim.dt
+                sensor._read_delay_steps = round(delay_steps_float)
+                if not np.isclose(delay_steps_float, sensor._read_delay_steps, atol=1e-6):
+                    gs.logger.warn(
+                        f"Read delay should be a multiple of the simulation time step. Got {sensor._options.read_delay}"
+                        f" and {self._sim.dt}. Actual read delay will be {1/sensor._read_delay_steps}."
+                    )
+
                 sensor._cache_size = sensor._get_cache_length() * tensor_size
                 sensor._cache_idx = cache_size_per_dtype[dtype]
                 cache_size_per_dtype[dtype] += sensor._cache_size
@@ -96,14 +105,14 @@ class SensorManager:
         if self._last_cache_cloned_step != self._sim.cur_step_global:
             self._last_cache_cloned_step = self._sim.cur_step_global
             self._cloned_cache[dtype] = self._cache[dtype].clone()
-        return self._cloned_cache[dtype][sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
+        return self._cloned_cache[dtype][:, sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
 
     def get_cloned_from_ground_truth_cache(self, sensor: "Sensor") -> torch.Tensor:
         dtype = sensor._get_cache_dtype()
         if self._last_ground_truth_cache_cloned_step != self._sim.cur_step_global:
             self._last_ground_truth_cache_cloned_step = self._sim.cur_step_global
             self._cloned_ground_truth_cache[dtype] = self._ground_truth_cache[dtype].clone()
-        return self._cloned_ground_truth_cache[dtype][sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
+        return self._cloned_ground_truth_cache[dtype][:, sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
 
     @property
     def sensors(self):

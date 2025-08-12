@@ -26,27 +26,19 @@ class Sensor(RBC):
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
 
-        # initialized during build
-        self._read_delay_steps: int = 0
         # initialized by SceneManager during build
+        self._read_delay_steps: int = 0
         self._shape_indices: list[tuple[int, int]] = []
         self._shared_metadata: dict[str, Any] | None = None
 
     # =============================== implementable methods ===============================
 
-    @gs.assert_unbuilt
     def build(self):
         """
         This method is called by the SensorManager during the scene build phase to initialize the sensor.
         This is where any shared metadata should be initialized.
         """
-        delay_steps_float = self._options.read_delay / self._manager._sim.dt
-        self._read_delay_steps = round(delay_steps_float)
-        if not np.isclose(delay_steps_float, self._read_delay_steps):
-            gs.logger.warn(
-                f"Read delay should be a multiple of the simulation time step. Got {self._options.read_delay} and "
-                f"{self._manager._sim.dt}. Actual read delay will be {1/self._read_delay_steps}."
-            )
+        raise NotImplementedError("Sensors must implement `build()`.")
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
