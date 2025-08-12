@@ -80,10 +80,6 @@ class RigidSolver(Solver):
     # override typing
     _entities: list[RigidEntity] = gs.List()
 
-    # created outside of __init__; added for linting
-    geoms_info: array_class.StructGeomsInfo
-    geoms_state: array_class.StructGeomsState
-
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -725,7 +721,7 @@ class RigidSolver(Solver):
 
     def _init_geom_fields(self):
         self.geoms_info: array_class.GeomsInfo = self.data_manager.geoms_info
-        self.geoms_state: array_class.StructGeomsState = self.data_manager.geoms_state
+        self.geoms_state: array_class.GeomsState = self.data_manager.geoms_state
         self.geoms_init_AABB = self._rigid_global_info.geoms_init_AABB
         self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=np.float32)
 
@@ -782,8 +778,8 @@ class RigidSolver(Solver):
             )
 
     def _init_vgeom_fields(self):
-        self.vgeoms_info = self.data_manager.vgeoms_info
-        self.vgeoms_state = self.data_manager.vgeoms_state
+        self.vgeoms_info: array_class.VGeomsInfo = self.data_manager.vgeoms_info
+        self.vgeoms_state: array_class.VGeomsState = self.data_manager.vgeoms_state
         self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_vgeoms > 0:
