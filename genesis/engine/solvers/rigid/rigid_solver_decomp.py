@@ -921,15 +921,6 @@ class RigidSolver(Solver):
     def substep(self):
         # from genesis.utils.tools import create_timer
 
-        # Note: ContactIsland param is needed when supporting hibernation. But the attribute does not exist
-        # in the solver when hibernation is disabled. In that case, we create a dummy ContactIsland object
-        # needed for compilation, but not being used in the kernel.
-        if not hasattr(self, "optional_contact_island"):
-            if hasattr(self, "constraint_solver") and hasattr(self.constraint_solver, "contact_island"):
-                self.optional_contact_island = self.constraint_solver.contact_island
-            else:
-                self.optional_contact_island = ContactIsland(self.collider)
-
         # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         kernel_step_1(
             links_state=self.links_state,
@@ -944,7 +935,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.optional_contact_island,
+            contact_island=self.constraint_solver.contact_island,
         )
         # timer.stamp("kernel_step_1")
         self._func_constraint_force()
@@ -963,7 +954,7 @@ class RigidSolver(Solver):
             collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.optional_contact_island,
+            contact_island=self.constraint_solver.contact_island,
         )
         # timer.stamp("kernel_step_2")
 
@@ -1015,6 +1006,7 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            contact_island=self.constraint_solver.contact_island,
         )
 
     def _func_update_acc(self):
@@ -3023,6 +3015,7 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    contact_island: ti.template(),  # ContactIsland
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -3035,6 +3028,7 @@ def kernel_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
+        contact_island=contact_island,
     )
 
 

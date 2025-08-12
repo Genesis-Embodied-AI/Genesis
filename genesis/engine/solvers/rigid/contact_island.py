@@ -32,26 +32,25 @@ class ContactIsland:
             start=gs.ti_int,
         )
 
-        self.ci_edges = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None], 2))
-        )
+        max_num_contact_pairs = self.collider._collider_info._max_contact_pairs[None]
+        max_num_contact_pairs = max(max_num_contact_pairs, 1)  # can't create 0-sized fields
+
+        self.ci_edges = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_num_contact_pairs, 2)))
 
         # maps half-edges (half-edges are referenced by entity_edge range) to actual edge index
         # description: half_edge_ref_to_edge_idx
         self.edge_id = ti.field(
             dtype=gs.ti_int,
-            shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None] * 2)),
+            shape=self.solver._batch_shape((max_num_contact_pairs * 2)),
         )
 
         # maps collider_state.contact_data index to island idx
-        self.constraint_list = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None]))
-        )
+        self.constraint_list = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_num_contact_pairs)))
 
         # analogous to edge_id: maps island's constraint local-index to world's contact index
         self.constraint_id = ti.field(
             dtype=gs.ti_int,
-            shape=self.solver._batch_shape((self.collider._collider_info._max_contact_pairs[None] * 2)),
+            shape=self.solver._batch_shape((max_num_contact_pairs * 2)),
         )
 
         # per-entity range of half-edges (indexing into edge_id)
