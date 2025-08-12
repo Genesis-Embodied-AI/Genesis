@@ -215,10 +215,11 @@ class Visualizer(RBC):
             return
 
         for camera in self._cameras:
-            if camera._attached_link is not None:
-                camera.move_to_attach()
-            elif camera._followed_entity is not None:
-                camera.update_following()
+            if camera.is_built:
+                if camera._attached_link is not None:
+                    camera.move_to_attach()
+                elif camera._followed_entity is not None:
+                    camera.update_following()
 
         if self._scene.rigid_solver.is_active():
             self._scene.rigid_solver.update_geoms_render_T()
