@@ -1159,20 +1159,31 @@ def _np_z_up_to_R(z, up=None, out=None):
         if z_norm_i > gs.EPS:
             z /= z_norm_i
         else:
-            z[:] = 0.0, 1.0, 0.0
+            if up is None or abs(up[i][1]) < 0.5:
+                z[:] = 0.0, 1.0, 0.0
+            else:
+                z[:] = 0.0, 0.0, 1.0
 
         if up is not None:
             x[:] = np.cross(up[i], z)
         else:
-            x[0] = z[1]
-            x[1] = -z[0]
-            x[2] = 0.0
+            if abs(z[2]) < 1.0 - gs.EPS:
+                # up = (0.0, 0.0, 1.0)
+                x[0] = z[1]
+                x[1] = -z[0]
+                x[2] = 0.0
+            else:
+                # up = (0.0, 1.0, 0.0)
+                x[0] = z[2]
+                x[1] = 0.0
+                x[2] = -z[0]
 
         x_norm = np.linalg.norm(x)
         if x_norm > gs.EPS:
             x /= x_norm
             y[:] = np.cross(z, x)
         else:
+            # This would only occurs if the user specified non-zero colinear z and up
             R[:] = np.eye(3, dtype=R.dtype)
 
     return out_
@@ -1199,16 +1210,22 @@ def _tc_z_up_to_R(z, up=None, out=None):
     # Handle zero norm cases
     zero_mask = z_norm[..., 0] < gs.EPS
     if zero_mask.any():
-        z[zero_mask] = torch.tensor((0.0, 1.0, 0.0), device=z.device, dtype=z.dtype)
+        if up is None:
+            z[zero_mask] = torch.tensor((0.0, 1.0, 0.0), device=z.device, dtype=z.dtype)
+        else:
+            up_mask = up[..., 1].abs() < 0.5
+            z[zero_mask & up_mask] = torch.tensor((0.0, 1.0, 0.0), device=z.device, dtype=z.dtype)
+            z[zero_mask & ~up_mask] = torch.tensor((0.0, 0.0, 1.0), device=z.device, dtype=z.dtype)
 
     # Compute x vectors (first column)
     if up is not None:
         x[:] = torch.cross(up, z, dim=-1)
     else:
-        # Default up vector case
-        x[..., 0] = z[..., 1]
-        x[..., 1] = -z[..., 0]
-        x[..., 2] = 0.0
+        up_mask = z[..., 2].abs() < 1.0 - gs.EPS
+        _zero = torch.tensor(0.0, device=z.device, dtype=z.dtype)
+        torch.where(up_mask, z[..., 1], z[..., 2], out=x[..., 0])
+        torch.where(up_mask, -z[..., 0], _zero, out=x[..., 1])
+        torch.where(up_mask, _zero, -z[..., 0], out=x[..., 2])
 
     # Normalize x vectors
     x_norm = torch.norm(x, dim=-1, keepdim=True)

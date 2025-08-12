@@ -800,7 +800,7 @@ def create_arrow(
 def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=12):
     vec = end - start
     length = np.linalg.norm(vec)
-    mesh = create_cylinder(radius, length, sections)  # along z-axis
+    mesh = create_cylinder(radius, length, sections, color)  # along z-axis
     mesh._data["vertices"][:, -1] += length / 2.0
     mesh.vertices = gu.transform_by_trans_R(mesh._data["vertices"], start, gu.z_up_to_R(vec))
     return mesh
