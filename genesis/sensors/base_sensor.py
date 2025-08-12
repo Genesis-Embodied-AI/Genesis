@@ -25,7 +25,7 @@ class Sensor(RBC):
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
 
-        # initialized by SceneManager during build
+        # initialized by SensorManager during build
         self._read_delay_steps: int = 0
         self._shape_indices: list[tuple[int, int]] = []
         self._shared_metadata: dict[str, Any] | None = None
