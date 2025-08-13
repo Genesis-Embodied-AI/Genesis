@@ -7,14 +7,14 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from .rigid_debug import Debug
-from .rigid_validate import validate_next_hibernated_entity_indices_in_entire_scene
-
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 INVALID_NEXT_HIBERNATED_ENTITY_IDX = -1
+
+from .rigid_validate import validate_next_hibernated_entity_indices_in_entire_scene
 
 
 @ti.data_oriented
