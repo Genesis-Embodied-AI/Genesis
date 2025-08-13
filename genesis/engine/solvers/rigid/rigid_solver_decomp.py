@@ -13,11 +13,6 @@ import genesis.utils.array_class as array_class
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
-from genesis.engine.solvers.rigid.rigid_debug import Debug
-from genesis.engine.solvers.rigid.rigid_validate import (
-    validate_entity_hibernation_state_for_all_entities_in_temp_island,
-    validate_next_hibernated_entity_indices_in_entire_scene,
-)
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.styles import colors, formats
@@ -4937,20 +4932,12 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
         for island_idx in range(ci.n_islands[i_b]):
             was_island_hibernated = ci.island_hibernated[island_idx, i_b]
 
-            if ti.static(Debug.validate):
-                validate_entity_hibernation_state_for_all_entities_in_temp_island(
-                    island_idx, i_b, entities_state, contact_island, expected_hibernation_state=was_island_hibernated
-                )
-
             if not was_island_hibernated:
                 are_all_entities_okay_for_hibernation = True
                 entity_ref_range = ci.island_entity[island_idx, i_b]
                 for i_entity_ref_offset_ in range(entity_ref_range.n):
                     entity_ref = entity_ref_range.start + i_entity_ref_offset_
                     entity_idx = ci.entity_id[entity_ref, i_b]
-
-                    is_entity_fixed = entities_info.n_dofs[entity_idx] == 0
-                    Debug.assertf(0x7AD00005, not is_entity_fixed)  # Fixed entity should not belong to an island
 
                     # Hibernated entities already have zero dofs_state.acc/vel
                     is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
@@ -4997,11 +4984,6 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                         )
 
                         # store entities in the hibernated islands by daisy chaining them
-                        Debug.assertf(
-                            0x7AD00014,
-                            ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b]
-                            == INVALID_NEXT_HIBERNATED_ENTITY_IDX,
-                        )
                         ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
                         prev_entity_idx = entity_idx
 

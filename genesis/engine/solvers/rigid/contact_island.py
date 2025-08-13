@@ -6,15 +6,11 @@ import taichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 
-from .rigid_debug import Debug
-
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 INVALID_NEXT_HIBERNATED_ENTITY_IDX = -1
-
-from .rigid_validate import validate_next_hibernated_entity_indices_in_entire_scene
 
 
 @ti.data_oriented
@@ -139,11 +135,6 @@ class ContactIsland:
             for i_e in range(n_entities):
                 next_entity_idx = self.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
                 if next_entity_idx != INVALID_NEXT_HIBERNATED_ENTITY_IDX and next_entity_idx != i_e:
-                    if ti.static(Debug.validate):
-                        island_idx_a = self.entity_island[i_e, i_b]
-                        island_idx_b = self.entity_island[next_entity_idx, i_b]
-                        Debug.assertf(0x7AD00012, island_idx_a == island_idx_b)
-
                     any_link_a = self.solver.entities_info.link_start[i_e]
                     any_link_b = self.solver.entities_info.link_start[next_entity_idx]
                     self.add_edge(any_link_a, any_link_b, i_b)
@@ -253,7 +244,7 @@ class ContactIsland:
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
-                    if ti.static(Debug.validate):
+                    if ti.static(False):  # Debug.validate
                         if self.n_stack[i_b] > self.stack.shape[0]:
                             capacity = self.stack.shape[0]
                             print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
@@ -277,7 +268,7 @@ class ContactIsland:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
-                                if ti.static(Debug.validate):
+                                if ti.static(False):  # Debug.validate
                                     if self.n_stack[i_b] > self.stack.shape[0]:
                                         capacity = self.stack.shape[0]
                                         print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
