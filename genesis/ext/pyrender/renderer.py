@@ -10,7 +10,6 @@ import PIL
 import pyglet
 import numpy as np
 from OpenGL.GL import *
-import matplotlib.pyplot as plt
 
 from .constants import (
     DEFAULT_Z_FAR,
@@ -609,24 +608,26 @@ class Renderer(object):
     ###########################################################################
 
     def _update_context(self, scene, flags):
-        # Update meshes
-        scene_meshes = scene.meshes
+        # Get existing and new meshes
+        scene_meshes_new = scene.meshes.copy()
+        scene_meshes_old = self._meshes
 
-        # Add new meshes to context
-        for mesh in scene_meshes - self._meshes:
-            for p in mesh.primitives:
-                p._add_to_context()
-
-        # Remove old meshes from context
-        for mesh in self._meshes - scene_meshes:
+        # Remove from context old meshes that are now irrelevant
+        for mesh in scene_meshes_old - scene_meshes_new:
             for p in mesh.primitives:
                 p.delete()
 
-        self._meshes = scene_meshes.copy()
+        # Update set of meshes right away, so that the context can be cleaned up correctly in case of failure
+        self._meshes = scene_meshes_new
+
+        # Add new meshes to context
+        for mesh in scene_meshes_new - scene_meshes_old:
+            for p in mesh.primitives:
+                p._add_to_context()
 
         # Update mesh textures
         mesh_textures = set()
-        for m in scene_meshes:
+        for m in scene_meshes_new:
             for p in m.primitives:
                 mesh_textures |= p.material.textures
 

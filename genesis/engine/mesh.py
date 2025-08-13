@@ -4,16 +4,12 @@ import pickle as pkl
 import fast_simplification
 import numpy as np
 import numpy.typing as npt
-import pyvista as pv
-import tetgen
 import trimesh
-import pymeshlab
 
 import genesis as gs
 from genesis.options.surfaces import Surface
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
-import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
 from genesis.repr_base import RBC
 
@@ -126,6 +122,9 @@ class Mesh(RBC):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
+            # Importing pymeshlab is very slow and not used very often. Let's delay import.
+            import pymeshlab
+
             gs.logger.info("Remeshing for tetrahedralization...")
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(vertex_matrix=self.verts, face_matrix=self.faces))
@@ -152,6 +151,10 @@ class Mesh(RBC):
         """
         Tetrahedralize the mesh.
         """
+        # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+        import pyvista as pv
+        import tetgen
+
         pv_obj = pv.PolyData(
             self.verts, np.concatenate([np.full((self.faces.shape[0], 1), self.faces.shape[1]), self.faces], axis=1)
         )
@@ -229,6 +232,7 @@ class Mesh(RBC):
         """
         if surface is None:
             surface = gs.surfaces.Default()
+            surface.update_texture()
         else:
             surface = surface.copy()
         mesh = mesh.copy(include_cache=True)
@@ -341,22 +345,20 @@ class Mesh(RBC):
         If the morph is a Mesh morph (morphs.Mesh), it could contain multiple submeshes, so we return a list.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
-            if morph.file.endswith(("obj", "ply", "stl")):
+            if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
-
-            elif morph.file.endswith(("glb", "gltf")):
+            elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+            elif morph.is_format(gs.options.morphs.USD_FORMATS):
+                import genesis.utils.usda as usda_utils
 
-            elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
-
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
-
             else:
                 gs.raise_exception(
                     f"File type not supported (yet). Submit a feature request if you need this: {morph.file}."

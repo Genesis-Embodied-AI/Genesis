@@ -119,7 +119,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 @pytest.mark.required
 @pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
-def test_batched_offscreen_rendering(show_viewer, tol):
+def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
@@ -247,6 +247,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
 
+    cam.start_recording()
     for _ in range(7):
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
         qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
@@ -270,6 +271,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
         for i in range(3):
             assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+    cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
 
 @pytest.mark.required

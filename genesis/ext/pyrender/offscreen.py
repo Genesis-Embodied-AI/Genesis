@@ -173,16 +173,22 @@ class OffscreenRenderer(object):
             else:
                 if flags & RenderFlags.ENV_SEPARATE:
                     gs.raise_exception("'env_separate_rigid=True' not supported on this platform.")
-                if normal:
-                    gs.raise_exception("'normal=True' not supported on this platform.")
                 renderer.render(scene, flags, seg_node_map)
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+                glReadBuffer(GL_FRONT)
                 if depth:
-                    depth = renderer.read_depth_buf()
+                    z_near = scene.main_camera_node.camera.znear
+                    z_far = scene.main_camera_node.camera.zfar
+                    if z_far is None:
+                        z_far = -1.0
+                    depth_arr = renderer.jit.read_depth_buf(self.viewport_height, self.viewport_width, z_near, z_far)
+                    depth_arr = renderer._resize_image(depth_arr, antialias=not seg)
                 if flags & RenderFlags.DEPTH_ONLY:
-                    retval = (depth,)
+                    retval = (depth_arr,)
                 else:
-                    color = renderer.read_color_buf()
-                    retval = (color, depth)
+                    color_arr = renderer.jit.read_color_buf(self.viewport_height, self.viewport_width, rgba=False)
+                    color_arr = renderer._resize_image(color_arr, antialias=not seg)
+                    retval = (color_arr, depth_arr) if depth else (color_arr,)
         else:
             retval = ()
 
@@ -207,7 +213,16 @@ class OffscreenRenderer(object):
             if env_separate_rigid:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+
+            if self._platform.supports_framebuffers():
+                normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+            else:
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+                glReadBuffer(GL_FRONT)
+                renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+                normal_arr = renderer.jit.read_color_buf(self.viewport_height, self.viewport_width, rgba=False)
+                normal_arr = renderer._resize_image(normal_arr, antialias=not seg)
+
             retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache

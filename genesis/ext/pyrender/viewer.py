@@ -16,30 +16,18 @@ from OpenGL.GL import *
 import genesis as gs
 from genesis.vis.rasterizer_context import RasterizerContext
 
+# Importing Tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
+# Note that destroying the window will cause segfault at exit.
 if sys.platform.startswith("darwin"):
-    # Mac OS
     from tkinter import Tk
-    from tkinter import filedialog
-else:
-    try:
-        from Tkinter import Tk
-        from Tkinter import tkFileDialog as filedialog
-    except Exception:
-        try:
-            from tkinter import Tk
-            from tkinter import filedialog as filedialog
-        except Exception:
-            pass
+    from tkinter import filedialog as filedialog
 
-
-try:
     root = Tk()
     root.withdraw()
-except:
-    pass
+else:
+    root = None
 
 import pyglet
-from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from pyglet import clock
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
@@ -917,6 +905,9 @@ class Viewer(pyglet.window.Window):
                 self.save_video()
                 self.set_caption(self.viewer_flags["window_title"])
             else:
+                # Importing moviepy is very slow and not used very often. Let's delay import.
+                from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
+
                 self.video_recorder = FFMPEG_VideoWriter(
                     filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
                     fps=self.viewer_flags["refresh_rate"],
@@ -1037,6 +1028,8 @@ class Viewer(pyglet.window.Window):
         self._trackball = Trackball(self._default_camera_pose, self.viewport_size, scale, centroid)
 
     def _get_save_filename(self, file_exts):
+        global root
+
         file_types = {
             "mp4": ("video files", "*.mp4"),
             "png": ("png files", "*.png"),
@@ -1045,14 +1038,28 @@ class Viewer(pyglet.window.Window):
             "all": ("all files", "*"),
         }
         filetypes = [file_types[x] for x in file_exts]
+        save_dir = self.viewer_flags["save_directory"]
+        if save_dir is None:
+            save_dir = os.getcwd()
+
+        # Importing tkinter is very slow and not used very often. Let's delay import.
         try:
-            save_dir = self.viewer_flags["save_directory"]
-            if save_dir is None:
-                save_dir = os.getcwd()
-            filename = filedialog.asksaveasfilename(
-                initialdir=save_dir, title="Select file save location", filetypes=filetypes
+            from tkinter import Tk
+            from tkinter import filedialog as filedialog
+        except ImportError:
+            from Tkinter import Tk
+            from Tkinter import tkFileDialog as filedialog
+
+        try:
+            if root is None:
+                root = Tk()
+                root.withdraw()
+            dialog = filedialog.SaveAs(
+                root, initialdir=save_dir, title="Select file save location", filetypes=filetypes
             )
+            filename = dialog.show()
         except Exception:
+            gs.logger.warning("Failed to open file save location dialog.")
             return None
 
         if not filename:
@@ -1063,11 +1070,12 @@ class Viewer(pyglet.window.Window):
         filename = self._get_save_filename(["png", "jpg", "gif", "all"])
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)
-            imageio.imwrite(filename, self._renderer.read_color_buf())
+            data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
+            imageio.imwrite(filename, img_arr)
 
     def _record(self):
         """Save another frame for the GIF."""
-        data = self._renderer.read_color_buf()
+        data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
         if not np.all(data == 0.0):
             self.video_recorder.write_frame(data)
 
@@ -1236,7 +1244,7 @@ class Viewer(pyglet.window.Window):
         except OpenGL.error.Error:
             # Invalid OpenGL context. Closing before raising.
             self.close()
-            return
+            raise
 
         # At this point, we are all set to display the graphical window, finally!
         self.set_visible(True)
