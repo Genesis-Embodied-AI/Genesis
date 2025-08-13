@@ -243,6 +243,7 @@ class LBVH(RBC):
         # This is to silence taichi debug warning of overflow
         # Has the same result as v = (v * ti.u32(0x00000101)) & ti.u32(0x0F00F00F)
         # Performance difference is negligible
+        # See https://github.com/Genesis-Embodied-AI/Genesis/pull/1560 for details
         v = (v | ((v & 0x00FFFFFF) << 8)) & 0x0F00F00F
         v = (v * ti.u32(0x00000011)) & ti.u32(0xC30C30C3)
         v = (v * ti.u32(0x00000005)) & ti.u32(0x49249249)
