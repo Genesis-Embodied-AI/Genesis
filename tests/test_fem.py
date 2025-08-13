@@ -6,7 +6,7 @@ import igl
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from .utils import assert_allclose, get_hf_assets
+from .utils import assert_allclose, get_hf_dataset
 
 
 @pytest.fixture(scope="session")
@@ -375,7 +375,7 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
 
     # Add second FEM entity
     scale = 0.1
-    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
     scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/meshes/cube8.obj",

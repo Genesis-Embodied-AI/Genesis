@@ -247,7 +247,8 @@ class ParticleEntity(Entity):
             self._vfaces = np.array([], dtype=gs.np_float)
         elif isinstance(self._morph, gs.options.morphs.MeshSet):
             for i in range(len(self._morph.files)):
-                pos_i, euler_i = map(np.asarray, (self._morph.poss[i], self._morph.eulers[i]))
+                pos_i = np.asarray(self._morph.poss[i], dtype=gs.np_float)
+                euler_i = np.asarray(self._morph.eulers[i], dtype=gs.np_float)
                 quat_i = gs.utils.geom.xyz_to_quat(euler_i, rpy=True, degrees=True)
                 self._vmesh[i].apply_transform(gu.trans_quat_to_T(pos_i, quat_i))
 
@@ -284,7 +285,8 @@ class ParticleEntity(Entity):
             origin = np.mean(self._morph.poss, dtype=gs.np_float)
         else:
             # transform vmesh
-            pos, quat = map(np.asarray, (self._morph.pos, self._morph.quat))
+            pos = np.asarray(self._morph.pos, dtype=gs.np_float)
+            quat = np.asarray(self._morph.quat, dtype=gs.np_float)
             self._vmesh.apply_transform(gu.trans_quat_to_T(pos, quat))
             # transform particles
             particles = gu.transform_by_trans_quat(
@@ -297,8 +299,8 @@ class ParticleEntity(Entity):
                 gs.raise_exception(
                     "Entity has particles outside solver boundary. Note that for MPMSolver, boundary is slightly "
                     "tighter than the specified domain due to safety padding.\n\n"
-                    "Current boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\n"
-                    "max: {particles.max(0)}\n"
+                    f"Current boundary:\n{self._solver.boundary}\n\nEntity to be added:\nmin: {particles.min(0)}\n"
+                    f"max: {particles.max(0)}\n"
                 )
 
             if self._need_skinning:
@@ -476,9 +478,9 @@ class ParticleEntity(Entity):
         mass : float
             The computed total mass.
         """
-        mass = np.zeros(1, dtype=gs.np_float)
+        mass = np.zeros((1,), dtype=gs.np_float)
         self._kernel_get_mass(mass)
-        return mass[0]
+        return float(mass)
 
     def deactivate(self):
         """

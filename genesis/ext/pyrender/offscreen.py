@@ -104,14 +104,15 @@ class OffscreenRenderer(object):
         self,
         scene,
         renderer,
+        rgb=True,
+        seg=False,
+        normal=False,
+        depth=False,
         flags=RenderFlags.NONE,
         camera_node=None,
         shadow=False,
-        seg=False,
-        ret_depth=False,
         plane_reflection=False,
         env_separate_rigid=False,
-        normal=False,
     ):
         """Render a scene with the given set of flags.
 
@@ -131,6 +132,9 @@ class OffscreenRenderer(object):
         depth_im : (h, w) float32
             The depth buffer in linear units.
         """
+        if seg and rgb:
+            gs.raise_exception("RGB and segmentation map cannot be rendered in the same forward pass.")
+
         if not self._has_valid_context:
             gs.raise_exception(
                 "Ensure that the right context is set before rendering. Please call the method 'make_current'."
@@ -144,6 +148,9 @@ class OffscreenRenderer(object):
         if shadow and not self._is_software:
             flags |= RenderFlags.SHADOWS_ALL
 
+        if depth and not (rgb or seg):
+            flags |= RenderFlags.DEPTH_ONLY
+
         if plane_reflection and not self._is_software:
             flags |= RenderFlags.REFLECTIVE_FLOOR
 
@@ -156,23 +163,36 @@ class OffscreenRenderer(object):
         else:
             seg_node_map = None
 
-        if ret_depth:
+        if depth:
             flags |= RenderFlags.RET_DEPTH
 
-        if self._platform.supports_framebuffers():
-            flags |= RenderFlags.OFFSCREEN
-            retval = renderer.render(scene, flags, seg_node_map)
-        else:
-            renderer.render(scene, flags, seg_node_map)
-            depth = renderer.read_depth_buf()
-            if flags & RenderFlags.DEPTH_ONLY:
-                retval = depth
+        if rgb or depth or seg:
+            if self._platform.supports_framebuffers():
+                flags |= RenderFlags.OFFSCREEN
+                retval = renderer.render(scene, flags, seg_node_map)
             else:
-                color = renderer.read_color_buf()
-                retval = color, depth
+                if flags & RenderFlags.ENV_SEPARATE:
+                    gs.raise_exception("'env_separate_rigid=True' not supported on this platform.")
+                renderer.render(scene, flags, seg_node_map)
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+                glReadBuffer(GL_FRONT)
+                if depth:
+                    z_near = scene.main_camera_node.camera.znear
+                    z_far = scene.main_camera_node.camera.zfar
+                    if z_far is None:
+                        z_far = -1.0
+                    depth_arr = renderer.jit.read_depth_buf(self.viewport_height, self.viewport_width, z_near, z_far)
+                    depth_arr = renderer._resize_image(depth_arr, antialias=not seg)
+                if flags & RenderFlags.DEPTH_ONLY:
+                    retval = (depth_arr,)
+                else:
+                    color_arr = renderer.jit.read_color_buf(self.viewport_height, self.viewport_width, rgba=False)
+                    color_arr = renderer._resize_image(color_arr, antialias=not seg)
+                    retval = (color_arr, depth_arr) if depth else (color_arr,)
+        else:
+            retval = ()
 
         if normal:
-
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None
@@ -193,8 +213,17 @@ class OffscreenRenderer(object):
             if env_separate_rigid:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
-            retval = retval + (normal_arr,)
+
+            if self._platform.supports_framebuffers():
+                normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+            else:
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+                glReadBuffer(GL_FRONT)
+                renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+                normal_arr = renderer.jit.read_color_buf(self.viewport_height, self.viewport_width, rgba=False)
+                normal_arr = renderer._resize_image(normal_arr, antialias=not seg)
+
+            retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache
 

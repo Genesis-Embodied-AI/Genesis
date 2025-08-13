@@ -35,21 +35,33 @@ class Solver(RBC):
         self._B = self._sim._B
         if self._init_gravity is not None:
             g_np = np.asarray(self._init_gravity, dtype=gs.np_float)
-            g_np = np.repeat(g_np[None], self._B, axis=0)
+            g_np = np.tile(g_np, (self._B, 1))
             self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
             self._gravity.from_numpy(g_np)
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
         if self._gravity is None:
+            gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return
         g = np.asarray(gravity, dtype=gs.np_float)
         if envs_idx is None:
             if g.ndim == 1:
-                g = np.repeat(g[None], self._B, axis=0)
+                g = np.tile(g, (self._B, 1))
+            assert g.shape == (self._B, 3), "Input gravity array should match (n_envs, 3)"
             self._gravity.from_numpy(g)
         else:
-            self._gravity[envs_idx] = g
+            envs_idx = np.atleast_1d(np.array(envs_idx, dtype=gs.np_int))
+            if g.ndim == 1:
+                g = np.tile(g, (len(envs_idx), 1))
+            assert g.shape == (len(envs_idx), 3), "Input gravity array should match (len(envs_idx), 3)"
+            self._kernel_set_gravity(g, envs_idx)
+
+    @ti.kernel
+    def _kernel_set_gravity(self, gravity: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
+        for i_b_ in range(envs_idx.shape[0]):
+            for j in ti.static(range(3)):
+                self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
@@ -152,7 +164,7 @@ class Solver(RBC):
         return self._gravity.to_numpy() if self._gravity is not None else None
 
     @property
-    def entities(self):
+    def entities(self) -> list[Entity]:
         return self._entities
 
     @property

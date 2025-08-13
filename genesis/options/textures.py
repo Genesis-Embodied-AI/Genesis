@@ -7,6 +7,7 @@ import OpenEXR
 from PIL import Image
 
 import genesis as gs
+import genesis.utils.mesh as mu
 
 from .options import Options
 
@@ -30,6 +31,9 @@ class Texture(Options):
         raise NotImplementedError
 
     def apply_cutoff(self, cutoff):
+        raise NotImplementedError
+
+    def is_black(self):
         raise NotImplementedError
 
 
@@ -66,6 +70,9 @@ class ColorTexture(Texture):
         if cutoff is None:
             return
         self.color = tuple(1.0 if c >= cutoff else 0.0 for c in self.color)
+
+    def is_black(self):
+        return all(c < gs.EPS for c in self.color)
 
 
 class ImageTexture(Texture):
@@ -115,25 +122,7 @@ class ImageTexture(Texture):
             if self.image_path.endswith((".hdr", ".exr")):
                 self.encoding = "linear"  # .exr or .hdr images should be encoded with 'linear'
                 if self.image_path.endswith((".exr")):
-                    exr_file = OpenEXR.InputFile(self.image_path)
-                    exr_header = exr_file.header()
-
-                    if exr_header["compression"].v > Imath.Compression.PIZ_COMPRESSION:
-                        new_image_path = f"{self.image_path[:-4]}_ZIP.exr"
-                        gs.logger.warning(
-                            f"EXR image {self.image_path}'s compression type {exr_header['compression']} is not supported. "
-                            f"Converting to compression type ZIP_COMPRESSION and saving to {new_image_path}."
-                        )
-                        self.image_path = new_image_path
-
-                        if not os.path.exists(new_image_path):
-                            channel_data = {channel: exr_file.channel(channel) for channel in exr_header["channels"]}
-                            exr_header["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
-                            new_exr_file = OpenEXR.OutputFile(new_image_path, exr_header)
-                            new_exr_file.writePixels(channel_data)
-                            new_exr_file.close()
-
-                    exr_file.close()
+                    self.image_path = mu.check_exr_compression(self.image_path)
             else:
                 self.image_array = np.array(Image.open(self.image_path))
                 self.image_path = None
@@ -158,16 +147,8 @@ class ImageTexture(Texture):
                     )
             self.image_array = arr
 
-        # calculate channel
-        if self.image_array is None:
-            if isinstance(self.resolution, (tuple, list)):
-                H, W = self.resolution
-            else:
-                H = W = self.resolution
-
-            # Default to 3-channel RGB
-            white = np.array([255, 255, 255], dtype=np.uint8)
-            self.image_array = np.full((H, W, 3), white, dtype=np.uint8)
+        # just calculate channel
+        if self.image_array is None:  # Using 'image_path'
             self._mean_color = np.array([1.0, 1.0, 1.0], dtype=np.float16)
             self._channel = 3
         else:
@@ -216,3 +197,6 @@ class ImageTexture(Texture):
         if cutoff is None or self.image_array is None:  # Cutoff does not apply on image file.
             return
         self.image_array = np.where(self.image_array >= 255.0 * cutoff, 255, 0).astype(np.uint8)
+
+    def is_black(self):
+        return all(c < gs.EPS for c in self.image_color) or np.max(self.image_array) == 0

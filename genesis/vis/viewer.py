@@ -36,11 +36,14 @@ class Viewer(RBC):
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
         self._max_FPS = options.max_FPS
-        self._camera_init_pos = options.camera_pos
-        self._camera_init_lookat = options.camera_lookat
-        self._camera_up = options.camera_up
+        self._camera_init_pos = np.asarray(options.camera_pos, dtype=gs.np_float)
+        self._camera_init_lookat = np.asarray(options.camera_lookat, dtype=gs.np_float)
+        self._camera_up = np.asarray(options.camera_up, dtype=gs.np_float)
         self._camera_fov = options.camera_fov
         self._enable_interaction = options.enable_interaction
+
+        if options.enable_interaction and gs.backend != gs.cpu:
+            gs.logger.warning("Interaction code is slow on GPU. Switch to CPU backend or disable interaction.")
 
         self._pyrender_viewer = None
         self.context = context
@@ -161,8 +164,8 @@ class Viewer(RBC):
         if self._max_FPS is not None:
             self.rate.sleep()
 
-    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
-        return self._pyrender_viewer.render_offscreen(camera_node, render_target, depth, seg, normal)
+    def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
+        return self._pyrender_viewer.render_offscreen(camera_node, render_target, rgb, depth, seg, normal)
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
         """
@@ -219,19 +222,19 @@ class Viewer(RBC):
         entity_pos = self._followed_entity.get_pos().cpu().numpy()
         if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
-        camera_pose = np.array(self._pyrender_viewer._trackball.pose)
+        camera_transform = np.asarray(self._pyrender_viewer._trackball.pose, copy=True)
         camera_pos = np.array(self._pyrender_viewer._trackball.pose[:3, 3])
 
         if self._follow_smoothing is not None:
             # Smooth viewer movement with a low-pass filter
             camera_pos = self._follow_smoothing * camera_pos + (1 - self._follow_smoothing) * (
-                entity_pos + np.array(self._camera_init_pos)
+                entity_pos + self._camera_init_pos
             )
             self._follow_lookat = (
                 self._follow_smoothing * self._follow_lookat + (1 - self._follow_smoothing) * entity_pos
             )
         else:
-            camera_pos = entity_pos + np.array(self._camera_init_pos)
+            camera_pos = entity_pos + self._camera_init_pos
             self._follow_lookat = entity_pos
 
         for i, fixed_axis in enumerate(self._follow_fixed_axis):
@@ -241,8 +244,8 @@ class Viewer(RBC):
 
         if self._follow_fix_orientation:
             # Keep the camera orientation fixed by overriding the lookat point
-            camera_pose[:3, 3] = camera_pos
-            self.set_camera_pose(pose=camera_pose)
+            camera_transform[:3, 3] = camera_pos
+            self.set_camera_pose(pose=camera_transform)
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 

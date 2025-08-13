@@ -102,6 +102,7 @@ class RigidEntity(Entity):
             gs.raise_exception(f"Unsupported morph: {self._morph}.")
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
+        self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
         self._update_child_idxs()
 
@@ -409,6 +410,7 @@ class RigidEntity(Entity):
             j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
             j_info["dofs_stiffness"] = np.zeros(6)
             j_info["dofs_invweight"] = np.zeros(6)
+            j_info["dofs_frictionloss"] = np.zeros(6)
             j_info["dofs_damping"] = np.zeros(6)
             if isinstance(morph, gs.morphs.Drone):
                 mass_tot = sum(l_info["inertial_mass"] for l_info in l_infos)
@@ -696,6 +698,7 @@ class RigidEntity(Entity):
                 dofs_motion_vel=dofs_motion_vel,
                 dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
                 dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
+                dofs_frictionloss=j_info.get("dofs_frictionloss", np.zeros(n_dofs)),
                 dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
                 dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
                 dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
@@ -760,9 +763,9 @@ class RigidEntity(Entity):
 
         # Add collision geometries
         for g_info in cg_infos:
-            friction = g_info.get("friction", self.material.friction)
+            friction = self.material.friction
             if friction is None:
-                friction = gu.default_friction()
+                friction = g_info.get("friction", gu.default_friction())
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
@@ -1879,6 +1882,7 @@ class RigidEntity(Entity):
             The vertices of the entity (using collision geoms).
         """
 
+        self._update_verts_for_geom()
         if self.is_free:
             tensor = torch.empty(
                 self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
@@ -1891,22 +1895,20 @@ class RigidEntity(Entity):
             self._kernel_get_fixed_verts(tensor)
         return tensor
 
+    @gs.assert_built
+    def _update_verts_for_geom(self):
+        for i_g_ in range(self.n_geoms):
+            i_g = i_g_ + self._geom_start
+            self._solver.update_verts_for_geom(i_g)
+
     @ti.kernel
     def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
-        for i_g_, i_b in ti.ndrange(self.n_geoms, self._solver._B):
-            i_g = i_g_ + self._geom_start
-            self._solver._func_update_verts_for_geom(i_g, i_b)
-
         for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
             idx_vert = i + self._verts_state_start
             tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
 
     @ti.kernel
     def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
-        for i_g_ in range(self.n_geoms):
-            i_g = i_g_ + self._geom_start
-            self._solver._func_update_verts_for_geom(i_g, 0)
-
         for i, j in ti.ndrange(self.n_verts, 3):
             idx_vert = i + self._verts_state_start
             tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
@@ -2505,9 +2507,10 @@ class RigidEntity(Entity):
         )
         return tensor.squeeze(0) if self._solver.n_envs == 0 else tensor
 
-    def set_friction_ratio(self, friction_ratio, links_idx_local, envs_idx=None):
+    def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the friction ratio of the geoms of the specified links.
+
         Parameters
         ----------
         friction_ratio : torch.Tensor, shape (n_envs, n_links)
@@ -2517,6 +2520,8 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        links_idx_local = self._get_idx(links_idx_local, self.n_links, 0, unsafe=unsafe)
+
         links_n_geoms = torch.tensor(
             [self._links[i_l].n_geoms for i_l in links_idx_local], dtype=gs.tc_int, device=gs.device
         )
@@ -2527,16 +2532,21 @@ class RigidEntity(Entity):
             dtype=gs.tc_int,
             device=gs.device,
         )
-        self._solver.set_geoms_friction_ratio(geoms_friction_ratio, geoms_idx, envs_idx)
+
+        self._solver.set_geoms_friction_ratio(geoms_friction_ratio, geoms_idx, envs_idx, unsafe=unsafe)
 
     def set_friction(self, friction):
         """
-        Set the friction coefficient of all the links (and in turn, geoms) of the rigid entity.
-        Note that for a pair of geoms in contact, the actual friction coefficient is set to be max(geom_a.friction, geom_b.friction), so you need to set for both geoms.
+        Set the friction coefficient of all the links (and in turn, geometries) of the rigid entity.
 
         Note
         ----
-        In actual simulation, friction will be computed using `max(max(ga_info.friction, gb_info.friction), 1e-2)`; i.e. the minimum friction coefficient is 1e-2.
+        The friction coefficient associated with a pair of geometries in contact is defined as the maximum between
+        their respective values, so one must be careful the set the friction coefficient properly for both of them.
+
+        Warning
+        -------
+        The friction coefficient must be in range [1e-2, 5.0] for simulation stability.
 
         Parameters
         ----------
@@ -2553,6 +2563,7 @@ class RigidEntity(Entity):
     def set_mass_shift(self, mass_shift, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the mass shift of specified links.
+
         Parameters
         ----------
         mass : torch.Tensor, shape (n_envs, n_links)
@@ -2565,9 +2576,10 @@ class RigidEntity(Entity):
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_mass_shift(mass_shift, links_idx, envs_idx, unsafe=unsafe)
 
-    def set_COM_shift(self, com_shift, links_idx_local, envs_idx=None, *, unsafe=False):
+    def set_COM_shift(self, com_shift, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the center of mass (COM) shift of specified links.
+
         Parameters
         ----------
         com : torch.Tensor, shape (n_envs, n_links, 3)
@@ -2600,13 +2612,9 @@ class RigidEntity(Entity):
         mass : float
             The mass to set.
         """
-        original_mass_distribution = []
+        ratio = float(mass) / self.get_mass()
         for link in self.links:
-            original_mass_distribution.append(link.get_mass())
-        original_mass_distribution = np.array(original_mass_distribution)
-        original_mass_distribution /= np.sum(original_mass_distribution)
-        for link, mass_ratio in zip(self.links, original_mass_distribution):
-            link.set_mass(mass * mass_ratio)
+            link.set_mass(link.get_mass() * ratio)
 
     @gs.assert_built
     def get_mass(self):
@@ -2869,3 +2877,8 @@ class RigidEntity(Entity):
     def is_free(self):
         """Whether the entity is free to move."""
         return self._is_free
+
+    @property
+    def is_local_collision_mask(self):
+        """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
+        return self._is_local_collision_mask
