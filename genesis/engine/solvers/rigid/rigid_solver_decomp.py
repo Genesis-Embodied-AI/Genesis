@@ -952,11 +952,8 @@ class RigidSolver(Solver):
         # from genesis.utils.tools import create_timer
 
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
-        if self._enable_collision or self._enable_joint_limit or self.n_equalities > 0:
-            self.constraint_solver.constraint_state.n_constraints.fill(0)
-            self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
-            self._func_constraint_clear()
-            # timer.stamp("constraint_solver.clear")
+        self._func_constraint_clear()
+        # timer.stamp("constraint_solver.clear")
 
         if self._enable_collision:
             self.collider.detection()
@@ -969,6 +966,7 @@ class RigidSolver(Solver):
     def _func_constraint_clear(self):
         self.constraint_solver.constraint_state.n_constraints.fill(0)
         self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
+        self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
         self.collider._collider_state.n_contacts.fill(0)
 
     def _func_forward_dynamics(self):
