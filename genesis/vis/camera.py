@@ -1,7 +1,7 @@
 import inspect
+import math
 import os
 import time
-import math
 
 import cv2
 import numpy as np
@@ -9,7 +9,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.sensors import Sensor
+from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
 
 
@@ -25,7 +25,7 @@ def _T_to_quat_for_madrona(T):
     return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
 
 
-class Camera(Sensor):
+class Camera(RBC):
     """
     A camera which can be used to render RGB, depth, and segmentation images.
     Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
@@ -66,6 +66,14 @@ class Camera(Sensor):
         The far plane of the camera.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
+    env_idx : int, optional
+        The index of the environment to track the camera.
+    debug : bool, optional
+        Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
+        simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
+        systematically, no matter if BatchRender and RayTracer is enabled. This way, it is possible to record the
+        simulation with arbitrary resolution and camera pose, without interfering with what robots can perceive
+        from their environment. Defaults to False.
     """
 
     def __init__(
@@ -87,6 +95,7 @@ class Camera(Sensor):
         far=100.0,
         transform=None,
         env_idx=None,
+        debug=False,
     ):
         self._idx = idx
         self._uid = gs.UID()
@@ -111,6 +120,7 @@ class Camera(Sensor):
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
+        self._debug = debug
 
         self._env_idx = env_idx
         self._envs_offset = None
@@ -139,11 +149,10 @@ class Camera(Sensor):
 
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
-        self._batch_renderer = self._visualizer.batch_renderer
         self._rasterizer = self._visualizer.rasterizer
-        self._raytracer = self._visualizer.raytracer
+        self._raytracer = self._visualizer.raytracer if not self._debug else None
+        self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
 
-        self._rasterizer.add_camera(self)
         if self._batch_renderer is not None:
             self._rgb_stacked = True
             self._other_stacked = True
@@ -157,6 +166,7 @@ class Camera(Sensor):
                 self._rgb_stacked = False
                 self._other_stacked = False
             else:
+                self._rasterizer.add_camera(self)
                 self._rgb_stacked = self._visualizer._context.env_separate_rigid
                 self._other_stacked = self._visualizer._context.env_separate_rigid
 
@@ -323,13 +333,13 @@ class Camera(Sensor):
         # If n_envs == 0, the second dimension of the output is camera.
         # Only return the current camera's image
         if rgb_arr:
-            rgb_arr = rgb_arr[self._idx]
+            rgb_arr = rgb_arr[self.idx]
         if depth:
-            depth_arr = depth_arr[self._idx]
+            depth_arr = depth_arr[self.idx]
         if segmentation:
-            seg_arr = seg_arr[self._idx]
+            seg_arr = seg_arr[self.idx]
         if normal:
-            normal_arr = normal_arr[self._idx]
+            normal_arr = normal_arr[self.idx]
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
@@ -533,19 +543,6 @@ class Camera(Sensor):
         point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    # quat for Madrona needs to be transformed to y-forward
-    def _T_to_quat_for_madrona(self, T):
-        if isinstance(T, torch.Tensor):
-            _, quat = gu.T_to_trans_quat(T)
-            to_y_fwd = torch.tensor(
-                [1.0 / np.sqrt(2.0), -1.0 / np.sqrt(2.0), 0, 0], dtype=gs.tc_float, device=gs.device
-            ).expand(quat.shape[0], 4)
-            quat = gu.transform_quat_by_quat(to_y_fwd, quat)
-            return quat
-        else:
-            gs.raise_exception(f"the input must be torch.Tensor. got: {type(T)=}")
-
-    @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
         """
         Set the pose of the camera.
@@ -620,9 +617,10 @@ class Camera(Sensor):
         self._multi_env_transform_tensor[env_idx] = transform
         self._multi_env_quat_tensor[env_idx] = _T_to_quat_for_madrona(transform)
 
-        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+        elif self._batch_renderer is None:
+            self._rasterizer.update_camera(self)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
@@ -663,9 +661,10 @@ class Camera(Sensor):
             else:
                 self._fov = intrinsics_fov
 
-        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+        elif self._batch_renderer is None:
+            self._rasterizer.update_camera(self)
 
     @gs.assert_built
     def start_recording(self):
@@ -765,7 +764,7 @@ class Camera(Sensor):
 
     @property
     def idx(self):
-        """The integer index of the camera."""
+        """The global integer index of the camera."""
         return self._idx
 
     @property
@@ -850,6 +849,11 @@ class Camera(Sensor):
     def env_idx(self):
         """Index of the environment being tracked by the camera."""
         return self._env_idx
+
+    @property
+    def debug(self):
+        """Whether the camera is a debug camera."""
+        return self._debug
 
     @property
     def pos(self):

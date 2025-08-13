@@ -26,6 +26,7 @@ from genesis.options import (
     PBDOptions,
     ProfilingOptions,
     RigidOptions,
+    SensorOptions,
     SFOptions,
     SimOptions,
     SPHOptions,
@@ -520,6 +521,10 @@ class Scene(RBC):
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
+    def add_sensor(self, sensor_options: SensorOptions):
+        return self._sim._sensor_manager.create_sensor(sensor_options)
+
+    @gs.assert_unbuilt
     def add_camera(
         self,
         model="pinhole",
@@ -534,6 +539,7 @@ class Scene(RBC):
         spp=256,
         denoise=None,
         env_idx=None,
+        debug=False,
     ):
         """
         Add a camera to the scene.
@@ -572,6 +578,12 @@ class Scene(RBC):
             Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
             to True on Linux, otherwise False. If OptiX denoiser is not available in your platform, consider enabling
             the OIDN denoiser option when building the RayTracer.
+        debug : bool
+            Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
+            simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
+            systematically, no matter if BatchRender and RayTracer is enabled. This way, it is possible to record the
+            simulation with arbitrary resolution and camera pose, without interfering with what robots can perceive
+            from their environment. Defaults to False.
 
         Returns
         -------
@@ -581,7 +593,7 @@ class Scene(RBC):
         if denoise is None:
             denoise = sys.platform != "darwin"
         return self._visualizer.add_camera(
-            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx
+            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug
         )
 
     @gs.assert_unbuilt

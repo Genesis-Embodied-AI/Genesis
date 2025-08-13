@@ -74,6 +74,8 @@ class RasterizerContext:
         self.scene = scene
         self.sim = scene.sim
         self.visualizer = scene.visualizer
+
+        # Update visuals at this point avoids nasty visual artifacts during Scene build
         self.visualizer.update_visual_states()
 
         if self.rendered_envs_idx is None:
