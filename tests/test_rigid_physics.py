@@ -1654,6 +1654,37 @@ def test_mass_mat(show_viewer, tol):
     assert_allclose(mass_mat, mass_mat_1, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_frictionloss_advanced(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    asset_path = get_hf_dataset(pattern="SO101/*")
+    robot = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=f"{asset_path}/SO101/so101_new_calib.xml",
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.025, 0.025, 0.025),
+        ),
+    )
+    scene.build(n_envs=0)
+
+    scene.reset()
+    box.set_pos(torch.tensor((0.1, 0.0, 1.0), dtype=gs.tc_float, device=gs.device))
+    for _ in range(200):
+        scene.step()
+
+    assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
+    # assert_allclose(torch.stack([geom.get_AABB() for geom in robot.geoms])[:, :, 2].min(), 0.0, tol=1e-3)
+    assert_allclose(box.get_dofs_velocity(), 0.0, tol=tol)
+
+
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_nonconvex_collision(show_viewer):
     scene = gs.Scene(
