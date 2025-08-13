@@ -35,7 +35,10 @@ def load_rl_policy(env, train_cfg, log_dir):
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
-    last_ckpt = sorted(checkpoint_files)[-1]
+    try:
+        *_, last_ckpt = sorted(checkpoint_files)
+    except ValueError as e:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
     runner.load(last_ckpt)
     print(f"Loaded RL checkpoint from {last_ckpt}")
 
@@ -52,7 +55,10 @@ def load_bc_policy(env, bc_cfg, log_dir):
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
-    last_ckpt = sorted(checkpoint_files)[-1]
+    try:
+        *_, last_ckpt = sorted(checkpoint_files)
+    except ValueError as e:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
     print(f"Loaded BC checkpoint from {last_ckpt}")
     bc_runner.load(last_ckpt)
 
@@ -61,34 +67,26 @@ def load_bc_policy(env, bc_cfg, log_dir):
 
 def get_stereo_frame(env, step_count):
     """Get stereo frame as numpy array."""
-    # Get individual camera images
-    rgb_left, _, _, _ = env.left_cam.render(rgb=True, depth=False)
-    rgb_right, _, _, _ = env.right_cam.render(rgb=True, depth=False)
+    # Get stacked stereo rgb image (B, 6, H, W)
+    stacked_stereo_rgb = env.get_stereo_rgb_images(normalize=False).cpu().numpy()[0]
+    stacked_stereo_rgb = stacked_stereo_rgb.transpose(1, 2, 0)
 
-    # Convert to numpy arrays and format for OpenCV
-    left_img = rgb_left[0].cpu().numpy()  # Take first environment
-    right_img = rgb_right[0].cpu().numpy()  # Take first environment
-
-    # Convert from RGB to BGR for OpenCV
+    # Split stacked stereo rgb image into left and right images
+    left_img, right_img = np.split(stacked_stereo_rgb, 2, axis=2)
     left_img = cv2.cvtColor(left_img, cv2.COLOR_RGB2BGR)
     right_img = cv2.cvtColor(right_img, cv2.COLOR_RGB2BGR)
+    stereo_rgb_img = np.concatenate([left_img, right_img], axis=1)
 
-    # Resize images for better display
-    scale = 2.0
-    left_img = cv2.resize(left_img, (int(left_img.shape[1] * scale), int(left_img.shape[0] * scale)))
-    right_img = cv2.resize(right_img, (int(right_img.shape[1] * scale), int(right_img.shape[0] * scale)))
-    # Concatenate images horizontally (side by side)
-    stereo_img = np.hstack([left_img, right_img])
     # Add a vertical line separator between the two images
     separator_x = left_img.shape[1]
     cv2.line(
-        img=stereo_img,
+        img=stereo_rgb_img,
         pt1=(separator_x, 0),
-        pt2=(separator_x, stereo_img.shape[0]),
+        pt2=(separator_x, stereo_rgb_img.shape[0]),
         color=(255, 255, 255),
         thickness=2,
     )
-    return stereo_img
+    return stereo_rgb_img
 
 
 def display_stereo_images(env, step_count):

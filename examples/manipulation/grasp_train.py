@@ -153,7 +153,10 @@ def load_teacher_policy(env, rl_train_cfg, exp_name):
     log_dir = Path("logs") / f"{exp_name + '_' + 'rl'}"
     assert log_dir.exists(), f"Log directory {log_dir} does not exist"
     checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
-    last_ckpt = sorted(checkpoint_files)[-1]
+    try:
+        *_, last_ckpt = sorted(checkpoint_files)
+    except ValueError as e:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
     assert last_ckpt is not None, f"No checkpoint found in {log_dir}"
     runner = OnPolicyRunner(env, rl_train_cfg, log_dir, device=gs.device)
     runner.load(last_ckpt)
