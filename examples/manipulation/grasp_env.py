@@ -1,12 +1,15 @@
 import torch
 import math
 from typing import Literal
+
 import genesis as gs
 from genesis.utils.geom import (
     xyz_to_quat,
     transform_quat_by_quat,
     transform_by_quat,
 )
+
+MAX_DEPTH = 10.0
 
 
 class GraspEnv:
@@ -223,9 +226,9 @@ class GraspEnv:
         #
         obs_components = [
             finger_pos - obj_pos,  # 3D position difference
-            finger_quat,  # current orientation (4D quaternion)
+            finger_quat,  # current orientation (w, x, y, z)
             obj_pos,  # goal position
-            obj_quat,  # goal orientation (4D quaternion)
+            obj_quat,  # goal orientation (w, x, y, z)
         ]
         obs_tensor = torch.cat(obs_components, dim=-1)
         self.extras["observations"]["critic"] = obs_tensor
@@ -237,16 +240,16 @@ class GraspEnv:
 
     def get_depth_image(self, normalize: bool = True) -> torch.Tensor:
         # Render depth image from the camera
-        _, depth, _, _ = self.batch_cam.render(rgb=False, depth=True)
+        _, depth, _, _ = self.batch_cam.render(rgb=False, depth=True, segmentation=False, normal=False)
         depth = depth.permute(0, 3, 1, 2)  # shape (B, 1, H, W)
         if normalize:
-            depth = torch.clamp(depth, min=0.0, max=10)
-            depth = (depth - 0.0) / (10.0 - 0.0)  # normalize to [0, 1]
+            depth = torch.clamp(depth, min=0.0, max=MAX_DEPTH)
+            depth = (depth - 0.0) / (MAX_DEPTH - 0.0)  # normalize to [0, 1]
         return depth
 
     def get_stereo_rgb_images(self, normalize: bool = True) -> torch.Tensor:
-        rgb_left, _, _, _ = self.left_cam.render(rgb=True, depth=False)
-        rgb_right, _, _, _ = self.right_cam.render(rgb=True, depth=False)
+        rgb_left, _, _, _ = self.left_cam.render(rgb=True, depth=False, segmentation=False, normal=False)
+        rgb_right, _, _, _ = self.right_cam.render(rgb=True, depth=False, segmentation=False, normal=False)
 
         # Convert to proper format
         rgb_left = rgb_left.permute(0, 3, 1, 2)[:, :3]  # shape (B, 3, H, W)
@@ -254,10 +257,8 @@ class GraspEnv:
 
         # Normalize if requested
         if normalize:
-            rgb_left = torch.clamp(rgb_left, min=0.0, max=255.0)
-            rgb_left = (rgb_left - 0.0) / (255.0 - 0.0)
-            rgb_right = torch.clamp(rgb_right, min=0.0, max=255.0)
-            rgb_right = (rgb_right - 0.0) / (255.0 - 0.0)
+            rgb_left = torch.clamp(rgb_left, min=0.0, max=255.0) / 255.0
+            rgb_right = torch.clamp(rgb_right, min=0.0, max=255.0) / 255.0
 
         # Concatenate left and right rgb images along channel dimension
         # Result: [B, 6, H, W] where channel 0 is left rgb, channel 1 is right rgb

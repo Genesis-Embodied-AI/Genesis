@@ -29,7 +29,7 @@ def get_train_cfg(exp_name, max_iterations):
             "class_name": "PPO",
             "clip_param": 0.2,
             "desired_kl": 0.01,
-            "entropy_coef": 0.00,
+            "entropy_coef": 0.0,
             "gamma": 0.99,
             "lam": 0.95,
             "learning_rate": 0.0003,
@@ -72,7 +72,7 @@ def get_train_cfg(exp_name, max_iterations):
         "num_steps_per_env": 24,
         "learning_rate": 0.001,
         "num_epochs": 5,
-        "mini_batches_size": 512,
+        "num_mini_batches": 10,
         "max_grad_norm": 1.0,
         # Network architecture
         "policy": {
@@ -210,5 +210,10 @@ if __name__ == "__main__":
 
 """
 # training
-python examples/manipulation/grasp_train.py
+
+# to train the RL policy
+python examples/manipulation/grasp_train.py --stage=rl  
+
+# to train the BC policy (requires RL policy to be trained first)
+python examples/manipulation/grasp_train.py --stage=bc 
 """

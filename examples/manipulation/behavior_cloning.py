@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 import numpy as np
 from collections import deque
+from collections.abc import Iterator
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -37,7 +38,7 @@ class BehaviorCloning:
             img_shape=rgb_shape,
             state_dim=self._cfg["policy"]["action_head"]["state_obs_dim"],
             action_dim=action_dim,
-            device=self._device,
+            device=device,
         )
 
         # Training state
@@ -63,18 +64,18 @@ class BehaviorCloning:
             num_batches = 0
 
             start_time = time.time()
-            generator = self._buffer.get_batches(self._cfg.get("mini_batches_size", 32), self._cfg["num_epochs"])
+            generator = self._buffer.get_batches(self._cfg.get("num_mini_batches", 4), self._cfg["num_epochs"])
             for batch in generator:
                 # Forward pass for both action and pose prediction
-                pred_action = self._policy(batch["rgb_obs"].float(), batch["robot_pose"].float())
-                pred_left_pose, pred_right_pose = self._policy.predict_pose(batch["rgb_obs"].float())
+                pred_action = self._policy(batch["rgb_obs"], batch["robot_pose"])
+                pred_left_pose, pred_right_pose = self._policy.predict_pose(batch["rgb_obs"])
 
                 # Compute action prediction loss
-                action_loss = F.mse_loss(pred_action, batch["actions"].float())
+                action_loss = F.mse_loss(pred_action, batch["actions"])
 
                 # Compute pose estimation loss (position + orientation)
-                pose_left_loss = self._compute_pose_loss(pred_left_pose, batch["object_poses"].float())
-                pose_right_loss = self._compute_pose_loss(pred_right_pose, batch["object_poses"].float())
+                pose_left_loss = self._compute_pose_loss(pred_left_pose, batch["object_poses"])
+                pose_right_loss = self._compute_pose_loss(pred_right_pose, batch["object_poses"])
                 pose_loss = pose_left_loss + pose_right_loss
 
                 # Combined loss with weights
@@ -227,7 +228,7 @@ class BehaviorCloning:
 
 
 class ExperienceBuffer:
-    """Experience buffer."""
+    """A first-in-first-out buffer for experience replay."""
 
     def __init__(
         self,
@@ -238,20 +239,20 @@ class ExperienceBuffer:
         action_dim: int,
         device: str = "cpu",
     ):
+        self._num_envs = num_envs
+        self._max_size = max_size
         self._img_shape = img_shape
         self._state_dim = state_dim
         self._action_dim = action_dim
-        self._num_envs = num_envs
-        self._max_size = max_size
         self._device = device
+        self._ptr = 0
         self._size = 0
-        self._ptr = 0  # pointer to the next free slot in the buffer
 
-        # Initialize buffers
-        self._rgb_obs = torch.zeros(max_size, num_envs, *img_shape, device=device)
-        self._robot_pose = torch.zeros(max_size, num_envs, state_dim, device=device)
-        self._object_poses = torch.zeros(max_size, num_envs, 7, device=device)
-        self._actions = torch.zeros(max_size, num_envs, action_dim, device=device)
+        # Buffers for data
+        self._rgb_obs = torch.empty(max_size, num_envs, *img_shape, dtype=torch.float32, device=device)
+        self._robot_pose = torch.empty(max_size, num_envs, state_dim, dtype=torch.float32, device=device)
+        self._object_poses = torch.empty(max_size, num_envs, 7, dtype=torch.float32, device=device)
+        self._actions = torch.empty(max_size, num_envs, action_dim, dtype=torch.float32, device=device)
 
     def add(
         self,
@@ -261,42 +262,38 @@ class ExperienceBuffer:
         actions: torch.Tensor,
     ) -> None:
         """Add experience to buffer."""
-        ptr = self._ptr % self._max_size
-        self._rgb_obs[ptr].copy_(rgb_obs)
-        self._robot_pose[ptr].copy_(robot_pose)
-        self._object_poses[ptr].copy_(object_poses)
-        self._actions[ptr].copy_(actions)
-        self._ptr = self._ptr + 1
+        self._ptr = (self._ptr + 1) % self._max_size
+        self._rgb_obs[self._ptr] = rgb_obs
+        self._robot_pose[self._ptr] = robot_pose
+        self._object_poses[self._ptr] = object_poses
+        self._actions[self._ptr] = actions
         self._size = min(self._size + 1, self._max_size)
 
-    def get_batches(self, mini_batches_size: int, num_epochs: int):
+    def get_batches(self, num_mini_batches: int, num_epochs: int) -> Iterator[dict[str, torch.Tensor]]:
         """Generate batches for training."""
-        buffer_size = self._size * self._num_envs
-        indices = torch.randperm(buffer_size, device=self._device)
         # calculate the size of each mini-batch
-        num_batches = min(buffer_size // mini_batches_size, 10)
+        batch_size = self._size // num_mini_batches
         for _ in range(num_epochs):
-            for batch_idx in range(num_batches):
-                start = batch_idx * mini_batches_size
-                end = start + mini_batches_size
-                mb_indices = indices[start:end]
+            indices = torch.randperm(self._size)
+            for batch_idx in range(0, self._size, batch_size):
+                batch_indices = indices[batch_idx : batch_idx + batch_size]
 
                 # Yield a mini-batch of data
-                batch = {
-                    "rgb_obs": self._rgb_obs.view(-1, *self._img_shape)[mb_indices],
-                    "robot_pose": self._robot_pose.view(-1, self._state_dim)[mb_indices],
-                    "object_poses": self._object_poses.view(-1, 7)[mb_indices],
-                    "actions": self._actions.view(-1, self._action_dim)[mb_indices],
+                yield {
+                    "rgb_obs": self._rgb_obs[batch_indices].view(-1, *self._img_shape),
+                    "robot_pose": self._robot_pose[batch_indices].view(-1, self._state_dim),
+                    "object_poses": self._object_poses[batch_indices].view(-1, 7),
+                    "actions": self._actions[batch_indices].view(-1, self._action_dim),
                 }
-                yield batch
 
     def clear(self) -> None:
         """Clear the buffer."""
         self._rgb_obs.zero_()
         self._robot_pose.zero_()
+        self._object_poses.zero_()
         self._actions.zero_()
-        self._size = 0
         self._ptr = 0
+        self._size = 0
 
     def is_full(self) -> bool:
         """Check if buffer is full."""
@@ -343,9 +340,7 @@ class Policy(nn.Module):
         pose_mlp_cfg["output_dim"] = 7
         self.pose_mlp = self._build_mlp(pose_mlp_cfg)
 
-        # Force float32 for better performance
-        self.float()
-
+    @staticmethod
     def _build_cnn(self, config: dict) -> nn.Sequential:
         """Build CNN encoder for grayscale images."""
         layers = []
@@ -372,7 +367,8 @@ class Policy(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _build_mlp(self, config: dict) -> nn.Sequential:
+    @staticmethod
+    def _build_mlp(config: dict) -> nn.Sequential:
         mlp_input_dim = config["input_dim"]
         layers = []
         for hidden_dim in config["hidden_dims"]:
@@ -393,11 +389,6 @@ class Policy(nn.Module):
 
     def forward(self, rgb_obs: torch.Tensor, state_obs: torch.Tensor | None = None) -> dict:
         """Forward pass with shared stereo encoder for rgb images."""
-        # Ensure float32 for better performance
-        rgb_obs = rgb_obs.float()
-        if state_obs is not None:
-            state_obs = state_obs.float()
-
         # Get features
         left_features, right_features = self.get_features(rgb_obs)
 
@@ -417,8 +408,6 @@ class Policy(nn.Module):
 
     def predict_pose(self, rgb_obs: torch.Tensor) -> torch.Tensor:
         """Predict pose from rgb images and state observations."""
-        # Ensure float32 for better performance
-        rgb_obs = rgb_obs.float()
         left_features, right_features = self.get_features(rgb_obs)
         left_pose = self.pose_mlp(left_features)
         right_pose = self.pose_mlp(right_features)
