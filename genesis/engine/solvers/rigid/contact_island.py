@@ -89,7 +89,7 @@ class ContactIsland:
         self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
 
     @ti.kernel
-    def clear__island_mapping(self):
+    def clear(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_e, i_b in ti.ndrange(self.solver.n_entities, self.solver._B):
             self.entity_edge[i_e, i_b].n = 0
@@ -121,7 +121,7 @@ class ContactIsland:
         self.n_edges[i_b] = n_edge + 1
 
     @ti.kernel
-    def add_island__all_contact_edges(self):
+    def add_contact_edges_to_islands(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
@@ -131,7 +131,7 @@ class ContactIsland:
                 self.add_edge(link_a, link_b, i_b)
 
     @ti.kernel
-    def add_island__all_hibernated_island_edges(self):
+    def add_hiberanted_edges_to_islands(self):
         _B = self.solver._B
         n_entities = self.solver.n_entities
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
@@ -149,15 +149,15 @@ class ContactIsland:
                     self.add_edge(any_link_a, any_link_b, i_b)
 
     def construct(self):
-        self.clear__island_mapping()
-        self.add_island__all_contact_edges()
-        self.add_island__all_hibernated_island_edges()
-        self.preprocess_island__map_entities_to_edges()
+        self.clear()
+        self.add_contact_edges_to_islands()
+        self.add_hiberanted_edges_to_islands()
+        self.preprocess_island_and_map_entities_to_edges()
         self.construct_islands()
-        self.postprocess_island__assign_contact_data_to_temp_islands()
+        self.postprocess_island_and_assign_contact_data_to_islands()
 
     @ti.kernel
-    def postprocess_island__assign_contact_data_to_temp_islands(self):
+    def postprocess_island_and_assign_contact_data_to_islands(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
@@ -216,7 +216,7 @@ class ContactIsland:
                     self.island_entity[island, i_b].curr = self.island_entity[island, i_b].curr + 1
 
     @ti.kernel
-    def preprocess_island__map_entities_to_edges(self):
+    def preprocess_island_and_map_entities_to_edges(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             entity_list_start = 0

@@ -1,40 +1,42 @@
-from typing import Literal, TYPE_CHECKING
 from dataclasses import dataclass
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
-import torch
 import numpy.typing as npt
 import taichi as ti
+import torch
 
 import genesis as gs
-from genesis.engine.entities.base_entity import Entity
-from genesis.options.solvers import RigidOptions
 import genesis.utils.geom as gu
-from genesis.utils import linalg as lu
-from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
-from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
-from genesis.engine.states.solvers import RigidSolverState
-from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
+
+from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
+from genesis.engine.entities.base_entity import Entity
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.engine.solvers.rigid.rigid_debug import Debug
 from genesis.engine.solvers.rigid.rigid_validate import (
     validate_entity_hibernation_state_for_all_entities_in_temp_island,
     validate_next_hibernated_entity_indices_in_entire_scene,
 )
+from genesis.engine.states.solvers import RigidSolverState
+from genesis.options.solvers import RigidOptions
+from genesis.styles import colors, formats
+from genesis.utils import linalg as lu
+from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
 
+from ....utils.sdf_decomp import SDF
 from ..base_solver import Solver
-from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
-from ....utils.sdf_decomp import SDF
 from .contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
+from .collider_decomp import Collider
+from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
+    import genesis.engine.solvers.rigid.array_class
+
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
-    import genesis.engine.solvers.rigid.array_class
 
 
 # minimum constraint impedance
@@ -4943,8 +4945,8 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
             if not was_island_hibernated:
                 are_all_entities_okay_for_hibernation = True
                 entity_ref_range = ci.island_entity[island_idx, i_b]
-                for i in range(entity_ref_range.n):
-                    entity_ref = entity_ref_range.start + i
+                for i_entity_ref_offset_ in range(entity_ref_range.n):
+                    entity_ref = entity_ref_range.start + i_entity_ref_offset_
                     entity_idx = ci.entity_id[entity_ref, i_b]
 
                     is_entity_fixed = entities_info.n_dofs[entity_idx] == 0
@@ -4967,8 +4969,8 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
 
                 if not are_all_entities_okay_for_hibernation:
                     # update collider sort_buffer with aabb extents along x-axis
-                    for i in range(entity_ref_range.n):
-                        entity_ref = entity_ref_range.start + i
+                    for i_entity_ref_offset_ in range(entity_ref_range.n):
+                        entity_ref = entity_ref_range.start + i_entity_ref_offset_
                         entity_idx = ci.entity_id[entity_ref, i_b]
                         for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
                             min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
@@ -4980,8 +4982,8 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
                     prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
 
-                    for i in range(entity_ref_range.n):
-                        entity_ref = entity_ref_range.start + i
+                    for i_entity_ref_offset_ in range(entity_ref_range.n):
+                        entity_ref = entity_ref_range.start + i_entity_ref_offset_
                         entity_idx = ci.entity_id[entity_ref, i_b]
 
                         func_hibernate_entity_and_zero_dof_velocities(
