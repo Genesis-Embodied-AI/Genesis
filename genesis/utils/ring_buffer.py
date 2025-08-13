@@ -29,19 +29,29 @@ class TensorRingBuffer:
         self.buffer[self._idx_ptr.value].copy_(tensor)
         self._idx_ptr.value = (self._idx_ptr.value + 1) % self.N
 
-    def get(self, idx: int, clone: bool = True):
+    def at(self, idx: int) -> torch.Tensor:
         """
+        Get a view of the tensor at the given index.
+
         Parameters
         ----------
         idx : int
             Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
-        clone : bool
-            Whether to clone the tensor.
         """
-        tensor = self.buffer[(self._idx_ptr.value - idx) % self.N]
-        return tensor.clone() if clone else tensor
+        return self.buffer[(self._idx_ptr.value - idx) % self.N]
 
-    def clone(self):
+    def get(self, idx: int) -> torch.Tensor:
+        """
+        Get a clone of the tensor at the given index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
+        """
+        return self.at(idx).clone()
+
+    def clone(self) -> "TensorRingBuffer":
         return TensorRingBuffer(
             self.N,
             self.buffer.shape[1:],
@@ -50,7 +60,7 @@ class TensorRingBuffer:
             idx_ptr=self._idx_ptr,
         )
 
-    def __getitem__(self, key: int | slice | tuple):
+    def __getitem__(self, key: int | slice | tuple) -> "TensorRingBuffer":
         """
         Enable slicing of the tensor ring buffer.
 

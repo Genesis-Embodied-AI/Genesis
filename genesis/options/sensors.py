@@ -14,3 +14,9 @@ class SensorOptions(Options):
     """
 
     read_delay: float = 0.0
+
+    def validate(self, scene):
+        """
+        Validate the sensor options values before the sensor is added to the scene.
+        """
+        pass

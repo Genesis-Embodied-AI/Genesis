@@ -9,16 +9,16 @@ from genesis.utils.ring_buffer import TensorRingBuffer
 if TYPE_CHECKING:
     from genesis.options.sensors import SensorOptions
 
-    from .base_sensor import Sensor
+    from .base_sensor import Sensor, SharedSensorMetadata
 
 
 class SensorManager:
-    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], Type["Sensor"]] = {}
+    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], tuple[Type["Sensor"], Type["SharedSensorMetadata"]]] = {}
 
     def __init__(self, sim):
         self._sim = sim
         self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
-        self._sensors_metadata: dict[Type["Sensor"], dict[str, Any]] = {}
+        self._sensors_metadata: dict[Type["Sensor"], SharedSensorMetadata | None] = {}
         self._ground_truth_cache: dict[Type[torch.dtype], torch.Tensor] = {}
         self._cache: dict[Type[torch.dtype], TensorRingBuffer] = {}
         self._cache_slices_by_type: dict[Type["Sensor"], slice] = {}
@@ -27,9 +27,12 @@ class SensorManager:
         self._cloned_ground_truth_cache: dict[Type[torch.dtype], torch.Tensor] = {}
 
     def create_sensor(self, sensor_options: "SensorOptions"):
-        sensor_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
+        sensor_options.validate(self._sim.scene)
+        sensor_cls, metadata_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         self._sensors_by_type.setdefault(sensor_cls, [])
         sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
+        if sensor_cls not in self._sensors_metadata:
+            self._sensors_metadata[sensor_cls] = metadata_cls()
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
 
@@ -37,8 +40,11 @@ class SensorManager:
         max_cache_buf_len = 0
         cache_size_per_dtype = {}
         for sensor_cls, sensors in self._sensors_by_type.items():
-            self._sensors_metadata[sensor_cls] = {}
             dtype = sensor_cls._get_cache_dtype()
+
+            self._last_ground_truth_cache_cloned_step.setdefault(dtype, -1)
+            self._cloned_ground_truth_cache.setdefault(dtype, torch.zeros(0, dtype=dtype))
+
             cache_size_per_dtype.setdefault(dtype, 0)
             cls_cache_start_idx = cache_size_per_dtype[dtype]
 
@@ -106,9 +112,9 @@ class SensorManager:
         return tuple([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
 
 
-def register_sensor(sensor_cls: Type["Sensor"]):
-    def _impl(options_cls: Type["SensorOptions"]):
-        SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls
-        return options_cls
+def register_sensor(options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"]):
+    def _impl(sensor_cls: Type["Sensor"]):
+        SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls, metadata_cls
+        return sensor_cls
 
     return _impl

@@ -30,25 +30,25 @@ def test_imu_sensor(show_viewer):
         ),
     )
 
-    imu = scene.add_sensor(IMUOptions(link_idx=box.base_link_idx))
-    imu_delayed = scene.add_sensor(IMUOptions(link_idx=box.base_link_idx, read_delay=DT))
+    imu = scene.add_sensor(IMUOptions(entity_idx=box.idx))
+    imu_delayed = scene.add_sensor(IMUOptions(entity_idx=box.idx, read_delay=DT))
 
     scene.build()
 
+    # box is in freefall
     for _ in range(10):
         scene.step()
 
-    # freefall
     imu_data = imu.read()
-    assert_allclose(imu_data["lin_acc"], torch.tensor([0.0, 0.0, 0.0]), tol=1e-7)
-    assert_allclose(imu_data["ang_vel"], torch.tensor([0.0, 0.0, 0.0]), tol=1e-7)
+    assert_allclose(imu_data["lin_acc"], 0.0, tol=1e-7)
+    assert_allclose(imu_data["ang_vel"], 0.0, tol=1e-7)
 
     # shift COM to induce angular velocity
     box.set_COM_shift(torch.tensor([[0.1, 0.1, 0.1]]))
 
+    # box collides with ground
     for _ in range(30):
         scene.step()
-    # collision with ground
 
     imu_data = imu.read()
     imu_delayed_data = imu_delayed.read()
@@ -61,10 +61,10 @@ def test_imu_sensor(show_viewer):
 
     box.set_COM_shift(torch.tensor([[0.0, 0.0, 0.0]]))
 
+    # box is stationary on ground
     for _ in range(80):
         scene.step()
 
-    # on ground
     imu_data = imu.read()
     assert_allclose(imu_data["lin_acc"], torch.tensor([0.0, 0.0, -GRAVITY]), tol=1e-7)
     assert_allclose(imu_data["ang_vel"], torch.tensor([0.0, 0.0, 0.0]), tol=1e-5)

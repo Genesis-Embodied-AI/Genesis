@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, List, Type
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, List
 
 import numpy as np
 import taichi as ti
@@ -12,6 +13,15 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
     from .sensor_manager import SensorManager
+
+
+@dataclass
+class SharedSensorMetadata:
+    """
+    Shared metadata between all sensors of the same class.
+    """
+
+    pass
 
 
 @ti.data_oriented
@@ -28,7 +38,7 @@ class Sensor(RBC):
         # initialized by SensorManager during build
         self._read_delay_steps: int = 0
         self._shape_indices: list[tuple[int, int]] = []
-        self._shared_metadata: dict[str, Any] | None = None
+        self._shared_metadata: SharedSensorMetadata | None = None
         self._cache: "TensorRingBuffer" | None = None
 
     # =============================== implementable methods ===============================
