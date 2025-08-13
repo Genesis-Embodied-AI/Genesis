@@ -915,7 +915,7 @@ class RigidSolver(Solver):
         )
         # timer.stamp("kernel_step_1")
         if isinstance(self.sim.coupler, SAPCoupler):
-            self.update_qvel_save_qvel_prev()
+            self.update_qvel()
         else:
             self._func_constraint_force()
             # timer.stamp("constraint_force")
@@ -1211,7 +1211,7 @@ class RigidSolver(Solver):
         )
 
     @ti.kernel
-    def update_qvel_save_qvel_prev(self):
+    def update_qvel(self):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self._B):
@@ -1230,7 +1230,7 @@ class RigidSolver(Solver):
                 )
 
     @ti.kernel
-    def update_qacc_from_qvel_reset_qvel(self):
+    def update_qacc_from_qvel_delta(self):
         if ti.static(self._use_hibernation):
             ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self._B):
@@ -1257,7 +1257,7 @@ class RigidSolver(Solver):
 
     def substep_post_coupling(self, f):
         if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
-            self.update_qacc_from_qvel_reset_qvel()
+            self.update_qacc_from_qvel_delta()
             kernel_step_2(
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,

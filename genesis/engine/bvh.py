@@ -489,6 +489,7 @@ class LBVH(RBC):
 class FEMSurfaceTetLBVH(LBVH):
     """
     FEMSurfaceTetLBVH is a specialized Linear BVH for FEM surface tetrahedrals.
+
     It extends the LBVH class to support filtering based on FEM surface tetrahedral elements.
     """
 
@@ -499,10 +500,16 @@ class FEMSurfaceTetLBVH(LBVH):
     @ti.func
     def filter(self, i_a, i_q):
         """
-        Filter function for FEM surface tets. Filter out tet that share vertices.\
+        Filter function for FEM surface tets. Filter out tet that share vertices.
+
         This is used to avoid self-collisions in FEM surface tets.
-        i_a: index of the found AABB
-        i_q: index of the query AABB
+
+        Parameters
+        ----------
+        i_a:
+            index of the found AABB
+        i_q:
+            index of the query AABB
         """
         result = i_a >= i_q
         i_av = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_a]].el2v

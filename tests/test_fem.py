@@ -529,6 +529,7 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
 
     sphere = scene.add_entity(
@@ -552,8 +553,12 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     state = sphere.get_state()
     min_pos_z = state.pos[..., 2].min()
     # The contact requires some penetration to generate enough contact force to cancel out gravity
-    assert_allclose(min_pos_z, -1.0e-3, atol=1e-4), f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3."
+    assert_allclose(
+        min_pos_z, -1.0e-3, atol=1e-4, err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3."
+    )
 
     link_verts = link.get_verts()
     min_pos_z = link_verts[..., 2].min()
-    assert_allclose(min_pos_z, -1.0e-4, atol=5e-5), f"Link minimum Z position {min_pos_z} is not close to -1.0e-4."
+    assert_allclose(
+        min_pos_z, -1.0e-4, atol=5e-5, err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4."
+    )

@@ -5,7 +5,6 @@ import numpy as np
 import trimesh
 import igl
 
-
 import genesis as gs
 
 from . import geom as gu
