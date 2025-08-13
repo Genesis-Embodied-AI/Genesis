@@ -156,7 +156,7 @@ def load_teacher_policy(env, rl_train_cfg, exp_name):
     last_ckpt = sorted(checkpoint_files)[-1]
     assert last_ckpt is not None, f"No checkpoint found in {log_dir}"
     runner = OnPolicyRunner(env, rl_train_cfg, log_dir, device=gs.device)
-    runner.load(log_dir / last_ckpt)
+    runner.load(last_ckpt)
     print(f"Loaded teacher policy from checkpoint {last_ckpt} from {log_dir}")
     teacher_policy = runner.get_inference_policy(device=gs.device)
     return teacher_policy

@@ -143,6 +143,7 @@ class GraspEnv:
 
         # downward facing quaternion to align with the hand
         q_downward = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(num_reset, 1)
+        # randomly yaw the object
         random_yaw = (torch.rand(num_reset, device=self.device) * 2 * math.pi - math.pi) * 0.25
         q_yaw = torch.stack(
             [

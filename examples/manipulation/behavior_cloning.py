@@ -341,7 +341,7 @@ class Policy(nn.Module):
         self.pose_mlp = self._build_mlp(pose_mlp_cfg)
 
     @staticmethod
-    def _build_cnn(self, config: dict) -> nn.Sequential:
+    def _build_cnn(config: dict) -> nn.Sequential:
         """Build CNN encoder for grayscale images."""
         layers = []
 

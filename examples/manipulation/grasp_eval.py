@@ -36,7 +36,7 @@ def load_rl_policy(env, train_cfg, log_dir):
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
     last_ckpt = sorted(checkpoint_files)[-1]
-    runner.load(log_dir / last_ckpt)
+    runner.load(last_ckpt)
     print(f"Loaded RL checkpoint from {last_ckpt}")
 
     return runner.get_inference_policy(device=gs.device)
@@ -54,7 +54,7 @@ def load_bc_policy(env, bc_cfg, log_dir):
 
     last_ckpt = sorted(checkpoint_files)[-1]
     print(f"Loaded BC checkpoint from {last_ckpt}")
-    bc_runner.load(log_dir / last_ckpt)
+    bc_runner.load(last_ckpt)
 
     return bc_runner._policy
 
@@ -82,9 +82,9 @@ def get_stereo_frame(env, step_count):
     # Add a vertical line separator between the two images
     separator_x = left_img.shape[1]
     cv2.line(
-        image=stereo_img,
-        start_point=(separator_x, 0),
-        end_point=(separator_x, stereo_img.shape[0]),
+        img=stereo_img,
+        pt1=(separator_x, 0),
+        pt2=(separator_x, stereo_img.shape[0]),
         color=(255, 255, 255),
         thickness=2,
     )
