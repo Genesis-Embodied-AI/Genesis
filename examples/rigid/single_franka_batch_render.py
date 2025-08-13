@@ -81,15 +81,15 @@ def main():
     for i in range(args.n_steps):
         scene.step()
         if args.render_all_cameras:
-            rgba, depth, normal, segmentation = scene.render_all_cameras(
-                rgb=True, depth=i % 2 == 1, normal=True, segmentation=i % 2 == 1
+            color, depth, seg, normal = scene.render_all_cameras(
+                rgb=True, depth=i % 2 == 1, segmentation=i % 2 == 1, normal=True
             )
-            exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth, normal=normal, segmentation=segmentation)
+            exporter.export_frame_all_cameras(i, rgb=color, depth=depth, segmentation=seg, normal=normal)
         else:
-            rgba, depth, normal, segmentation = cam_1.render(
-                rgb=i % 2 == 1, depth=True, normal=i % 2 == 1, segmentation=True
+            color, depth, seg, normal = cam_1.render(
+                rgb=i % 2 == 1, depth=True, segmentation=True, normal=i % 2 == 1
             )
-            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth, normal=normal, segmentation=segmentation)
+            exporter.export_frame_single_camera(i, cam_1.idx, rgb=color, depth=depth, segmentation=seg, normal=normal)
 
 
 if __name__ == "__main__":

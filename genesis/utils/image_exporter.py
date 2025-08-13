@@ -1,23 +1,93 @@
 import os
 import cv2
 import numpy as np
-import torch
+import numpy as np
+# import torch
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
+RGB_S = "rgb"
+DEPTH_S = "depth"
+SEGMENTATION_S = "segmentation"
+NORMAL_S = "normal"
 
-def _export_frame_rgb_camera(i_env, export_dir, i_cam, i_step, rgb):
-    # Take the rgb channel in case the rgb tensor has RGBA channel.
-    rgb = np.flip(tensor_to_array(rgb[i_env, ..., :3]), axis=-1)
-    cv2.imwrite(f"{export_dir}/rgb_cam{i_cam}_env{i_env}_{i_step:03d}.png", rgb)
+
+class ImageComponent:
+    def __init__(self, name, channel, normalize_func):
+        self.name = name
+        self.channel = channel
+        self.normalize_func = normalize_func
+
+    def export_frame_camera(self, i_env, export_dir, i_step, i_cam, frame):
+        # frame = tensor_to_array(frame[i_env])
+        frame = frame[i_env]
+        frame_path = os.path.join(export_dir, f"{self.name}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
+        cv2.imwrite(frame_path, frame)
+    
+    def check_frame_shape(self, frame):
+        if frame.ndim == 3:
+            frame = frame.unsqueeze(0)
+        elif frame.ndim == 2:
+            frame = frame.reshape((1, *frame.shape, 1))
+        if frame.ndim != 4 or frame.shape[-1] != self.channel:
+            gs.raise_exception(f"'{self.name}' must be an array of shape (n_envs, H, W, {self.channel})")
+        return frame
 
 
-def _export_frame_depth_camera(i_env, export_dir, i_cam, i_step, depth):
-    depth = tensor_to_array(depth[i_env])
-    cv2.imwrite(f"{export_dir}/depth_cam{i_cam}_env{i_env}_{i_step:03d}.png", depth)
+def normalize_depth(depth, depth_clip_max, depth_scale):
+    """Normalize depth values for visualization.
+
+    Args:
+        depth: Float ndarray of depth values.
+        depth_clip_max: Maximum valid depth value (float).
+        depth_scale: Storage of depth image, "linear" or "log".
+
+    Returns:
+        Normalized depth ndarray as uint8.
+    """
+    # Masks for infinities
+    pinf_mask = np.isposinf(depth)
+    ninf_mask = np.isneginf(depth)
+    depth_min = np.where(ninf_mask, np.inf, depth).min(axis=(-3, -2), keepdims=True)
+    depth_max = np.where(pinf_mask, -np.inf, depth).max(axis=(-3, -2), keepdims=True)
+    depth_min = np.maximum(depth_min, 0.0)
+    depth_max = np.minimum(depth_max, depth_clip_max)
+    depth = np.clip(depth, 0.0, depth_clip_max)
+    depth = np.where(ninf_mask, depth_min, depth)
+    depth = np.where(pinf_mask, depth_max, depth)
+
+    # Optional log scaling
+    if depth_scale == "log":
+        depth = np.log(depth + 1.0)
+
+    # Normalize to 0–255
+    denom = (depth_max - depth_min)
+    out = np.where(
+        denom > gs.EPS, ((depth_max - depth) / denom * 255.0).astype(np.uint8), 0
+    )
+    return out
+
+
+def normalize_segmentation(segmentation):
+    """Normalize segmentation values for visualization.
+
+    Args:
+        segmentation: Int ndarray of labels.
+
+    Returns:
+        Normalized segmentation ndarray as uint8.
+    """
+    seg_min = segmentation.min(axis=(-3, -2), keepdims=True)
+    seg_max = segmentation.max(axis=(-3, -2), keepdims=True)
+    denom = (seg_max - seg_min)
+
+    out = np.where(
+        denom > 0, (((segmentation - seg_min) / denom) * 255.0).astype(np.uint8), 0
+    )
+    return out
 
 
 class FrameImageExporter:
@@ -25,179 +95,78 @@ class FrameImageExporter:
     This class enables exporting images from all cameras and all environments in batch and in parallel, unlike
     `Camera.(start|stop)_recording` API, which only allows for exporting images from a single camera and environment.
     """
-
-    @staticmethod
-    def _export_frame_normal_camera(i_env, export_dir, i_cam, i_step, normal):
-        # Take the normal channel in case the rgb tensor has RGBA channel.
-        normal = np.flip(tensor_to_array(normal[i_env, ..., :3]), axis=-1)
-        cv2.imwrite(f"{export_dir}/normal_cam{i_cam}_env{i_env}_{i_step:03d}.png", normal)
-
-    @staticmethod
-    def _export_frame_segmentation_camera(i_env, export_dir, i_cam, i_step, segmentation):
-        segmentation = tensor_to_array(segmentation[i_env])
-        cv2.imwrite(f"{export_dir}/segmentation_cam{i_cam}_env{i_env}_{i_step:03d}.png", segmentation)
-
     def __init__(self, export_dir, depth_clip_max=100, depth_scale="linear"):
+        self.image_components = {
+            RGB_S: ImageComponent(RGB_S, 3, None),
+            DEPTH_S: ImageComponent(
+                DEPTH_S, 1, partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale)
+            ),
+            SEGMENTATION_S: ImageComponent(
+                SEGMENTATION_S, 1, partial(normalize_segmentation)
+            ),
+            NORMAL_S: ImageComponent(NORMAL_S, 3, None),
+        }
         self.export_dir = export_dir
         if not os.path.exists(export_dir):
             os.makedirs(export_dir)
-        self.depth_clip_max = depth_clip_max
-        self.depth_scale = depth_scale
 
-    def _normalize_depth(self, depth):
-        """Normalize depth values for visualization.
-
-        Args:
-            depth: Tensor of depth values
-
-        Returns:
-            Normalized depth tensor as uint8
-        """
-        # Filter corrupted depth pixels. inf/-inf should be replaced with max/min values (not clip values)
-        pinf_mask = torch.isposinf(depth)
-        ninf_mask = torch.isneginf(depth)
-        depth_min = torch.where(ninf_mask, float("inf"), depth).amin(dim=(-3, -2), keepdim=True)
-        depth_max = torch.where(pinf_mask, -float("inf"), depth).amax(dim=(-3, -2), keepdim=True)
-        depth_min = torch.maximum(depth_min, 0.0)
-        depth_max = torch.minimum(depth_max, self.depth_clip_max)
-        depth = depth.clamp(0.0, self.depth_clip_max)       # clip depth values
-        depth = torch.where(ninf_mask, depth_min, depth)
-        depth = torch.where(pinf_mask, depth_max, depth)
-
-        # Apply scaling if specified
-        if self.depth_scale == "log":
-            depth = torch.log(depth + 1)
-
-        # Normalize to 0-255 range
-        return torch.where(
-            depth_max - depth_min > gs.EPS, ((depth_max - depth) / (depth_max - depth_min) * 255).to(torch.uint8), 0
-        )
-
-    def export_frame_all_cameras(self, i_step, camera_idx=None, rgb=None, depth=None, normal=None, segmentation=None):
+    def export_frame_all_cameras(self, i_step, camera_idx=None, rgb=None, depth=None, segmentation=None, normal=None):
         """
         Export frames for all cameras.
 
         Args:
             i_step: The current step index.
             camera_idx: array of indices of cameras to export. If None, all cameras are exported.
-            rgb: rgb image is a sequence of tensors of shape (n_envs, H, W, 3).
-            depth: Depth image is a sequence of tensors of shape (n_envs, H, W).
+            rgb: RGB image is a sequence of arrays of shape (n_envs, H, W, 3).
+            depth: Depth image is a sequence of arrays of shape (n_envs, H, W).
+            segmentation: Segmentation image is a sequence of arrays of shape (n_envs, H, W).
+            normal: Normal image is a sequence of arrays of shape (n_envs, H, W, 3).
         """
-        if rgb is None and depth is None and normal is None and segmentation is None:
-            gs.logger.info("No images to export")
-            return
-        if rgb is not None and (not isinstance(rgb, (tuple, list)) or not rgb):
-            gs.raise_exception("'rgb' must be a non-empty sequence of tensors.")
-        if depth is not None and (not isinstance(depth, (tuple, list)) or not depth):
-            gs.raise_exception("'depth' must be a non-empty sequence of tensors.")
-        if normal is not None and (not isinstance(normal, (tuple, list)) or not normal):
-            gs.raise_exception("'normal' must be a non-empty sequence of tensors.")
-        if segmentation is not None and (not isinstance(segmentation, (tuple, list)) or not segmentation):
-            gs.raise_exception("'segmentation' must be a non-empty sequence of tensors.")
+        component_frames = {RGB_S: rgb, DEPTH_S: depth, SEGMENTATION_S: segmentation, NORMAL_S: normal}
+        ref_component = next((c for c in component_frames.values() if c is not None), None)
+        if ref_component is None:
+            gs.raise_exception("No images to export")
+        
+        # Choose reference sequence for default camera indices
         if camera_idx is None:
-            camera_idx = range(len(depth or rgb))
-        for i_cam in camera_idx:
-            rgb_cam, depth_cam, normal_cam, segmentation_cam = None, None, None, None
-            if rgb is not None:
-                rgb_cam = rgb[i_cam]
-            if depth is not None:
-                depth_cam = depth[i_cam]
-            if normal is not None:
-                normal_cam = normal[i_cam]
-            if segmentation is not None:
-                segmentation_cam = segmentation[i_cam]
-            self.export_frame_single_camera(i_step, i_cam, rgb_cam, depth_cam, normal_cam, segmentation_cam)
+            camera_idx = range(len(ref_component))
 
-    def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, normal=None, segmentation=None):
+        for name, frames in component_frames.items():
+            if frames is not None and (not isinstance(frames, (tuple, list)) or len(frames) == 0):
+                gs.raise_exception(f"'{name}' must be a non-empty sequence of arrays.")
+
+        for i_cam in camera_idx:
+            frame_args = {}
+            for name, frames in component_frames.items():
+                frame_args[name] = None if frames is None else frames[i_cam] 
+                self.export_frame_single_camera(i_step, i_cam, **frame_args)
+
+    def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, segmentation=None, normal=None):
         """
         Export frames for a single camera.
 
         Args:
             i_step: The current step index.
             i_cam: The index of the camera.
-            rgb: rgb image tensor of shape (n_envs, H, W, 3).
-            depth: Depth tensor of shape (n_envs, H, W).
+            rgb: RGB image array of shape (n_envs, H, W, 3).
+            depth: Depth image array of shape (n_envs, H, W).
+            segmentation: Segmentation image array of shape (n_envs, H, W).
+            normal: Normal image array of shape (n_envs, H, W, 3).
         """
-        if rgb is not None:
-            rgb = torch.as_tensor(rgb, dtype=torch.uint8, device=gs.device)
+        component_frames = {RGB_S: rgb, DEPTH_S: depth, SEGMENTATION_S: segmentation, NORMAL_S: normal}
 
-            # Unsqueeze rgb to (n_envs, H, W, 3)
-            if rgb.ndim == 3:
-                rgb = rgb.unsqueeze(0)
-            if rgb.ndim != 4 or rgb.shape[-1] != 3:
-                gs.raise_exception("'rgb' must be a tensor of shape (n_envs, H, W, 3)")
-
-            rgb_job = partial(
-                _export_frame_rgb_camera,
+        for name, frames in component_frames.items():
+            component = self.image_components[name]
+            frames = component.check_frame_shape(frames)
+            if component.normalize_func is not None:
+                frames = component.normalize_func(frames)
+            frame_job = partial(
+                component.export_frame_camera,
                 export_dir=self.export_dir,
-                i_cam=i_cam,
                 i_step=i_step,
-                rgb=rgb,
-            )
-
-            with ThreadPoolExecutor() as executor:
-                executor.map(rgb_job, np.arange(len(rgb)))
-
-        if depth is not None:
-            depth = torch.as_tensor(depth, dtype=torch.float32, device=gs.device)
-
-            # Unsqueeze depth to (n_envs, H, W, 1)
-            if depth.ndim == 3:
-                depth = depth.unsqueeze(0)
-            elif depth.ndim == 2:
-                depth = depth.reshape((1, *depth.shape, 1))
-            depth = self._normalize_depth(depth)
-            if depth.ndim != 4 or depth.shape[-1] != 1:
-                gs.raise_exception("'rgb' must be a tensor of shape (n_envs, H, W, 1)")
-
-            depth_job = partial(
-                _export_frame_depth_camera,
-                export_dir=self.export_dir,
                 i_cam=i_cam,
-                i_step=i_step,
-                depth=depth,
+                frame=frames,
             )
-
             with ThreadPoolExecutor() as executor:
-                executor.map(depth_job, np.arange(len(depth)))
-
-        if normal is not None:
-            normal = torch.as_tensor(normal, dtype=gs.tc_float, device=gs.device)
-
-            # Unsqueeze normal to (n_envs, H, W, 3)
-            if normal.ndim == 3:
-                normal = normal.unsqueeze(0)
-            assert normal.ndim == 4, "normal must be of shape (n_envs, H, W, 3)"
-
-            normal_job = partial(
-                FrameImageExporter._export_frame_normal_camera,
-                export_dir=self.export_dir,
-                i_cam=i_cam,
-                i_step=i_step,
-                normal=normal,
-            )
-
-            with ThreadPoolExecutor() as executor:
-                executor.map(normal_job, np.arange(len(normal)))
-
-        if segmentation is not None:
-            segmentation = torch.as_tensor(segmentation, dtype=gs.tc_float, device=gs.device)
-
-            # Unsqueeze segmentation to (n_envs, H, W, 1)
-            if segmentation.ndim == 3:
-                segmentation = segmentation.unsqueeze(0)
-            elif segmentation.ndim == 2:
-                segmentation = segmentation.reshape(1, segmentation.shape[0], segmentation.shape[1], 1)
-            segmentation = self._normalize_depth(segmentation)
-            assert segmentation.ndim == 4, "segmentation must be of shape (n_envs, H, W, 1)"
-
-            segmentation_job = partial(
-                FrameImageExporter._export_frame_segmentation_camera,
-                export_dir=self.export_dir,
-                i_cam=i_cam,
-                i_step=i_step,
-                segmentation=segmentation,
-            )
-
-            with ThreadPoolExecutor() as executor:
-                executor.map(segmentation_job, np.arange(len(segmentation)))
+                executor.map(frame_job, np.arange(len(frames)))
+            

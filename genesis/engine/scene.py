@@ -1130,7 +1130,7 @@ class Scene(RBC):
             )
 
     @gs.assert_built
-    def render_all_cameras(self, rgb=True, depth=False, normal=False, segmentation=False, force_render=False):
+    def render_all_cameras(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False):
         """
         Render the scene for all cameras using the batch renderer.
 
@@ -1155,7 +1155,7 @@ class Scene(RBC):
         if self._visualizer.batch_renderer is None:
             gs.raise_exception("Method only supported by 'BatchRenderer'")
 
-        return self._visualizer.batch_renderer.render(rgb, depth, normal, segmentation, force_render)
+        return self._visualizer.batch_renderer.render(rgb, depth, segmentation, normal, force_render)
 
     @gs.assert_built
     def clear_debug_object(self, object):

@@ -16,8 +16,8 @@ except ImportError as e:
 class IMAGE_TYPE(enum.IntEnum):
     RGB = 0
     DEPTH = 3
-    NORMAL = 1
-    SEGMENTATION = 2
+    SEGMENTATION = 1
+    NORMAL = 2
 
 
 class Light:
@@ -153,10 +153,10 @@ class BatchRenderer(RBC):
             Whether to render the rgb image.
         depth : bool, optional
             Whether to render the depth image.
-        normal : bool, optional
-            Whether to render the normal image.
         segmentation : bool, optional
             Whether to render the segmentation image.
+        normal : bool, optional
+            Whether to render the normal image.
         force_render : bool, optional
             Whether to force render the scene.
         aliasing : bool, optional
@@ -164,14 +164,14 @@ class BatchRenderer(RBC):
 
         Returns
         -------
-        rgb_arr : tuple of tensors
+        rgb_arr : tuple of arrays
             The sequence of rgb images associated with each camera.
-        depth_arr : tuple of tensors
+        depth_arr : tuple of arrays
             The sequence of depth images associated with each camera.
-        normal_arr : tuple of tensors
-            The sequence of normal images associated with each camera.
-        segmentation_arr : tuple of tensors
+        segmentation_arr : tuple of arrays
             The sequence of segmentation images associated with each camera.
+        normal_arr : tuple of arrays
+            The sequence of normal images associated with each camera.
         """
 
         # Clear cache if requested or necessary
@@ -182,14 +182,14 @@ class BatchRenderer(RBC):
         cache_key = (aliasing,)
         rgb_arr = self._data_cache.get((IMAGE_TYPE.RGB, cache_key), None)
         depth_arr = self._data_cache.get((IMAGE_TYPE.DEPTH, cache_key), None)
-        normal_arr = self._data_cache.get((IMAGE_TYPE.NORMAL, cache_key), None)
         segmentation_arr = self._data_cache.get((IMAGE_TYPE.SEGMENTATION, cache_key), None)
+        normal_arr = self._data_cache.get((IMAGE_TYPE.NORMAL, cache_key), None)
 
         # Force disabling rendering whenever cached data is already available
         rgb_ = rgb and rgb_arr is None
         depth_ = depth and depth_arr is None
-        normal_ = normal and normal_arr is None
         segmentation_ = segmentation and segmentation_arr is None
+        normal_ = normal and normal_arr is None
 
         # Early return if there is nothing to do
         if not (rgb_ or depth_):
@@ -202,12 +202,17 @@ class BatchRenderer(RBC):
         cameras_pos = torch.stack([camera.get_pos() for camera in self._visualizer._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._visualizer._cameras], dim=1)
         render_options = np.array((rgb_, depth_, normal_, segmentation_, aliasing), dtype=np.uint32)
-        rgba_arr_all, depth_arr_all, normal_arr_all, segmentation_arr_all = self._renderer.render(
+        rgba_arr_all, depth_arr_all, segmentation_arr_all, normal_arr_all = self._renderer.render(
             self._visualizer.scene.rigid_solver, cameras_pos, cameras_quat, render_options
         )
 
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
-        buffers = [rgba_arr_all[..., :3], depth_arr_all, normal_arr_all[..., :3], segmentation_arr_all]
+        buffers = [
+            rgba_arr_all[..., :3].cpu().numpy(),
+            depth_arr_all.cpu().numpy(),
+            segmentation_arr_all.cpu().numpy(),
+            normal_arr_all[..., :3].cpu().numpy(),
+        ]
         for i, data in enumerate(buffers):
             if data is not None:
                 data = data.swapaxes(0, 1)
@@ -221,12 +226,12 @@ class BatchRenderer(RBC):
             rgb_arr = self._data_cache[(IMAGE_TYPE.RGB, cache_key)] = buffers[0]
         if depth_:
             depth_arr = self._data_cache[(IMAGE_TYPE.DEPTH, cache_key)] = buffers[1]
-        if normal_:
-            normal_arr = self._data_cache[(IMAGE_TYPE.NORMAL, cache_key)] = buffers[2]
         if segmentation_:
-            segmentation_arr = self._data_cache[(IMAGE_TYPE.SEGMENTATION, cache_key)] = buffers[3]
+            segmentation_arr = self._data_cache[(IMAGE_TYPE.SEGMENTATION, cache_key)] = buffers[2]
+        if normal_:
+            normal_arr = self._data_cache[(IMAGE_TYPE.NORMAL, cache_key)] = buffers[3]
 
-        return rgb_arr, depth_arr, normal_arr, segmentation_arr
+        return rgb_arr, depth_arr, segmentation_arr, normal_arr
 
     def destroy(self):
         self._lights.clear()
