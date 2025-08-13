@@ -235,12 +235,15 @@ class LBVH(RBC):
             self.morton_codes[i_b, i_a] = ti.Vector([morton_code, i_a], dt=ti.u32)
 
     @ti.func
-    def expand_bits(self, v):
+    def expand_bits(self, v: ti.u32) -> ti.u32:
         """
         Expands a 10-bit integer into 30 bits by inserting 2 zeros before each bit.
         """
         v = (v * ti.u32(0x00010001)) & ti.u32(0xFF0000FF)
-        v = (v * ti.u32(0x00000101)) & ti.u32(0x0F00F00F)
+        # This is to silence taichi debug warning of overflow
+        # Has the same result as v = (v * ti.u32(0x00000101)) & ti.u32(0x0F00F00F)
+        # Performance difference is negligible
+        v = (v | ((v & 0x00FFFFFF) << 8)) & 0x0F00F00F
         v = (v * ti.u32(0x00000011)) & ti.u32(0xC30C30C3)
         v = (v * ti.u32(0x00000005)) & ti.u32(0x49249249)
         return v
@@ -351,21 +354,21 @@ class LBVH(RBC):
 
             delta_min = self.delta(i, i - d, i_b)
             l_max = ti.u32(2)
-            while self.delta(i, i + l_max * d, i_b) > delta_min:
+            while self.delta(i, i + ti.i32(l_max) * d, i_b) > delta_min:
                 l_max *= 2
             l = ti.u32(0)
 
             t = l_max // 2
             while t > 0:
-                if self.delta(i, i + (l + t) * d, i_b) > delta_min:
+                if self.delta(i, i + ti.i32(l + t) * d, i_b) > delta_min:
                     l += t
                 t //= 2
-            j = i + l * d
+            j = i + ti.i32(l) * d
             delta_node = self.delta(i, j, i_b)
             s = ti.u32(0)
             t = (l + 1) // 2
             while t > 0:
-                if self.delta(i, i + (s + t) * d, i_b) > delta_node:
+                if self.delta(i, i + ti.i32(s + t) * d, i_b) > delta_node:
                     s += t
                 t = ti.select(t > 1, (t + 1) // 2, 0)
 
@@ -378,7 +381,7 @@ class LBVH(RBC):
             self.nodes[i_b, ti.i32(right)].parent = i
 
     @ti.func
-    def delta(self, i, j, i_b):
+    def delta(self, i: ti.i32, j: ti.i32, i_b: ti.i32):
         """
         Compute the longest common prefix (LCP) of the morton codes of two AABBs.
         """
@@ -386,9 +389,9 @@ class LBVH(RBC):
         if j >= 0 and j < self.n_aabbs:
             result = 64
             for i_bit in range(2):
-                x = self.morton_codes[i_b, ti.i32(i)][i_bit] ^ self.morton_codes[i_b, ti.i32(j)][i_bit]
+                x = self.morton_codes[i_b, i][i_bit] ^ self.morton_codes[i_b, j][i_bit]
                 for b in range(32):
-                    if x & (1 << (31 - b)):
+                    if x & (ti.u32(1) << (31 - b)):
                         result = b + 32 * i_bit
                         break
                 if result != 64:
