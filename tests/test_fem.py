@@ -540,7 +540,7 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
         material=fem_material_linear_corotated_soft,
     )
 
-    asset_path = get_hf_assets(pattern="heavy_three_joint_link.xml")
+    asset_path = get_hf_dataset(pattern="heavy_three_joint_link.xml")
     link = scene.add_entity(
         gs.morphs.MJCF(file=f"{asset_path}/heavy_three_joint_link.xml", scale=0.5, pos=(-0.5, -0.5, 0.4)),
     )
@@ -551,14 +551,34 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
         scene.step()
 
     state = sphere.get_state()
+    center = state.pos.mean(axis=(0, 1))
     min_pos_z = state.pos[..., 2].min()
     # The contact requires some penetration to generate enough contact force to cancel out gravity
     assert_allclose(
-        min_pos_z, -1.0e-3, atol=1e-4, err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3."
+        min_pos_z,
+        -1.0e-3,
+        atol=1e-4,
+        err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3.",
+    )
+    assert_allclose(
+        center,
+        np.array([0.0, 0.0, 0.2], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Sphere center {center} moves too far from [0.0, 0.0, 0.2].",
     )
 
     link_verts = link.get_verts()
+    center = link_verts.mean(axis=0)
     min_pos_z = link_verts[..., 2].min()
     assert_allclose(
-        min_pos_z, -1.0e-4, atol=5e-5, err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4."
+        min_pos_z,
+        -1.0e-4,
+        atol=5e-5,
+        err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4.",
+    )
+    assert_allclose(
+        center,
+        np.array([-0.5, -0.5, 0.04], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Link center {center} moves too far from [-0.5, -0.5, 0.04].",
     )

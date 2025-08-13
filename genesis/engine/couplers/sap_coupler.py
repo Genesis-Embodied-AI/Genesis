@@ -11,6 +11,7 @@ from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH
 from genesis.utils.element import mesh_to_elements, split_all_surface_tets
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum
+from genesis.engine.solvers.rigid.rigid_solver_decomp import func_update_all_verts
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -193,7 +194,7 @@ class SAPCoupler(RBC):
 
     def build(self) -> None:
         self._B = self.sim._B
-        self.contacts = []
+        self.contact_handlers = []
         self._enable_rigid_fem_contact &= self.rigid_solver.is_active() and self.fem_solver.is_active()
         self._enable_fem_self_tet_contact &= self.fem_solver.is_active()
 
@@ -210,28 +211,28 @@ class SAPCoupler(RBC):
                 self._init_hydroelastic_fem_fields_and_info()
 
             if self._fem_floor_contact_type == FEMFloorContactType.TET:
-                self.fem_floor_tet_contact = FEMFloorTetContact(self.sim)
-                self.contacts.append(self.fem_floor_tet_contact)
+                self.fem_floor_tet_contact = FEMFloorTetContactHandler(self.sim)
+                self.contact_handlers.append(self.fem_floor_tet_contact)
 
             if self._fem_floor_contact_type == FEMFloorContactType.VERT:
-                self.fem_floor_vert_contact = FEMFloorVertContact(self.sim)
-                self.contacts.append(self.fem_floor_vert_contact)
+                self.fem_floor_vert_contact = FEMFloorVertContactHandler(self.sim)
+                self.contact_handlers.append(self.fem_floor_vert_contact)
 
             if self._enable_fem_self_tet_contact:
-                self.fem_self_tet_contact = FEMSelfTetContact(self.sim)
-                self.contacts.append(self.fem_self_tet_contact)
+                self.fem_self_tet_contact = FEMSelfTetContactHandler(self.sim)
+                self.contact_handlers.append(self.fem_self_tet_contact)
 
             self._init_fem_fields()
 
         if self.rigid_solver.is_active():
             self._init_rigid_fields()
             if self._rigid_floor_contact_type == RigidFloorContactType.VERT:
-                self.rigid_floor_vert_contact = RigidFloorVertContact(self.sim)
-                self.contacts.append(self.rigid_floor_vert_contact)
+                self.rigid_floor_vert_contact = RigidFloorVertContactHandler(self.sim)
+                self.contact_handlers.append(self.rigid_floor_vert_contact)
 
         if self._enable_rigid_fem_contact:
-            self.rigid_fem_contact = RigidFemTetContact(self.sim)
-            self.contacts.append(self.rigid_fem_contact)
+            self.rigid_fem_contact = RigidFemTetContactHanlder(self.sim)
+            self.contact_handlers.append(self.rigid_fem_contact)
 
         self._init_sap_fields()
         self._init_pcg_fields()
@@ -396,7 +397,7 @@ class SAPCoupler(RBC):
         self.has_contact, overflow = self.update_contact(i_step)
         if overflow:
             message = "Overflowed In Contact Query: \n"
-            for contact in self.contacts:
+            for contact in self.contact_handlers:
                 if contact.n_contact_pairs[None] > contact.max_contact_pairs:
                     message += (
                         f"{contact.name} max contact pairs: {contact.max_contact_pairs}"
@@ -411,13 +412,13 @@ class SAPCoupler(RBC):
                 self.fem_compute_pressure_gradient(i_step)
 
         if ti.static(self.rigid_solver.is_active()):
-            self.rigid_solver._func_update_all_verts()
+            func_update_all_verts(self.rigid_solver)
 
     @ti.kernel
     def update_contact(self, i_step: ti.i32) -> tuple[bool, bool]:
         has_contact = False
         overflow = False
-        for contact in ti.static(self.contacts):
+        for contact in ti.static(self.contact_handlers):
             overflow |= contact.detection(i_step)
             has_contact |= contact.n_contact_pairs[None] > 0
             contact.compute_jacobian()
@@ -610,7 +611,7 @@ class SAPCoupler(RBC):
     def _init_sap_solve(self, i_step: ti.i32):
         self._init_v(i_step)
         self.batch_active.fill(True)
-        for contact in self.contacts:
+        for contact in self.contact_handlers:
             contact.compute_regularization()
 
     def _init_v(self, i_step: ti.i32):
@@ -682,7 +683,7 @@ class SAPCoupler(RBC):
 
     def compute_contact_gradient_hessian_diag_prec(self):
         self.clear_impulses()
-        for contact in self.contacts:
+        for contact in self.contact_handlers:
             contact.compute_gradient_hessian_diag()
         self.compute_preconditioner()
 
@@ -817,41 +818,8 @@ class SAPCoupler(RBC):
                 continue
             out[i_b, i_d1] += self.rigid_solver.mass_mat[i_d1, i_d0, i_b] * vec[i_b, i_d0]
 
-    @ti.func
-    def sap_rigid_solve_ldlt(self, vec, out, dim):
-        """
-        Solve the linear system M @ out = vec using the precomputed LDL^T factorization of M, the rigid mass matrix.
-        """
-        # Step 1: Solve w st. L^T @ w = y
-        for i_b, i_e in ti.ndrange(self._B, self.rigid_solver.n_entities):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            entity_dof_start = self.rigid_solver.entities_info.dof_start[i_e]
-            entity_dof_end = self.rigid_solver.entities_info.dof_end[i_e]
-            n_dofs = self.rigid_solver.entities_info.n_dofs[i_e]
-            for i_d_ in range(n_dofs):
-                i_d = entity_dof_end - i_d_ - 1
-                out[i_b, i_d] = vec[i_b, i_d]
-                for j_d in range(i_d + 1, entity_dof_end):
-                    out[i_b, i_d] -= self.rigid_solver.mass_mat_L[j_d, i_d, i_b] * out[i_b, j_d]
-
-        # Step 2: z = D^{-1} w
-        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            out[i_b, i_d] *= self.rigid_solver.mass_mat_D_inv[i_d, i_b]
-
-        # Step 3: Solve x st. L @ x = z
-        for i_b, i_e in ti.ndrange(self._B, self.rigid_solver.n_entities):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            entity_dof_start = self.rigid_solver.entities_info.dof_start[i_e]
-            entity_dof_end = self.rigid_solver.entities_info.dof_end[i_e]
-            n_dofs = self.rigid_solver.entities_info.n_dofs[i_e]
-            for i_d in range(entity_dof_start, entity_dof_end):
-                for j_d in range(entity_dof_start, i_d):
-                    out[i_b, i_d] -= self.rigid_solver.mass_mat_L[i_d, j_d, i_b] * out[i_b, j_d]
-
+    # FIXME: This following two rigid solves are duplicated with the one in rigid_solver_decomp.py:func_solve_mass_batched
+    # Consider refactoring.
     @ti.func
     def rigid_solve_pcg(self, vec, out):
         # Step 1: Solve w st. L^T @ w = y
@@ -960,7 +928,7 @@ class SAPCoupler(RBC):
         if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_pcg_matrix_vector_product()
         # Contact
-        for contact in ti.static(self.contacts):
+        for contact in ti.static(self.contact_handlers):
             contact.compute_pcg_matrix_vector_product()
 
     @ti.func
@@ -1102,7 +1070,7 @@ class SAPCoupler(RBC):
         if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_energy(energy)
         # Contact
-        for contact in ti.static(self.contacts):
+        for contact in ti.static(self.contact_handlers):
             contact.compute_energy(energy)
 
     @ti.func
@@ -1207,7 +1175,7 @@ class SAPCoupler(RBC):
             self.compute_rigid_energy_alpha(self.linesearch_state.energy)
             self.compute_rigid_gradient_alpha()
 
-        for contact in ti.static(self.contacts):
+        for contact in ti.static(self.contact_handlers):
             contact.compute_energy_gamma_G()
             contact.update_gradient_hessian_alpha()
 
@@ -1279,7 +1247,7 @@ class SAPCoupler(RBC):
             self.prepare_fem_search_direction_data()
         if ti.static(self.rigid_solver.is_active()):
             self.prepare_rigid_search_direction_data()
-        for contact in ti.static(self.contacts):
+        for contact in ti.static(self.contact_handlers):
             contact.prepare_search_direction_data()
         self.compute_d2ellA_dalpha2()
 
@@ -1518,7 +1486,7 @@ class ContactMode(IntEnum):
 
 
 @ti.data_oriented
-class BaseContact(RBC):
+class BaseContactHandler(RBC):
     """
     Base class for contact handling in SAPCoupler.
 
@@ -1693,7 +1661,7 @@ class BaseContact(RBC):
 
 
 @ti.data_oriented
-class RigidContact(BaseContact):
+class RigidContactHandler(BaseContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
@@ -1701,6 +1669,8 @@ class RigidContact(BaseContact):
         super().__init__(simulator)
         self.rigid_solver = self.sim.rigid_solver
 
+    # FIXME This function is similar to the one in constraint_solver_decomp.py:add_collision_constraints.
+    # Consider refactoring, using better naming, and removing while.
     @ti.func
     def compute_jacobian(self):
         self.Jt.fill(0.0)
@@ -1771,7 +1741,7 @@ class RigidContact(BaseContact):
 
 
 @ti.data_oriented
-class FEMContact(BaseContact):
+class FEMContactHandler(BaseContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
@@ -1816,7 +1786,7 @@ class FEMContact(BaseContact):
 
 
 @ti.data_oriented
-class RigidFEMContact(RigidContact):
+class RigidFEMContactHandler(RigidContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
@@ -1878,7 +1848,7 @@ def accumulate_area_centroid(
 
 
 @ti.data_oriented
-class FEMFloorTetContact(FEMContact):
+class FEMFloorTetContactHandler(FEMContactHandler):
     """
     Class for handling contact between a tetrahedral mesh and a floor in a simulation using hydroelastic model.
 
@@ -2045,7 +2015,7 @@ class FEMFloorTetContact(FEMContact):
 
 
 @ti.data_oriented
-class FEMSelfTetContact(FEMContact):
+class FEMSelfTetContactHandler(FEMContactHandler):
     """
     Class for handling self-contact between tetrahedral elements in a simulation using hydroelastic model.
 
@@ -2375,7 +2345,7 @@ class FEMSelfTetContact(FEMContact):
 
 
 @ti.data_oriented
-class FEMFloorVertContact(FEMContact):
+class FEMFloorVertContactHandler(FEMContactHandler):
     """
     Class for handling contact between tetrahedral elements and a floor in a simulation using point contact model.
 
@@ -2457,7 +2427,7 @@ class FEMFloorVertContact(FEMContact):
 
 
 @ti.data_oriented
-class RigidFloorVertContact(RigidContact):
+class RigidFloorVertContactHandler(RigidContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
@@ -2542,7 +2512,7 @@ class RigidFloorVertContact(RigidContact):
 
 
 @ti.data_oriented
-class RigidFemTetContact(RigidFEMContact):
+class RigidFemTetContactHanlder(RigidFEMContactHandler):
     """
     Class for handling self-contact between tetrahedral elements in a simulation using hydroelastic model.
 

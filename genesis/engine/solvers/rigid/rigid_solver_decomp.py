@@ -23,8 +23,6 @@ from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
 from ....utils.sdf_decomp import SDF
 
-from genesis.engine.couplers import SAPCoupler
-
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
@@ -902,6 +900,7 @@ class RigidSolver(Solver):
 
     def substep(self):
         # from genesis.utils.tools import create_timer
+        from genesis.engine.couplers import SAPCoupler
 
         # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         kernel_step_1(
@@ -1035,10 +1034,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-
-    @ti.func
-    def _func_update_all_verts(self):
-        func_update_all_verts(self)
 
     # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
     # right now, a python-scope function is more convenient since .fill(0) only works on python scope for ndarray
@@ -1258,6 +1253,9 @@ class RigidSolver(Solver):
         pass
 
     def substep_post_coupling(self, f):
+
+        from genesis.engine.couplers import SAPCoupler
+
         if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
             self.update_qacc_from_qvel_delta()
             kernel_step_2(
