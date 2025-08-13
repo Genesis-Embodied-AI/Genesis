@@ -4,4 +4,3 @@ recursive-include genesis/assets *
 recursive-include genesis/ext/pyrender/fonts *
 recursive-include genesis/ext/pyrender/shaders *
 include genesis/ext/VolumeSampling
-include genesis/ext/fast_simplification/*.h

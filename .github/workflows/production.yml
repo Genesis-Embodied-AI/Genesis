@@ -25,6 +25,8 @@ jobs:
       GENESIS_IMAGE_VER: "1_1"
       TIMEOUT_MINUTES: 180
       MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
+      OMNI_KIT_ACCEPT_EULA: "yes"
+      OMNI_KIT_ALLOW_ROOT: "1"
 
     steps:
       - name: Checkout code
@@ -48,6 +50,9 @@ jobs:
             NODELIST="--nodelist=$IDLE_NODES"
           fi
 
+          # TODO: USD baking does not currently support Python 3.11 since
+          # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
+          # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
@@ -60,7 +65,8 @@ jobs:
             --partition=hpc-mid ${NODELIST} --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
-              pip install -e '.[dev,render]' && \
+              pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
+              pip install -e '.[dev,render,usd]' && \
               pytest -v --forked ./tests
             "
 

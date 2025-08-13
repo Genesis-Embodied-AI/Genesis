@@ -6,6 +6,7 @@ import shutil
 import tempfile
 
 import igl
+import pysplashsurf
 import numpy as np
 import trimesh
 
@@ -347,48 +348,26 @@ def particles_to_mesh(positions, radius, backend):
         return trimesh.Trimesh(vertices, faces, process=False)
 
     elif "splashsurf" in backend:
-        if gs.platform != "Linux":
-            gs.raise_exception("Backend 'splashsurf' is only supported on Linux.")
-
-        fd, xyz_path = tempfile.mkstemp(suffix=".xyz")
-        os.close(fd)
-        fd, obj_path = tempfile.mkstemp(suffix=".obj")
-        os.close(fd)
-        positions.astype(np.float32, copy=False).tofile(xyz_path)
-
         # Suggested value is 1.4-1.6, but 1.0 seems more detailed
-        radius_scale = args_dict.get("rscale", 1.0)
-        smooth_iter = args_dict.get("smooth")
-        r = radius * radius_scale
-
-        try:
-            command = ["splashsurf", "reconstruct", xyz_path, f"-r={r}", "-c=0.8", "-l=2.0", "-t=0.6", "-o", obj_path]
-            if smooth_iter is not None:
-                command += [
-                    "--mesh-cleanup=on",
-                    "--mesh-smoothing-weights=on",
-                    f"--mesh-smoothing-iters={int(smooth_iter)}",
-                    "--normals=on",
-                    "--normals-smoothing-iters=10",
-                ]
-
-            result = subprocess.run(map(str, command), capture_output=True, text=True)
-            if result.stdout:
-                gs.logger.debug(result.stdout)
-            if result.stderr:
-                gs.logger.warning(result.stderr)
-            if os.path.getsize(obj_path) == 0:
-                raise OSError("Output OBJ file is empty.")
-
-            # Read the generated OBJ file
-            mesh = trimesh.load_mesh(obj_path)
-            gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
-        except OSError as e:
-            gs.raise_exception_from("Surface reconstruction failed.", e)
-        finally:
-            os.remove(xyz_path)
-            os.remove(obj_path)
-
+        mesh_with_data, _ = pysplashsurf.reconstruction_pipeline(
+            positions,
+            particle_radius=radius * args_dict.get("rscale", 1.0),
+            smoothing_length=2.0,
+            cube_size=0.8,
+            iso_surface_threshold=0.6,
+            mesh_smoothing_weights=True,
+            mesh_smoothing_iters=int(args_dict.get("smooth", 25)),
+            normals_smoothing_iters=10,
+            mesh_cleanup=True,
+            compute_normals=True,
+            enable_multi_threading=True,
+        )
+        mesh = trimesh.Trimesh(
+            vertices=mesh_with_data.mesh.vertices,
+            faces=mesh_with_data.mesh.triangles,
+            face_normals=mesh_with_data.get_point_attribute("normals"),
+        )
+        gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
         return mesh
 
     else:

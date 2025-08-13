@@ -69,48 +69,54 @@ class Rasterizer(RBC):
             self._context.buffer.clear()
 
             # Render
-            if rgb or depth or normal:
-                retval = self._renderer.render(
-                    self._context._scene,
-                    self._camera_targets[camera.uid],
-                    camera_node=self._camera_nodes[camera.uid],
-                    env_separate_rigid=self._context.env_separate_rigid,
-                    ret_depth=depth,
-                    plane_reflection=rgb and self._context.plane_reflection,
-                    shadow=rgb and self._context.shadow,
-                    normal=normal,
-                    seg=False,
-                )
+            try:
+                if rgb or depth or normal:
+                    retval = self._renderer.render(
+                        self._context._scene,
+                        self._camera_targets[camera.uid],
+                        camera_node=self._camera_nodes[camera.uid],
+                        env_separate_rigid=self._context.env_separate_rigid,
+                        rgb=rgb,
+                        normal=normal,
+                        seg=False,
+                        depth=depth,
+                        plane_reflection=rgb and self._context.plane_reflection,
+                        shadow=rgb and self._context.shadow,
+                    )
 
-            if segmentation:
-                seg_idxc_rgb_arr, _ = self._renderer.render(
-                    self._context._scene,
-                    self._camera_targets[camera.uid],
-                    camera_node=self._camera_nodes[camera.uid],
-                    env_separate_rigid=self._context.env_separate_rigid,
-                    ret_depth=False,
-                    plane_reflection=False,
-                    shadow=False,
-                    normal=False,
-                    seg=True,
-                )
-
-            # Unset the context
-            self._renderer.make_uncurrent()
+                if segmentation:
+                    seg_idxc_rgb_arr, *_ = self._renderer.render(
+                        self._context._scene,
+                        self._camera_targets[camera.uid],
+                        camera_node=self._camera_nodes[camera.uid],
+                        env_separate_rigid=self._context.env_separate_rigid,
+                        rgb=False,
+                        normal=False,
+                        seg=True,
+                        depth=False,
+                        plane_reflection=False,
+                        shadow=False,
+                    )
+            finally:
+                # Unset the context
+                self._renderer.make_uncurrent()
         else:
             # Render
             if rgb or depth or normal:
                 retval = self._viewer.render_offscreen(
                     self._camera_nodes[camera.uid],
                     self._camera_targets[camera.uid],
+                    rgb=rgb,
                     depth=depth,
                     normal=normal,
+                    seg=False,
                 )
 
             if segmentation:
-                seg_idxc_rgb_arr, _ = self._viewer.render_offscreen(
+                seg_idxc_rgb_arr, *_ = self._viewer.render_offscreen(
                     self._camera_nodes[camera.uid],
                     self._camera_targets[camera.uid],
+                    rgb=False,
                     depth=False,
                     normal=False,
                     seg=True,
@@ -119,12 +125,12 @@ class Rasterizer(RBC):
         if segmentation:
             seg_idxc_arr = self._context.seg_idxc_rgb_arr_to_idxc_arr(seg_idxc_rgb_arr)
 
-        if rgb or depth or normal:
+        if rgb:
             rgb_arr = retval[0]
         if depth:
-            depth_arr = retval[1]
+            depth_arr = retval[int(rgb)]
         if normal:
-            normal_arr = retval[2]
+            normal_arr = retval[int(rgb + depth)]
         return rgb_arr, depth_arr, seg_idxc_arr, normal_arr
 
     def update_scene(self):

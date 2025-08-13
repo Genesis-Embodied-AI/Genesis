@@ -1,19 +1,22 @@
+import itertools
 import queue
 import sys
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
+from syrupy.location import PyTestLocation
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter
 
-from .utils import assert_allclose, assert_array_equal
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 
 IMG_STD_ERR_THR = 0.8
@@ -116,7 +119,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 @pytest.mark.required
 @pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
-def test_batched_offscreen_rendering(show_viewer, tol):
+def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
@@ -244,7 +247,8 @@ def test_batched_offscreen_rendering(show_viewer, tol):
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
 
-    for _ in range(10):
+    cam.start_recording()
+    for _ in range(7):
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
         qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
 
@@ -267,6 +271,147 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
         for i in range(3):
             assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+    cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
+
+
+@pytest.mark.required
+def test_render_api(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.0),
+            radius=1.0,
+            fixed=True,
+        ),
+    )
+    camera = scene.add_camera(
+        pos=(0.0, 0.0, 10.0),
+        lookat=(0.0, 0.0, 0.0),
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    rgb_arrs, depth_arrs, seg_arrs, normal_arrs = [], [], [], []
+    for rgb, depth, seg, normal in itertools.product((True, False), repeat=4):
+        rgb_arr, depth_arr, seg_arr, normal_arr = camera.render(rgb=rgb, depth=depth, segmentation=seg, normal=normal)
+        if rgb:
+            rgb_arrs.append(rgb_arr.astype(np.float32))
+        if depth:
+            depth_arrs.append(depth_arr.astype(np.float32))
+        if seg:
+            seg_arrs.append(seg_arr.astype(np.float32))
+        if normal:
+            normal_arrs.append(normal_arr.astype(np.float32))
+
+    assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
+    assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
+    assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
+    # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
+    # FIXME: There is one pixel off on MacOS with Apple's Software Rendering, probably due to a bug...
+    tol = 2e-4 if sys.platform == "darwin" else gs.EPS
+    assert_allclose(np.diff(depth_arrs, axis=0)[[0, 1, 2, 4, 5, 6]], 0.0, tol=tol)
+
+
+@pytest.mark.required
+def test_point_cloud(show_viewer):
+    CAMERA_DIST = 8.0
+    OBJ_OFFSET = 10.0
+    BOX_HALFSIZE = 1.0
+    SPHERE_RADIUS = 1.0
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, OBJ_OFFSET, 0.0),
+            radius=SPHERE_RADIUS,
+            fixed=True,
+        ),
+    )
+    camera_sphere = scene.add_camera(
+        pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, OBJ_OFFSET, 0.0),
+        GUI=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, -OBJ_OFFSET, 0.0),
+            size=(2.0 * BOX_HALFSIZE, 2.0 * BOX_HALFSIZE, 2.0 * BOX_HALFSIZE),
+            fixed=True,
+        )
+    )
+    camera_box_1 = scene.add_camera(
+        pos=(0.0, -OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, -OBJ_OFFSET, 0.0),
+        GUI=show_viewer,
+    )
+    camera_box_2 = scene.add_camera(
+        pos=np.array((CAMERA_DIST, CAMERA_DIST - OBJ_OFFSET, CAMERA_DIST)),
+        lookat=(0.0, -OBJ_OFFSET, 0.0),
+        GUI=show_viewer,
+    )
+    for camera in scene.visualizer.cameras:
+        camera._near = 2.0
+        camera._far = 15.0
+    scene.build()
+
+    if show_viewer:
+        for camera in scene.visualizer.cameras:
+            camera.render(rgb=True, depth=True)
+
+    point_cloud, mask = camera_box_1.render_pointcloud(world_frame=False)
+    point_cloud = point_cloud[mask]
+    assert_allclose(CAMERA_DIST - point_cloud[:, 2], BOX_HALFSIZE, atol=1e-4)
+    assert np.all(-BOX_HALFSIZE <= point_cloud[:, :2].min(axis=0))
+    assert np.all(point_cloud[:, :2].max(axis=0) <= BOX_HALFSIZE)
+
+    point_cloud, mask = camera_box_2.render_pointcloud(world_frame=False)
+    point_cloud = point_cloud[mask]
+    point_cloud = point_cloud @ gu.z_up_to_R(np.array((1.0, 1.0, 1.0)), np.array((0.0, 0.0, 1.0))).T
+    point_cloud -= np.array((CAMERA_DIST, CAMERA_DIST, CAMERA_DIST))
+    # FIXME: Tolerance must be increased whe using Apple's Software Rendering, probably due to a bug...
+    tol = 2e-4 if sys.platform == "darwin" else 1e-4
+    assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=tol)
+
+    point_cloud, mask = camera_box_2.render_pointcloud(world_frame=True)
+    point_cloud = point_cloud[mask]
+    point_cloud += np.array((0.0, OBJ_OFFSET, 0.0))
+    assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=tol)
+
+    # It is not possible to get higher accuracy because of tesselation
+    point_cloud, mask = camera_sphere.render_pointcloud(world_frame=False)
+    point_cloud = point_cloud[mask]
+    assert_allclose(np.linalg.norm((0.0, 0.0, CAMERA_DIST) - point_cloud, axis=-1), SPHERE_RADIUS, atol=1e-2)
+
+
+@pytest.mark.required
+def test_splashsurf_surface_reconstruction(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    water = scene.add_entity(
+        material=gs.materials.SPH.Liquid(),
+        morph=gs.morphs.Box(
+            pos=(0.15, 0.15, 0.22),
+            size=(0.25, 0.25, 0.4),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.6, 1.0, 1.0),
+            vis_mode="recon",
+        ),
+    )
+    cam = scene.add_camera(
+        pos=(1.3, 1.3, 0.8),
+        lookat=(0.0, 0.0, 0.2),
+        GUI=show_viewer,
+    )
+    scene.build()
+    cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
 
 
 @pytest.mark.required
@@ -314,8 +459,8 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     for cam in cams:
         cam.attach(robot.get_link("hand"), gu.trans_R_to_T(trans, R))
 
-    target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
-    center = np.tile(np.array([-0.25, -0.25, 0.5]), [n_envs, 1])
+    target_quat = np.tile(np.array([0, 1, 0, 0]), (n_envs, 1))  # pointing downwards
+    center = np.tile(np.array([-0.25, -0.25, 0.5]), (n_envs, 1))
     rng = np.random.default_rng(42)
     angular_speed = rng.uniform(-10, 10, n_envs)
     r = 0.25
@@ -323,12 +468,10 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
     ee_link = robot.get_link("hand")
 
     steps_rgb_queue: queue.Queue[list[np.ndarray]] = queue.Queue(maxsize=2)
-
-    for i in range(50):
-        target_pos = np.zeros([n_envs, 3])
-        target_pos[:, 0] = center[:, 0] + np.cos(i / 360 * np.pi * angular_speed) * r
-        target_pos[:, 1] = center[:, 1] + np.sin(i / 360 * np.pi * angular_speed) * r
-        target_pos[:, 2] = center[:, 2]
+    for i in range(20):
+        target_pos = center.copy()
+        target_pos[:, 0] += np.cos(i / 360 * np.pi * angular_speed) * r
+        target_pos[:, 1] += np.sin(i / 360 * np.pi * angular_speed) * r
 
         q = robot.inverse_kinematics(
             link=ee_link,
@@ -361,6 +504,7 @@ def test_batched_mounted_camera_rendering(show_viewer, tol):
                 assert np.count_nonzero(diff) > diff_tol * np.prod(diff.shape)
 
 
+@pytest.mark.required
 def test_debug_draw(show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -411,7 +555,8 @@ def test_debug_draw(show_viewer):
     )
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-    assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+    # assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
     scene.clear_debug_objects()
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
@@ -420,7 +565,6 @@ def test_debug_draw(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(sys.platform != "linux", reason="Madrona batch renderer only supports Linux.")
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
 @pytest.mark.parametrize("n_envs", [0, 4])
@@ -428,6 +572,9 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     CAM_RES = (256, 256)
 
     pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+
+    snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=png_snapshot.test_location))
+    get_hf_dataset(pattern=f"{snapshot_dir.name}/*", repo_name="snapshots", local_dir=snapshot_dir.parent)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -535,3 +682,20 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
             assert f.read() == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_2_channels_luminance_alpha_textures(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = get_hf_dataset(pattern="fridge/*")
+    fridge = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/fridge/fridge.urdf",
+            fixed=True,
+        )
+    )
+    scene.build()

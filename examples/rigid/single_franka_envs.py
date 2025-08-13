@@ -20,11 +20,11 @@ def main():
     ########################## create a scene ##########################
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            plane_reflection=False,
+            plane_reflection=True,
             rendered_envs_idx=list(range(args.num_env)),
             env_separate_rigid=args.sep,
-            show_world_frame=False,
-            show_link_frame=False,
+            show_world_frame=True,
+            show_link_frame=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),

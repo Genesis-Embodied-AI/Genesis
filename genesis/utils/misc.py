@@ -142,7 +142,7 @@ def assert_built(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if not self.is_built:
-            gs.raise_exception("Scene is not built yet.")
+            gs.raise_exception(f"{type(self).__name__} is not built yet.")
         return method(self, *args, **kwargs)
 
     return wrapper
@@ -268,6 +268,14 @@ def get_gel_cache_dir():
 
 def get_remesh_cache_dir():
     return os.path.join(get_cache_dir(), "rm")
+
+
+def get_exr_cache_dir():
+    return os.path.join(get_cache_dir(), "exr")
+
+
+def get_usd_cache_dir():
+    return os.path.join(get_cache_dir(), "usd")
 
 
 def clean_cache_files():
