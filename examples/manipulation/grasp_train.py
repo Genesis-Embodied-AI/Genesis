@@ -3,6 +3,7 @@ import os
 import re
 import pickle
 from importlib import metadata
+from pathlib import Path
 
 try:
     try:
@@ -149,13 +150,13 @@ def get_task_cfgs():
 
 def load_teacher_policy(env, rl_train_cfg, exp_name):
     # load teacher policy
-    log_dir = f"logs/{exp_name + '_' + 'rl'}"
-    assert os.path.exists(log_dir), f"Log directory {log_dir} does not exist"
-    checkpoint_files = [f for f in os.listdir(log_dir) if re.match(r"model_\d+\.pt", f)]
+    log_dir = Path("logs") / f"{exp_name + '_' + 'rl'}"
+    assert log_dir.exists(), f"Log directory {log_dir} does not exist"
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
     last_ckpt = sorted(checkpoint_files)[-1]
-    assert last_ckpt is not None, "No checkpoint found in {log_dir}"
+    assert last_ckpt is not None, f"No checkpoint found in {log_dir}"
     runner = OnPolicyRunner(env, rl_train_cfg, log_dir, device=gs.device)
-    runner.load(os.path.join(log_dir, last_ckpt))
+    runner.load(log_dir / last_ckpt)
     print(f"Loaded teacher policy from checkpoint {last_ckpt} from {log_dir}")
     teacher_policy = runner.get_inference_policy(device=gs.device)
     return teacher_policy
@@ -178,10 +179,10 @@ def main():
     rl_train_cfg, bc_train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
 
     # === log dir ===
-    log_dir = f"logs/{args.exp_name + '_' + args.stage}"
-    os.makedirs(log_dir, exist_ok=True)
+    log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
+    log_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(f"{log_dir}/cfgs.pkl", "wb") as f:
+    with open(log_dir / "cfgs.pkl", "wb") as f:
         pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
 
     # === env ===

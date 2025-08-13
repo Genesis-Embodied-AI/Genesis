@@ -9,7 +9,7 @@ from genesis.utils.geom import (
     transform_by_quat,
 )
 
-MAX_DEPTH = 10.0
+MAX_DEPTH = 10.0  # meters
 
 
 class GraspEnv:

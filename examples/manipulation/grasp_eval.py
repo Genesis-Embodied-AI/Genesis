@@ -3,6 +3,7 @@ import os
 import re
 import pickle
 from importlib import metadata
+from pathlib import Path
 
 import torch
 import cv2
@@ -30,12 +31,12 @@ def load_rl_policy(env, train_cfg, log_dir):
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     # Find the latest checkpoint
-    checkpoint_files = [f for f in os.listdir(log_dir) if re.match(r"model_\d+\.pt", f)]
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
     last_ckpt = sorted(checkpoint_files)[-1]
-    runner.load(os.path.join(log_dir, last_ckpt))
+    runner.load(log_dir / last_ckpt)
     print(f"Loaded RL checkpoint from {last_ckpt}")
 
     return runner.get_inference_policy(device=gs.device)
@@ -47,14 +48,13 @@ def load_bc_policy(env, bc_cfg, log_dir):
     bc_runner = BehaviorCloning(env, bc_cfg, None, device=gs.device)
 
     # Find the latest checkpoint
-    checkpoint_files = [f for f in os.listdir(log_dir) if re.match(r"checkpoint_\d+\.pt", f)]
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
     last_ckpt = sorted(checkpoint_files)[-1]
-    last_ckpt_file = os.path.join(log_dir, last_ckpt)
-    print(f"Loaded BC checkpoint from {last_ckpt_file}")
-    bc_runner.load(last_ckpt_file)
+    print(f"Loaded BC checkpoint from {last_ckpt}")
+    bc_runner.load(log_dir / last_ckpt)
 
     return bc_runner._policy
 
@@ -82,11 +82,11 @@ def get_stereo_frame(env, step_count):
     # Add a vertical line separator between the two images
     separator_x = left_img.shape[1]
     cv2.line(
-        stereo_img,
-        (separator_x, 0),
-        (separator_x, stereo_img.shape[0]),
-        (255, 255, 255),
-        2,
+        image=stereo_img,
+        start_point=(separator_x, 0),
+        end_point=(separator_x, stereo_img.shape[0]),
+        color=(255, 255, 255),
+        thickness=2,
     )
     return stereo_img
 
@@ -162,15 +162,15 @@ def main():
 
     gs.init()
 
-    log_dir = f"logs/{args.exp_name + '_' + args.stage}"
+    log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
 
     # Load configurations
     if args.stage == "rl":
         # For RL, load the standard configs
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
     else:
         # For BC, we need to load the configs and create BC config
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(f"{log_dir}/cfgs.pkl", "rb"))
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
 
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
@@ -229,7 +229,7 @@ def main():
 
         # Save video if recording was enabled
         if args.record and frames:
-            video_path = f"{log_dir}/stereo_evaluation.mp4"
+            video_path = log_dir / "stereo_evaluation.mp4"
             # Save frames as video
             fps = env_cfg["max_visualize_FPS"]
             save_frames_as_video(frames, video_path, fps)
