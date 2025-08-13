@@ -2393,6 +2393,36 @@ def test_drone_advanced(show_viewer):
     assert abs(quat_1[2] - quat_2[2]) < tol
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_constraints_api(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    cube = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.2, 0.0, 0.05)))
+    scene.build(n_envs=2)
+
+    link_a, link_b = robot.base_link.idx, cube.base_link.idx
+    scene.sim.rigid_solver.add_weld_constraint(link_a, link_b, envs_idx=[1])
+    with np.testing.assert_raises(AssertionError):
+        scene.sim.rigid_solver.add_weld_constraint(link_a, link_b, envs_idx=[1])
+
+    for as_tensor, to_torch in ((True, True), (True, False), (False, True), (False, False)):
+        weld_const_info = scene.sim.rigid_solver.get_weld_constraints(as_tensor, to_torch)
+        link_a_, link_b_ = weld_const_info["link_a"], weld_const_info["link_b"]
+        if as_tensor:
+            assert_allclose((link_a_[0], link_b_[0]), ((-1,), (-1,)), tol=0)
+        else:
+            assert_allclose((link_a_[0], link_b_[0]), ((), ()), tol=0)
+        assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
+
+
 @pytest.mark.parametrize(
     "n_envs, batched, backend",
     [

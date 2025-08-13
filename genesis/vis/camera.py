@@ -2,6 +2,7 @@ import inspect
 import os
 import time
 import math
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -66,6 +67,14 @@ class Camera(Sensor):
         The far plane of the camera.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
+    env_idx : int, optional
+        The index of the environment to track the camera.
+    debug : bool, optional
+        Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
+        simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
+        systematically, no matter if BatchRender and RayTracer is enabled. This way, it is possible to record the
+        simulation with arbitrary resolution and camera pose, without interfering with what robots can perceive
+        from their environment. Defaults to False.
     """
 
     def __init__(
@@ -87,6 +96,7 @@ class Camera(Sensor):
         far=100.0,
         transform=None,
         env_idx=None,
+        debug=False,
     ):
         self._idx = idx
         self._uid = gs.UID()
@@ -111,6 +121,7 @@ class Camera(Sensor):
         self._is_built = False
         self._attached_link = None
         self._attached_offset_T = None
+        self._debug = debug
 
         self._env_idx = env_idx
         self._envs_offset = None
@@ -130,13 +141,19 @@ class Camera(Sensor):
             self._focus_dist = np.linalg.norm(np.asarray(lookat) - np.asarray(pos))
 
     def build(self):
+        n_envs = max(self._visualizer.scene.n_envs, 1)
+        self._multi_env_pos_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_lookat_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_up_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_transform_tensor = torch.empty((n_envs, 4, 4), dtype=gs.tc_float, device=gs.device)
+        self._multi_env_quat_tensor = torch.empty((n_envs, 4), dtype=gs.tc_float, device=gs.device)
+
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
-        self._batch_renderer = self._visualizer.batch_renderer
         self._rasterizer = self._visualizer.rasterizer
-        self._raytracer = self._visualizer.raytracer
+        self._raytracer = self._visualizer.raytracer if not self._debug else None
+        self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
 
-        self._rasterizer.add_camera(self)
         if self._batch_renderer is not None:
             self._rgb_stacked = True
             self._other_stacked = True
@@ -150,11 +167,17 @@ class Camera(Sensor):
                 self._rgb_stacked = False
                 self._other_stacked = False
             else:
+                self._rasterizer.add_camera(self)
                 self._rgb_stacked = self._visualizer._context.env_separate_rigid
                 self._other_stacked = self._visualizer._context.env_separate_rigid
 
         self._is_built = True
-        self.setup_initial_env_poses()
+        self.set_pose(
+            transform=self._initial_transform, pos=self._initial_pos, lookat=self._initial_lookat, up=self._initial_up
+        )
+        # FIXME: For some reason, it is necessary to update the camera twice...
+        if self._raytracer is not None:
+            self._raytracer.update_camera(self)
 
     def attach(self, rigid_link, offset_T):
         """
@@ -296,8 +319,8 @@ class Camera(Sensor):
         depth=False,
         segmentation=False,
         normal=False,
+        antialiasing=True,
         force_render=False,
-        antialiasing=False,
     ):
         """
         Render the camera view with batch renderer.
@@ -311,13 +334,13 @@ class Camera(Sensor):
         # If n_envs == 0, the second dimension of the output is camera.
         # Only return the current camera's image
         if rgb_arr:
-            rgb_arr = rgb_arr[self._idx]
+            rgb_arr = rgb_arr[self.idx]
         if depth:
-            depth_arr = depth_arr[self._idx]
+            depth_arr = depth_arr[self.idx]
         if segmentation:
-            seg_arr = seg_arr[self._idx]
+            seg_arr = seg_arr[self.idx]
         if normal:
-            normal_arr = normal_arr[self._idx]
+            normal_arr = normal_arr[self.idx]
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
@@ -371,7 +394,7 @@ class Camera(Sensor):
         normal_arr : np.ndarray
             The rendered surface normal(s).
         """
-        rgb_arr, depth_arr, seg_arr, seg_color_arr, normal_arr = None, None, None, None, None
+        rgb_arr, depth_arr, seg_arr, seg_color_arr, seg_idxc_arr, normal_arr = None, None, None, None, None, None
 
         if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
@@ -521,29 +544,6 @@ class Camera(Sensor):
         point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    @gs.assert_built
-    def setup_initial_env_poses(self):
-        """
-        Setup the camera poses for multiple environments.
-        """
-        if self._initial_transform is not None:
-            assert self._initial_transform.shape == (4, 4)
-            self._initial_pos, self._initial_lookat, self._initial_up = gu.T_to_pos_lookat_up(self._initial_transform)
-        else:
-            self._initial_transform = gu.pos_lookat_up_to_T(self._initial_pos, self._initial_lookat, self._initial_up)
-
-        n_envs = max(self._visualizer.scene.n_envs, 1)
-        self._multi_env_pos_tensor = self._initial_pos.repeat((n_envs, 1))
-        self._multi_env_lookat_tensor = self._initial_lookat.repeat((n_envs, 1))
-        self._multi_env_up_tensor = self._initial_up.repeat((n_envs, 1))
-        self._multi_env_transform_tensor = self._initial_transform.repeat((n_envs, 1, 1))
-        self._multi_env_quat_tensor = _T_to_quat_for_madrona(self._multi_env_transform_tensor)
-
-        self._rasterizer.update_camera(self)
-        if self._raytracer is not None:
-            self._raytracer.update_camera(self)
-
-    @gs.assert_built
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
         """
         Set the pose of the camera.
@@ -618,9 +618,10 @@ class Camera(Sensor):
         self._multi_env_transform_tensor[env_idx] = transform
         self._multi_env_quat_tensor[env_idx] = _T_to_quat_for_madrona(transform)
 
-        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+        elif self._batch_renderer is None:
+            self._rasterizer.update_camera(self)
 
     @gs.assert_built
     def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
@@ -661,9 +662,10 @@ class Camera(Sensor):
             else:
                 self._fov = intrinsics_fov
 
-        self._rasterizer.update_camera(self)
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
+        elif self._batch_renderer is None:
+            self._rasterizer.update_camera(self)
 
     @gs.assert_built
     def start_recording(self):
@@ -763,7 +765,7 @@ class Camera(Sensor):
 
     @property
     def idx(self):
-        """The integer index of the camera."""
+        """The global integer index of the camera."""
         return self._idx
 
     @property
@@ -848,6 +850,11 @@ class Camera(Sensor):
     def env_idx(self):
         """Index of the environment being tracked by the camera."""
         return self._env_idx
+
+    @property
+    def debug(self):
+        """Whether the camera is a debug camera."""
+        return self._debug
 
     @property
     def pos(self):

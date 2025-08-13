@@ -127,10 +127,24 @@ class Visualizer(RBC):
         self.viewer_lock = None
         self._renderer = None
 
-    def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx):
-        cam_idx = len(self._cameras)
+    def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug):
+        cam_idx = len([camera for camera in self._cameras if camera.debug == debug])
         camera = Camera(
-            self, cam_idx, model, res, pos, lookat, up, fov, aperture, focus_dist, GUI, spp, denoise, env_idx=env_idx
+            self,
+            cam_idx,
+            model,
+            res,
+            pos,
+            lookat,
+            up,
+            fov,
+            aperture,
+            focus_dist,
+            GUI,
+            spp,
+            denoise,
+            env_idx=env_idx,
+            debug=debug,
         )
         self._cameras.append(camera)
         return camera
@@ -138,6 +152,8 @@ class Visualizer(RBC):
     def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
         if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+        else:
+            gs.raise_exception("`add_light` is specifically for batch renderer.")
 
     def reset(self):
         self._t = -1

@@ -119,7 +119,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 @pytest.mark.required
 @pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
-def test_batched_offscreen_rendering(show_viewer, tol):
+def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
@@ -247,6 +247,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
 
+    cam.start_recording()
     for _ in range(7):
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
         qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
@@ -270,6 +271,7 @@ def test_batched_offscreen_rendering(show_viewer, tol):
 
         for i in range(3):
             assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+    cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
 
 @pytest.mark.required
@@ -385,6 +387,31 @@ def test_point_cloud(show_viewer):
     point_cloud, mask = camera_sphere.render_pointcloud(world_frame=False)
     point_cloud = point_cloud[mask]
     assert_allclose(np.linalg.norm((0.0, 0.0, CAMERA_DIST) - point_cloud, axis=-1), SPHERE_RADIUS, atol=1e-2)
+
+
+@pytest.mark.required
+def test_splashsurf_surface_reconstruction(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    water = scene.add_entity(
+        material=gs.materials.SPH.Liquid(),
+        morph=gs.morphs.Box(
+            pos=(0.15, 0.15, 0.22),
+            size=(0.25, 0.25, 0.4),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.6, 1.0, 1.0),
+            vis_mode="recon",
+        ),
+    )
+    cam = scene.add_camera(
+        pos=(1.3, 1.3, 0.8),
+        lookat=(0.0, 0.0, 0.2),
+        GUI=show_viewer,
+    )
+    scene.build()
+    cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
 
 
 @pytest.mark.required
@@ -655,3 +682,20 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
             assert f.read() == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_2_channels_luminance_alpha_textures(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = get_hf_dataset(pattern="fridge/*")
+    fridge = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/fridge/fridge.urdf",
+            fixed=True,
+        )
+    )
+    scene.build()

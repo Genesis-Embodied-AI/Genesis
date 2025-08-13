@@ -2165,27 +2165,16 @@ class RigidSolver(Solver):
         kernel_set_geoms_friction(friction, geoms_idx, self.geoms_info, self._static_rigid_sim_config)
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        kernel_add_weld_constraint(
-            int(link1_idx),
-            int(link2_idx),
-            envs_idx,
-            self.equalities_info,
-            self.constraint_solver.constraint_state,
-            self.links_state,
-            self._static_rigid_sim_config,
-        )
+        return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx, unsafe=unsafe)
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        kernel_delete_weld_constraint(
-            int(link1_idx),
-            int(link2_idx),
-            envs_idx,
-            self.equalities_info,
-            self.constraint_solver.constraint_state,
-            self._static_rigid_sim_config,
-        )
+        return self.constraint_solver.delete_weld_constraint(link1_idx, link2_idx, envs_idx, unsafe=unsafe)
+
+    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        return self.constraint_solver.get_weld_constraints(as_tensor, to_torch)
+
+    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        return self.constraint_solver.get_equality_constraints(as_tensor, to_torch)
 
     def clear_external_force(self):
         kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
@@ -6641,80 +6630,3 @@ def kernel_set_geoms_friction(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_g_ in ti.ndrange(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
-
-
-@ti.kernel
-def kernel_add_weld_constraint(
-    link1_idx: ti.i32,
-    link2_idx: ti.i32,
-    envs_idx: ti.types.ndarray(),
-    equalities_info: array_class.EqualitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    links_state: array_class.LinksState,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_b_ in ti.ndrange(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == static_rigid_sim_config.n_equalities_candidate:
-            print(
-                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring dynamically registered weld constraint "
-                f"to avoid exceeding max number of equality constraints ({static_rigid_sim_config.n_equalities_candidate}). "
-                f"Please increase the value of RigidSolver's option 'max_dynamic_constraints'.{formats.RESET}"
-            )
-        else:
-            shared_pos = links_state.pos[link1_idx, i_b]
-            pos1 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, links_state.pos[link1_idx, i_b], links_state.quat[link1_idx, i_b]
-            )
-            pos2 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, links_state.pos[link2_idx, i_b], links_state.quat[link2_idx, i_b]
-            )
-
-            equalities_info.eq_type[i_e, i_b] = gs.ti_int(gs.EQUALITY_TYPE.WELD)
-            equalities_info.eq_obj1id[i_e, i_b] = link1_idx
-            equalities_info.eq_obj2id[i_e, i_b] = link2_idx
-
-            for i_3 in ti.static(range(3)):
-                equalities_info.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
-                equalities_info.eq_data[i_e, i_b][i_3] = pos2[i_3]
-
-            relpose = gu.ti_quat_mul(gu.ti_inv_quat(links_state.quat[link1_idx, i_b]), links_state.quat[link2_idx, i_b])
-
-            equalities_info.eq_data[i_e, i_b][6] = relpose[0]
-            equalities_info.eq_data[i_e, i_b][7] = relpose[1]
-            equalities_info.eq_data[i_e, i_b][8] = relpose[2]
-            equalities_info.eq_data[i_e, i_b][9] = relpose[3]
-
-            equalities_info.eq_data[i_e, i_b][10] = 1.0
-            equalities_info.sol_params[i_e, i_b] = ti.Vector(
-                [2 * static_rigid_sim_config.substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
-            )
-
-            constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1
-
-
-@ti.kernel
-def kernel_delete_weld_constraint(
-    link1_idx: ti.i32,
-    link2_idx: ti.i32,
-    envs_idx: ti.types.ndarray(),
-    equalities_info: array_class.EqualitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_b_ in ti.ndrange(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        for i_e in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
-            if (
-                equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
-                and equalities_info.eq_obj1id[i_e, i_b] == link1_idx
-                and equalities_info.eq_obj2id[i_e, i_b] == link2_idx
-            ):
-                if i_e < constraint_state.ti_n_equalities[i_b] - 1:
-                    equalities_info.eq_type[i_e, i_b] = equalities_info.eq_type[
-                        constraint_state.ti_n_equalities[i_b] - 1, i_b
-                    ]
-                constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1

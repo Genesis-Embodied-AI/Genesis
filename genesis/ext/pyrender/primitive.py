@@ -478,7 +478,7 @@ class Primitive(object):
             glDeleteVertexArrays(1, [self._vaid])
             glDeleteBuffers(len(self._buffers), list(self._buffers.values()))
             self._vaid = None
-            self._buffers = {}
+            self._buffers.clear()
 
     def _in_context(self):
         return self._vaid is not None

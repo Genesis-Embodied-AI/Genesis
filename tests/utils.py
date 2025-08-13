@@ -24,13 +24,15 @@ import genesis.utils.geom as gu
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
+from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_FORMATS, USD_FORMATS
 
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-MESH_EXTENSIONS = (".mtl", ".glb", ".obj", ".stl", ".usb", ".usdz", ".mdl")
+MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
+
 
 # Get repository "root" path (actually test dir is good enough)
 TEST_DIR = os.path.dirname(__file__)
@@ -169,7 +171,12 @@ def get_git_commit_info(ref="HEAD"):
 
 
 def get_hf_dataset(
-    pattern, repo_name: str = "assets", local_dir: str | None = None, num_retry: int = 4, retry_delay: float = 30.0
+    pattern,
+    repo_name: str = "assets",
+    local_dir: str | None = None,
+    num_retry: int = 4,
+    retry_delay: float = 30.0,
+    local_dir_use_symlinks: bool = True,
 ):
     assert num_retry >= 1
 
@@ -183,6 +190,7 @@ def get_hf_dataset(
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
+                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful
@@ -192,7 +200,7 @@ def get_hf_dataset(
                     continue
 
                 ext = path.suffix.lower()
-                if not ext in (".xml", ".urdf", *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
+                if not ext in (URDF_FORMAT, MJCF_FORMAT, *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
                     continue
 
                 has_files = True
@@ -200,7 +208,7 @@ def get_hf_dataset(
                 if path.stat().st_size == 0:
                     raise HTTPError(f"File '{path}' is empty.")
 
-                if path.suffix.lower() in (".xml", ".urdf"):
+                if path.suffix.lower() in (URDF_FORMAT, MJCF_FORMAT):
                     try:
                         ET.parse(path)
                     except ET.ParseError as e:
