@@ -5,6 +5,7 @@ import taichi as ti
 import torch
 
 import genesis as gs
+from genesis.engine.entities import RigidEntity
 from genesis.engine.solvers import RigidSolver
 from genesis.utils.geom import (
     euler_to_quat,
@@ -34,6 +35,10 @@ class IMUOptions(SensorOptions):
         The offset of the IMU sensor from the RigidLink.
     euler_offset : tuple[float, float, float]
         The offset of the IMU sensor from the RigidLink in euler angles.
+    accelerometer_bias : tuple[float, float, float]
+        The bias of the accelerometer.
+    gyroscope_bias : tuple[float, float, float]
+        The bias of the gyroscope.
     """
 
     entity_idx: int
@@ -44,11 +49,10 @@ class IMUOptions(SensorOptions):
     accelerometer_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
     gyroscope_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-    return_accelerometer: bool = True
-    return_gyroscope: bool = True
-
     def validate(self, scene):
         assert self.entity_idx >= 0 and self.entity_idx < len(scene.entities), "Invalid RigidEntity index."
+        entity = scene.entities[self.entity_idx]
+        assert isinstance(entity, RigidEntity), "Entity at given index is not a RigidEntity."
         assert (
             self.link_idx_local >= 0 and self.link_idx_local < scene.entities[self.entity_idx].n_links
         ), "Invalid RigidLink index."
@@ -98,12 +102,10 @@ class IMU(Sensor):
         )
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
-        return_format = {}
-        if self._options.return_accelerometer:
-            return_format["lin_acc"] = (3,)
-        if self._options.return_gyroscope:
-            return_format["ang_vel"] = (3,)
-        return return_format
+        return {
+            "lin_acc": (3,),
+            "ang_vel": (3,),
+        }
 
     def _get_cache_length(self) -> int:
         return 1
@@ -148,16 +150,8 @@ class IMU(Sensor):
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        # store the history of ground truth cache in the buffer
         buffered_data.append(shared_ground_truth_cache)
-
-        # apply read_delay_steps to the buffered data and store the result in shared_cache
-        tensor_idx = 0
-        for tensor_size, read_delay_step in zip(shared_metadata.cache_sizes, shared_metadata.read_delay_steps):
-            shared_cache[:, tensor_idx : tensor_idx + tensor_size] = buffered_data.at(read_delay_step)[
-                :, tensor_idx : tensor_idx + tensor_size
-            ]
-            tensor_idx += tensor_size
+        cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
         # add bias to the shared_cache
         strided_shared_cache = torch.as_strided(

@@ -155,6 +155,18 @@ class Sensor(RBC):
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
+    @classmethod
+    def _apply_delay_to_shared_cache(
+        self, shared_metadata: SharedSensorMetadata, shared_cache: torch.Tensor, buffered_data: "TensorRingBuffer"
+    ):
+        """
+        Applies the read delay to the shared cache tensor by copying the buffered data at the appropriate index.
+        """
+        idx = 0
+        for tensor_size, read_delay_step in zip(shared_metadata.cache_sizes, shared_metadata.read_delay_steps):
+            shared_cache[:, idx : idx + tensor_size] = buffered_data.at(read_delay_step)[:, idx : idx + tensor_size]
+            idx += tensor_size
+
     def _get_formatted_data(
         self, tensor: torch.Tensor, envs_idx: list[int] | None
     ) -> torch.Tensor | dict[str, torch.Tensor]:
