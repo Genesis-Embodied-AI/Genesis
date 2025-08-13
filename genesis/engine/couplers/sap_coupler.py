@@ -496,11 +496,11 @@ class SAPCoupler(RBC):
     def compute_fem_surface_tet_aabb(self, i_step: ti.i32):
         aabbs = ti.static(self.fem_surface_tet_aabb.aabbs)
         for i_b, i_se in ti.ndrange(self.fem_solver._B, self.fem_solver.n_surface_elements):
-            aabbs[i_b, i_se].min.fill(np.inf)
-            aabbs[i_b, i_se].max.fill(-np.inf)
             i_e = self.fem_solver.surface_elements[i_se]
             i_v = self.fem_solver.elements_i[i_e].el2v
 
+            aabbs[i_b, i_se].min.fill(np.inf)
+            aabbs[i_b, i_se].max.fill(-np.inf)
             for i in ti.static(range(4)):
                 pos_v = self.fem_solver.elements_v[i_step, i_v[i], i_b].pos
                 aabbs[i_b, i_se].min = ti.min(aabbs[i_b, i_se].min, pos_v)
@@ -510,8 +510,6 @@ class SAPCoupler(RBC):
     def compute_rigid_tri_aabb(self):
         aabbs = ti.static(self.rigid_tri_aabb.aabbs)
         for i_b, i_f in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_faces):
-            aabbs[i_b, i_f].min.fill(np.inf)
-            aabbs[i_b, i_f].max.fill(-np.inf)
             i_v0 = self.rigid_solver.faces_info.verts_idx[i_f][0]
             i_v1 = self.rigid_solver.faces_info.verts_idx[i_f][1]
             i_v2 = self.rigid_solver.faces_info.verts_idx[i_f][2]
@@ -523,10 +521,11 @@ class SAPCoupler(RBC):
             pos_v1 = self.rigid_solver.free_verts_state.pos[i_fv1, i_b]
             pos_v2 = self.rigid_solver.free_verts_state.pos[i_fv2, i_b]
 
+            aabbs[i_b, i_f].min.fill(np.inf)
+            aabbs[i_b, i_f].max.fill(-np.inf)
             aabbs[i_b, i_f].min = ti.min(aabbs[i_b, i_f].min, pos_v0)
             aabbs[i_b, i_f].min = ti.min(aabbs[i_b, i_f].min, pos_v1)
             aabbs[i_b, i_f].min = ti.min(aabbs[i_b, i_f].min, pos_v2)
-
             aabbs[i_b, i_f].max = ti.max(aabbs[i_b, i_f].max, pos_v0)
             aabbs[i_b, i_f].max = ti.max(aabbs[i_b, i_f].max, pos_v1)
             aabbs[i_b, i_f].max = ti.max(aabbs[i_b, i_f].max, pos_v2)
