@@ -272,10 +272,16 @@ def _build_multi_pendulum(n):
 
     return urdf
 
+@pytest.fixture(scope="session")
+def pendulum(asset_tmp_path):
+    return _build_multi_pendulum(n=1)
+
+@pytest.fixture(scope="session")
+def double_pendulum(asset_tmp_path):
+    return _build_multi_pendulum(n=2)
 
 @pytest.fixture(scope="session")
 def one_pendulum(asset_tmp_path):
-
     mjcf = ET.Element("mujoco", model="one_stick_robot")
     # ET.SubElement(mjcf, "option", timestep="0.05")
     default = ET.SubElement(mjcf, "default")
@@ -284,14 +290,7 @@ def one_pendulum(asset_tmp_path):
     link1 = ET.SubElement(worldbody, "body", name="body1", pos="0.0 0.0 0.0")
     ET.SubElement(link1, "geom", type="capsule", fromto="0 0 0 0.0 0 1.0", size="0.05", rgba="0 0 1 0.3")
     ET.SubElement(link1, "joint", type="hinge", name="joint1", axis="0 1 0")
-
     return mjcf
-
-
-@pytest.fixture(scope="session")
-def double_pendulum(asset_tmp_path):
-    return _build_multi_pendulum(n=2)
-
 
 @pytest.fixture(scope="session")
 def double_ball_pendulum():
