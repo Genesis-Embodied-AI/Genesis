@@ -442,89 +442,53 @@ class Scene(RBC):
         parent_link._child_idxs.append(child_link.idx)
 
     @gs.assert_unbuilt
-    def add_light(
+    def add_mesh_light(
         self,
-        *,
         morph: Morph | None = None,
         color: ArrayLike | None = (1.0, 1.0, 1.0, 1.0),
         intensity: float = 20.0,
         revert_dir: bool | None = False,
         double_sided: bool | None = False,
-        beam_angle: float | None = 180.0,
-        pos: ArrayLike | None = None,
-        dir: ArrayLike | None = None,
-        directional: bool | None = None,
-        castshadow: bool | None = None,
-        cutoff: float | None = None,
+        cutoff: float | None = 180.0,
     ):
         """
-        Add a light to the scene.
-
-        Warning
-        -------
-        The signature of this method is different depending on the renderer being used, i.e.:
-        - RayTracer: 'add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle)'
-        - BatchRender: 'add_ligth(self, pos, dir, intensity, directional, castshadow, cutoff)'
-        - Rasterizer: **Unsupported**
+        Add a mesh light to the scene. Only supported by RayTracer.
 
         Parameters
         ----------
         morph : gs.morphs.Morph
-            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`. Only supported by
-            RayTracer.
+            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`.
         color : tuple of float, shape (3,)
-            The color of the light, specified as (r, g, b). Only supported by RayTracer.
+            The color of the light, specified as (r, g, b).
         intensity : float
             The intensity of the light.
         revert_dir : bool
             Whether to revert the direction of the light. If True, the light will be emitted towards the mesh's inside.
-            Only supported by RayTracer.
         double_sided : bool
-            Whether to emit light from both sides of surface. Only supported by RayTracer.
-        beam_angle : float
-            The beam angle of the light. Only supported by RayTracer.
-        pos : tuple of float, shape (3,)
-            The position of the light, specified as (x, y, z). Only supported by BatchRenderer.
-        dir : tuple of float, shape (3,)
-            The direction of the light, specified as (x, y, z). Only supported by BatchRenderer.
-        intensity : float
-            The intensity of the light. Only supported by BatchRenderer.
-        directional : bool
-            Whether the light is directional. Only supported by BatchRenderer.
-        castshadow : bool
-            Whether the light casts shadows. Only supported by BatchRenderer.
+            Whether to emit light from both sides of surface.
         cutoff : float
-            The cutoff angle of the light in degrees. Only supported by BatchRenderer.
+            The cutoff angle of the light in degrees. Range: [0.0, 180.0].
         """
-        if self._visualizer.batch_renderer is not None:
-            if any(map(lambda e: e is None, (pos, dir, intensity, directional, castshadow, cutoff))):
-                gs.raise_exception("Input arguments do not complain with expected signature when using 'BatchRenderer'")
+        if not isinstance(self.renderer_options, gs.renderers.RayTracer):
+            gs.logger.warning("add_mesh_light() is only supported when using RayTracer.")
+            return
 
-            self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
-        elif self.visualizer.raytracer is not None:
-            if any(map(lambda e: e is None, (morph, color, intensity, revert_dir, double_sided, beam_angle))):
-                gs.raise_exception("Input arguments do not complain with expected signature when using 'RayTracer'")
-            if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
-                gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
-
-            mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
-            self.visualizer.raytracer.add_mesh_light(
-                mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, beam_angle
-            )
-        else:
-            gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
+        if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
+            gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
+        mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
+        self._visualizer.add_mesh_light(mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff)
 
     @gs.assert_unbuilt
     def add_light(
         self,
-        pos,
-        dir,
-        color=(1.0, 1.0, 1.0),
-        intensity=1.0,
-        directional=0,
-        castshadow=True,
-        cutoff=180.0,
-        attenuation=0.0,
+        pos: ArrayLike,
+        dir: ArrayLike,
+        color: ArrayLike = (1.0, 1.0, 1.0),
+        intensity: float = 1.0,
+        directional: bool = False,
+        castshadow: bool = True,
+        cutoff: float = 45.0,
+        attenuation: float = 0.0,
     ):
         """
         Add a light to the scene for batch renderer.
@@ -536,7 +500,7 @@ class Scene(RBC):
         dir : tuple of float, shape (3,)
             The direction of the light, specified as (x, y, z).
         color : tuple of float, shape (3,)
-            The color of the light, specified as (x, y, z).
+            The color of the light, specified as (r, g, b).
         intensity : float
             The intensity of the light.
         directional : bool
@@ -544,16 +508,13 @@ class Scene(RBC):
         castshadow : bool
             Whether the light casts shadows.
         cutoff : float
-            The cutoff angle of the light in degrees.
+            The cutoff angle of the light in degrees. Range: (0.0, 90.0).
         attenuation : float
             The attenuation factor of the light.
             Light intensity will attenuate by distance with (1 / (1 + attenuation * distance ^ 2))
         """
         if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-            gs.logger.warning(
-                "This add_light() function is only supported when using BatchRenderer."
-                "Please use add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle) instead."
-            )
+            gs.logger.warning("add_light() is only supported when using BatchRenderer.")
             return
 
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)

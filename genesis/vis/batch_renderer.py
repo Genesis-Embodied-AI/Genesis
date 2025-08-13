@@ -124,7 +124,17 @@ class BatchRenderer(RBC):
         light_intensity = torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
 
         self._renderer = MadronaBatchRendererAdapter(
-            rigid, gpu_id, n_envs, n_cameras, n_lights, cameras_fov, cameras_near, cameras_far, *res, False, use_rasterizer
+            rigid,
+            gpu_id,
+            n_envs,
+            n_cameras,
+            n_lights,
+            cameras_fov,
+            cameras_near,
+            cameras_far,
+            *res,
+            False,
+            use_rasterizer,
         )
         self._renderer.init(
             rigid,
@@ -192,8 +202,13 @@ class BatchRenderer(RBC):
         normal_ = normal and normal_arr is None
 
         # Early return if there is nothing to do
-        if not (rgb_ or depth_):
-            return rgb_arr if rgb else None, depth_arr if depth else None, None, None
+        if not (rgb_ or depth_ or segmentation_ or normal_):
+            return (
+                rgb_arr if rgb else None,
+                depth_arr if depth else None,
+                segmentation_arr if segmentation else None,
+                normal_arr if normal else None,
+            )
 
         # Update scene
         self.update_scene()
@@ -208,10 +223,10 @@ class BatchRenderer(RBC):
 
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
         buffers = [
-            rgba_arr_all[..., :3].cpu().numpy(),
-            depth_arr_all.cpu().numpy(),
-            segmentation_arr_all.cpu().numpy(),
-            normal_arr_all[..., :3].cpu().numpy(),
+            rgba_arr_all[..., :3].flip(-1).cpu().numpy() if rgb else None,
+            depth_arr_all.cpu().numpy() if depth else None,
+            segmentation_arr_all.cpu().numpy() if segmentation else None,
+            normal_arr_all[..., :3].flip(-1).cpu().numpy() if normal else None,
         ]
         for i, data in enumerate(buffers):
             if data is not None:

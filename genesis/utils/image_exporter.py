@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import numpy as np
+
 # import torch
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
@@ -26,7 +27,7 @@ class ImageComponent:
         frame = frame[i_env]
         frame_path = os.path.join(export_dir, f"{self.name}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
         cv2.imwrite(frame_path, frame)
-    
+
     def check_frame_shape(self, frame):
         if frame.ndim == 3:
             frame = frame.unsqueeze(0)
@@ -64,10 +65,8 @@ def normalize_depth(depth, depth_clip_max, depth_scale):
         depth = np.log(depth + 1.0)
 
     # Normalize to 0–255
-    denom = (depth_max - depth_min)
-    out = np.where(
-        denom > gs.EPS, ((depth_max - depth) / denom * 255.0).astype(np.uint8), 0
-    )
+    denom = depth_max - depth_min
+    out = np.where(denom > gs.EPS, ((depth_max - depth) / denom * 255.0).astype(np.uint8), 0)
     return out
 
 
@@ -82,11 +81,9 @@ def normalize_segmentation(segmentation):
     """
     seg_min = segmentation.min(axis=(-3, -2), keepdims=True)
     seg_max = segmentation.max(axis=(-3, -2), keepdims=True)
-    denom = (seg_max - seg_min)
+    denom = seg_max - seg_min
 
-    out = np.where(
-        denom > 0, (((segmentation - seg_min) / denom) * 255.0).astype(np.uint8), 0
-    )
+    out = np.where(denom > 0, (((segmentation - seg_min) / denom) * 255.0).astype(np.uint8), 0)
     return out
 
 
@@ -95,15 +92,14 @@ class FrameImageExporter:
     This class enables exporting images from all cameras and all environments in batch and in parallel, unlike
     `Camera.(start|stop)_recording` API, which only allows for exporting images from a single camera and environment.
     """
+
     def __init__(self, export_dir, depth_clip_max=100, depth_scale="linear"):
         self.image_components = {
             RGB_S: ImageComponent(RGB_S, 3, None),
             DEPTH_S: ImageComponent(
                 DEPTH_S, 1, partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale)
             ),
-            SEGMENTATION_S: ImageComponent(
-                SEGMENTATION_S, 1, partial(normalize_segmentation)
-            ),
+            SEGMENTATION_S: ImageComponent(SEGMENTATION_S, 1, partial(normalize_segmentation)),
             NORMAL_S: ImageComponent(NORMAL_S, 3, None),
         }
         self.export_dir = export_dir
@@ -126,7 +122,7 @@ class FrameImageExporter:
         ref_component = next((c for c in component_frames.values() if c is not None), None)
         if ref_component is None:
             gs.raise_exception("No images to export")
-        
+
         # Choose reference sequence for default camera indices
         if camera_idx is None:
             camera_idx = range(len(ref_component))
@@ -138,7 +134,7 @@ class FrameImageExporter:
         for i_cam in camera_idx:
             frame_args = {}
             for name, frames in component_frames.items():
-                frame_args[name] = None if frames is None else frames[i_cam] 
+                frame_args[name] = None if frames is None else frames[i_cam]
                 self.export_frame_single_camera(i_step, i_cam, **frame_args)
 
     def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, segmentation=None, normal=None):
@@ -156,6 +152,8 @@ class FrameImageExporter:
         component_frames = {RGB_S: rgb, DEPTH_S: depth, SEGMENTATION_S: segmentation, NORMAL_S: normal}
 
         for name, frames in component_frames.items():
+            if frames is None:
+                continue
             component = self.image_components[name]
             frames = component.check_frame_shape(frames)
             if component.normalize_func is not None:
@@ -169,4 +167,3 @@ class FrameImageExporter:
             )
             with ThreadPoolExecutor() as executor:
                 executor.map(frame_job, np.arange(len(frames)))
-            

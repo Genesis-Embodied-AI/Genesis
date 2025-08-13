@@ -617,16 +617,16 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
         GUI=show_viewer,
     )
     scene.add_light(
-        pos=[0.0, 0.0, 1.5],
-        dir=[1.0, 1.0, -2.0],
+        pos=(0.0, 0.0, 1.5),
+        dir=(1.0, 1.0, -2.0),
         directional=True,
         castshadow=True,
         cutoff=45.0,
         intensity=0.5,
     )
     scene.add_light(
-        pos=[4.0, -4.0, 4.0],
-        dir=[-1.0, 1.0, -1.0],
+        pos=(4.0, -4.0, 4.0),
+        dir=(-1.0, 1.0, -1.0),
         directional=False,
         castshadow=True,
         cutoff=45.0,

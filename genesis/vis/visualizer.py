@@ -134,6 +134,10 @@ class Visualizer(RBC):
         self._cameras.append(camera)
         return camera
 
+    def add_mesh_light(self, mesh, color, intensity, pos, quat, revert_dir, double_sided, cutoff):
+        if self._raytracer is not None:
+            self._raytracer.add_mesh_light(mesh, color, intensity, pos, quat, revert_dir, double_sided, cutoff)
+
     def add_light(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)

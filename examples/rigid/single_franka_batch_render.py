@@ -52,22 +52,29 @@ def main():
         fov=45,
         GUI=args.vis,
     )
+    cam_2 = scene.add_camera(
+        res=(512, 512),
+        pos=(0.0, 0.1, 5.0),
+        lookat=(0.0, 0.0, 0.0),
+        fov=45,
+        GUI=args.vis,
+    )
 
     scene.add_light(
         pos=(0.0, 0.0, 1.5),
         dir=(1.0, 1.0, -2.0),
         color=(1.0, 0.0, 0.0),
-        directional=1,
-        castshadow=1,
+        directional=True,
+        castshadow=True,
         cutoff=45.0,
         intensity=0.5,
     )
     scene.add_light(
         pos=(4, -4, 4),
         dir=(0, 0, -1),
-        directional=0,
-        castshadow=1,
-        cutoff=180.0,
+        directional=False,
+        castshadow=True,
+        cutoff=45.0,
         intensity=2.0,
         attenuation=0.1,
     )
@@ -86,9 +93,7 @@ def main():
             )
             exporter.export_frame_all_cameras(i, rgb=color, depth=depth, segmentation=seg, normal=normal)
         else:
-            color, depth, seg, normal = cam_1.render(
-                rgb=i % 2 == 1, depth=True, segmentation=True, normal=i % 2 == 1
-            )
+            color, depth, seg, normal = cam_1.render(rgb=i % 2 == 1, depth=True, segmentation=True, normal=i % 2 == 1)
             exporter.export_frame_single_camera(i, cam_1.idx, rgb=color, depth=depth, segmentation=seg, normal=normal)
 
 
