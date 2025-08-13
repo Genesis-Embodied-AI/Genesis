@@ -582,6 +582,8 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
         atol=0.2,
         err_msg=f"Link center {center} moves too far from [-0.5, -0.5, 0.04].",
     )
+
+
 def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
     Test if a box with hard vertex constraints has those vertices fixed,
@@ -598,9 +600,10 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
 
-    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/meshes/cube8.obj",
@@ -671,9 +674,10 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
 
-    asset_path = get_hf_assets(pattern="meshes/cube8.obj")
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/meshes/cube8.obj",

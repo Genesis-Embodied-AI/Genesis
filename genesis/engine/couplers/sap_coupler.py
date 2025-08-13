@@ -1114,7 +1114,7 @@ class SAPCoupler(RBC):
                     if self.fem_solver.vertex_constraints.is_constrained[i_v[i], i_b]:
                         S[i, :] = ti.Vector.zero(gs.ti_float, 3)
 
-            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, self.fem_state_v.v_diff)
+            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_v, self.fem_state_v.v_diff)
             energy[i_b] += 0.5 * p9.dot(H9_p9) * damping_beta_factor * V_dt2
 
     @ti.func
