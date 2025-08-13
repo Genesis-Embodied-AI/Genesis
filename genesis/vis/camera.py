@@ -1,8 +1,7 @@
 import inspect
+import math
 import os
 import time
-import math
-from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -10,7 +9,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.sensors import Sensor
+from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
 
 
@@ -26,7 +25,7 @@ def _T_to_quat_for_madrona(T):
     return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
 
 
-class Camera(Sensor):
+class Camera(RBC):
     """
     A camera which can be used to render RGB, depth, and segmentation images.
     Supports either rasterizer or raytracer for rendering, specified by `scene.renderer`.
