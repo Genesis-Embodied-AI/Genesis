@@ -21,7 +21,7 @@ from .utils import (
     build_mujoco_sim,
     check_mujoco_data_consistency,
     check_mujoco_model_consistency,
-    get_hf_assets,
+    get_hf_dataset,
     init_simulators,
     simulate_and_check_mujoco_consistency,
 )
@@ -307,6 +307,24 @@ def double_ball_pendulum():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def hinge_slide():
+    mjcf = ET.Element("mujoco", model="hinge_slide")
+
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "joint", damping="0.01")
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    base = ET.SubElement(worldbody, "body", name="pendulum", pos="0.15 0.0 0.0")
+    ET.SubElement(base, "joint", name="hinge", type="hinge", axis="0 1 0", frictionloss="0.08")
+    ET.SubElement(base, "geom", name="geom1", type="capsule", size="0.02", fromto="0.0 0.0 0.0 0.1 0.0 0.0")
+    link1 = ET.SubElement(base, "body", name="link1", pos="0.1 0.0 0.0")
+    ET.SubElement(link1, "joint", name="slide", type="slide", axis="1 0 0", frictionloss="0.3", stiffness="200.0")
+    ET.SubElement(link1, "geom", name="geom2", type="capsule", size="0.015", fromto="-0.1 0.0 0.0 0.1 0.0 0.0")
+
+    return mjcf
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -330,6 +348,20 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_simple_kinematic_chain(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=200, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["hinge_slide"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_frictionloss(gs_sim, mj_sim, tol):
+    qvel = np.array([0.7, -0.9])
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=2000, tol=tol)
+
+    # Check that final velocity is almost zero
+    gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()
+    assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
 # Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
@@ -362,14 +394,12 @@ def test_walker(gs_sim, mj_sim, gjk_collision, tol):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_equality_joint(gs_sim, mj_sim, gs_solver):
+def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
     # there is an equality constraint
     assert gs_sim.rigid_solver.n_equalities == 1
 
     qpos = np.array((0.0, -1.0))
     qvel = np.array((1.0, -0.3))
-    # Note that it is impossible to be more accurate than this because of the inherent stiffness of the problem.
-    tol = 2e-8 if gs_solver == gs.constraint_solver.Newton else 1e-8
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=300, tol=tol)
 
     # check if the two joints are equal
@@ -403,7 +433,7 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
     # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
     # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
+    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 5e-6
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
@@ -518,7 +548,7 @@ def test_urdf_rope(
     dof_damping,
     show_viewer,
 ):
-    asset_path = get_hf_assets(pattern="linear_deformable.urdf")
+    asset_path = get_hf_dataset(pattern="linear_deformable.urdf")
     xml_path = os.path.join(asset_path, "linear_deformable.urdf")
 
     mj_sim = build_mujoco_sim(
@@ -1675,7 +1705,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = get_hf_assets(pattern="work_table.glb")
+    asset_path = get_hf_dataset(pattern="work_table.glb")
     table = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
@@ -1684,7 +1714,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         ),
         vis_mode="collision",
     )
-    asset_path = get_hf_assets(pattern="spoon.glb")
+    asset_path = get_hf_dataset(pattern="spoon.glb")
     obj = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
@@ -1757,7 +1787,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
     )
     objs = []
     for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
-        asset_path = get_hf_assets(pattern=f"{asset_name}/*")
+        asset_path = get_hf_dataset(pattern=f"{asset_name}/*")
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/output.xml",
@@ -1866,7 +1896,7 @@ def test_collision_plane_convex(show_viewer, tol):
 
         scene.add_entity(morph)
 
-        asset_path = get_hf_assets(pattern="image_0000_segmented.glb")
+        asset_path = get_hf_dataset(pattern="image_0000_segmented.glb")
         asset = scene.add_entity(
             gs.morphs.Mesh(
                 file=f"{asset_path}/image_0000_segmented.glb",
@@ -2048,7 +2078,7 @@ def test_urdf_parsing(show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    asset_path = get_hf_assets(pattern="microwave/*")
+    asset_path = get_hf_dataset(pattern="microwave/*")
     entities = {}
     for i, (fixed, merge_fixed_links) in enumerate(
         ((False, False), (False, True), (True, False), (True, True)),
@@ -2177,18 +2207,29 @@ def test_gravity(show_viewer, tol):
     )
 
     sphere = scene.add_entity(gs.morphs.Sphere())
-    scene.build(n_envs=2)
+    scene.build(n_envs=3)
 
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, -9.8]), envs_idx=0)
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 9.8]), envs_idx=1)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
+    scene.sim.set_gravity(torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=2)
 
-    for _ in range(200):
-        scene.step()
+    with np.testing.assert_raises(AssertionError):
+        scene.sim.set_gravity(torch.tensor([0.0, -10.0]))
 
-    first_pos = sphere.get_dofs_position()[0, 2]
-    second_pos = sphere.get_dofs_position()[1, 2]
+    with np.testing.assert_raises(AssertionError):
+        scene.sim.set_gravity(torch.tensor([[0.0, 0.0, -10.0], [0.0, 0.0, -10.0]]), envs_idx=1)
 
-    assert_allclose(first_pos * -1, second_pos, tol=tol)
+    scene.step()
+
+    assert_allclose(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 0.0, 3.0],
+        ],
+        sphere.get_links_acc().squeeze(),
+        tol=tol,
+    )
 
 
 @pytest.mark.required
@@ -2299,7 +2340,7 @@ def test_drone_advanced(show_viewer):
         show_FPS=False,
     )
     plane = scene.add_entity(gs.morphs.Plane())
-    asset_path = get_hf_assets(pattern="drone_sus/*")
+    asset_path = get_hf_dataset(pattern="drone_sus/*")
     drones = []
     for offset, merge_fixed_links in ((-0.3, False), (0.3, True)):
         drone = scene.add_entity(
@@ -2350,6 +2391,36 @@ def test_drone_advanced(show_viewer):
     assert abs(quat_1[1] + quat_2[1]) < tol
     assert abs(quat_1[2] - quat_2[2]) < tol
     assert abs(quat_1[2] - quat_2[2]) < tol
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_get_constraints_api(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    cube = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.2, 0.0, 0.05)))
+    scene.build(n_envs=2)
+
+    link_a, link_b = robot.base_link.idx, cube.base_link.idx
+    scene.sim.rigid_solver.add_weld_constraint(link_a, link_b, envs_idx=[1])
+    with np.testing.assert_raises(AssertionError):
+        scene.sim.rigid_solver.add_weld_constraint(link_a, link_b, envs_idx=[1])
+
+    for as_tensor, to_torch in ((True, True), (True, False), (False, True), (False, False)):
+        weld_const_info = scene.sim.rigid_solver.get_weld_constraints(as_tensor, to_torch)
+        link_a_, link_b_ = weld_const_info["link_a"], weld_const_info["link_b"]
+        if as_tensor:
+            assert_allclose((link_a_[0], link_b_[0]), ((-1,), (-1,)), tol=0)
+        else:
+            assert_allclose((link_a_[0], link_b_[0]), ((), ()), tol=0)
+        assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
 
 
 @pytest.mark.parametrize(

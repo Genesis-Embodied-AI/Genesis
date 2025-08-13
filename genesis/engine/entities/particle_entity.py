@@ -247,7 +247,8 @@ class ParticleEntity(Entity):
             self._vfaces = np.array([], dtype=gs.np_float)
         elif isinstance(self._morph, gs.options.morphs.MeshSet):
             for i in range(len(self._morph.files)):
-                pos_i, euler_i = map(np.asarray, (self._morph.poss[i], self._morph.eulers[i]))
+                pos_i = np.asarray(self._morph.poss[i], dtype=gs.np_float)
+                euler_i = np.asarray(self._morph.eulers[i], dtype=gs.np_float)
                 quat_i = gs.utils.geom.xyz_to_quat(euler_i, rpy=True, degrees=True)
                 self._vmesh[i].apply_transform(gu.trans_quat_to_T(pos_i, quat_i))
 
@@ -284,7 +285,8 @@ class ParticleEntity(Entity):
             origin = np.mean(self._morph.poss, dtype=gs.np_float)
         else:
             # transform vmesh
-            pos, quat = map(np.asarray, (self._morph.pos, self._morph.quat))
+            pos = np.asarray(self._morph.pos, dtype=gs.np_float)
+            quat = np.asarray(self._morph.quat, dtype=gs.np_float)
             self._vmesh.apply_transform(gu.trans_quat_to_T(pos, quat))
             # transform particles
             particles = gu.transform_by_trans_quat(

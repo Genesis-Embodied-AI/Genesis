@@ -562,6 +562,7 @@ class RigidSolver(Solver):
                 dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
                 dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
+                dofs_frictionloss=np.concatenate([joint.dofs_frictionloss for joint in joints], dtype=gs.np_float),
                 dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
                 dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
@@ -821,6 +822,9 @@ class RigidSolver(Solver):
             entities_geom_end=np.array([entity.geom_end for entity in entities], dtype=gs.np_int),
             entities_gravity_compensation=np.array(
                 [entity.gravity_compensation for entity in entities], dtype=gs.np_float
+            ),
+            entities_is_local_collision_mask=np.array(
+                [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
             ),
             # taichi variables
             entities_info=self.entities_info,
@@ -2161,27 +2165,16 @@ class RigidSolver(Solver):
         kernel_set_geoms_friction(friction, geoms_idx, self.geoms_info, self._static_rigid_sim_config)
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        kernel_add_weld_constraint(
-            int(link1_idx),
-            int(link2_idx),
-            envs_idx,
-            self.equalities_info,
-            self.constraint_solver.constraint_state,
-            self.links_state,
-            self._static_rigid_sim_config,
-        )
+        return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx, unsafe=unsafe)
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        kernel_delete_weld_constraint(
-            int(link1_idx),
-            int(link2_idx),
-            envs_idx,
-            self.equalities_info,
-            self.constraint_solver.constraint_state,
-            self._static_rigid_sim_config,
-        )
+        return self.constraint_solver.delete_weld_constraint(link1_idx, link2_idx, envs_idx, unsafe=unsafe)
+
+    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        return self.constraint_solver.get_weld_constraints(as_tensor, to_torch)
+
+    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        return self.constraint_solver.get_equality_constraints(as_tensor, to_torch)
 
     def clear_external_force(self):
         kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
@@ -2191,16 +2184,9 @@ class RigidSolver(Solver):
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
-        if not hasattr(self, "_rigid_global_info"):
-            super().set_gravity(gravity, envs_idx)
-            return
-        g = np.asarray(gravity, dtype=gs.np_float)
-        if envs_idx is None:
-            if g.ndim == 1:
-                g = np.tile(g, (self._B, 1))
-            self._rigid_global_info.gravity.from_numpy(g)
-        else:
-            self._rigid_global_info.gravity[envs_idx] = g
+        super().set_gravity(gravity, envs_idx)
+        if hasattr(self, "_rigid_global_info"):
+            self._rigid_global_info.gravity.copy_from(self._gravity)
 
     def rigid_entity_inverse_kinematics(
         self,
@@ -2514,6 +2500,7 @@ def kernel_init_dof_fields(
     dofs_invweight: ti.types.ndarray(),
     dofs_stiffness: ti.types.ndarray(),
     dofs_damping: ti.types.ndarray(),
+    dofs_frictionloss: ti.types.ndarray(),
     dofs_armature: ti.types.ndarray(),
     dofs_kp: ti.types.ndarray(),
     dofs_kv: ti.types.ndarray(),
@@ -2542,6 +2529,7 @@ def kernel_init_dof_fields(
         dofs_info.invweight[I] = dofs_invweight[i]
         dofs_info.stiffness[I] = dofs_stiffness[i]
         dofs_info.damping[I] = dofs_damping[i]
+        dofs_info.frictionloss[I] = dofs_frictionloss[i]
         dofs_info.kp[I] = dofs_kp[i]
         dofs_info.kv[I] = dofs_kv[i]
 
@@ -2917,6 +2905,7 @@ def kernel_init_entity_fields(
     entities_geom_start: ti.types.ndarray(),
     entities_geom_end: ti.types.ndarray(),
     entities_gravity_compensation: ti.types.ndarray(),
+    entities_is_local_collision_mask: ti.types.ndarray(),
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
@@ -2942,6 +2931,7 @@ def kernel_init_entity_fields(
         entities_info.n_geoms[i] = entities_geom_end[i] - entities_geom_start[i]
 
         entities_info.gravity_compensation[i] = entities_gravity_compensation[i]
+        entities_info.is_local_collision_mask[i] = entities_is_local_collision_mask[i]
 
         if ti.static(static_rigid_sim_config.batch_dofs_info):
             for i_d, i_b in ti.ndrange((entities_dof_start[i], entities_dof_end[i]), _B):
@@ -6640,80 +6630,3 @@ def kernel_set_geoms_friction(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_g_ in ti.ndrange(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
-
-
-@ti.kernel
-def kernel_add_weld_constraint(
-    link1_idx: ti.i32,
-    link2_idx: ti.i32,
-    envs_idx: ti.types.ndarray(),
-    equalities_info: array_class.EqualitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    links_state: array_class.LinksState,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_b_ in ti.ndrange(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == static_rigid_sim_config.n_equalities_candidate:
-            print(
-                f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring dynamically registered weld constraint "
-                f"to avoid exceeding max number of equality constraints ({static_rigid_sim_config.n_equalities_candidate}). "
-                f"Please increase the value of RigidSolver's option 'max_dynamic_constraints'.{formats.RESET}"
-            )
-        else:
-            shared_pos = links_state.pos[link1_idx, i_b]
-            pos1 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, links_state.pos[link1_idx, i_b], links_state.quat[link1_idx, i_b]
-            )
-            pos2 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, links_state.pos[link2_idx, i_b], links_state.quat[link2_idx, i_b]
-            )
-
-            equalities_info.eq_type[i_e, i_b] = gs.ti_int(gs.EQUALITY_TYPE.WELD)
-            equalities_info.eq_obj1id[i_e, i_b] = link1_idx
-            equalities_info.eq_obj2id[i_e, i_b] = link2_idx
-
-            for i_3 in ti.static(range(3)):
-                equalities_info.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
-                equalities_info.eq_data[i_e, i_b][i_3] = pos2[i_3]
-
-            relpose = gu.ti_quat_mul(gu.ti_inv_quat(links_state.quat[link1_idx, i_b]), links_state.quat[link2_idx, i_b])
-
-            equalities_info.eq_data[i_e, i_b][6] = relpose[0]
-            equalities_info.eq_data[i_e, i_b][7] = relpose[1]
-            equalities_info.eq_data[i_e, i_b][8] = relpose[2]
-            equalities_info.eq_data[i_e, i_b][9] = relpose[3]
-
-            equalities_info.eq_data[i_e, i_b][10] = 1.0
-            equalities_info.sol_params[i_e, i_b] = ti.Vector(
-                [2 * static_rigid_sim_config.substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
-            )
-
-            constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1
-
-
-@ti.kernel
-def kernel_delete_weld_constraint(
-    link1_idx: ti.i32,
-    link2_idx: ti.i32,
-    envs_idx: ti.types.ndarray(),
-    equalities_info: array_class.EqualitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_b_ in ti.ndrange(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        for i_e in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
-            if (
-                equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
-                and equalities_info.eq_obj1id[i_e, i_b] == link1_idx
-                and equalities_info.eq_obj2id[i_e, i_b] == link2_idx
-            ):
-                if i_e < constraint_state.ti_n_equalities[i_b] - 1:
-                    equalities_info.eq_type[i_e, i_b] = equalities_info.eq_type[
-                        constraint_state.ti_n_equalities[i_b] - 1, i_b
-                    ]
-                constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1

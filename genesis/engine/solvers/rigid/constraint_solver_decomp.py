@@ -1,7 +1,9 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
-import taichi as ti
 import numpy.typing as npt
+import taichi as ti
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -36,6 +38,8 @@ class ConstraintSolver:
         self.len_constraints_ = max(1, self.len_constraints)
 
         self.constraint_state = array_class.get_constraint_state(self, self._solver)
+
+        self._eq_const_info_cache = {}
 
         # self.ti_n_equalities = ti.field(gs.ti_int, shape=self._solver._batch_shape())
         # self.ti_n_equalities.from_numpy(np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int))
@@ -117,6 +121,7 @@ class ConstraintSolver:
         self.jac_relevant_dofs = cs.jac_relevant_dofs
         self.n_constraints = cs.n_constraints
         self.n_constraints_equality = cs.n_constraints_equality
+        self.n_constraints_frictionloss = cs.n_constraints_frictionloss
         self.improved = cs.improved
         self.Jaref = cs.Jaref
         self.Ma = cs.Ma
@@ -155,58 +160,14 @@ class ConstraintSolver:
 
         self.reset()
 
-        #
-
-        # self.constraint_state.ti_n_equalities = self.ti_n_equalities
-        # self.constraint_state.jac = self.jac
-        # self.constraint_state.diag = self.diag
-        # self.constraint_state.aref = self.aref
-        # self.constraint_state.jac_n_relevant_dofs = self.jac_n_relevant_dofs
-        # self.constraint_state.jac_relevant_dofs = self.jac_relevant_dofs
-        # self.constraint_state.n_constraints = self.n_constraints
-        # self.constraint_state.n_constraints_equality = self.n_constraints_equality
-        # self.constraint_state.improved = self.improved
-        # self.constraint_state.Jaref = self.Jaref
-        # self.constraint_state.Ma = self.Ma
-        # self.constraint_state.Ma_ws = self.Ma_ws
-        # self.constraint_state.grad = self.grad
-        # self.constraint_state.Mgrad = self.Mgrad
-        # self.constraint_state.search = self.search
-        # self.constraint_state.efc_D = self.efc_D
-        # self.constraint_state.efc_force = self.efc_force
-        # self.constraint_state.active = self.active
-        # self.constraint_state.prev_active = self.prev_active
-        # self.constraint_state.qfrc_constraint = self.qfrc_constraint
-        # self.constraint_state.qacc = self.qacc
-        # self.constraint_state.qacc_ws = self.qacc_ws
-        # self.constraint_state.qacc_prev = self.qacc_prev
-        # self.constraint_state.cost_ws = self.cost_ws
-        # self.constraint_state.gauss = self.gauss
-        # self.constraint_state.cost = self.cost
-        # self.constraint_state.prev_cost = self.prev_cost
-        # self.constraint_state.gtol = self.gtol
-        # self.constraint_state.mv = self.mv
-        # self.constraint_state.jv = self.jv
-        # self.constraint_state.quad_gauss = self.quad_gauss
-        # self.constraint_state.quad = self.quad
-        # self.constraint_state.candidates = self.candidates
-        # self.constraint_state.ls_its = self.ls_its
-        # self.constraint_state.ls_result = self.ls_result
-        # if self._solver_type == gs.constraint_solver.CG:
-        #     self.constraint_state.cg_prev_grad = self.cg_prev_grad
-        #     self.constraint_state.cg_prev_Mgrad = self.cg_prev_Mgrad
-        #     self.constraint_state.cg_beta = self.cg_beta
-        #     self.constraint_state.cg_pg_dot_pMg = self.cg_pg_dot_pMg
-        # if self._solver_type == gs.constraint_solver.Newton:
-        #     self.constraint_state.nt_H = self.nt_H
-        #     self.constraint_state.nt_vec = self.nt_vec
-
     def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
+        self._eq_const_info_cache.clear()
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_clear(envs_idx, self._solver._static_rigid_sim_config, self.constraint_state)
 
     def reset(self, envs_idx=None):
+        self._eq_const_info_cache.clear()
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_reset(
@@ -226,6 +187,16 @@ class ConstraintSolver:
             constraint_state=self.constraint_state,
             collider_state=self._collider._collider_state,
             rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
+
+        add_frictionloss_constraints(
+            links_info=self._solver.links_info,
+            joints_info=self._solver.joints_info,
+            dofs_info=self._solver.dofs_info,
+            dofs_state=self._solver.dofs_state,
+            rigid_global_info=self._solver._rigid_global_info,
+            constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
@@ -288,6 +259,137 @@ class ConstraintSolver:
         )
         # timer.stamp("compute force")
 
+    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        # Early return if already pre-computed
+        eq_const_info = self._eq_const_info_cache.get((as_tensor, to_torch))
+        if eq_const_info is not None:
+            return eq_const_info.copy()
+
+        n_eqs = tuple(self.constraint_state.ti_n_equalities.to_numpy())
+        n_envs = len(n_eqs)
+        n_eqs_max = max(n_eqs)
+
+        if as_tensor:
+            out_size = n_envs * n_eqs_max
+        else:
+            *n_eqs_starts, out_size = np.cumsum(n_eqs)
+
+        if to_torch:
+            iout = torch.full((out_size, 3), -1, dtype=gs.tc_int, device=gs.device)
+            fout = torch.zeros((out_size, 6), dtype=gs.tc_float, device=gs.device)
+        else:
+            iout = np.full((out_size, 3), -1, dtype=gs.np_int)
+            fout = np.zeros((out_size, 6), dtype=gs.np_float)
+
+        if n_eqs_max > 0:
+            kernel_get_equality_constraints(
+                as_tensor,
+                iout,
+                fout,
+                self.constraint_state,
+                self._solver.equalities_info,
+                self._solver._static_rigid_sim_config,
+            )
+
+        if as_tensor:
+            iout = iout.reshape((n_envs, n_eqs_max, 3))
+            eq_type, obj_a, obj_b = (iout[..., i] for i in range(3))
+            efc_force = fout.reshape((n_envs, n_eqs_max, 6))
+            values = (eq_type, obj_a, obj_b, fout)
+        else:
+            if to_torch:
+                iout_chunks = torch.split(iout, n_eqs)
+                efc_force = torch.split(fout, n_eqs)
+            else:
+                iout_chunks = np.split(iout, n_eqs_starts)
+                efc_force = np.split(fout, n_eqs_starts)
+            eq_type, obj_a, obj_b = tuple(zip(*([data[..., i] for i in range(3)] for data in iout_chunks)))
+
+        values = (eq_type, obj_a, obj_b, efc_force)
+        eq_const_info = dict(zip(("type", "obj_a", "obj_b", "force"), values))
+
+        # Cache equality constraint information before returning
+        self._eq_const_info_cache[(as_tensor, to_torch)] = eq_const_info
+
+        return eq_const_info.copy()
+
+    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+        eq_const_info = self.get_equality_constraints(as_tensor, to_torch)
+        eq_type = eq_const_info.pop("type")
+
+        weld_const_info = {}
+        if as_tensor:
+            weld_mask = eq_type == gs.EQUALITY_TYPE.WELD
+            n_envs = len(weld_mask)
+            n_welds = weld_mask.sum(dim=-1) if to_torch else np.sum(weld_mask, axis=-1)
+            n_welds_max = max(n_welds)
+            for key, value in eq_const_info.items():
+                shape = (n_envs, n_welds_max, *value.shape[2:])
+                if to_torch:
+                    if torch.is_floating_point(value):
+                        weld_const_info[key] = torch.zeros(shape, dtype=value.dtype, device=value.device)
+                    else:
+                        weld_const_info[key] = torch.full(shape, -1, dtype=value.dtype, device=value.device)
+                else:
+                    if np.issubdtype(value.dtype, np.floating):
+                        weld_const_info[key] = np.zeros(shape, dtype=value.dtype)
+                    else:
+                        weld_const_info[key] = np.full(shape, -1, dtype=value.dtype)
+            for i_b, (n_welds_i, weld_mask_i) in enumerate(zip(n_welds, weld_mask)):
+                for eq_value, weld_value in zip(eq_const_info.values(), weld_const_info.values()):
+                    weld_value[i_b, :n_welds_i] = eq_value[i_b, weld_mask_i]
+        else:
+            weld_mask_chunks = tuple(eq_type_i == gs.EQUALITY_TYPE.WELD for eq_type_i in eq_type)
+            for key, value in eq_const_info.items():
+                weld_const_info[key] = tuple(data[weld_mask] for weld_mask, data in zip(weld_mask_chunks, value))
+
+        weld_const_info["link_a"] = weld_const_info.pop("obj_a")
+        weld_const_info["link_b"] = weld_const_info.pop("obj_b")
+
+        return weld_const_info
+
+    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        link1_idx, link2_idx = int(link1_idx), int(link2_idx)
+
+        if not unsafe:
+            assert link1_idx >= 0 and link2_idx >= 0
+            weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
+            link_a = weld_const_info["link_a"]
+            link_b = weld_const_info["link_b"]
+            assert not (
+                ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
+            ).any()
+
+        self._eq_const_info_cache.clear()
+        overflow = kernel_add_weld_constraint(
+            link1_idx,
+            link2_idx,
+            envs_idx,
+            self._solver.equalities_info,
+            self.constraint_state,
+            self._solver.links_state,
+            self._solver._static_rigid_sim_config,
+        )
+        if overflow:
+            gs.logger.warning(
+                "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
+                f"({self._static_rigid_sim_config.n_equalities_candidate}). Please increase the value of "
+                "RigidSolver's option 'max_dynamic_constraints'."
+            )
+
+    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        self._eq_const_info_cache.clear()
+        kernel_delete_weld_constraint(
+            int(link1_idx),
+            int(link2_idx),
+            envs_idx,
+            self._solver.equalities_info,
+            self.constraint_state,
+            self._solver._static_rigid_sim_config,
+        )
+
 
 @ti.kernel
 def constraint_solver_kernel_clear(
@@ -300,6 +402,7 @@ def constraint_solver_kernel_clear(
         i_b = envs_idx[i_b_]
         constraint_state.n_constraints[i_b] = 0
         constraint_state.n_constraints_equality[i_b] = 0
+        constraint_state.n_constraints_frictionloss[i_b] = 0
 
 
 @ti.kernel
@@ -520,11 +623,11 @@ def func_equality_connect(
 
         imp, aref = gu.imp_aref(sol_params, -penetration, jac_qvel, pos_diff[i_3])
 
-        diag = ti.max(invweight * (1 - imp) / imp, gs.EPS)
+        diag = ti.max(invweight * (1.0 - imp) / imp, gs.EPS)
 
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref
-        constraint_state.efc_D[n_con, i_b] = 1 / diag
+        constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
 
 @ti.func
@@ -598,11 +701,11 @@ def func_equality_joint(
 
     imp, aref = gu.imp_aref(sol_params, -ti.abs(pos), jac_qvel, pos)
 
-    diag = ti.max(invweight * (1 - imp) / imp, gs.EPS)
+    diag = ti.max(invweight * (1.0 - imp) / imp, gs.EPS)
 
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
-    constraint_state.efc_D[n_con, i_b] = 1 / diag
+    constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
 
 @ti.kernel
@@ -804,7 +907,7 @@ def func_equality_weld(
     for i_ab in range(2):
         sign = gs.ti_float(1.0) if i_ab == 0 else gs.ti_float(-1.0)
         link = link1_idx if i_ab == 0 else link2_idx
-        # For rotation, we use the body’s orientation (here we use its quaternion)
+        # For rotation, we use the body's orientation (here we use its quaternion)
         # and a suitable reference frame. (You may need a more detailed implementation.)
         while link > -1:
             link_maybe_batch = [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
@@ -904,6 +1007,50 @@ def add_joint_limit_constraints(
                         if ti.static(static_rigid_sim_config.sparse_solve):
                             constraint_state.jac_n_relevant_dofs[n_con, i_b] = 1
                             constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
+
+
+@ti.kernel
+def add_frictionloss_constraints(
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+    n_links = links_info.root_idx.shape[0]
+    n_dofs = dofs_state.ctrl_mode.shape[0]
+
+    # TODO: sparse mode
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_b in range(_B):
+        for i_l in range(n_links):
+            I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+
+            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+                I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+
+                for i_d in range(joints_info.dof_start[I_j], joints_info.dof_end[I_j]):
+                    I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+
+                    if dofs_info.frictionloss[I_d] > 0:
+                        jac = 1.0
+                        jac_qvel = jac * dofs_state.vel[i_d, i_b]
+                        imp, aref = gu.imp_aref(joints_info.sol_params[I_j], 0.0, jac_qvel, 0.0)
+                        diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
+
+                        n_con = constraint_state.n_constraints[i_b]
+                        ti.atomic_add(constraint_state.n_constraints_frictionloss[i_b], 1)
+                        constraint_state.n_constraints[i_b] = n_con + 1
+                        constraint_state.diag[n_con, i_b] = diag
+                        constraint_state.aref[n_con, i_b] = aref
+                        constraint_state.efc_D[n_con, i_b] = 1 / diag
+                        constraint_state.efc_frictionloss[n_con, i_b] = dofs_info.frictionloss[I_d]
+                        for i_d2 in range(n_dofs):
+                            constraint_state.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
+                        constraint_state.jac[n_con, i_d, i_b] = jac
 
 
 @ti.func
@@ -1146,7 +1293,9 @@ def func_update_contact_force(
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        const_start = constraint_state.n_constraints_equality[i_b]
+        const_start = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+
+        # contact constraints should be after equality and frictionloss constraints and before joint limit constraints
         for i_c in range(collider_state.n_contacts[i_b]):
             contact_data_normal = collider_state.contact_data.normal[i_c, i_b]
             contact_data_friction = collider_state.contact_data.friction[i_c, i_b]
@@ -1217,14 +1366,6 @@ def func_solve(
                 if constraint_state.improved[i_b] < 1:
                     break
 
-                gradient = gs.ti_float(0.0)
-                for i_d in range(n_dofs):
-                    gradient += constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
-                gradient = ti.sqrt(gradient)
-                improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
-                if gradient < tol_scaled or improvement < tol_scaled:
-                    break
-
 
 @ti.func
 def func_ls_init(
@@ -1289,23 +1430,46 @@ def func_ls_point_fn(
     alpha,
     constraint_state: array_class.ConstraintState,
 ):
-    tmp_quad_total0, tmp_quad_total1, tmp_quad_total2 = gs.ti_float(0.0), gs.ti_float(0.0), gs.ti_float(0.0)
-    for _i0 in range(1):
-        tmp_quad_total0 = constraint_state.quad_gauss[_i0 + 0, i_b]
-        tmp_quad_total1 = constraint_state.quad_gauss[_i0 + 1, i_b]
-        tmp_quad_total2 = constraint_state.quad_gauss[_i0 + 2, i_b]
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            active = 1
-            if i_c >= constraint_state.n_constraints_equality[i_b]:
-                active = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b] < 0
-            tmp_quad_total0 += constraint_state.quad[i_c, _i0 + 0, i_b] * active
-            tmp_quad_total1 += constraint_state.quad[i_c, _i0 + 1, i_b] * active
-            tmp_quad_total2 += constraint_state.quad[i_c, _i0 + 2, i_b] * active
+    tmp_quad_total_0, tmp_quad_total_1, tmp_quad_total_2 = gs.ti_float(0.0), gs.ti_float(0.0), gs.ti_float(0.0)
+    tmp_quad_total_0 = constraint_state.quad_gauss[0, i_b]
+    tmp_quad_total_1 = constraint_state.quad_gauss[1, i_b]
+    tmp_quad_total_2 = constraint_state.quad_gauss[2, i_b]
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        x = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b]
+        active = 1
+        ne = constraint_state.n_constraints_equality[i_b]
+        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        if i_c >= ne and i_c < nef:
+            f = constraint_state.efc_frictionloss[i_c, i_b]
+            r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
+            rf = r * f
+            linear_neg = x <= -rf
+            linear_pos = x >= rf
 
-    cost = alpha * alpha * tmp_quad_total2 + alpha * tmp_quad_total1 + tmp_quad_total0
+            if linear_neg or linear_pos:
+                qf_0 = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
+                    -0.5 * rf + constraint_state.Jaref[i_c, i_b]
+                )
+                qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
+                    f * constraint_state.jv[i_c, i_b]
+                )
+                qf_2 = 0.0
+        elif i_c >= nef:
+            active = x < 0
 
-    deriv_0 = 2 * alpha * tmp_quad_total2 + tmp_quad_total1
-    deriv_1 = 2 * tmp_quad_total2 + gs.EPS * (ti.abs(tmp_quad_total2) < gs.EPS)
+        tmp_quad_total_0 += qf_0 * active
+        tmp_quad_total_1 += qf_1 * active
+        tmp_quad_total_2 += qf_2 * active
+
+    cost = alpha * alpha * tmp_quad_total_2 + alpha * tmp_quad_total_1 + tmp_quad_total_0
+
+    deriv_0 = 2 * alpha * tmp_quad_total_2 + tmp_quad_total_1
+    deriv_1 = 2 * tmp_quad_total_2
+    if deriv_1 <= 0.0:
+        deriv_1 = gs.EPS
 
     constraint_state.ls_its[i_b] = constraint_state.ls_its[i_b] + 1
 
@@ -1550,8 +1714,6 @@ def update_bracket(
                 constraint_state.candidates[4 * i + 3, i_b],
             )
             flag = 2
-        else:
-            pass
 
     p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = p_alpha, p_cost, p_deriv_0, p_deriv_1
 
@@ -1584,7 +1746,6 @@ def func_solve_body(
     if ti.abs(alpha) < gs.EPS:
         constraint_state.improved[i_b] = 0
     else:
-        constraint_state.improved[i_b] = 1
         for i_d in range(n_dofs):
             constraint_state.qacc[i_d, i_b] = (
                 constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
@@ -1609,56 +1770,58 @@ def func_solve_body(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-            func_update_gradient(
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            func_nt_hessian_incremental(
                 i_b,
-                dofs_state=dofs_state,
                 entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
-            constraint_state.cg_beta[i_b] = gs.ti_float(0.0)
-            constraint_state.cg_pg_dot_pMg[i_b] = gs.ti_float(0.0)
+        func_update_gradient(
+            i_b,
+            dofs_state=dofs_state,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
-            for i_d in range(n_dofs):
-                constraint_state.cg_beta[i_b] += constraint_state.grad[i_d, i_b] * (
-                    constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
-                )
-                constraint_state.cg_pg_dot_pMg[i_b] += (
-                    constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
-                )
+        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * static_rigid_sim_config.tolerance
+        improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
+        gradient = gs.ti_float(0.0)
+        for i_d in range(n_dofs):
+            gradient += constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+        gradient = ti.sqrt(gradient)
+        if gradient < tol_scaled or improvement < tol_scaled:
+            constraint_state.improved[i_b] = 0
+        else:
+            constraint_state.improved[i_b] = 1
 
-            constraint_state.cg_beta[i_b] = ti.max(
-                0.0, constraint_state.cg_beta[i_b] / ti.max(gs.EPS, constraint_state.cg_pg_dot_pMg[i_b])
-            )
-            for i_d in range(n_dofs):
-                constraint_state.search[i_d, i_b] = (
-                    -constraint_state.Mgrad[i_d, i_b]
-                    + constraint_state.cg_beta[i_b] * constraint_state.search[i_d, i_b]
-                )
-
-        elif ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
-            if improvement > 0:
-                func_nt_hessian_incremental(
-                    i_b,
-                    entities_info=entities_info,
-                    constraint_state=constraint_state,
-                    rigid_global_info=rigid_global_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                )
-                func_update_gradient(
-                    i_b,
-                    dofs_state=dofs_state,
-                    entities_info=entities_info,
-                    rigid_global_info=rigid_global_info,
-                    constraint_state=constraint_state,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                )
+            if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+            else:
+                constraint_state.cg_beta[i_b] = gs.ti_float(0.0)
+                constraint_state.cg_pg_dot_pMg[i_b] = gs.ti_float(0.0)
+
+                for i_d in range(n_dofs):
+                    constraint_state.cg_beta[i_b] += constraint_state.grad[i_d, i_b] * (
+                        constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                    )
+                    constraint_state.cg_pg_dot_pMg[i_b] += (
+                        constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                    )
+
+                constraint_state.cg_beta[i_b] = ti.max(
+                    0.0, constraint_state.cg_beta[i_b] / ti.max(gs.EPS, constraint_state.cg_pg_dot_pMg[i_b])
+                )
+                for i_d in range(n_dofs):
+                    constraint_state.search[i_d, i_b] = (
+                        -constraint_state.Mgrad[i_d, i_b]
+                        + constraint_state.cg_beta[i_b] * constraint_state.search[i_d, i_b]
+                    )
 
 
 @ti.func
@@ -1681,9 +1844,24 @@ def func_update_constraint(
         if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
         constraint_state.active[i_c, i_b] = 1
-        if i_c >= constraint_state.n_constraints_equality[i_b]:
+        floss_force = gs.ti_float(0.0)
+        ne = constraint_state.n_constraints_equality[i_b]
+        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        if i_c >= ne and i_c < nef:
+            f = constraint_state.efc_frictionloss[i_c, i_b]
+            r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
+            rf = r * f
+            linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+            linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+            constraint_state.active[i_c, i_b] = (~linear_neg) & (~linear_pos)
+            floss_force = linear_neg * f + linear_pos * -f
+            floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
+            floss_cost_local += linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
+            cost[i_b] = cost[i_b] + floss_cost_local
+        elif i_c >= nef:
             constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
-        constraint_state.efc_force[i_c, i_b] = (
+
+        constraint_state.efc_force[i_c, i_b] = floss_force + (
             -constraint_state.efc_D[i_c, i_b] * constraint_state.Jaref[i_c, i_b] * constraint_state.active[i_c, i_b]
         )
 
@@ -1746,10 +1924,7 @@ def func_update_gradient(
         )
 
     elif ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        func_nt_chol_solve(
-            i_b,
-            constraint_state=constraint_state,
-        )
+        func_nt_chol_solve(i_b, constraint_state=constraint_state)
 
 
 @ti.func
@@ -1901,3 +2076,129 @@ def func_init_solver(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+
+
+@ti.kernel
+def kernel_add_weld_constraint(
+    link1_idx: ti.i32,
+    link2_idx: ti.i32,
+    envs_idx: ti.types.ndarray(),
+    equalities_info: array_class.EqualitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    links_state: array_class.LinksState,
+    static_rigid_sim_config: ti.template(),
+) -> ti.i32:
+    overflow = gs.ti_bool(False)
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_b_ in ti.ndrange(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        i_e = constraint_state.ti_n_equalities[i_b]
+        if i_e == static_rigid_sim_config.n_equalities_candidate:
+            overflow = True
+        else:
+            shared_pos = links_state.pos[link1_idx, i_b]
+            pos1 = gu.ti_inv_transform_by_trans_quat(
+                shared_pos, links_state.pos[link1_idx, i_b], links_state.quat[link1_idx, i_b]
+            )
+            pos2 = gu.ti_inv_transform_by_trans_quat(
+                shared_pos, links_state.pos[link2_idx, i_b], links_state.quat[link2_idx, i_b]
+            )
+
+            equalities_info.eq_type[i_e, i_b] = gs.ti_int(gs.EQUALITY_TYPE.WELD)
+            equalities_info.eq_obj1id[i_e, i_b] = link1_idx
+            equalities_info.eq_obj2id[i_e, i_b] = link2_idx
+
+            for i_3 in ti.static(range(3)):
+                equalities_info.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
+                equalities_info.eq_data[i_e, i_b][i_3] = pos2[i_3]
+
+            relpose = gu.ti_quat_mul(gu.ti_inv_quat(links_state.quat[link1_idx, i_b]), links_state.quat[link2_idx, i_b])
+
+            equalities_info.eq_data[i_e, i_b][6] = relpose[0]
+            equalities_info.eq_data[i_e, i_b][7] = relpose[1]
+            equalities_info.eq_data[i_e, i_b][8] = relpose[2]
+            equalities_info.eq_data[i_e, i_b][9] = relpose[3]
+
+            equalities_info.eq_data[i_e, i_b][10] = 1.0
+            equalities_info.sol_params[i_e, i_b] = ti.Vector(
+                [2 * static_rigid_sim_config.substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
+            )
+
+            constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1
+    return overflow
+
+
+@ti.kernel
+def kernel_delete_weld_constraint(
+    link1_idx: ti.i32,
+    link2_idx: ti.i32,
+    envs_idx: ti.types.ndarray(),
+    equalities_info: array_class.EqualitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_b_ in ti.ndrange(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        for i_e in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
+            if (
+                equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
+                and equalities_info.eq_obj1id[i_e, i_b] == link1_idx
+                and equalities_info.eq_obj2id[i_e, i_b] == link2_idx
+            ):
+                if i_e < constraint_state.ti_n_equalities[i_b] - 1:
+                    equalities_info.eq_type[i_e, i_b] = equalities_info.eq_type[
+                        constraint_state.ti_n_equalities[i_b] - 1, i_b
+                    ]
+                constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
+
+
+@ti.kernel
+def kernel_get_equality_constraints(
+    is_padded: ti.template(),
+    iout: ti.types.ndarray(),
+    fout: ti.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
+    equalities_info: array_class.EqualitiesInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.ti_n_equalities.shape[0]
+    n_eqs_max = gs.ti_int(0)
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        n_eqs = constraint_state.ti_n_equalities[i_b]
+        if n_eqs > n_eqs_max:
+            n_eqs_max = n_eqs
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        i_c_start = gs.ti_int(0)
+        i_e_start = gs.ti_int(0)
+        if ti.static(is_padded):
+            i_e_start = i_b * n_eqs_max
+        else:
+            for j_b in range(i_b):
+                i_e_start = i_e_start + constraint_state.ti_n_equalities[j_b]
+
+        for i_e_ in range(constraint_state.ti_n_equalities[i_b]):
+            i_e = i_e_start + i_e_
+
+            iout[i_e, 0] = equalities_info.eq_type[i_e_, i_b]
+            iout[i_e, 1] = equalities_info.eq_obj1id[i_e_, i_b]
+            iout[i_e, 2] = equalities_info.eq_obj2id[i_e_, i_b]
+
+            if equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.CONNECT:
+                for i_c_ in ti.static(range(3)):
+                    i_c = i_c_start + i_c_
+                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
+                i_c_start = i_c_start + 3
+            elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.WELD:
+                for i_c_ in ti.static(range(6)):
+                    i_c = i_c_start + i_c_
+                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
+                i_c_start = i_c_start + 6
+            elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.JOINT:
+                fout[i_e, 0] = constraint_state.efc_force[i_c_start, i_b]
+                i_c_start = i_c_start + 1
