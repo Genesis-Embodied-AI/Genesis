@@ -10,7 +10,6 @@ import PIL
 import pyglet
 import numpy as np
 from OpenGL.GL import *
-import matplotlib.pyplot as plt
 
 from .constants import (
     DEFAULT_Z_FAR,
