@@ -6,14 +6,13 @@ import torch
 
 import genesis as gs
 from genesis.engine.solvers import RigidSolver
-from genesis.options.sensors import SensorOptions
 from genesis.utils.geom import (
     euler_to_quat,
     inv_transform_by_trans_quat,
     transform_quat_by_quat,
 )
 
-from .base_sensor import Sensor, SharedSensorMetadata
+from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
@@ -65,6 +64,8 @@ class IMUSharedMetadata(SharedSensorMetadata):
     links_idx: list[int] = field(default_factory=list)
     offsets_pos: torch.Tensor = torch.tensor([])
     offsets_quat: torch.Tensor = torch.tensor([])
+    acc_bias: torch.Tensor = torch.tensor([])
+    ang_bias: torch.Tensor = torch.tensor([])
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
@@ -88,6 +89,13 @@ class IMU(Sensor):
         quat_tensor = torch.tensor(quat_offset, dtype=gs.tc_float)
         quat_tensor = quat_tensor.view(1, 1, 4).expand(self._manager._sim._B, 1, 4)
         self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=1)
+
+        self._shared_metadata.acc_bias = torch.cat(
+            [self._shared_metadata.acc_bias, torch.tensor([self._options.accelerometer_bias], dtype=gs.tc_float)]
+        )
+        self._shared_metadata.ang_bias = torch.cat(
+            [self._shared_metadata.ang_bias, torch.tensor([self._options.gyroscope_bias], dtype=gs.tc_float)]
+        )
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return_format = {}
@@ -123,20 +131,42 @@ class IMU(Sensor):
         local_acc = local_acc - gravity.unsqueeze(1).expand(-1, local_acc.shape[1], -1)
 
         # cache shape: (B, n_links * 6)
-        batch_size, n_links, n_xyz = local_acc.shape
-        interleaved_cache_view = torch.as_strided(
+        batch_size, n_links, _ = local_acc.shape
+        strided_ground_truth_cache = torch.as_strided(
             shared_ground_truth_cache,
-            size=(batch_size, n_links, 2, n_xyz),
-            stride=(n_links * 2 * n_xyz, 2 * n_xyz, n_xyz, 1),
+            size=(batch_size, n_links, 2, 3),
+            stride=(n_links * 6, 6, 3, 1),
         )
-        interleaved_cache_view[:, :, 0, :].copy_(local_acc)
-        interleaved_cache_view[:, :, 1, :].copy_(local_ang)
+        strided_ground_truth_cache[:, :, 0, :].copy_(local_acc)
+        strided_ground_truth_cache[:, :, 1, :].copy_(local_ang)
 
     @classmethod
-    def _update_shared_cache(
-        cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor, shared_cache: "TensorRingBuffer"
+    def _update_shared_cache_with_noise(
+        cls,
+        shared_metadata: dict[str, Any],
+        shared_ground_truth_cache: torch.Tensor,
+        shared_cache: torch.Tensor,
+        buffered_data: "TensorRingBuffer",
     ):
-        shared_cache.append(shared_ground_truth_cache)
+        # store the history of ground truth cache in the buffer
+        buffered_data.append(shared_ground_truth_cache)
+
+        # apply read_delay_steps to the buffered data and store the result in shared_cache
+        tensor_idx = 0
+        for tensor_size, read_delay_step in zip(shared_metadata.cache_sizes, shared_metadata.read_delay_steps):
+            shared_cache[:, tensor_idx : tensor_idx + tensor_size] = buffered_data.at(read_delay_step)[
+                :, tensor_idx : tensor_idx + tensor_size
+            ]
+            tensor_idx += tensor_size
+
+        # add bias to the shared_cache
+        strided_shared_cache = torch.as_strided(
+            shared_cache,
+            size=(shared_cache.shape[0], shared_metadata.acc_bias.shape[0], 2, 3),
+            stride=(shared_cache.shape[1], 6, 3, 1),
+        )
+        strided_shared_cache[:, :, 0, :] += shared_metadata.acc_bias
+        strided_shared_cache[:, :, 1, :] += shared_metadata.ang_bias
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
