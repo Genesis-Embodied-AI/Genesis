@@ -821,7 +821,7 @@ class RigidEntity(Entity):
         link : RigidLink
             The target link.
         local_point : torch.Tensor or None, shape (3,)
-            Coordinates of the point in the link’s *local* frame.
+            Coordinates of the point in the link's *local* frame.
             If None, the link origin is used (back-compat).
 
         Returns
@@ -2882,3 +2882,57 @@ class RigidEntity(Entity):
     def is_local_collision_mask(self):
         """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
         return self._is_local_collision_mask
+
+    @gs.assert_built
+    def get_link_point_position_velocity(self, local_offsets, links_idx_local, envs_idx=None, *, unsafe=False):
+        """
+        Compute the world position and velocity of points given their local offsets from link origins.
+
+        Parameters
+        ----------
+        local_offsets : torch.Tensor or array_like
+            Local offsets from link origins. Shape should be:
+            - (n_points, 3) for multiple points
+            - (n_envs, n_points, 3) for batched environments
+        links_idx_local : torch.Tensor or array_like
+            The link indices for each point. Shape should be:
+            - (n_points,) for multiple points
+            - (n_envs, n_points) for batched environments
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        unsafe : bool, optional
+            Whether to skip safety checks. Defaults to False.
+
+        Returns
+        -------
+        positions : torch.Tensor
+            World positions of the points. Shape: (n_points, 3) or (n_envs, n_points, 3)
+        velocities : torch.Tensor
+            World velocities of the points. Shape matches positions.
+
+        Examples
+        --------
+        # Multiple points on different links
+        local_offsets = torch.tensor([
+            [0.1, 0.0, 0.05],  # Point 1 offset
+            [0.02, 0.0, 0.01], # Point 2 offset
+            [0.08, 0.0, 0.05], # Point 3 offset
+            [0.0, 0.03, 0.08]  # Point 4 offset
+        ])
+        links_idx_local = torch.tensor([0, 1, 2, 2])  # Link indices for each point
+
+        pos, vel = entity.get_link_point_position_velocity(
+            local_offsets=local_offsets,
+            links_idx_local=links_idx_local
+        )
+        """
+        links_pos = self.get_links_pos(links_idx_local, envs_idx, unsafe=unsafe)
+        links_quat = self.get_links_quat(links_idx_local, envs_idx, unsafe=unsafe)
+        links_vel = self.get_links_vel(links_idx_local, envs_idx, ref="link_origin", unsafe=unsafe)
+        links_ang = self.get_links_ang(links_idx_local, envs_idx, unsafe=unsafe)
+
+        world_positions = gu.transform_by_trans_quat(local_offsets, links_pos, links_quat)
+        arm_vectors = world_positions - links_pos
+        rotational_vel = torch.cross(links_ang, arm_vectors, dim=-1)
+        world_velocities = links_vel + rotational_vel
+        return world_positions, world_velocities

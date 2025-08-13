@@ -274,8 +274,18 @@ def _build_multi_pendulum(n):
 
 
 @pytest.fixture(scope="session")
-def pendulum(asset_tmp_path):
-    return _build_multi_pendulum(n=1)
+def one_pendulum(asset_tmp_path):
+
+    mjcf = ET.Element("mujoco", model="one_stick_robot")
+    # ET.SubElement(mjcf, "option", timestep="0.05")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    link1 = ET.SubElement(worldbody, "body", name="body1", pos="0.0 0.0 0.0")
+    ET.SubElement(link1, "geom", type="capsule", fromto="0 0 0 0.0 0 1.0", size="0.05", rgba="0 0 1 0.3")
+    ET.SubElement(link1, "joint", type="hinge", name="joint1", axis="0 1 0")
+
+    return mjcf
 
 
 @pytest.fixture(scope="session")
@@ -2877,3 +2887,59 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
     assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
     assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.merge_fixed_links(False)
+@pytest.mark.parametrize("model_name", ["one_pendulum"])
+@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_point_position_velocity(gs_sim, backend, tol):
+    """Test get_link_point_position_velocity against analytical pendulum motion."""
+    scene = gs_sim
+    pendulum = scene.entities[0]
+
+    arm_link = pendulum.get_link("body1")
+    r = 1.0
+    local_point_offsets = torch.tensor([[0.0, 0.0, 1.0]], dtype=gs.tc_float, device=gs.device)
+    point_links_idx_local = torch.tensor([arm_link.idx_local], dtype=gs.tc_int, device=gs.device)
+
+    pendulum.set_dofs_position(torch.tensor([np.pi / 6], dtype=gs.tc_float, device=gs.device))
+    pendulum.set_dofs_velocity(torch.tensor([0.0], dtype=gs.tc_float, device=gs.device))
+
+    n_steps = 50
+
+    for step in range(n_steps):
+        scene.step()
+
+        theta = pendulum.get_dofs_position()[0]
+        theta_dot = pendulum.get_dofs_velocity()[0]
+
+        world_positions, world_velocities = pendulum.get_link_point_position_velocity(
+            local_offsets=local_point_offsets, links_idx_local=point_links_idx_local
+        )
+
+        pos_analytical = torch.tensor([r * np.sin(theta), 0.0, r * np.cos(theta)], dtype=gs.tc_float, device=gs.device)
+
+        # Velocity: v = r * θ̇ * tangent_direction
+        # Tangent direction = [cos(θ), 0, sin(θ)]
+        vel_analytical = torch.tensor(
+            [r * theta_dot * np.cos(theta), 0.0, -r * theta_dot * np.sin(theta)], dtype=gs.tc_float, device=gs.device
+        )
+
+        # Compare with API results
+        pos_queried = world_positions[0]
+        vel_queried = world_velocities[0]
+
+        # Calculate errors
+        pos_error = torch.norm(pos_queried - pos_analytical).item()
+        vel_error = torch.norm(vel_queried - vel_analytical).item()
+        print(step, "pos", pos_error, pos_queried, pos_analytical)
+        print(step, "vel", vel_error, vel_queried, vel_analytical)
+
+        assert_allclose(pos_error, 0.0, atol=tol, err_msg="position error too large")
+        # why cannot be tol?
+        assert_allclose(vel_error, 0.0, atol=0.02, err_msg="velocity error too large")
+
+    # Use appropriate tolerances
