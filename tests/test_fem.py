@@ -754,7 +754,7 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
 
 @pytest.fixture(scope="session")
 def fem_material_linear_corotated_rough():
-    """Fixture for common FEM linear material properties"""
+    """Fixture for rough FEM linear material properties"""
     return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
 
 
@@ -832,3 +832,113 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
+        if i == 49:
+            old_pos = cube.get_state().pos.mean(axis=(0, 1))
+        if i == 99:
+            new_pos = cube.get_state().pos.mean(axis=(0, 1))
+
+    assert_allclose(
+        new_pos - old_pos,
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        atol=5e-4,
+        err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}.",
+    )
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear_corotated_soft_rough():
+    """Fixture for soft rough FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
+
+
+def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough, show_viewer):
+    """
+    Test if the Franka Panda can successfully grasp the soft sphere.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            pcg_threshold=1e-10,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(
+            pcg_threshold=1e-10,
+            sap_convergence_atol=1e-10,
+            sap_convergence_rtol=1e-10,
+            linesearch_ftol=1e-10,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    friction = 1.0
+    force = 1.0
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        material=gs.materials.Rigid(coup_friction=friction, friction=friction),
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.02,
+            pos=np.array([0.65, 0.0, 0.02], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated_soft_rough,
+    )
+
+    scene.build()
+    motors_dof = np.arange(7)
+    fingers_dof = np.arange(7, 9)
+    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    franka.set_qpos(qpos)
+    scene.step()
+
+    end_effector = franka.get_link("hand")
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.135]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+
+    franka.control_dofs_position(qpos[:-2], motors_dof)
+
+    # hold
+    for i in range(10):
+        scene.step()
+    # grasp
+    for i in range(30):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
+
+    # lift
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.3]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+    for i in range(100):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
+        if i == 49:
+            old_pos = sphere.get_state().pos.mean(axis=(0, 1))
+        if i == 99:
+            new_pos = sphere.get_state().pos.mean(axis=(0, 1))
+    pos_np = sphere.get_state().pos.cpu().numpy().reshape(-1, 3)
+    BV, BF = igl.bounding_box(pos_np)
+    deformation = BV[0, :] - BV[-1, :]
+    assert_allclose(
+        new_pos - old_pos,
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        atol=5e-4,
+        err_msg=f"Sphere should be not moving much. Old pos: {old_pos}, new pos: {new_pos}.",
+    )
+    assert_allclose(
+        deformation,
+        np.array([0.04, 0.038, 0.04], dtype=np.float32),
+        atol=1e-3,
+        err_msg=f"Sphere deformation should be small. Deformation: {deformation}.",
+    )
