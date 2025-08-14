@@ -711,14 +711,10 @@ def test_pendulum_links_acc(gs_sim, tol):
         # Linear true acceleration:
         # * acc_classical_lin_y = sin(theta) * g (tangential angular acceleration effect)
         # * acc_classical_lin_z = - theta_dot ** 2  (radial centripedal effect)
-        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc(mimick_imu=False))
+        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc())
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = R @ acc_classical_lin_world[2]
         assert_allclose(acc_classical_lin_local, np.array([0.0, np.sin(theta) * g, -(theta_dot**2)]), tol=tol)
-        # IMU accelerometer data:
-        # * acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
-        acc_imu = gs_sim.rigid_solver.get_links_acc(mimick_imu=True)[2]
-        assert_allclose(acc_imu, np.array([0.0, 0.0, -(theta_dot**2) - np.cos(theta) * g]), tol=tol)
 
     # Hold the pendulum straight using PD controller and check again
     pendulum.set_dofs_kp([4000.0])
@@ -726,7 +722,7 @@ def test_pendulum_links_acc(gs_sim, tol):
     pendulum.control_dofs_position([0.5 * np.pi])
     for _ in range(400):
         gs_sim.scene.step()
-    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc(mimick_imu=False)
+    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc()
     assert_allclose(acc_classical_lin_world, 0, tol=tol)
 
 
@@ -785,7 +781,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
         )
 
         # Linear true acceleration
-        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc(mimick_imu=False)[[0, 2, 4]])
+        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc()[[0, 2, 4]])
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = np.matmul(np.moveaxis(R, 2, 0), acc_classical_lin_world[1:, :, None])[..., 0]
         assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -theta_dot[0] ** 2]), tol=tol)
@@ -801,7 +797,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
     robot.control_dofs_position([0.5 * np.pi, 0.0])
     for _ in range(900):
         gs_sim.scene.step()
-    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc(mimick_imu=False)
+    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc()
     assert_allclose(acc_classical_lin_world, 0, tol=tol)
 
 
