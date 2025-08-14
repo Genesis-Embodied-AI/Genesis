@@ -750,3 +750,85 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     assert_allclose(
         min_sphere_pos_z, -1e-3, atol=2e-4
     ), f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface."
+
+
+@pytest.fixture(scope="session")
+def fem_material_linear_corotated_rough():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
+
+
+def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
+    """
+    Test if the Franka Panda can successfully grasp the cube.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            pcg_threshold=1e-10,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(
+            pcg_threshold=1e-10,
+            sap_convergence_atol=1e-10,
+            sap_convergence_rtol=1e-10,
+            linesearch_ftol=1e-10,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    friction = 1.0
+    force = 1.0
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        material=gs.materials.Rigid(coup_friction=friction, friction=friction),
+    )
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
+    cube = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            scale=0.02,
+            pos=np.array([0.65, 0.0, 0.02], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated_rough,
+    )
+
+    scene.build()
+    motors_dof = np.arange(7)
+    fingers_dof = np.arange(7, 9)
+    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    franka.set_qpos(qpos)
+    scene.step()
+
+    end_effector = franka.get_link("hand")
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.135]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+
+    franka.control_dofs_position(qpos[:-2], motors_dof)
+
+    # hold
+    for i in range(10):
+        scene.step()
+    # grasp
+    for i in range(30):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
+
+    # lift
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.3]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+    for i in range(100):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
