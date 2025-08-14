@@ -1,9 +1,7 @@
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Type
 
-import numpy as np
 import torch
 
-import genesis as gs
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
@@ -76,7 +74,7 @@ class SensorManager:
             sensor_cls._update_shared_ground_truth_cache(
                 self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][cache_slice]
             )
-            sensor_cls._update_shared_cache_with_noise(
+            sensor_cls._update_shared_cache(
                 self._sensors_metadata[sensor_cls],
                 self._ground_truth_cache[dtype][cache_slice],
                 self._cache[dtype][cache_slice],

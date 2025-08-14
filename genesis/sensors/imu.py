@@ -77,20 +77,18 @@ class IMUSharedMetadata(SharedSensorMetadata):
 class IMU(Sensor):
 
     def build(self):
-        self._solver = self._manager._sim.rigid_solver
-        self._link_idx = self._options.entity_idx + self._options.link_idx_local
-
-        quat_offset = euler_to_quat(self._options.euler_offset)
-
+        """
+        Initialize all shared metadata needed to update all IMU sensors.
+        """
         if self._shared_metadata.solver is None:
-            self._shared_metadata.solver = self._solver
+            self._shared_metadata.solver = self._manager._sim.rigid_solver
 
-        self._shared_metadata.links_idx.append(self._link_idx)
+        self._shared_metadata.links_idx.append(self._options.entity_idx + self._options.link_idx_local)
         self._shared_metadata.offsets_pos = torch.cat(
             [self._shared_metadata.offsets_pos, torch.tensor([self._options.pos_offset], dtype=gs.tc_float)]
         )
 
-        quat_tensor = torch.tensor(quat_offset, dtype=gs.tc_float)
+        quat_tensor = torch.tensor(euler_to_quat(self._options.euler_offset), dtype=gs.tc_float)
         quat_tensor = quat_tensor.view(1, 1, 4).expand(self._manager._sim._B, 1, 4)
         self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=1)
 
@@ -114,6 +112,9 @@ class IMU(Sensor):
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
+        """
+        Update the current ground truth values for all IMU sensors.
+        """
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
@@ -143,13 +144,19 @@ class IMU(Sensor):
         strided_ground_truth_cache[:, :, 1, :].copy_(local_ang)
 
     @classmethod
-    def _update_shared_cache_with_noise(
+    def _update_shared_cache(
         cls,
         shared_metadata: dict[str, Any],
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
+        """
+        Update the current measured sensor data for all IMU sensors.
+
+        NOTE: `buffered_data` contains the history of ground truth cache, and noise/bias is only applied to the current
+        sensor readout `shared_cache`, not the whole buffer.
+        """
         buffered_data.append(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 

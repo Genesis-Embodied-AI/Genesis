@@ -55,6 +55,11 @@ class SharedSensorMetadata:
 class Sensor(RBC):
     """
     Base class for all types of sensors.
+
+    NOTE: The Sensor system is designed to be performant.  All sensors of the same type are updated at once and stored
+    in a cache in SensorManager. Cache size is inferred from the return format and cache length of each sensor.
+    `read()` and `read_ground_truth()`, the public-facing methods of every Sensor, automatically handles indexing into
+    the shared cache to return the correct data.
     """
 
     def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
@@ -119,7 +124,7 @@ class Sensor(RBC):
         raise NotImplementedError("Sensors must implement `update_shared_ground_truth_cache()`.")
 
     @classmethod
-    def _update_shared_cache_with_noise(
+    def _update_shared_cache(
         cls,
         shared_metadata: dict[str, Any],
         shared_ground_truth_cache: torch.Tensor,
@@ -128,7 +133,9 @@ class Sensor(RBC):
     ):
         """
         Update the shared sensor cache for all sensors of this class using metadata in SensorManager.
-        This is where noise should be applied to the sensor data, if applicable.
+
+        The information in shared_cache should be the final measured sensor data after all noise and post-processing.
+        NOTE: The implementation should include applying the delay using the `_apply_delay_to_shared_cache()` method.
         """
         raise NotImplementedError("Sensors must implement `update_shared_cache_with_noise()`.")
 
@@ -170,7 +177,11 @@ class Sensor(RBC):
     def _get_formatted_data(
         self, tensor: torch.Tensor, envs_idx: list[int] | None
     ) -> torch.Tensor | dict[str, torch.Tensor]:
-        # Note: This method does not clone the data tensor, it should have been cloned by the caller.
+        """
+        Formats the flattened cache tensor into a dict of tensors using the format specified in `_get_return_format()`.
+
+        NOTE: This method does not clone the data tensor, it should have been cloned by the caller.
+        """
 
         if envs_idx is None:
             envs_idx = self._manager._sim._scene._envs_idx
