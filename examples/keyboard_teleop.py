@@ -62,7 +62,7 @@ def build_scene():
             enable_collision=True,
             gravity=(0, 0, -9.8),
             box_box_detection=True,
-            constraint_timeconst=0.02,
+            constraint_timeconst=0.01,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 0.0, 0.7),
@@ -198,9 +198,9 @@ def run_sim(scene, entities, clients):
         robot.control_dofs_position(q[:-2], motors_dof)
         # control gripper
         if is_close_gripper:
-            robot.control_dofs_force(np.array([-0.5, -0.5]), fingers_dof)
+            robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         else:
-            robot.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
+            robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
 
         scene.step()
 
