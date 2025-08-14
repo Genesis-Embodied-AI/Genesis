@@ -313,12 +313,12 @@ class FEMSolver(Solver):
     @ti.kernel
     def compute_surface_vertices(self):
         for i_v in range(self.n_vertices):
-            self.vertices_on_surface[i_v] = 0
+            self.vertices_on_surface[i_v] = False
 
         for i_s in range(self.n_surfaces):
             tri2v = self.surface[i_s].tri2v
             for i in ti.static(range(3)):
-                self.vertices_on_surface[tri2v[i]] = 1
+                self.vertices_on_surface[tri2v[i]] = True
 
     @ti.kernel
     def compute_surface_elements(self):

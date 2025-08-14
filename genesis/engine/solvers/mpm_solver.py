@@ -383,7 +383,7 @@ class MPMSolver(Solver):
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
                 for offset in ti.static(ti.grouped(self.stencil_range())):
                     dpos = (offset.cast(gs.ti_float) - fx) * self._dx
-                    weight = ti.cast(1.0, gs.ti_float)
+                    weight = gs.ti_float(1.0)
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
@@ -439,7 +439,7 @@ class MPMSolver(Solver):
                 for offset in ti.static(ti.grouped(self.stencil_range())):
                     dpos = offset.cast(gs.ti_float) - fx
                     grid_vel = self.grid[f, base - self._grid_offset + offset, i_b].vel_out
-                    weight = ti.cast(1.0, gs.ti_float)
+                    weight = gs.ti_float(1.0)
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 

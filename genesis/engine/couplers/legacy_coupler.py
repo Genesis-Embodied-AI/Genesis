@@ -454,7 +454,7 @@ class LegacyCoupler(RBC):
                             mpm_grid_I = mpm_base - self.mpm_solver.grid_offset + mpm_offset
                             mpm_grid_mass = self.mpm_solver.grid[f, mpm_grid_I, i_b].mass / self.mpm_solver.p_vol_scale
 
-                            mpm_weight = ti.cast(1.0, gs.ti_float)
+                            mpm_weight = gs.ti_float(1.0)
                             for d in ti.static(range(3)):
                                 mpm_weight *= mpm_w[mpm_offset[d]][d]
 
