@@ -1999,7 +1999,13 @@ class RigidSolver(Solver):
         )
         if self.n_envs == 0:
             velocity = velocity.unsqueeze(0)
-        kernel_control_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+        has_gains = kernel_control_dofs_velocity(
+            velocity, dofs_idx, envs_idx, self.dofs_state, self.dofs_info, self._static_rigid_sim_config
+        )
+        if not unsafe and not has_gains:
+            raise gs.raise_exception(
+                "Please set control gains kp,kv using `get_dofs_kp`,`get_dofs_kv` prior to calling this method."
+            )
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -2007,7 +2013,13 @@ class RigidSolver(Solver):
         )
         if self.n_envs == 0:
             position = position.unsqueeze(0)
-        kernel_control_dofs_position(position, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+        has_gains = kernel_control_dofs_position(
+            position, dofs_idx, envs_idx, self.dofs_state, self.dofs_info, self._static_rigid_sim_config
+        )
+        if not unsafe and not has_gains:
+            raise gs.raise_exception(
+                "Please set control gains kp,kv using `get_dofs_kp`,`get_dofs_kv` prior to calling this method."
+            )
 
     def get_sol_params(self, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
         """
@@ -6566,12 +6578,21 @@ def kernel_control_dofs_velocity(
     dofs_idx: ti.types.ndarray(),
     envs_idx: ti.types.ndarray(),
     dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
     static_rigid_sim_config: ti.template(),
-):
+) -> ti.i32:
+    has_gains = gs.ti_bool(False)
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-        dofs_state.ctrl_mode[dofs_idx[i_d_], envs_idx[i_b_]] = gs.CTRL_MODE.VELOCITY
-        dofs_state.ctrl_vel[dofs_idx[i_d_], envs_idx[i_b_]] = velocity[i_b_, i_d_]
+        i_d = dofs_idx[i_d_]
+        i_b = envs_idx[i_b_]
+
+        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+        dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.VELOCITY
+        dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
+        if (dofs_info.kp[I_d] > gs.EPS) | (dofs_info.kv[I_d] > gs.EPS):
+            has_gains = True
+    return has_gains
 
 
 @ti.kernel
@@ -6580,12 +6601,21 @@ def kernel_control_dofs_position(
     dofs_idx: ti.types.ndarray(),
     envs_idx: ti.types.ndarray(),
     dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
     static_rigid_sim_config: ti.template(),
-):
+) -> ti.i32:
+    has_gains = gs.ti_bool(False)
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-        dofs_state.ctrl_mode[dofs_idx[i_d_], envs_idx[i_b_]] = gs.CTRL_MODE.POSITION
-        dofs_state.ctrl_pos[dofs_idx[i_d_], envs_idx[i_b_]] = position[i_b_, i_d_]
+        i_d = dofs_idx[i_d_]
+        i_b = envs_idx[i_b_]
+
+        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+        dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION
+        dofs_state.ctrl_pos[i_d, i_b] = position[i_b_, i_d_]
+        if (dofs_info.kp[I_d] > gs.EPS) | (dofs_info.kv[I_d] > gs.EPS):
+            has_gains = True
+    return has_gains
 
 
 @ti.kernel
