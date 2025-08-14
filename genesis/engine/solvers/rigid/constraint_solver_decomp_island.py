@@ -242,12 +242,6 @@ class ConstraintSolverIsland:
                         self.contact_island,
                     )
 
-        # after all collisions added for the island
-        if ti.static(False):  # Debug.validate
-            validate_entity_hibernation_state_for_all_entities_in_temp_island(
-                i_island, i_b, self._solver.entities_state, self.contact_island, expected_hibernation_state=False
-            )
-
     @ti.func
     def add_joint_limit_constraints(self, i_island: int, i_b: int):
         for i_island_entity in range(self.contact_island.island_entity[i_island, i_b].n):

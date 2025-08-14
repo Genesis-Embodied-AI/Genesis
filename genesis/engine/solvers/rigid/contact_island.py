@@ -244,10 +244,6 @@ class ContactIsland:
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
-                    if ti.static(False):  # Debug.validate
-                        if self.n_stack[i_b] > self.stack.shape[0]:
-                            capacity = self.stack.shape[0]
-                            print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
 
                     while self.n_stack[i_b] > 0:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
@@ -268,10 +264,6 @@ class ContactIsland:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
-                                if ti.static(False):  # Debug.validate
-                                    if self.n_stack[i_b] > self.stack.shape[0]:
-                                        capacity = self.stack.shape[0]
-                                        print(f"Stack overflow! capacity and size: {capacity} < {self.n_stack[i_b]}")
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 
