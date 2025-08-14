@@ -618,7 +618,7 @@ class SAPCoupler(RBC):
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
 
-    @ti.func
+    @ti.kernel
     def compute_regularization(self):
         for contact in ti.static(self.contact_handlers):
             contact.compute_regularization()
