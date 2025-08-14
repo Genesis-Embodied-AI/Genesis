@@ -5283,11 +5283,11 @@ def func_torque_and_passive_force(
                 joint_type = joints_info.type[I_j]
 
                 if joint_type != gs.JOINT_TYPE.FREE and joint_type != gs.JOINT_TYPE.FIXED:
-                    dof_start = links_info.dof_start[I_l]
                     q_start = links_info.q_start[I_l]
-                    q_end = links_info.q_end[I_l]
+                    dof_start = links_info.dof_start[I_l]
+                    dof_end = links_info.dof_end[I_l]
 
-                    for j_d in range(q_end - q_start):
+                    for j_d in range(dof_end - dof_start):
                         I_d = (
                             [dof_start + j_d, i_b]
                             if ti.static(static_rigid_sim_config.batch_dofs_info)
@@ -5313,11 +5313,11 @@ def func_torque_and_passive_force(
             joint_type = joints_info.type[I_j]
 
             if joint_type != gs.JOINT_TYPE.FREE and joint_type != gs.JOINT_TYPE.FIXED:
-                dof_start = links_info.dof_start[I_l]
                 q_start = links_info.q_start[I_l]
-                q_end = links_info.q_end[I_l]
+                dof_start = links_info.dof_start[I_l]
+                dof_end = links_info.dof_end[I_l]
 
-                for j_d in range(q_end - q_start):
+                for j_d in range(dof_end - dof_start):
                     I_d = (
                         [dof_start + j_d, i_b]
                         if ti.static(static_rigid_sim_config.batch_dofs_info)

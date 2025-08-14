@@ -962,11 +962,11 @@ class MPMSolver(Solver):
     def _kernel_update_render_fields(self, f: ti.i32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
-                self.particles_render[i_b, i_p].pos = self.particles[f, i_p, i_b].pos
-                self.particles_render[i_b, i_p].vel = self.particles[f, i_p, i_b].vel
+                self.particles_render[i_p, i_b].pos = self.particles[f, i_p, i_b].pos
+                self.particles_render[i_p, i_b].vel = self.particles[f, i_p, i_b].vel
             else:
-                self.particles_render[i_b, i_p].pos = gu.ti_nowhere()
-            self.particles_render[i_b, i_p].active = self.particles_ng[f, i_p, i_b].active
+                self.particles_render[i_p, i_b].pos = gu.ti_nowhere()
+            self.particles_render[i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
 
         for i_v, i_b in ti.ndrange(self._n_vverts, self._B):
             vvert_pos = ti.Vector.zero(gs.ti_float, 3)
