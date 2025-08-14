@@ -25,6 +25,10 @@ class IMUOptions(SensorOptions):
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
 
+    Note
+    ----
+    Accelerometers return the so-called classical linear acceleration in local frame minus gravity.
+
     Parameters
     ----------
     entity_idx : int
@@ -88,9 +92,10 @@ class IMU(Sensor):
             [self._shared_metadata.offsets_pos, torch.tensor([self._options.pos_offset], dtype=gs.tc_float)]
         )
 
-        quat_tensor = torch.tensor(euler_to_quat(self._options.euler_offset), dtype=gs.tc_float)
-        quat_tensor = quat_tensor.view(1, 1, 4).expand(self._manager._sim._B, 1, 4)
-        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=1)
+        quat_tensor = torch.tensor(euler_to_quat(self._options.euler_offset), dtype=gs.tc_float).unsqueeze(0)
+        if self._shared_metadata.solver.n_envs > 0:
+            quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
+        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
 
         self._shared_metadata.acc_bias = torch.cat(
             [self._shared_metadata.acc_bias, torch.tensor([self._options.accelerometer_bias], dtype=gs.tc_float)]
@@ -119,29 +124,20 @@ class IMU(Sensor):
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
         ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
-        if shared_metadata.solver.n_envs == 0:
-            gravity = gravity.unsqueeze(0)
-            quats = quats.unsqueeze(0)
-            acc = acc.unsqueeze(0)
-            ang = ang.unsqueeze(0)
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
-        # acc/ang shape: (B, n_links, 3)
+        # acc/ang shape: (B, n_imus, 3)
         local_acc = inv_transform_by_trans_quat(acc, shared_metadata.offsets_pos, offset_quats)
         local_ang = inv_transform_by_trans_quat(ang, shared_metadata.offsets_pos, offset_quats)
 
-        local_acc = local_acc - gravity.unsqueeze(1).expand(-1, local_acc.shape[1], -1)
+        *batch_size, n_imus, _ = local_acc.shape
+        local_acc = local_acc - gravity.unsqueeze(-2).expand((*batch_size, n_imus, -1))
 
-        # cache shape: (B, n_links * 6)
-        batch_size, n_links, _ = local_acc.shape
-        strided_ground_truth_cache = torch.as_strided(
-            shared_ground_truth_cache,
-            size=(batch_size, n_links, 2, 3),
-            stride=(n_links * 6, 6, 3, 1),
-        )
-        strided_ground_truth_cache[:, :, 0, :].copy_(local_acc)
-        strided_ground_truth_cache[:, :, 1, :].copy_(local_ang)
+        # cache shape: (B, n_imus * 6)
+        strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 2, 3))
+        strided_ground_truth_cache[..., 0, :].copy_(local_acc)
+        strided_ground_truth_cache[..., 1, :].copy_(local_ang)
 
     @classmethod
     def _update_shared_cache(
@@ -154,20 +150,19 @@ class IMU(Sensor):
         """
         Update the current measured sensor data for all IMU sensors.
 
-        NOTE: `buffered_data` contains the history of ground truth cache, and noise/bias is only applied to the current
+        Note
+        ----
+        `buffered_data` contains the history of ground truth cache, and noise/bias is only applied to the current
         sensor readout `shared_cache`, not the whole buffer.
         """
         buffered_data.append(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
         # add bias to the shared_cache
-        strided_shared_cache = torch.as_strided(
-            shared_cache,
-            size=(shared_cache.shape[0], shared_metadata.acc_bias.shape[0], 2, 3),
-            stride=(shared_cache.shape[1], 6, 3, 1),
-        )
-        strided_shared_cache[:, :, 0, :] += shared_metadata.acc_bias
-        strided_shared_cache[:, :, 1, :] += shared_metadata.ang_bias
+        *batch_size, n_imus, _ = shared_metadata.offsets_quat.shape
+        strided_shared_cache = shared_cache.reshape((*batch_size, n_imus, 2, 3))
+        strided_shared_cache[..., 0, :] += shared_metadata.acc_bias
+        strided_shared_cache[..., 1, :] += shared_metadata.ang_bias
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:

@@ -20,6 +20,7 @@ def test_imu_sensor(show_viewer):
             gravity=(0.0, 0.0, GRAVITY),
         ),
         show_viewer=show_viewer,
+        show_FPS=False,
     )
 
     scene.add_entity(gs.morphs.Plane())
