@@ -249,7 +249,7 @@ def get_constraint_state(constraint_solver, solver):
 
 @dataclasses.dataclass
 class StructContactData:
-    # WARNING: cannot add/remove fields here without also updeating collider_decomp.py::kernel_collider_clear
+    # WARNING: cannot add/remove fields here without also updating collider_decomp.py::kernel_collider_clear
     geom_a: V_ANNOTATION
     geom_b: V_ANNOTATION
     penetration: V_ANNOTATION

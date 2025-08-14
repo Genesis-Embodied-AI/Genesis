@@ -32,19 +32,13 @@ class ContactIsland:
 
         # maps half-edges (half-edges are referenced by entity_edge range) to actual edge index
         # description: half_edge_ref_to_edge_idx
-        self.edge_id = ti.field(
-            dtype=gs.ti_int,
-            shape=self.solver._batch_shape((max_contact_pairs * 2)),
-        )
+        self.edge_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs * 2)))
 
         # maps collider_state.contact_data index to island idx
         self.constraint_list = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs)))
 
         # analogous to edge_id: maps island's constraint local-index to world's contact index
-        self.constraint_id = ti.field(
-            dtype=gs.ti_int,
-            shape=self.solver._batch_shape((max_contact_pairs * 2)),
-        )
+        self.constraint_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs * 2)))
 
         # per-entity range of half-edges (indexing into edge_id)
         # description: entity_idx_to_half_edge_ref_range
@@ -145,10 +139,10 @@ class ContactIsland:
         self.add_hiberanted_edges_to_islands()
         self.preprocess_island_and_map_entities_to_edges()
         self.construct_islands()
-        self.postprocess_island_and_assign_contact_data_to_islands()
+        self.postprocess_island_and_assign_contact_data()
 
     @ti.kernel
-    def postprocess_island_and_assign_contact_data_to_islands(self):
+    def postprocess_island_and_assign_contact_data(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
@@ -244,6 +238,8 @@ class ContactIsland:
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
+                    # FIXME: Add proper mechanism to detection overflow in Taichi-scope
+                    # but raise exception in Python-scope
 
                     while self.n_stack[i_b] > 0:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
@@ -264,6 +260,8 @@ class ContactIsland:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
+                                # FIXME: Add proper mechanism to detection overflow in Taichi-scope
+                                # but raise exception in Python-scope
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 
