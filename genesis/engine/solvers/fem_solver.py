@@ -665,17 +665,17 @@ class FEMSolver(Solver):
         damping_beta_over_dt = self._damping_beta / self._substep_dt
         damping_beta_factor = damping_beta_over_dt + 1.0
         # inertia
-        for i_b, i_vs in ti.ndrange(self._B, self.n_vertices):
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_active[i_b]:
                 continue
-            self.elements_v_energy[i_b, i_vs].force = -self.elements_v_info[i_vs].mass_over_dt2 * (
-                (self.elements_v[f + 1, i_vs, i_b].pos - self.elements_v_energy[i_b, i_vs].inertia)
-                + (self.elements_v[f + 1, i_vs, i_b].pos - self.elements_v[f, i_vs, i_b].pos) * damping_alpha_dt
+            self.elements_v_energy[i_b, i_v].force = -self.elements_v_info[i_v].mass_over_dt2 * (
+                (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia)
+                + (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos) * damping_alpha_dt
             )
-            self.pcg_state_v[i_b, i_vs].diag3x3 = ti.Matrix.zero(gs.ti_float, 3, 3)
+            self.pcg_state_v[i_b, i_v].diag3x3 = ti.Matrix.zero(gs.ti_float, 3, 3)
             for i in ti.static(range(3)):
-                self.pcg_state_v[i_b, i_vs].diag3x3[i, i] = (
-                    self.elements_v_info[i_vs].mass_over_dt2 * damping_alpha_factor
+                self.pcg_state_v[i_b, i_v].diag3x3[i, i] = (
+                    self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor
                 )
 
         # elastic
@@ -723,11 +723,11 @@ class FEMSolver(Solver):
                 )
 
         # inverse
-        for i_b, i_vs in ti.ndrange(self._B, self.n_vertices):
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_active[i_b]:
                 continue
             # Use 3-by-3 diagonal block inverse for preconditioner
-            self.pcg_state_v[i_b, i_vs].prec = self.pcg_state_v[i_b, i_vs].diag3x3.inverse()
+            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag3x3.inverse()
 
             # Other options for preconditioner:
             # Uncomment one of the following lines to test different preconditioners

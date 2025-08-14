@@ -498,12 +498,12 @@ class SAPCoupler(RBC):
         aabbs = ti.static(self.fem_surface_tet_aabb.aabbs)
         for i_b, i_se in ti.ndrange(self.fem_solver._B, self.fem_solver.n_surface_elements):
             i_e = self.fem_solver.surface_elements[i_se]
-            i_v = self.fem_solver.elements_i[i_e].el2v
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
             aabbs[i_b, i_se].min.fill(np.inf)
             aabbs[i_b, i_se].max.fill(-np.inf)
             for i in ti.static(range(4)):
-                pos_v = self.fem_solver.elements_v[i_step, i_v[i], i_b].pos
+                pos_v = self.fem_solver.elements_v[i_step, i_vs[i], i_b].pos
                 aabbs[i_b, i_se].min = ti.min(aabbs[i_b, i_se].min, pos_v)
                 aabbs[i_b, i_se].max = ti.max(aabbs[i_b, i_se].max, pos_v)
 
@@ -768,18 +768,18 @@ class SAPCoupler(RBC):
             S = ti.Matrix.zero(gs.ti_float, 4, 3)
             S[:3, :] = B
             S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-            i_v = self.fem_solver.elements_i[i_e].el2v
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
             if ti.static(self.fem_solver._enable_vertex_constraints):
                 for i in ti.static(range(4)):
-                    if self.fem_solver.vertex_constraints.is_constrained[i_v[i], i_b]:
+                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
                         S[i, :] = ti.Vector.zero(gs.ti_float, 3)
 
-            _, new_p9 = self.compute_elastic_products(i_b, i_e, S, i_v, src)
+            _, new_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, src)
             # atomic
             scale = V_dt2 * damping_beta_factor
             for i in ti.static(range(4)):
-                dst[i_b, i_v[i]] += (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * scale
+                dst[i_b, i_vs[i]] += (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * scale
 
     def init_pcg_solve(self):
         self.init_pcg_state()
@@ -1107,14 +1107,14 @@ class SAPCoupler(RBC):
             S = ti.Matrix.zero(gs.ti_float, 4, 3)
             S[:3, :] = B
             S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-            i_v = self.fem_solver.elements_i[i_e].el2v
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
             if ti.static(self.fem_solver._enable_vertex_constraints):
                 for i in ti.static(range(4)):
-                    if self.fem_solver.vertex_constraints.is_constrained[i_v[i], i_b]:
+                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
                         S[i, :] = ti.Vector.zero(gs.ti_float, 3)
 
-            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_v, self.fem_state_v.v_diff)
+            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, self.fem_state_v.v_diff)
             energy[i_b] += 0.5 * p9.dot(H9_p9) * damping_beta_factor * V_dt2
 
     @ti.func
