@@ -21,7 +21,6 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .couplers import LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
 from .solvers.base_solver import Solver
 from .solvers import (
@@ -34,6 +33,7 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
+from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
 from genesis.sensors.sensor_manager import SensorManager

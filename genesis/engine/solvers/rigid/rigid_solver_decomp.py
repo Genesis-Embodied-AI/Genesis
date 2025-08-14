@@ -900,6 +900,7 @@ class RigidSolver(Solver):
 
     def substep(self):
         # from genesis.utils.tools import create_timer
+        from genesis.engine.couplers import SAPCoupler
 
         # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         kernel_step_1(
@@ -916,24 +917,27 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         # timer.stamp("kernel_step_1")
-        self._func_constraint_force()
-        # timer.stamp("constraint_force")
-        kernel_step_2(
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            joints_info=self.joints_info,
-            joints_state=self.joints_state,
-            entities_state=self.entities_state,
-            entities_info=self.entities_info,
-            geoms_info=self.geoms_info,
-            geoms_state=self.geoms_state,
-            collider_state=self.collider._collider_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-        # timer.stamp("kernel_step_2")
+        if isinstance(self.sim.coupler, SAPCoupler):
+            self.update_qvel()
+        else:
+            self._func_constraint_force()
+            # timer.stamp("constraint_force")
+            kernel_step_2(
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                joints_info=self.joints_info,
+                joints_state=self.joints_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                collider_state=self.collider._collider_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+            # timer.stamp("kernel_step_2")
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -1203,6 +1207,44 @@ class RigidSolver(Solver):
             torque, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
         )
 
+    @ti.kernel
+    def update_qvel(self):
+        if ti.static(self._use_hibernation):
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(self._B):
+                for i_d_ in range(self.n_awake_dofs[i_b]):
+                    i_d = self.awake_dofs[i_d_, i_b]
+                    self.dofs_state.vel_prev[i_d, i_b] = self.dofs_state.vel[i_d, i_b]
+                    self.dofs_state.vel[i_d, i_b] = (
+                        self.dofs_state.vel[i_d, i_b] + self.dofs_state.acc[i_d, i_b] * self._substep_dt
+                    )
+        else:
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
+                self.dofs_state.vel_prev[i_d, i_b] = self.dofs_state.vel[i_d, i_b]
+                self.dofs_state.vel[i_d, i_b] = (
+                    self.dofs_state.vel[i_d, i_b] + self.dofs_state.acc[i_d, i_b] * self._substep_dt
+                )
+
+    @ti.kernel
+    def update_qacc_from_qvel_delta(self):
+        if ti.static(self._use_hibernation):
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(self._B):
+                for i_d_ in range(self.n_awake_dofs[i_b]):
+                    i_d = self.awake_dofs[i_d_, i_b]
+                    self.dofs_state.acc[i_d, i_b] = (
+                        self.dofs_state.vel[i_d, i_b] - self.dofs_state.vel_prev[i_d, i_b]
+                    ) / self._substep_dt
+                    self.dofs_state.vel[i_d, i_b] = self.dofs_state.vel_prev[i_d, i_b]
+        else:
+            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
+                self.dofs_state.acc[i_d, i_b] = (
+                    self.dofs_state.vel[i_d, i_b] - self.dofs_state.vel_prev[i_d, i_b]
+                ) / self._substep_dt
+                self.dofs_state.vel[i_d, i_b] = self.dofs_state.vel_prev[i_d, i_b]
+
     def substep_pre_coupling(self, f):
         if self.is_active():
             self.substep()
@@ -1211,7 +1253,26 @@ class RigidSolver(Solver):
         pass
 
     def substep_post_coupling(self, f):
-        pass
+
+        from genesis.engine.couplers import SAPCoupler
+
+        if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
+            self.update_qacc_from_qvel_delta()
+            kernel_step_2(
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                joints_info=self.joints_info,
+                joints_state=self.joints_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                collider_state=self.collider._collider_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
     def substep_post_coupling_grad(self, f):
         pass
