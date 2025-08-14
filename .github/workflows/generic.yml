@@ -32,6 +32,7 @@ jobs:
       TI_ENABLE_METAL: "0"
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
+      TI_DEBUG: "0"
 
     runs-on: ${{ matrix.OS }}
     if: github.event_name != 'release'
@@ -112,7 +113,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --forked -m required ./tests
+          pytest -v --logical --dev --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: always()

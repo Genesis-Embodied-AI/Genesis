@@ -213,7 +213,7 @@ def init(
             arch=ti_arch,
             # Debug mode was buggy and causing segfault prior to v1.7.4
             # Add a (hidden) mechanism to forceable disable taichi debug mode as it is still a bit experimental
-            debug=debug and ti.__version__ >= (1, 7, 4) and (os.environ.get("TI_DEBUG", 1) == "0"),
+            debug=debug and ti.__version__ >= (1, 7, 4) and (os.environ.get("TI_DEBUG") != "0"),
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
