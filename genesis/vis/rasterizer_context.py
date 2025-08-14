@@ -29,8 +29,6 @@ class SegmentationManager:
         return self.seg_idxc_map[seg_idxc]
 
     def colorize_seg_idxc_arr(self, seg_idxc_arr):
-        if seg_idxc_arr.shape[-1] == 1:
-            seg_idxc_arr = seg_idxc_arr.squeeze(-1)
         return self.seg_idxc_to_color[seg_idxc_arr]
 
     def generate_seg_colors(self):

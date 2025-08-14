@@ -538,6 +538,8 @@ class Scene(RBC):
         GUI=False,
         spp=256,
         denoise=None,
+        near=0.05,
+        far=100.0,
         env_idx=None,
         debug=False,
     ):
@@ -578,6 +580,12 @@ class Scene(RBC):
             Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
             to True on Linux, otherwise False. If OptiX denoiser is not available in your platform, consider enabling
             the OIDN denoiser option when building the RayTracer.
+        near: float
+            Distance from camera center to near plane in meters.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.05.
+        far: float
+            Distance from camera center to far plane in meters.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 100.0.
         debug : bool
             Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
             simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
@@ -593,7 +601,7 @@ class Scene(RBC):
         if denoise is None:
             denoise = sys.platform != "darwin"
         return self._visualizer.add_camera(
-            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug
+            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, near, far, env_idx, debug
         )
 
     @gs.assert_unbuilt
@@ -1119,7 +1127,7 @@ class Scene(RBC):
 
     @gs.assert_built
     def render_all_cameras(
-        self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=False
+        self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, antialiasing=False, force_render=False
     ):
         """
         Render the scene for all cameras using the batch renderer.
@@ -1134,6 +1142,8 @@ class Scene(RBC):
             Whether to render the segmentation image.
         normal : bool, optional
             Whether to render the normal image.
+        antialiasing : bool, optional
+            Whether to apply anti-aliasing.
         force_render : bool, optional
             Whether to force render the scene.
 
@@ -1146,7 +1156,7 @@ class Scene(RBC):
             gs.raise_exception("Method only supported by 'BatchRenderer'")
 
         rgb_out, depth_out, seg_out, normal_out = self._visualizer.batch_renderer.render(
-            rgb, depth, segmentation, normal, force_render
+            rgb, depth, segmentation, normal, antialiasing, force_render
         )
         if segmentation and colorize_seg:
             seg_out = tuple(self._visualizer.batch_renderer.colorize_seg_idxc_arr(seg) for seg in seg_out)

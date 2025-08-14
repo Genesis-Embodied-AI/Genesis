@@ -312,7 +312,7 @@ class BatchRenderer(RBC):
     def update_scene(self):
         self._visualizer._context.update()
 
-    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False, antialiasing=False):
+    def render(self, rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=False):
         """
         Render all cameras in the batch.
 
@@ -326,10 +326,10 @@ class BatchRenderer(RBC):
             Whether to render the segmentation image.
         normal : bool, optional
             Whether to render the normal image.
-        force_render : bool, optional
-            Whether to force render the scene.
         antialiasing : bool, optional
             Whether to apply anti-aliasing.
+        force_render : bool, optional
+            Whether to force render the scene.
 
         Returns
         -------
@@ -383,8 +383,8 @@ class BatchRenderer(RBC):
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
         buffers = [
             tensor_to_array(rgba_arr_all[..., :3].flip(-1)) if rgb else None,
-            tensor_to_array(depth_arr_all) if depth else None,
-            tensor_to_array(segmentation_arr_all) if segmentation else None,
+            tensor_to_array(depth_arr_all[..., 0]) if depth else None,
+            tensor_to_array(segmentation_arr_all[..., 0]) if segmentation else None,
             tensor_to_array(normal_arr_all[..., :3].flip(-1)) if normal else None,
         ]
         # convert seg geom idx to seg_idxc
@@ -437,3 +437,7 @@ class BatchRenderer(RBC):
     @property
     def seg_idxc_map(self):
         return self._geom_retriever.seg_manager.seg_idxc_map
+
+    @property
+    def use_rasterizer(self):
+        return self._use_rasterizer
