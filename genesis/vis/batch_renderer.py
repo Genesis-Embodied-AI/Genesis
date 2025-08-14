@@ -3,9 +3,14 @@ import math
 
 import numpy as np
 import torch
+from trimesh.visual.texture import TextureVisuals
+from trimesh.visual.color import ColorVisuals
+from PIL import Image
 
 import genesis as gs
 from genesis.repr_base import RBC
+from genesis.utils.misc import tensor_to_array
+from .rasterizer_context import SegmentationManager
 
 try:
     from gs_madrona.renderer_gs import MadronaBatchRendererAdapter
@@ -18,6 +23,163 @@ class IMAGE_TYPE(enum.IntEnum):
     DEPTH = 3
     SEGMENTATION = 1
     NORMAL = 2
+
+
+class GeomRetriever:
+    def __init__(self, rigid_solver, seg_level):
+        self.rigid_solver = rigid_solver
+        self.seg_manager = SegmentationManager()
+        self.seg_level = seg_level
+        self.geom_idxc = None
+
+        self.default_geom_group = 2
+        self.default_enabled_geom_groups = np.array([self.default_geom_group], dtype=np.int32)
+        self.num_textures_per_material = 10  # Madrona allows up to 10 textures per material, should not change.
+
+    def build(self):
+        self.n_vgeoms = self.rigid_solver.n_vgeoms
+        self.geom_idxc = []
+        vgeoms = self.rigid_solver.vgeoms
+        for vgeom in vgeoms:
+            seg_key = self.get_seg_key(vgeom)
+            seg_idxc = self.seg_manager.seg_key_to_idxc(seg_key)
+            self.geom_idxc.append(seg_idxc)
+        self.geom_idxc = np.array(self.geom_idxc, dtype=np.uint32)
+        self.seg_manager.generate_seg_colors()
+
+    def get_seg_key(self, vgeom):
+        if self.seg_level == "geom":
+            return (vgeom.entity.idx, vgeom.link.idx, vgeom.idx)
+        elif self.seg_level == "link":
+            return (vgeom.entity.idx, vgeom.link.idx)
+        elif self.seg_level == "entity":
+            return vgeom.entity.idx
+        else:
+            gs.raise_exception(f"Unsupported segmentation level: {self.seg_level}")
+
+    def retrieve_rigid_meshes_static(self):
+        args = {}
+        vgeoms = self.rigid_solver.vgeoms
+
+        # Retrieve geom data
+        mesh_vertices = self.rigid_solver.vverts_info.init_pos.to_numpy()
+        mesh_faces = self.rigid_solver.vfaces_info.vverts_idx.to_numpy()
+        mesh_vertex_offsets = self.rigid_solver.vgeoms_info.vvert_start.to_numpy()
+        mesh_face_starts = self.rigid_solver.vgeoms_info.vface_start.to_numpy()
+        mesh_face_ends = self.rigid_solver.vgeoms_info.vface_end.to_numpy()
+        for i in range(self.n_vgeoms):
+            mesh_faces[mesh_face_starts[i] : mesh_face_ends[i]] -= mesh_vertex_offsets[i]
+
+        geom_data_ids = []
+        for vgeom in vgeoms:
+            seg_key = self.get_seg_key(vgeom)
+            seg_id = self.seg_manager.seg_key_to_idxc(seg_key)
+            geom_data_ids.append(seg_id)
+
+        args["mesh_vertices"] = mesh_vertices
+        args["mesh_faces"] = mesh_faces
+        args["mesh_vertex_offsets"] = mesh_vertex_offsets
+        args["mesh_face_offsets"] = mesh_face_starts
+        args["geom_types"] = np.full((self.n_vgeoms,), 7, dtype=np.int32)  # 7 stands for mesh
+        args["geom_groups"] = np.full((self.n_vgeoms,), self.default_geom_group, dtype=np.int32)
+        args["geom_data_ids"] = np.arange(self.n_vgeoms, dtype=np.int32)
+        args["geom_sizes"] = np.ones((self.n_vgeoms, 3), dtype=np.float32)
+        args["enabled_geom_groups"] = self.default_enabled_geom_groups
+
+        # Retrieve material data
+        num_materials = 0
+        total_uv_size = 0
+        total_texture_size = 0
+        geom_mat_ids = []
+        geom_uv_sizes = []
+        geom_uv_offsets = []
+        geom_rgbas = []
+
+        mat_uv_data = []
+        mat_texture_widths = []
+        mat_texture_heights = []
+        mat_texture_nchans = []
+        mat_texture_offsets = []
+        mat_texture_data = []
+        mat_texture_ids = []
+        mat_rgbas = []
+
+        for vgeom in vgeoms:
+            visual = vgeom.get_trimesh().visual
+            if isinstance(visual, TextureVisuals):
+                uv_size = visual.uv.shape[0]
+                geom_mat_ids.append(num_materials)
+                geom_uv_sizes.append(uv_size)
+                geom_uv_offsets.append(total_uv_size)
+                geom_rgbas.append(np.empty((4,), dtype=np.float32))
+
+                texture_width = visual.material.image.width
+                texture_height = visual.material.image.height
+                texture_nchans = 4 if visual.material.image.mode == "RGBA" else 3
+                texture_size = texture_width * texture_height * texture_nchans
+                texture_ids = np.full((self.num_textures_per_material,), -1, np.int32)
+                texture_ids[0] = num_materials
+
+                mat_uv_data.append(visual.uv.astype(np.float32))
+                mat_texture_widths.append(texture_width)
+                mat_texture_heights.append(texture_height)
+                mat_texture_nchans.append(texture_nchans)
+                mat_texture_offsets.append(total_texture_size)
+                mat_texture_data.append(
+                    np.array(
+                        visual.material.image.transpose(Image.Transpose.FLIP_TOP_BOTTOM).getdata(), dtype=np.uint8
+                    ).flatten()
+                )
+                mat_texture_ids.append(texture_ids)
+                mat_rgbas.append(visual.material.diffuse.astype(np.float32) / 255.0)
+
+                num_materials += 1
+                total_uv_size += uv_size
+                total_texture_size += texture_size
+            else:
+                geom_mat_ids.append(-1)
+                geom_uv_sizes.append(0)
+                geom_uv_offsets.append(-1)
+                if isinstance(visual, ColorVisuals):
+                    geom_rgbas.append(visual.main_color.astype(np.float32) / 255.0)
+                else:
+                    geom_rgbas.append(np.empty((4,), dtype=np.float32))
+
+        args["geom_mat_ids"] = np.array(geom_mat_ids, np.int32)
+        args["mesh_texcoord_num"] = np.array(geom_uv_sizes, np.int32)
+        args["mesh_texcoord_offsets"] = np.array(geom_uv_offsets, np.int32)
+        args["geom_rgba"] = np.stack(geom_rgbas, axis=0)
+
+        args["mesh_texcoords"] = np.concatenate(mat_uv_data, axis=0)
+        args["tex_widths"] = np.array(mat_texture_widths, np.int32)
+        args["tex_heights"] = np.array(mat_texture_heights, np.int32)
+        args["tex_nchans"] = np.array(mat_texture_nchans, np.int32)
+        args["tex_offsets"] = np.array(mat_texture_offsets, np.int32)
+        args["tex_data"] = np.concatenate(mat_texture_data, axis=0)
+        args["mat_tex_ids"] = np.stack(mat_texture_ids, axis=0)
+        args["mat_rgba"] = np.stack(mat_rgbas, axis=0)
+
+        return args
+
+    def retrieve_rigid_property_torch(self, num_worlds):
+        geom_rgb_torch = self.rigid_solver.vgeoms_info.color.to_torch()
+        geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)  # Cast to int32
+        geom_rgb_uint = (geom_rgb_int[:, 0] << 16) | (geom_rgb_int[:, 1] << 8) | geom_rgb_int[:, 2]
+        geom_rgb = geom_rgb_uint.unsqueeze(0).repeat(num_worlds, 1)
+
+        geom_mat_ids = torch.full((self.n_vgeoms,), -1, dtype=torch.int32)
+        geom_mat_ids = geom_mat_ids.unsqueeze(0).repeat(num_worlds, 1)
+
+        geom_sizes = torch.ones((self.n_vgeoms, 3), dtype=torch.float32)
+        geom_sizes = geom_sizes.unsqueeze(0).repeat(num_worlds, 1, 1)
+        return geom_mat_ids, geom_rgb, geom_sizes
+
+    def retrieve_rigid_state_torch(self):
+        geom_pos = self.rigid_solver.vgeoms_state.pos.to_torch()
+        geom_rot = self.rigid_solver.vgeoms_state.quat.to_torch()
+        geom_pos = geom_pos.transpose(0, 1).contiguous()
+        geom_rot = geom_rot.transpose(0, 1).contiguous()
+        return geom_pos, geom_rot
 
 
 class Light:
@@ -73,12 +235,12 @@ class BatchRenderer(RBC):
     This class is used to manage batch rendering
     """
 
-    def __init__(self, visualizer, renderer_options):
+    def __init__(self, visualizer, renderer_options, vis_options):
         self._visualizer = visualizer
         self._lights = gs.List()
-        self._renderer_options = renderer_options
+        self._use_rasterizer = renderer_options.use_rasterizer
         self._renderer = None
-
+        self._geom_retriever = GeomRetriever(self._visualizer.scene.rigid_solver, vis_options.segmentation_level)
         self._data_cache = {}
         self._t = -1
 
@@ -96,12 +258,10 @@ class BatchRenderer(RBC):
             gs.raise_exception("BatchRenderer requires CUDA backend.")
 
         self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
-        lights = self._lights
-        rigid = self._visualizer.scene.rigid_solver
+        self._geom_retriever.build()
         n_envs = max(self._visualizer.scene.n_envs, 1)
         res = self._cameras[0].res
         gpu_id = gs.device.index
-        use_rasterizer = self._renderer_options.use_rasterizer
 
         # Cameras
         n_cameras = len(self._cameras)
@@ -113,7 +273,7 @@ class BatchRenderer(RBC):
 
         # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
         # consider storing light properties as taichi fields in Genesis.
-        n_lights = len(lights)
+        n_lights = len(self._lights)
         light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
         light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
         light_rgb = torch.tensor([light.color for light in self._lights], dtype=gs.tc_float)
@@ -124,7 +284,7 @@ class BatchRenderer(RBC):
         light_intensity = torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
 
         self._renderer = MadronaBatchRendererAdapter(
-            rigid,
+            self._geom_retriever,
             gpu_id,
             n_envs,
             n_cameras,
@@ -134,10 +294,9 @@ class BatchRenderer(RBC):
             cameras_far,
             *res,
             False,
-            use_rasterizer,
+            self._use_rasterizer,
         )
         self._renderer.init(
-            rigid,
             cameras_pos,
             cameras_quat,
             light_pos,
@@ -153,7 +312,7 @@ class BatchRenderer(RBC):
     def update_scene(self):
         self._visualizer._context.update()
 
-    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False, aliasing=False):
+    def render(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False, antialiasing=False):
         """
         Render all cameras in the batch.
 
@@ -169,7 +328,7 @@ class BatchRenderer(RBC):
             Whether to render the normal image.
         force_render : bool, optional
             Whether to force render the scene.
-        aliasing : bool, optional
+        antialiasing : bool, optional
             Whether to apply anti-aliasing.
 
         Returns
@@ -189,7 +348,7 @@ class BatchRenderer(RBC):
             self._data_cache.clear()
 
         # Fetch available cached data
-        cache_key = (aliasing,)
+        cache_key = (antialiasing,)
         rgb_arr = self._data_cache.get((IMAGE_TYPE.RGB, cache_key), None)
         depth_arr = self._data_cache.get((IMAGE_TYPE.DEPTH, cache_key), None)
         segmentation_arr = self._data_cache.get((IMAGE_TYPE.SEGMENTATION, cache_key), None)
@@ -216,18 +375,24 @@ class BatchRenderer(RBC):
         # Render frame
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
-        render_options = np.array((rgb_, depth_, normal_, segmentation_, aliasing), dtype=np.uint32)
+        render_options = np.array((rgb_, depth_, normal_, segmentation_, antialiasing), dtype=np.uint32)
         rgba_arr_all, depth_arr_all, segmentation_arr_all, normal_arr_all = self._renderer.render(
-            self._visualizer.scene.rigid_solver, cameras_pos, cameras_quat, render_options
+            cameras_pos, cameras_quat, render_options
         )
 
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
         buffers = [
-            rgba_arr_all[..., :3].flip(-1).cpu().numpy() if rgb else None,
-            depth_arr_all.cpu().numpy() if depth else None,
-            segmentation_arr_all.cpu().numpy() if segmentation else None,
-            normal_arr_all[..., :3].flip(-1).cpu().numpy() if normal else None,
+            tensor_to_array(rgba_arr_all[..., :3].flip(-1)) if rgb else None,
+            tensor_to_array(depth_arr_all) if depth else None,
+            tensor_to_array(segmentation_arr_all) if segmentation else None,
+            tensor_to_array(normal_arr_all[..., :3].flip(-1)) if normal else None,
         ]
+        # convert seg geom idx to seg_idxc
+        if segmentation:
+            seg_geoms = buffers[2]
+            mask = seg_geoms != -1
+            seg_geoms[mask] = self._geom_retriever.geom_idxc[seg_geoms[mask]]
+
         for i, data in enumerate(buffers):
             if data is not None:
                 data = data.swapaxes(0, 1)
@@ -248,6 +413,9 @@ class BatchRenderer(RBC):
 
         return rgb_arr, depth_arr, segmentation_arr, normal_arr
 
+    def colorize_seg_idxc_arr(self, seg_idxc_arr):
+        return self._geom_retriever.seg_manager.colorize_seg_idxc_arr(seg_idxc_arr)
+
     def destroy(self):
         self._lights.clear()
         self._data_cache.clear()
@@ -265,3 +433,7 @@ class BatchRenderer(RBC):
     @property
     def cameras(self):
         return self._cameras
+
+    @property
+    def seg_idxc_map(self):
+        return self._geom_retriever.seg_manager.seg_idxc_map

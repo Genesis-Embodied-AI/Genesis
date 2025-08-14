@@ -417,7 +417,7 @@ class Camera(RBC):
 
         if seg_idxc_arr is not None:
             if colorize_seg or (self._GUI and self._visualizer.has_display):
-                seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
+                seg_color_arr = self._visualizer.colorize_seg_idxc_arr(seg_idxc_arr)
             seg_arr = seg_color_arr if colorize_seg else seg_idxc_arr
 
         if self._in_recording or self._GUI and self._visualizer.has_display:
@@ -470,21 +470,6 @@ class Camera(RBC):
             self._recorded_imgs.append(rgb_np)
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
-
-    @gs.assert_built
-    def get_segmentation_idx_dict(self):
-        """
-        Returns a dictionary mapping segmentation indices to scene entities.
-
-        In the segmentation map:
-        - Index 0 corresponds to the background (-1).
-        - Indices > 0 correspond to scene elements, which may be represented as:
-            - `entity_id`
-            - `(entity_id, link_id)`
-            - `(entity_id, link_id, geom_id)`
-          depending on the material type and the configured segmentation level.
-        """
-        return self._rasterizer._context.seg_idxc_map
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):

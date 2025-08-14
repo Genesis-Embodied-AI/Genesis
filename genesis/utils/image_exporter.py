@@ -1,14 +1,11 @@
 import os
 import cv2
 import numpy as np
-import numpy as np
 
-# import torch
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 import genesis as gs
-from genesis.utils.misc import tensor_to_array
 
 RGB_S = "rgb"
 DEPTH_S = "depth"
@@ -23,14 +20,13 @@ class ImageComponent:
         self.normalize_func = normalize_func
 
     def export_frame_camera(self, i_env, export_dir, i_step, i_cam, frame):
-        # frame = tensor_to_array(frame[i_env])
         frame = frame[i_env]
         frame_path = os.path.join(export_dir, f"{self.name}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
         cv2.imwrite(frame_path, frame)
 
     def check_frame_shape(self, frame):
         if frame.ndim == 3:
-            frame = frame.unsqueeze(0)
+            frame = frame[None, ...]
         elif frame.ndim == 2:
             frame = frame.reshape((1, *frame.shape, 1))
         if frame.ndim != 4 or frame.shape[-1] != self.channel:
@@ -66,8 +62,9 @@ def normalize_depth(depth, depth_clip_max, depth_scale):
 
     # Normalize to 0–255
     denom = depth_max - depth_min
-    out = np.where(denom > gs.EPS, ((depth_max - depth) / denom * 255.0).astype(np.uint8), 0)
-    return out
+    out = np.zeros_like(depth, dtype=np.float32)
+    np.divide(depth_max - depth, denom, out=out, where=denom > gs.EPS)  # safe masked divide
+    return (out * 255.0).astype(np.uint8)
 
 
 def normalize_segmentation(segmentation):
@@ -82,9 +79,10 @@ def normalize_segmentation(segmentation):
     seg_min = segmentation.min(axis=(-3, -2), keepdims=True)
     seg_max = segmentation.max(axis=(-3, -2), keepdims=True)
     denom = seg_max - seg_min
-
-    out = np.where(denom > 0, (((segmentation - seg_min) / denom) * 255.0).astype(np.uint8), 0)
-    return out
+    out = np.zeros_like(segmentation, dtype=np.float32)
+    # using np.where will evaluate values in advance.
+    np.divide(segmentation - seg_min, denom, out=out, where=denom > 0)
+    return (out * 255.0).astype(np.uint8)
 
 
 class FrameImageExporter:

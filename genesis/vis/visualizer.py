@@ -93,7 +93,7 @@ class Visualizer(RBC):
         if isinstance(renderer_options, gs.renderers.BatchRenderer):
             from .batch_renderer import BatchRenderer
 
-            self._renderer = self._batch_renderer = BatchRenderer(self, renderer_options)
+            self._renderer = self._batch_renderer = BatchRenderer(self, renderer_options, vis_options)
         elif isinstance(renderer_options, gs.renderers.RayTracer):
             from .raytracer import Raytracer
 
@@ -254,6 +254,14 @@ class Visualizer(RBC):
 
         self._t = self._scene._t
 
+    def colorize_seg_idxc_arr(self, seg_idxc_arr):
+        if self._batch_renderer is not None:
+            return self._batch_renderer.colorize_seg_idxc_arr(seg_idxc_arr)
+        elif self._rasterizer is not None:
+            return self._context.colorize_seg_idxc_arr(seg_idxc_arr)
+        else:
+            gs.raise_exception("Segmentation is only available with batch renderer or rasterizer.")
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -313,3 +321,12 @@ class Visualizer(RBC):
     @property
     def camera_far(self):
         return torch.tensor([camera.far for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
+
+    @property
+    def segmentation_idx_dict(self):
+        if self._batch_renderer is not None:
+            return self._batch_renderer.seg_idxc_map
+        elif self._rasterizer is not None:
+            return self._context.seg_manager.seg_idxc_map
+        else:
+            gs.raise_exception("Segmentation is only available with batch renderer or rasterizer.")

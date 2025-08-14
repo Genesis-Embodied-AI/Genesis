@@ -1103,7 +1103,24 @@ class Scene(RBC):
             )
 
     @gs.assert_built
-    def render_all_cameras(self, rgb=True, depth=False, segmentation=False, normal=False, force_render=False):
+    def get_segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+        """
+        return self._visualizer.segmentation_idx_dict
+
+    @gs.assert_built
+    def render_all_cameras(
+        self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=False
+    ):
         """
         Render the scene for all cameras using the batch renderer.
 
@@ -1128,7 +1145,12 @@ class Scene(RBC):
         if self._visualizer.batch_renderer is None:
             gs.raise_exception("Method only supported by 'BatchRenderer'")
 
-        return self._visualizer.batch_renderer.render(rgb, depth, segmentation, normal, force_render)
+        rgb_out, depth_out, seg_out, normal_out = self._visualizer.batch_renderer.render(
+            rgb, depth, segmentation, normal, force_render
+        )
+        if segmentation and colorize_seg:
+            seg_out = tuple(self._visualizer.batch_renderer.colorize_seg_idxc_arr(seg) for seg in seg_out)
+        return rgb_out, depth_out, seg_out, normal_out
 
     @gs.assert_built
     def clear_debug_object(self, object):

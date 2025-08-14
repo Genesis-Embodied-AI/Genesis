@@ -16,6 +16,7 @@ def main():
     parser.add_argument("-o", "--output_dir", type=str, default="img_output/test")
     parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
     parser.add_argument("-d", "--debug", action="store_true", default=False)
+    parser.add_argument("-l", "--seg_level", type=str, default="link")
     args = parser.parse_args()
 
     ########################## init ##########################
@@ -23,6 +24,9 @@ def main():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            segmentation_level=args.seg_level,
+        ),
         renderer=gs.options.renderers.BatchRenderer(
             use_rasterizer=args.use_rasterizer,
         ),
@@ -83,8 +87,8 @@ def main():
         dir=(0, 0, -1),
         directional=False,
         castshadow=True,
-        cutoff=45.0,
-        intensity=2.0,
+        cutoff=80.0,
+        intensity=1.0,
         attenuation=0.1,
     )
 
@@ -106,8 +110,10 @@ def main():
             )
             exporter.export_frame_all_cameras(i, rgb=color, depth=depth, segmentation=seg, normal=normal)
         else:
-            color, depth, seg, normal = cam_1.render(rgb=i % 2 == 1, depth=True, segmentation=True, normal=i % 2 == 1)
-            exporter.export_frame_single_camera(i, cam_1.idx, rgb=color, depth=depth, segmentation=seg, normal=normal)
+            color, depth, seg, normal = cam_0.render(
+                rgb=False, depth=True, segmentation=True, colorize_seg=True, normal=False,
+            )
+            exporter.export_frame_single_camera(i, cam_0.idx, rgb=seg, depth=depth, segmentation=None, normal=normal)
     if args.debug:
         debug_cam.stop_recording("debug_cam.mp4")
 
