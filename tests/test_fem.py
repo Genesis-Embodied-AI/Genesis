@@ -586,8 +586,8 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
 
 def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
-    Test if a box with hard vertex constraints has those vertices fixed,
-    and that updating and removing constraints works correctly.
+    Test if a box with hard vertex constraints has those vertices fixed, and that updating and removing constraints
+    works correctly.
     """
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -628,7 +628,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
     positions = cube.get_state().pos[0][verts_idx]
     assert_allclose(
-        positions, initial_target_poss, tol=0.0
+        positions, initial_target_poss, tol=gs.EPS
     ), "Vertices should stay at initial target positions with hard constraints"
     new_target_poss = initial_target_poss + gs.tensor(
         [[0.1, 0.1, 0.1]],
@@ -642,7 +642,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
     positions_after_update = cube.get_state().pos[0][verts_idx]
     assert_allclose(
-        positions_after_update, new_target_poss, tol=0.0
+        positions_after_update, new_target_poss, tol=gs.EPS
     ), "Vertices should be at new target positions after updating constraints"
 
     cube.remove_vertex_constraints()
@@ -653,15 +653,30 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
         scene.step()
 
     state = cube.get_state()
-    min_pos_z = state.pos[..., 2].min()
+    center = state.pos.mean(axis=(0, 1))
+    assert_allclose(
+        center,
+        np.array([0.2, 0.13, 0.1], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Cube center {center} moves too far from [0.2, 0.13, 0.1] after removing constraints.",
+    )
+
+    velocity = state.vel.mean(axis=(0, 1))
+    assert_allclose(
+        velocity,
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        atol=1e-5,
+        err_msg=f"Cube velocity {velocity} should be close to zero after settling.",
+    )
+
     # The contact requires some penetration to generate enough contact force to cancel out gravity
+    min_pos_z = state.pos[..., 2].min()
     assert_allclose(min_pos_z, -2.0e-5, atol=5e-6), f"Cube minimum Z position {min_pos_z} is not close to -2.0e-5."
 
 
 def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
-    Test if a box with hard vertex constraints has those vertices fixed,
-    and that updating and removing constraints works correctly.
+    Test if a box with hard vertex constraints has those vertices fixed, and collisiong with a sphere works correctly.
     """
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -699,7 +714,6 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     )
 
     scene.build()
-    # return
     if show_viewer:
         sphere_debug = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
 
@@ -711,10 +725,28 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     pos = cube.get_state().pos
     fixed_pos = pos[0][verts_idx]
     assert_allclose(
-        fixed_pos, initial_target_poss, tol=0.0
+        fixed_pos, initial_target_poss, tol=gs.EPS
     ), "Vertices should stay at initial target positions with hard constraints"
 
-    min_sphere_pos_z = sphere.get_state().pos[..., 2].min()
+    state = sphere.get_state()
+    center = state.pos.mean(axis=(0, 1))
+    assert_allclose(
+        center,
+        np.array([0.4, 0.4, 0.1], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Sphere center {center} moved too much from initial position [0.4, 0.4, 0.1].",
+    )
+
+    # Using a larger tolerance here since the sphere is rolling, rolling friction is not accurately modeled.
+    velocity = state.vel.mean(axis=(0, 1))
+    assert_allclose(
+        velocity,
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        atol=0.03,
+        err_msg=f"Sphere velocity {velocity} should be close to zero after settling.",
+    )
+
+    min_sphere_pos_z = state.pos[..., 2].min()
     assert_allclose(
         min_sphere_pos_z, -1e-3, atol=2e-4
     ), f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface."

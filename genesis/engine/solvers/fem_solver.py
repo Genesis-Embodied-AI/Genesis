@@ -596,6 +596,21 @@ class FEMSolver(Solver):
                         )
 
     @ti.func
+    def _func_compute_element_mapping_matrix(self, i_vs, B, i_b):
+        """
+        Compute the element mapping matrix S for an element.
+        """
+        S = ti.Matrix.zero(gs.ti_float, 4, 3)
+        S[:3, :] = B
+        S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+
+        if ti.static(self._enable_vertex_constraints):
+            for i in ti.static(range(4)):
+                if self.vertex_constraints.is_constrained[i_vs[i], i_b]:
+                    S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+        return S
+
+    @ti.func
     def _func_compute_ele_energy(self, f: ti.i32):
         """
         Compute the energy for each element in the batch. Should only be used in linesearch.
@@ -622,21 +637,14 @@ class FEMSolver(Solver):
             # add linearized damping energy
             if self._damping_beta > gs.EPS:
                 damping_beta_over_dt = self._damping_beta / self._substep_dt
-                i_v = self.elements_i[i_e].el2v
-                S = ti.Matrix.zero(gs.ti_float, 4, 3)
+                i_vs = self.elements_i[i_e].el2v
                 B = self.elements_i[i_e].B
-                S[:3, :] = B
-                S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-
-                if ti.static(self._enable_vertex_constraints):
-                    for i in ti.static(range(4)):
-                        if self.vertex_constraints.is_constrained[i_v[i], i_b]:
-                            S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+                S = self._func_compute_element_mapping_matrix(i_vs, B, i_b)
 
                 x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i in ti.static(range(4)):
                     x_diff[i * 3 : i * 3 + 3] = (
-                        self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
+                        self.elements_v[f + 1, i_vs[i], i_b].pos - self.elements_v[f, i_vs[i], i_b].pos
                     )
                 St_x_diff = ti.Vector.zero(gs.ti_float, 9)
                 for i, j in ti.static(ti.ndrange(3, 4)):
@@ -657,17 +665,17 @@ class FEMSolver(Solver):
         damping_beta_over_dt = self._damping_beta / self._substep_dt
         damping_beta_factor = damping_beta_over_dt + 1.0
         # inertia
-        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+        for i_b, i_vs in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_active[i_b]:
                 continue
-            self.elements_v_energy[i_b, i_v].force = -self.elements_v_info[i_v].mass_over_dt2 * (
-                (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia)
-                + (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos) * damping_alpha_dt
+            self.elements_v_energy[i_b, i_vs].force = -self.elements_v_info[i_vs].mass_over_dt2 * (
+                (self.elements_v[f + 1, i_vs, i_b].pos - self.elements_v_energy[i_b, i_vs].inertia)
+                + (self.elements_v[f + 1, i_vs, i_b].pos - self.elements_v[f, i_vs, i_b].pos) * damping_alpha_dt
             )
-            self.pcg_state_v[i_b, i_v].diag3x3 = ti.Matrix.zero(gs.ti_float, 3, 3)
+            self.pcg_state_v[i_b, i_vs].diag3x3 = ti.Matrix.zero(gs.ti_float, 3, 3)
             for i in ti.static(range(3)):
-                self.pcg_state_v[i_b, i_v].diag3x3[i, i] = (
-                    self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor
+                self.pcg_state_v[i_b, i_vs].diag3x3[i, i] = (
+                    self.elements_v_info[i_vs].mass_over_dt2 * damping_alpha_factor
                 )
 
         # elastic
@@ -677,27 +685,19 @@ class FEMSolver(Solver):
             V = self.elements_i[i_e].V
             B = self.elements_i[i_e].B
             gradient = self.elements_el_energy[i_b, i_e].gradient
-            i_v = self.elements_i[i_e].el2v
-            S = ti.Matrix.zero(gs.ti_float, 4, 3)
-            S[:3, :] = B
-            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-
-            if ti.static(self._enable_vertex_constraints):
-                for i in ti.static(range(4)):
-                    if self.vertex_constraints.is_constrained[i_v[i], i_b]:
-                        S[i, :] = ti.Vector.zero(gs.ti_float, 3)
-
+            i_vs = self.elements_i[i_e].el2v
+            S = self._func_compute_element_mapping_matrix(i_vs, B, i_b)
             force = -V * gradient @ S.transpose()
 
             # atomic
             for i in ti.static(range(4)):
-                self.elements_v_energy[i_b, i_v[i]].force += force[:, i]
+                self.elements_v_energy[i_b, i_vs[i]].force += force[:, i]
 
             if self._damping_beta > gs.EPS:
                 x_diff = ti.Vector.zero(gs.ti_float, 12)
                 for i in ti.static(range(4)):
                     x_diff[i * 3 : i * 3 + 3] = (
-                        self.elements_v[f + 1, i_v[i], i_b].pos - self.elements_v[f, i_v[i], i_b].pos
+                        self.elements_v[f + 1, i_vs[i], i_b].pos - self.elements_v[f, i_vs[i], i_b].pos
                     )
                 St_x_diff = ti.Vector.zero(gs.ti_float, 9)
                 for i, j in ti.static(ti.ndrange(3, 4)):
@@ -712,22 +712,22 @@ class FEMSolver(Solver):
                 for i, j in ti.static(ti.ndrange(4, 3)):
                     S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
                 for i in ti.static(range(4)):
-                    self.elements_v_energy[i_b, i_v[i]].force += (
+                    self.elements_v_energy[i_b, i_vs[i]].force += (
                         -damping_beta_over_dt * V * S_H_St_x_diff[i * 3 : i * 3 + 3]
                     )
 
             # diagonal 3-by-3 block of hessian
             for k, i, j in ti.ndrange(4, 3, 3):
-                self.pcg_state_v[i_b, i_v[k]].diag3x3 += (
+                self.pcg_state_v[i_b, i_vs[k]].diag3x3 += (
                     V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
                 )
 
         # inverse
-        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+        for i_b, i_vs in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_active[i_b]:
                 continue
             # Use 3-by-3 diagonal block inverse for preconditioner
-            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag3x3.inverse()
+            self.pcg_state_v[i_b, i_vs].prec = self.pcg_state_v[i_b, i_vs].diag3x3.inverse()
 
             # Other options for preconditioner:
             # Uncomment one of the following lines to test different preconditioners
@@ -745,11 +745,11 @@ class FEMSolver(Solver):
         damping_alpha_factor = damping_alpha_dt + 1.0
         damping_beta_over_dt = self._damping_beta / self._substep_dt
         damping_beta_factor = damping_beta_over_dt + 1.0
-        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
+        for i_b, i_vs in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_pcg_active[i_b]:
                 continue
-            self.pcg_state_v[i_b, i_v].Ap = (
-                self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor * self.pcg_state_v[i_b, i_v].p
+            self.pcg_state_v[i_b, i_vs].Ap = (
+                self.elements_v_info[i_vs].mass_over_dt2 * damping_alpha_factor * self.pcg_state_v[i_b, i_vs].p
             )
 
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
@@ -757,20 +757,13 @@ class FEMSolver(Solver):
                 continue
             V = self.elements_i[i_e].V
             B = self.elements_i[i_e].B
-            i_v = self.elements_i[i_e].el2v
-            S = ti.Matrix.zero(gs.ti_float, 4, 3)
-            S[:3, :] = B
-            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-
-            if ti.static(self._enable_vertex_constraints):
-                for i in ti.static(range(4)):
-                    if self.vertex_constraints.is_constrained[i_v[i], i_b]:
-                        S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+            i_vs = self.elements_i[i_e].el2v
+            S = self._func_compute_element_mapping_matrix(i_vs, B, i_b)
 
             p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
 
             for i, j in ti.static(ti.ndrange(3, 4)):
-                p9[i * 3 : i * 3 + 3] = p9[i * 3 : i * 3 + 3] + S[j, i] * self.pcg_state_v[i_b, i_v[j]].p
+                p9[i * 3 : i * 3 + 3] = p9[i * 3 : i * 3 + 3] + S[j, i] * self.pcg_state_v[i_b, i_vs[j]].p
 
             new_p9 = ti.Vector([0.0] * 9, dt=gs.ti_float)
 
@@ -781,7 +774,7 @@ class FEMSolver(Solver):
 
             # atomic
             for i in ti.static(range(4)):
-                self.pcg_state_v[i_b, i_v[i]].Ap += (
+                self.pcg_state_v[i_b, i_vs[i]].Ap += (
                     (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * V * damping_beta_factor
                 )
 

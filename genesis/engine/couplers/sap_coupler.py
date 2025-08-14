@@ -729,10 +729,10 @@ class SAPCoupler(RBC):
         )
 
     @ti.func
-    def compute_elastic_products(self, i_b, i_e, S, i_v, src):
+    def compute_elastic_products(self, i_b, i_e, S, i_vs, src):
         p9 = ti.Vector.zero(gs.ti_float, 9)
         for i, j in ti.static(ti.ndrange(3, 4)):
-            p9[i * 3 : i * 3 + 3] = p9[i * 3 : i * 3 + 3] + (S[j, i] * src[i_b, i_v[j]])
+            p9[i * 3 : i * 3 + 3] = p9[i * 3 : i * 3 + 3] + (S[j, i] * src[i_b, i_vs[j]])
 
         H9_p9 = ti.Vector.zero(gs.ti_float, 9)
 
