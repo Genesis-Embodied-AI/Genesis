@@ -745,11 +745,11 @@ class FEMSolver(Solver):
         damping_alpha_factor = damping_alpha_dt + 1.0
         damping_beta_over_dt = self._damping_beta / self._substep_dt
         damping_beta_factor = damping_beta_over_dt + 1.0
-        for i_b, i_vs in ti.ndrange(self._B, self.n_vertices):
+        for i_b, i_v in ti.ndrange(self._B, self.n_vertices):
             if not self.batch_pcg_active[i_b]:
                 continue
-            self.pcg_state_v[i_b, i_vs].Ap = (
-                self.elements_v_info[i_vs].mass_over_dt2 * damping_alpha_factor * self.pcg_state_v[i_b, i_vs].p
+            self.pcg_state_v[i_b, i_v].Ap = (
+                self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor * self.pcg_state_v[i_b, i_v].p
             )
 
         for i_b, i_e in ti.ndrange(self._B, self.n_elements):
