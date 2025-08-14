@@ -1274,7 +1274,6 @@ class RigidSolver(Solver):
         pass
 
     def substep_post_coupling(self, f):
-
         from genesis.engine.couplers import SAPCoupler
 
         if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
@@ -1293,6 +1292,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
+                contact_island=self.constraint_solver.contact_island,
             )
 
     def substep_post_coupling_grad(self, f):
