@@ -498,12 +498,12 @@ class SAPCoupler(RBC):
         aabbs = ti.static(self.fem_surface_tet_aabb.aabbs)
         for i_b, i_se in ti.ndrange(self.fem_solver._B, self.fem_solver.n_surface_elements):
             i_e = self.fem_solver.surface_elements[i_se]
-            i_v = self.fem_solver.elements_i[i_e].el2v
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
             aabbs[i_b, i_se].min.fill(np.inf)
             aabbs[i_b, i_se].max.fill(-np.inf)
             for i in ti.static(range(4)):
-                pos_v = self.fem_solver.elements_v[i_step, i_v[i], i_b].pos
+                pos_v = self.fem_solver.elements_v[i_step, i_vs[i], i_b].pos
                 aabbs[i_b, i_se].min = ti.min(aabbs[i_b, i_se].min, pos_v)
                 aabbs[i_b, i_se].max = ti.max(aabbs[i_b, i_se].max, pos_v)
 
@@ -729,18 +729,16 @@ class SAPCoupler(RBC):
         )
 
     @ti.func
-    def compute_elastic_products(self, i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, src):
+    def compute_elastic_products(self, i_b, i_e, S, i_vs, src):
         p9 = ti.Vector.zero(gs.ti_float, 9)
-        for i in ti.static(range(3)):
-            p9[i * 3 : i * 3 + 3] = (
-                B[0, i] * src[i_b, i_v0] + B[1, i] * src[i_b, i_v1] + B[2, i] * src[i_b, i_v2] + s[i] * src[i_b, i_v3]
-            )
+        for i, j in ti.static(ti.ndrange(3, 4)):
+            p9[i * 3 : i * 3 + 3] = p9[i * 3 : i * 3 + 3] + (S[j, i] * src[i_b, i_vs[j]])
+
         H9_p9 = ti.Vector.zero(gs.ti_float, 9)
-        for i in ti.static(range(3)):
-            H9_p9[i * 3 : i * 3 + 3] = (
-                self.fem_solver.elements_el_hessian[i_b, i, 0, i_e] @ p9[0:3]
-                + self.fem_solver.elements_el_hessian[i_b, i, 1, i_e] @ p9[3:6]
-                + self.fem_solver.elements_el_hessian[i_b, i, 2, i_e] @ p9[6:9]
+
+        for i, j in ti.static(ti.ndrange(3, 3)):
+            H9_p9[i * 3 : i * 3 + 3] = H9_p9[i * 3 : i * 3 + 3] + (
+                self.fem_solver.elements_el_hessian[i_b, i, j, i_e] @ p9[j * 3 : j * 3 + 3]
             )
         return p9, H9_p9
 
@@ -767,16 +765,21 @@ class SAPCoupler(RBC):
                 continue
             V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
             B = self.fem_solver.elements_i[i_e].B
-            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
-            i_v0, i_v1, i_v2, i_v3 = self.fem_solver.elements_i[i_e].el2v
+            S = ti.Matrix.zero(gs.ti_float, 4, 3)
+            S[:3, :] = B
+            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
-            _, new_p9 = self.compute_elastic_products(i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, src)
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                for i in ti.static(range(4)):
+                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
+                        S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+
+            _, new_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, src)
             # atomic
             scale = V_dt2 * damping_beta_factor
-            dst[i_b, i_v0] += (B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]) * scale
-            dst[i_b, i_v1] += (B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]) * scale
-            dst[i_b, i_v2] += (B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]) * scale
-            dst[i_b, i_v3] += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * scale
+            for i in ti.static(range(4)):
+                dst[i_b, i_vs[i]] += (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * scale
 
     def init_pcg_solve(self):
         self.init_pcg_state()
@@ -1101,10 +1104,17 @@ class SAPCoupler(RBC):
 
             V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
             B = self.fem_solver.elements_i[i_e].B
-            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
-            i_v0, i_v1, i_v2, i_v3 = self.fem_solver.elements_i[i_e].el2v
+            S = ti.Matrix.zero(gs.ti_float, 4, 3)
+            S[:3, :] = B
+            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
-            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, self.fem_state_v.v_diff)
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                for i in ti.static(range(4)):
+                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
+                        S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+
+            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, self.fem_state_v.v_diff)
             energy[i_b] += 0.5 * p9.dot(H9_p9) * damping_beta_factor * V_dt2
 
     @ti.func
@@ -1991,7 +2001,11 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         i_g = self.contact_pairs[i_p].geom_idx
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
@@ -1999,7 +2013,11 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         i_g = self.contact_pairs[i_p].geom_idx
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
 
     @ti.func
     def compute_delassus(self, i_p):
@@ -2302,10 +2320,18 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         x_ = world @ x
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
+            else:
+                y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
@@ -2318,10 +2344,18 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         B_ = world @ A @ world.transpose()
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
 
     @ti.func
     def compute_delassus(self, i_p):
@@ -2408,13 +2442,21 @@ class FEMFloorVertContactHandler(FEMContactHandler):
     def add_Jt_x(self, y, i_p, x):
         i_b = self.contact_pairs[i_p].batch_idx
         i_g = self.contact_pairs[i_p].geom_idx
-        y[i_b, i_g] += x
+        if ti.static(self.fem_solver._enable_vertex_constraints):
+            if not self.fem_solver.vertex_constraints.is_constrained[i_g, i_b]:
+                y[i_b, i_g] += x
+        else:
+            y[i_b, i_g] += x
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
         i_b = self.contact_pairs[i_p].batch_idx
         i_g = self.contact_pairs[i_p].geom_idx
-        y[i_b, i_g] += A
+        if ti.static(self.fem_solver._enable_vertex_constraints):
+            if not self.fem_solver.vertex_constraints.is_constrained[i_g, i_b]:
+                y[i_b, i_g] += A
+        else:
+            y[i_b, i_g] += A
 
     @ti.func
     def compute_delassus(self, i_p):

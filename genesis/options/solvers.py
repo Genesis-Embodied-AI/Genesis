@@ -114,6 +114,11 @@ class SAPCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
 
+    Note
+    ----
+    Paper reference: https://arxiv.org/abs/2110.10107
+    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
+
     Parameters
     ----------
     n_sap_iterations : int, optional
@@ -152,10 +157,6 @@ class SAPCouplerOptions(BaseCouplerOptions):
         Type of contact against the floor for rigid bodies. Defaults to "vert". Can be "vert" or "none".
     enable_rigid_fem_contact : bool, optional
         Whether to enable coupling between rigid and FEM solvers. Defaults to True.
-    Note
-    ----
-    Paper reference: https://arxiv.org/abs/2110.10107
-    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
     """
 
     n_sap_iterations: int = 5
@@ -581,6 +582,13 @@ class FEMOptions(Options):
     """
     Options configuring the FEMSolver.
 
+    Note
+    ----
+    - Damping coefficients are used to control the damping effect in the simulation.
+    They are used in the Rayleigh Damping model, which is a common damping model in FEM simulations.
+    Reference: https://doc.comsol.com/5.5/doc/com.comsol.help.sme/sme_ug_modeling.05.083.html
+    - TODO Move it to material parameters in the future instead of solver options.
+
     Parameters
     ----------
     dt : float, optional
@@ -612,13 +620,8 @@ class FEMOptions(Options):
         Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_beta : float, optional
         Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is True.
-
-    Note
-    ----
-    - Damping coefficients are used to control the damping effect in the simulation.
-    They are used in the Rayleigh Damping model, which is a common damping model in FEM simulations.
-    Reference: https://doc.comsol.com/5.5/doc/com.comsol.help.sme/sme_ug_modeling.05.083.html
-    - TODO Move it to material parameters in the future instead of solver options.
+    enable_vertex_constraints : bool, optional
+        Whether to enable vertex constraints. Defaults to False.
     """
 
     dt: Optional[float] = None
@@ -635,6 +638,7 @@ class FEMOptions(Options):
     linesearch_tau: float = 0.5
     damping_alpha: float = 0.5
     damping_beta: float = 5e-4
+    enable_vertex_constraints: bool = False
 
 
 class SFOptions(Options):
