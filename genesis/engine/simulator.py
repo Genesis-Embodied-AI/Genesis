@@ -21,7 +21,6 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .couplers import LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
 from .solvers.base_solver import Solver
 from .solvers import (
@@ -34,8 +33,10 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
+from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+from genesis.sensors.sensor_manager import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -151,6 +152,9 @@ class Simulator(RBC):
         # entities
         self._entities: list[Entity] = gs.List()
 
+        # sensors
+        self._sensor_manager = SensorManager(self)
+
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
@@ -205,6 +209,8 @@ class Simulator(RBC):
 
         if self.n_envs > 0 and self.sf_solver.is_active():
             gs.raise_exception("Batching is not supported for SF solver as of now.")
+
+        self._sensor_manager.build()
 
         # hybrid
         for entity in self._entities:
@@ -274,6 +280,8 @@ class Simulator(RBC):
 
         if self.rigid_solver.is_active():
             self.rigid_solver.clear_external_force()
+
+        self._sensor_manager.step()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):

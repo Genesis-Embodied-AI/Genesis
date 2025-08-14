@@ -14,8 +14,6 @@ import Imath
 
 import coacd
 import igl
-import pyvista as pv
-import tetgen
 
 import genesis as gs
 
@@ -800,7 +798,7 @@ def create_arrow(
 def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=12):
     vec = end - start
     length = np.linalg.norm(vec)
-    mesh = create_cylinder(radius, length, sections)  # along z-axis
+    mesh = create_cylinder(radius, length, sections, color)  # along z-axis
     mesh._data["vertices"][:, -1] += length / 2.0
     mesh.vertices = gu.transform_by_trans_R(mesh._data["vertices"], start, gu.z_up_to_R(vec))
     return mesh
@@ -974,6 +972,10 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
+    # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+    import pyvista as pv
+    import tetgen
+
     pv_obj = pv.PolyData(
         mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
     )
@@ -1007,6 +1009,9 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
                 scalars=cell_qual, stitle="Quality", cmap="bwr", clim=[0, 1], flip_scalars=True, show_edges=True
             )
         else:
+            # Importing pyvista is very slow and not used very often. Let's delay import.
+            import pyvista as pv
+
             plotter = pv.Plotter()
             plotter.add_mesh(subgrid, "lightgrey", lighting=True, show_edges=True)
             plotter.add_mesh(pv_data, "r", "wireframe")
