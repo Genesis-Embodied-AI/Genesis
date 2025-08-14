@@ -942,3 +942,171 @@ def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough
         atol=1e-3,
         err_msg=f"Sphere deformation should be small. Deformation: {deformation}.",
     )
+
+
+def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_viewer):
+    """
+    Test if a box with hard vertex constraints has those vertices fixed, and that updating and removing constraints
+    works correctly.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=1,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            enable_vertex_constraints=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
+    cube = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            scale=0.1,
+            pos=np.array([0.0, 0.0, 0.6], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    verts_idx = [0]
+    initial_target_poss = cube.init_positions[verts_idx]
+
+    scene.build()
+
+    if show_viewer:
+        sphere = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+
+    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
+
+    for _ in range(100):
+        scene.step()
+
+    positions = cube.get_state().pos[0][verts_idx]
+    assert_allclose(
+        positions, initial_target_poss, tol=gs.EPS
+    ), "Vertices should stay at initial target positions with hard constraints"
+    new_target_poss = initial_target_poss + gs.tensor(
+        [[0.1, 0.1, 0.1]],
+    )
+    cube.update_constraint_targets(verts_idx=verts_idx, target_poss=new_target_poss)
+    if show_viewer:
+        scene.clear_debug_object(sphere)
+        sphere = scene.draw_debug_spheres(poss=new_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+    for _ in range(100):
+        scene.step()
+
+    positions_after_update = cube.get_state().pos[0][verts_idx]
+    assert_allclose(
+        positions_after_update, new_target_poss, tol=gs.EPS
+    ), "Vertices should be at new target positions after updating constraints"
+
+    cube.remove_vertex_constraints()
+    if show_viewer:
+        scene.clear_debug_object(sphere)
+
+    for _ in range(100):
+        scene.step()
+
+    state = cube.get_state()
+    center = state.pos.mean(axis=(0, 1))
+    assert_allclose(
+        center,
+        np.array([0.2, 0.13, 0.1], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Cube center {center} moves too far from [0.2, 0.13, 0.1] after removing constraints.",
+    )
+
+    velocity = state.vel.mean(axis=(0, 1))
+    assert_allclose(
+        velocity,
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        atol=1e-5,
+        err_msg=f"Cube velocity {velocity} should be close to zero after settling.",
+    )
+
+    # The contact requires some penetration to generate enough contact force to cancel out gravity
+    min_pos_z = state.pos[..., 2].min()
+    assert_allclose(min_pos_z, -2.0e-5, atol=5e-6), f"Cube minimum Z position {min_pos_z} is not close to -2.0e-5."
+
+
+def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
+    """
+    Test if a box with hard vertex constraints has those vertices fixed, and collisiong with a sphere works correctly.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=1,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            enable_vertex_constraints=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
+    cube = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            scale=0.1,
+            pos=np.array([0.0, 0.0, 0.35], dtype=np.float32),
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    verts_idx = [0]
+    initial_target_poss = cube.init_positions[verts_idx]
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.1),
+            radius=0.1,
+        ),
+        material=fem_material_linear_corotated,
+    )
+
+    scene.build()
+    if show_viewer:
+        sphere_debug = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+
+    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
+
+    for _ in range(200):
+        scene.step()
+
+    pos = cube.get_state().pos
+    fixed_pos = pos[0][verts_idx]
+    assert_allclose(
+        fixed_pos, initial_target_poss, tol=gs.EPS
+    ), "Vertices should stay at initial target positions with hard constraints"
+
+    state = sphere.get_state()
+    center = state.pos.mean(axis=(0, 1))
+    assert_allclose(
+        center,
+        np.array([0.4, 0.4, 0.1], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Sphere center {center} moved too much from initial position [0.4, 0.4, 0.1].",
+    )
+
+    # Using a larger tolerance here since the sphere is rolling, rolling friction is not accurately modeled.
+    velocity = state.vel.mean(axis=(0, 1))
+    assert_allclose(
+        velocity,
+        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        atol=0.03,
+        err_msg=f"Sphere velocity {velocity} should be close to zero after settling.",
+    )
+
+    min_sphere_pos_z = state.pos[..., 2].min()
+    assert_allclose(
+        min_sphere_pos_z, -1e-3, atol=2e-4
+    ), f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface."
