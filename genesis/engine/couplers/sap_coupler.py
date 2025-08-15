@@ -2416,7 +2416,7 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
-        self.name = "FEMFloorTetContact"
+        self.name = "FEMFloorTetContactHandler"
         self.fem_solver = self.sim.fem_solver
         self.eps = eps
         self.contact_candidate_type = ti.types.struct(
@@ -2596,7 +2596,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
-        self.name = "FEMSelfTetContact"
+        self.name = "FEMSelfTetContactHandler"
         self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
@@ -2953,7 +2953,7 @@ class FEMFloorVertContactHandler(FEMContactHandler):
         simulator: "Simulator",
     ) -> None:
         super().__init__(simulator)
-        self.name = "FEMFloorVertContact"
+        self.name = "FEMFloorVertContactHandler"
         self.fem_solver = self.sim.fem_solver
 
         self.contact_pair_type = ti.types.struct(
@@ -3036,7 +3036,7 @@ class RigidFloorVertContactHandler(RigidContactHandler):
         simulator: "Simulator",
     ) -> None:
         super().__init__(simulator)
-        self.name = "RigidFloorVertContact"
+        self.name = "RigidFloorVertContactHandler"
         self.rigid_solver = self.sim.rigid_solver
         self.floor_height = self.sim.fem_solver.floor_height
         self.contact_pair_type = ti.types.struct(
@@ -3089,7 +3089,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
         eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
-        self.name = "RigidFloorTetContact"
+        self.name = "RigidFloorTetContactHandler"
         self.rigid_solver = self.sim.rigid_solver
         self.floor_height = self.sim.fem_solver.floor_height
         self.eps = eps
@@ -3549,7 +3549,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
     ) -> None:
         super().__init__(simulator)
         self.coupler = simulator.coupler
-        self.name = "RigidRigidTetContact"
+        self.name = "RigidRigidTetContactHandler"
         self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
@@ -3748,7 +3748,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
                 continue
 
             # compute centroid and area of the polygon
-            total_area = gs.EPS  # avoid division by zero
+            total_area = 0.0  # avoid division by zero
             total_area_weighted_centroid = ti.Vector.zero(gs.ti_float, 3)
             for i in range(2, polygon_n_vertices):
                 e1 = polygon_vertices[:, i - 1] - polygon_vertices[:, 0]
@@ -3779,7 +3779,6 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
             rigid_phi0 = -pressure / g
             if rigid_phi0 > self.eps:
                 continue
-            tmp = candidates[i_c].normal.z
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
                 pairs[i_p].batch_idx = i_b
@@ -3793,11 +3792,11 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
                 i_l1 = self.rigid_solver.geoms_info.link_idx[i_g1]
                 pairs[i_p].link_idx0 = i_l0
                 pairs[i_p].link_idx1 = i_l1
-                sap_info[i_p].k = rigid_k  # contact stiffness
+                sap_info[i_p].k = rigid_k
                 sap_info[i_p].phi0 = rigid_phi0
                 sap_info[i_p].mu = ti.sqrt(
                     self.rigid_solver.geoms_info.friction[i_g0] * self.rigid_solver.geoms_info.friction[i_g1]
-                )  # friction coefficient
+                )
             else:
                 overflow = True
         return overflow
