@@ -628,7 +628,7 @@ class SPHSolver(Solver):
 
     @ti.func
     def cubic_kernel(self, r_norm):
-        res = ti.cast(0.0, gs.ti_float)
+        res = gs.ti_float(0.0)
         h = self._support_radius
         # value of cubic spline smoothing kernel
         k = 1.0

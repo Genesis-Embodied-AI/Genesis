@@ -275,7 +275,7 @@ class Collider:
     def clear(self, envs_idx=None):
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        collider_kernel_clear(
+        kernel_collider_clear(
             envs_idx,
             self._solver.links_state,
             self._solver.links_info,
@@ -494,8 +494,9 @@ def collider_kernel_reset(
                 collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
+# only used with hibernation ??
 @ti.kernel
-def collider_kernel_clear(
+def kernel_collider_clear(
     envs_idx: ti.types.ndarray(),
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -511,8 +512,8 @@ def collider_kernel_clear(
 
             # advect hibernated contacts
             for i_c in range(collider_state.n_contacts[i_b]):
-                i_la = collider_state.contact_data[i_c, i_b].link_a
-                i_lb = collider_state.contact_data[i_c, i_b].link_b
+                i_la = collider_state.contact_data.link_a[i_c, i_b]
+                i_lb = collider_state.contact_data.link_b[i_c, i_b]
 
                 I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
                 I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
@@ -525,7 +526,20 @@ def collider_kernel_clear(
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
-                        collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
+                        # Copying all fields of class StructContactData:
+                        # fmt: off
+                        collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
+                        collider_state.contact_data.geom_b[i_c_hibernated, i_b] = collider_state.contact_data.geom_b[i_c, i_b]
+                        collider_state.contact_data.penetration[i_c_hibernated, i_b] = collider_state.contact_data.penetration[i_c, i_b]
+                        collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
+                        collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
+                        collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
+                        collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
+                        collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
+                        collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
+                        collider_state.contact_data.link_b[i_c_hibernated, i_b] = collider_state.contact_data.link_b[i_c, i_b]
+                        # fmt: on
+
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
@@ -1258,7 +1272,7 @@ def func_broad_phase(
 
                             if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
                                 # Clear collision normal cache if not in contact
-                                if ti.static(not static_rigid_sim_config._enable_mujoco_compatibility):
+                                if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     # self.contact_cache[i_ga, i_gb, i_b].i_va_ws = -1
                                     collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(
                                         gs.ti_float, 3

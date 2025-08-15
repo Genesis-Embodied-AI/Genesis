@@ -171,7 +171,7 @@ class PathPlanner(ABC):
         _pos=None,
         _quat=None,
     ):
-        res = torch.zeros(path.shape[1], dtype=bool, device=gs.device)
+        out = torch.zeros((path.shape[1],), dtype=gs.tc_bool, device=gs.device)
         for qpos in path:
             if self._solver.n_envs > 0:
                 self._entity.set_qpos(qpos, envs_idx=envs_idx, zero_velocity=False)
@@ -182,24 +182,24 @@ class PathPlanner(ABC):
                 self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
             self._solver._kernel_detect_collision()
             self._kernel_check_collision(
-                res,
                 ignore_geom_pairs,
                 envs_idx,
                 is_plan_with_obj=is_plan_with_obj,
                 obj_geom_start=obj_geom_start,
                 obj_geom_end=obj_geom_end,
+                out=out,
             )
-        return res
+        return out
 
     @ti.kernel
     def _kernel_check_collision(
         self,
-        tensor: ti.types.ndarray(),
         ignore_geom_pairs: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         is_plan_with_obj: ti.i32,
         obj_geom_start: ti.i32,
         obj_geom_end: ti.i32,
+        out: ti.types.ndarray(),
     ):
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
@@ -211,7 +211,7 @@ class PathPlanner(ABC):
                 obj_geom_start=obj_geom_start,
                 obj_geom_end=obj_geom_end,
             )
-            tensor[i_b] = tensor[i_b] or collision_detected
+            out[i_b] = out[i_b] or ti.cast(collision_detected, gs.ti_bool)
 
     @ti.func
     def _func_check_collision(
@@ -221,14 +221,14 @@ class PathPlanner(ABC):
         is_plan_with_obj: ti.i32 = False,
         obj_geom_start: ti.i32 = -1,
         obj_geom_end: ti.i32 = -1,
-    ):
-        is_collision_detected = gs.ti_int(False)
+    ) -> ti.i32:
+        is_collision_detected = ti.cast(False, gs.ti_int)
         for i_c in range(self._solver.collider._collider_state.n_contacts[i_b]):
             if not is_collision_detected:
                 i_ga = self._solver.collider._collider_state.contact_data.geom_a[i_c, i_b]
                 i_gb = self._solver.collider._collider_state.contact_data.geom_b[i_c, i_b]
 
-                is_ignored = gs.ti_int(False)
+                is_ignored = False
                 if self._solver.collider._collider_state.contact_data.penetration[i_c, i_b] < self.PENETRATION_EPS:
                     is_ignored = True
                 for i_p in range(ignore_geom_pairs.shape[0]):
@@ -442,7 +442,7 @@ class RRT(PathPlanner):
             i_b = envs_idx[i_b_]
 
             if self._rrt_is_active[i_b]:
-                is_collision_detected = False
+                is_collision_detected = ti.cast(False, gs.ti_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
                         ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
@@ -453,7 +453,7 @@ class RRT(PathPlanner):
                     self._rrt_node_info[self._rrt_tree_size[i_b], i_b].parent_idx = -1
                 else:
                     # check the obtained steer result is within goal configuration only if no collision
-                    is_goal = gs.ti_int(True)
+                    is_goal = True
                     for i_q in range(self._entity.n_qs):
                         if (
                             ti.abs(
@@ -526,7 +526,7 @@ class RRT(PathPlanner):
                 break
             if timeout is not None:
                 if time.time() - time_start > timeout:
-                    gs.logger.info(f"RRTConnect planning timeout.")
+                    gs.logger.info(f"RRT planning timeout.")
                     break
 
         gs.logger.debug(f"RRT planning time: {time.time() - time_start}")
@@ -598,9 +598,9 @@ class RRT(PathPlanner):
                     obj_link_idx=obj_link_idx,
                     _pos=_pos,
                     _quat=_quat,
-                )
+                ).bool()
             else:
-                is_invalid |= self.check_collision(sol, ignore_geom_pairs, envs_idx)
+                is_invalid |= self.check_collision(sol, ignore_geom_pairs, envs_idx).bool()
 
         if self._solver.n_envs > 0:
             self._entity.set_qpos(qpos_cur, envs_idx=envs_idx, zero_velocity=False)
@@ -788,7 +788,7 @@ class RRTConnect(PathPlanner):
             i_b = envs_idx[i_b_]
 
             if self._rrt_is_active[i_b]:
-                is_collision_detected = False
+                is_collision_detected = ti.cast(False, gs.ti_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
                         ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
@@ -973,9 +973,9 @@ class RRTConnect(PathPlanner):
                     obj_link_idx=obj_link_idx,
                     _pos=_pos,
                     _quat=_quat,
-                )
+                ).bool()
             else:
-                is_invalid |= self.check_collision(sol, ignore_geom_pairs, envs_idx)
+                is_invalid |= self.check_collision(sol, ignore_geom_pairs, envs_idx).bool()
 
         if self._solver.n_envs > 0:
             self._entity.set_qpos(qpos_cur, envs_idx=envs_idx, zero_velocity=False)

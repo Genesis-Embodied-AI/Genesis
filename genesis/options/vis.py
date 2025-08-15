@@ -53,15 +53,15 @@ class VisOptions(Options):
     Parameters
     ----------
     show_world_frame : bool
-        Whether to visualize the world frame.
+        Whether to visualize the world frame. Default to False.
     world_frame_size : float
         The length (in meters) of the world frame's axes.
     show_link_frame : bool
-        Whether to visualize the frames of each RigidLink.
+        Whether to visualize the frames of each RigidLink. Default to False.
     link_frame_size : float
         The length (in meters) of the link frames' axes.
     show_cameras : bool
-        Whether to render the cameras added to the scene, together with their frustums.
+        Whether to render the cameras added to the scene, together with their frustums. Default to False.
     shadow : bool
         Whether to render shadow. Defaults to True.
     plane_reflection : bool
@@ -96,7 +96,7 @@ class VisOptions(Options):
         Lights added to the scene.
     """
 
-    show_world_frame: bool = True
+    show_world_frame: bool = False
     world_frame_size: float = 1.0
     show_link_frame: bool = False
     link_frame_size: float = 0.2

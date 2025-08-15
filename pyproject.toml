@@ -10,7 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "taichi >= 1.7.2",
+    # Taichi debug mode has been fixed in 1.7.4
+    "taichi >= 1.7.4",
     "pydantic >= 2.7.1",
     "numpy >= 1.26.4",
     "trimesh",

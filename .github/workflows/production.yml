@@ -67,7 +67,7 @@ jobs:
             bash -c "
               pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
               pip install -e '.[dev,render,usd]' && \
-              pytest -v --forked ./tests
+              pytest -v --dev --forked ./tests
             "
 
       - name: Run benchmarks

@@ -131,10 +131,8 @@ def test_query(lbvh):
     query_kernel(lbvh, aabbs)
 
     query_result_count = lbvh.query_result_count.to_numpy()
-    if query_result_count > lbvh.max_n_query_results:
-        raise ValueError(
-            f"Query result count {query_result_count} exceeds max_n_query_results {lbvh.max_n_query_results}"
-        )
+    if query_result_count > lbvh.max_query_results:
+        raise ValueError(f"Query result count {query_result_count} exceeds max_query_results {lbvh.max_query_results}")
     query_result = lbvh.query_result.to_numpy()
 
     n_aabbs = lbvh.n_aabbs

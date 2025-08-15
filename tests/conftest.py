@@ -148,6 +148,7 @@ def pytest_addoption(parser):
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
     )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+    parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
 
 
 @pytest.fixture(scope="session")
@@ -276,12 +277,8 @@ def initialize_genesis(request, backend, taichi_offline_cache):
     from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
     logging_level = request.config.getoption("--log-cli-level")
-    if backend == gs.cpu:
-        precision = "64"
-        debug = True
-    else:
-        precision = "32"
-        debug = False
+    debug = request.config.getoption("--dev")
+    precision = "64" if backend == gs.cpu else "32"
 
     try:
         if not taichi_offline_cache:
