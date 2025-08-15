@@ -1,5 +1,6 @@
 import itertools
 import queue
+import os
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -556,8 +557,10 @@ def test_debug_draw(show_viewer):
     )
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-    # assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
-    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+    if "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ:
+        assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+    else:
+        assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
     scene.clear_debug_objects()
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
