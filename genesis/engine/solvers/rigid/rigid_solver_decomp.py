@@ -294,7 +294,6 @@ class RigidSolver(Solver):
         self._func_apply_external_force = func_apply_external_force
 
         if self.is_active():
-
             self.data_manager = array_class.DataManager(self)
 
             self._rigid_global_info = self.data_manager.rigid_global_info
