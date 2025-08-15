@@ -9,6 +9,7 @@
     - [BUG FIX] for non-breaking changes which fix an issue
     - [FEATURE] for non-breaking changes which add functionality
     - [MISC] for minor changes such as improved inline documentation or fixing typos
+    - [BEHAVIOR CHANGE] for modifications that will change the behavior (usually silently)
     - [BREAKING] **in addition to the above** for breaking changes, i.e., a fix or feature that would cause existing APIs or functionality to change
 -->
 
@@ -40,6 +41,7 @@ see how your change affects other areas of the code, etc. -->
 - [ ] I read the **CONTRIBUTING** document.
 - [ ] I followed the `Submitting Code Changes` section of **CONTRIBUTING** document.
 - [ ] I tagged the title correctly (including BUG FIX/FEATURE/MISC/BREAKING)
+- [ ] I add ONE line to RELEASE_NOTES.md in the format: [breaking/behavior change/fix/feature] Short description
 - [ ] I updated the [documentation](https://github.com/Genesis-Embodied-AI/genesis-doc) accordingly or no change is needed.
 - [ ] I tested my changes and added instructions on how to test it for reviewers.
 

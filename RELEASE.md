@@ -2,7 +2,7 @@
 
 ## latest
 
-* [Bug Fix] Fix a minor bug in `examples/rigid/franka_cube.py`
+* [Fix] Fix a minor import bug in `examples/rigid/franka_cube.py`
 
 ## 0.3.0
 
