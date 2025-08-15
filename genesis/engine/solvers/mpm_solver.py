@@ -387,11 +387,11 @@ class MPMSolver(Solver):
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
-                    if ti.static(self._enable_CPIC):
+                    sep_geom_idx = -1
+                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active()):
                         # check if particle and cell center are at different side of any thin object
                         cell_pos = (base + offset) * self._dx
 
-                        sep_geom_idx = -1
                         for i_g in range(self.sim.rigid_solver.n_geoms):
                             if self.sim.rigid_solver.geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
@@ -409,14 +409,7 @@ class MPMSolver(Solver):
                                     sep_geom_idx = i_g
                                     break
                         self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b] = sep_geom_idx
-                        if sep_geom_idx == -1:
-                            self.grid[f, base - self._grid_offset + offset, i_b].vel_in += weight * (
-                                self.particles_info[i_p].mass * self.particles[f, i_p, i_b].vel + affine @ dpos
-                            )
-                            self.grid[f, base - self._grid_offset + offset, i_b].mass += (
-                                weight * self.particles_info[i_p].mass
-                            )
-                    else:
+                    if sep_geom_idx == -1:
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in += weight * (
                             self.particles_info[i_p].mass * self.particles[f, i_p, i_b].vel + affine @ dpos
                         )

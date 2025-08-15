@@ -276,7 +276,7 @@ class LegacyCoupler(RBC):
                     vel_mpm = self._func_mpm_tool(f, pos, vel_mpm, i_b)
 
                 #################### MPM <-> Rigid ####################
-                if ti.static(self._rigid_mpm):
+                if ti.static(self._rigid_mpm and self.rigid_solver.is_active()):
                     vel_mpm = self._func_collide_with_rigid(f, pos, vel_mpm, mass_mpm, i_b)
 
                 #################### MPM <-> SPH ####################
@@ -656,7 +656,7 @@ class LegacyCoupler(RBC):
 
     def preprocess(self, f):
         # preprocess for MPM CPIC
-        if self.mpm_solver.is_active() and self.mpm_solver.enable_CPIC:
+        if self.mpm_solver.is_active() and self.rigid_solver.is_active() and self.mpm_solver.enable_CPIC:
             self.mpm_surface_to_particle(f)
 
     def couple(self, f):
@@ -665,11 +665,11 @@ class LegacyCoupler(RBC):
             self.mpm_grid_op(f, self.sim.cur_t)
 
         # SPH <-> Rigid
-        if self._rigid_sph:
+        if self._rigid_sph and self.rigid_solver.is_active():
             self.sph_rigid(f)
 
         # PBD <-> Rigid
-        if self._rigid_pbd:
+        if self._rigid_pbd and self.rigid_solver.is_active():
             self.pbd_rigid(f)
 
         if self.fem_solver.is_active():
