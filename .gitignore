@@ -149,3 +149,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Batch renderer output
+img_output/

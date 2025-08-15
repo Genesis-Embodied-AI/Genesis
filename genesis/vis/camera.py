@@ -61,9 +61,11 @@ class Camera(RBC):
         Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
         option when building RayTracer.
     near : float
-        The near plane of the camera.
+        Distance from camera center to near plane in meters.
+        Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.05.
     far : float
-        The far plane of the camera.
+        Distance from camera center to far plane in meters.
+        Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 100.0.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
     env_idx : int, optional
@@ -326,7 +328,7 @@ class Camera(RBC):
         """
         assert self._visualizer._batch_renderer is not None
         rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(
-            rgb, depth, segmentation, normal, force_render, antialiasing
+            rgb, depth, segmentation, normal, antialiasing, force_render
         )
         # The first dimension of the array is camera.
         # If n_envs > 0, the second dimension of the output is env.
@@ -350,8 +352,8 @@ class Camera(RBC):
         segmentation=False,
         colorize_seg=False,
         normal=False,
-        force_render=False,
         antialiasing=False,
+        force_render=False,
     ):
         """
         Render the camera view.
@@ -377,10 +379,10 @@ class Camera(RBC):
             If True, the segmentation mask will be colorized.
         normal : bool, optional
             Whether to render the surface normal.
-        force_render : bool, optional
-            Whether to force rendering even if the scene has not changed.
         antialiasing : bool, optional
             Whether to apply anti-aliasing. Only supported by 'BatchRenderer' for now.
+        force_render : bool, optional
+            Whether to force rendering even if the scene has not changed.
 
         Returns
         -------
@@ -397,7 +399,7 @@ class Camera(RBC):
 
         if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
-                rgb, depth, segmentation, normal, force_render, antialiasing
+                rgb, depth, segmentation, normal, antialiasing, force_render
             )
         elif self._raytracer is not None:
             if rgb:
@@ -417,7 +419,7 @@ class Camera(RBC):
 
         if seg_idxc_arr is not None:
             if colorize_seg or (self._GUI and self._visualizer.has_display):
-                seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
+                seg_color_arr = self._visualizer.colorize_seg_idxc_arr(seg_idxc_arr)
             seg_arr = seg_color_arr if colorize_seg else seg_idxc_arr
 
         if self._in_recording or self._GUI and self._visualizer.has_display:
@@ -472,21 +474,6 @@ class Camera(RBC):
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     @gs.assert_built
-    def get_segmentation_idx_dict(self):
-        """
-        Returns a dictionary mapping segmentation indices to scene entities.
-
-        In the segmentation map:
-        - Index 0 corresponds to the background (-1).
-        - Indices > 0 correspond to scene elements, which may be represented as:
-            - `entity_id`
-            - `(entity_id, link_id)`
-            - `(entity_id, link_id, geom_id)`
-          depending on the material type and the configured segmentation level.
-        """
-        return self._rasterizer._context.seg_idxc_map
-
-    @gs.assert_built
     def render_pointcloud(self, world_frame=True):
         """
         Render a partial point cloud from the camera view.
@@ -505,13 +492,23 @@ class Camera(RBC):
         """
         # Compute the (denormalized) depth map using PyRender systematically.
         # TODO: Add support of BatchRendered (requires access to projection matrix)
-        self._rasterizer.update_scene()
-        rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-            self, rgb=False, depth=True, segmentation=False, normal=False
-        )
+        if self._batch_renderer is not None:
+            if self._batch_renderer.use_rasterizer:
+                _, depth_arr, _, _ = self._batch_render(
+                    rgb=False, depth=True, segmentation=False, normal=False,
+                )
+            else:
+                gs.raise_exception("point cloud only support in BatchRender with rasterizer.")
+        elif self._rasterizer is not None:
+            self._rasterizer.update_scene()
+            _, depth_arr, _, _ = self._rasterizer.render_camera(
+                self, rgb=False, depth=True, segmentation=False, normal=False
+            )
+        else:
+            gs.raise_exception("Render point cloud not supported.")
 
         # Convert OpenGL projection matrix to camera intrinsics
-        P = self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix()
+        P = self.projection_matrix
         height, width = depth_arr.shape
         fx = P[0, 0] * width / 2.0
         fy = P[1, 1] * height / 2.0
@@ -891,3 +888,21 @@ class Camera(RBC):
         cx = 0.5 * self._res[0]
         cy = 0.5 * self._res[1]
         return np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
+
+    @property
+    def n_envs(self):
+        return max(self._visualizer.scene.n_envs, 1)
+    
+    @property
+    def projection_matrix(self):
+        """Return the projection matrix for this camera."""
+        a = self._aspect_ratio
+        t = np.tan(np.deg2rad(0.5 * self._fov))
+        n = self.near
+        f = self.far
+        return np.array([
+            [1.0 / (a * t), 0.0, 0.0, 0.0],
+            [0.0, 1.0 / t, 0.0, 0.0],
+            [0.0, 0.0, (f + n) / (n - f), (2 * f * n) / (n - f)],
+            [0.0, 0.0, -1.0, 0.0],
+        ])

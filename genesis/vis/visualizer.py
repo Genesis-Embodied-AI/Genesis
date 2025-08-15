@@ -8,7 +8,6 @@ from genesis.repr_base import RBC
 from .camera import Camera
 from .rasterizer import Rasterizer
 
-
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
 
@@ -94,7 +93,7 @@ class Visualizer(RBC):
         if isinstance(renderer_options, gs.renderers.BatchRenderer):
             from .batch_renderer import BatchRenderer
 
-            self._renderer = self._batch_renderer = BatchRenderer(self, renderer_options)
+            self._renderer = self._batch_renderer = BatchRenderer(self, renderer_options, vis_options)
         elif isinstance(renderer_options, gs.renderers.RayTracer):
             from .raytracer import Raytracer
 
@@ -127,7 +126,7 @@ class Visualizer(RBC):
         self.viewer_lock = None
         self._renderer = None
 
-    def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug):
+    def add_camera(self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, near, far, env_idx, debug):
         cam_idx = len([camera for camera in self._cameras if camera.debug == debug])
         camera = Camera(
             self,
@@ -143,15 +142,23 @@ class Visualizer(RBC):
             GUI,
             spp,
             denoise,
+            near,
+            far,
             env_idx=env_idx,
             debug=debug,
         )
         self._cameras.append(camera)
         return camera
 
-    def add_light(self, pos, dir, intensity, directional, castshadow, cutoff):
+    def add_mesh_light(self, mesh, color, intensity, pos, quat, revert_dir, double_sided, cutoff):
+        if self._raytracer is not None:
+            self._raytracer.add_mesh_light(mesh, color, intensity, pos, quat, revert_dir, double_sided, cutoff)
+        else:
+            gs.raise_exception("`add_mesh_light` is specifically for raytracer renderer.")
+
+    def add_light(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         if self._batch_renderer is not None:
-            self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
+            self._batch_renderer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
         else:
             gs.raise_exception("`add_light` is specifically for batch renderer.")
 
@@ -249,6 +256,14 @@ class Visualizer(RBC):
 
         self._t = self._scene._t
 
+    def colorize_seg_idxc_arr(self, seg_idxc_arr):
+        if self._batch_renderer is not None:
+            return self._batch_renderer.colorize_seg_idxc_arr(seg_idxc_arr)
+        elif self._rasterizer is not None:
+            return self._context.colorize_seg_idxc_arr(seg_idxc_arr)
+        else:
+            gs.raise_exception("Segmentation is only available with batch renderer or rasterizer.")
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -288,3 +303,32 @@ class Visualizer(RBC):
     @property
     def cameras(self):
         return self._cameras
+
+    @property
+    def camera_pos(self):
+        return torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
+
+    @property
+    def camera_quat(self):
+        return torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+
+    @property
+    def camera_fov(self):
+        return torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
+
+    @property
+    def camera_near(self):
+        return torch.tensor([camera.near for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
+
+    @property
+    def camera_far(self):
+        return torch.tensor([camera.far for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
+
+    @property
+    def segmentation_idx_dict(self):
+        if self._batch_renderer is not None:
+            return self._batch_renderer.seg_idxc_map
+        elif self._rasterizer is not None:
+            return self._context.seg_manager.seg_idxc_map
+        else:
+            gs.raise_exception("Segmentation is only available with batch renderer or rasterizer.")

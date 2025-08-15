@@ -171,7 +171,7 @@ class Raytracer:
             log_level=logging_class[self.logging_level],
         )
 
-    def add_mesh_light(self, mesh, color, intensity, pos, quat, revert_dir=False, double_sided=False, beam_angle=180.0):
+    def add_mesh_light(self, mesh, color, intensity, pos, quat, revert_dir=False, double_sided=False, cutoff=180.0):
         color = np.array(color)
         if color.ndim != 1 or (color.shape[0] != 3 and color.shape[0] != 4):
             gs.raise_exception("Light color should have shape (3,) or (4,).")
@@ -188,7 +188,7 @@ class Raytracer:
                         color[2] * intensity,
                     ),
                     double_sided=double_sided,
-                    beam_angle=beam_angle,
+                    cutoff=cutoff,
                 ),
                 name=str(mesh.uid),
                 revert_dir=revert_dir,
@@ -367,7 +367,7 @@ class Raytracer:
                 name=f"emis_{shape_name}",
                 emission=self.get_texture(surface.get_emission()),
                 two_sided=False if surface.double_sided is None else surface.double_sided,
-                beam_angle=surface.beam_angle,
+                beam_angle=surface.cutoff,
             )
             self._scene.update_emission(emission_luisa)
         else:
