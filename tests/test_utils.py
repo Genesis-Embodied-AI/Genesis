@@ -28,6 +28,7 @@ def clear_seen_fixture():
     warnings_mod._seen.clear()
 
 
+@pytest.mark.required
 def test_warn_once_logs_once(clear_seen_fixture):
     msg = "This is a warning"
     with patch.object(gs, "logger", create=True) as mock_logger:
@@ -37,6 +38,7 @@ def test_warn_once_logs_once(clear_seen_fixture):
             mock_warning.assert_called_once_with(msg)
 
 
+@pytest.mark.required
 def test_warn_once_logs_different_messages(clear_seen_fixture):
     msg1 = "Warning 1"
     msg2 = "Warning 2"
@@ -49,6 +51,7 @@ def test_warn_once_logs_different_messages(clear_seen_fixture):
             mock_warning.assert_any_call(msg2)
 
 
+@pytest.mark.required
 def test_warn_once_with_empty_message(clear_seen_fixture):
     with patch.object(gs, "logger", create=True) as mock_logger:
         with patch.object(mock_logger, "warning") as mock_warning:
@@ -105,6 +108,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
     return kernel
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
     import taichi as ti
@@ -160,6 +164,7 @@ def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
             np.testing.assert_allclose(np_out, tc_out, atol=1e2 * gs.EPS)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
     for py_func, shapes_in, shapes_out in (
@@ -192,6 +197,7 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape):
             np.testing.assert_allclose(np_out, tc_out, atol=gs.EPS)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_inverse(batch_shape):
     import taichi as ti
@@ -237,6 +243,7 @@ def test_utils_geom_taichi_inverse(batch_shape):
             np.testing.assert_allclose(ti_value_in_arg.to_numpy(), ti_value_inv_out_arg.to_numpy(), atol=1e2 * gs.EPS)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_identity(batch_shape):
     import taichi as ti
@@ -262,6 +269,7 @@ def test_utils_geom_taichi_identity(batch_shape):
         np.testing.assert_allclose(ti_args[0].to_numpy(), ti_args[-1].to_numpy(), atol=1e2 * gs.EPS)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_tensor_identity(batch_shape):
     import taichi as ti

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 import genesis as gs
@@ -7,6 +8,7 @@ from genesis.sensors.imu import IMUOptions
 from .utils import assert_allclose, assert_array_equal
 
 
+@pytest.mark.required
 def test_imu_sensor(show_viewer):
     """Test if the IMU sensor returns the correct data."""
     GRAVITY = -10.0
