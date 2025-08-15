@@ -20,7 +20,6 @@ def main():
     fem_material_linear_corotated = gs.materials.FEM.Elastic(
         model="linear_corotated",
     )
-    fem_material_linear_corotated_soft = gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
