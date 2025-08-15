@@ -273,9 +273,6 @@ class SAPCoupler(RBC):
                 self.rigid_rigid_tet_contact = RigidRigidTetContactHandler(self.sim)
                 self.contact_handlers.append(self.rigid_rigid_tet_contact)
 
-            if self.rigid_solver.n_equalities > 0:
-                self._init_equality_constraint()
-
             # TODO: Dynamically added constraints are not supported for now
             if self.rigid_solver.n_equalities > 0:
                 self._init_equality_constraint()
