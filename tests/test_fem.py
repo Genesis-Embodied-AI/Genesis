@@ -838,8 +838,8 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
             new_pos = cube.get_state().pos.mean(axis=(0, 1))
 
     assert_allclose(
-        new_pos - old_pos,
-        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        new_pos,
+        old_pos,
         atol=5e-4,
         err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}.",
     )
@@ -931,8 +931,8 @@ def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough
     BV, BF = igl.bounding_box(pos_np)
     deformation = BV[0, :] - BV[-1, :]
     assert_allclose(
-        new_pos - old_pos,
-        np.array([0.0, 0.0, 0.0], dtype=np.float32),
+        new_pos,
+        old_pos,
         atol=5e-4,
         err_msg=f"Sphere should be not moving much. Old pos: {old_pos}, new pos: {new_pos}.",
     )

@@ -118,7 +118,7 @@ class LBVH(RBC):
         self.n_batches = aabb.n_batches
 
         # Maximum number of query results
-        self.max_n_query_results = min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF)
+        self.max_query_results = min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF)
         # Maximum stack depth for traversal
         self.max_stack_depth = 64
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(self.n_batches, self.n_aabbs))
@@ -168,7 +168,7 @@ class LBVH(RBC):
         self.internal_node_ready = ti.field(gs.ti_bool, shape=(self.n_batches, self.n_aabbs - 1))
 
         # Query results, vec3 of batch id, self id, query id
-        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
+        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_query_results))
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
 
@@ -473,7 +473,7 @@ class LBVH(RBC):
                         if self.filter(i_a, i_q):
                             continue
                         idx = ti.atomic_add(self.query_result_count[None], 1)
-                        if idx < self.max_n_query_results:
+                        if idx < self.max_query_results:
                             self.query_result[idx] = gs.ti_ivec3(i_b, i_a, i_q)  # Store the AABB index
                         else:
                             overflow = True
