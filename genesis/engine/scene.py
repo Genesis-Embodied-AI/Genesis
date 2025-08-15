@@ -2,6 +2,7 @@ import os
 import pickle
 import sys
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -26,7 +27,6 @@ from genesis.options import (
     PBDOptions,
     ProfilingOptions,
     RigidOptions,
-    SensorOptions,
     SFOptions,
     SimOptions,
     SPHOptions,
@@ -42,6 +42,9 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+
+if TYPE_CHECKING:
+    from genesis.sensors.base_sensor import SensorOptions
 
 
 @gs.assert_initialized
@@ -516,7 +519,7 @@ class Scene(RBC):
             gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
 
     @gs.assert_unbuilt
-    def add_sensor(self, sensor_options: SensorOptions):
+    def add_sensor(self, sensor_options: "SensorOptions"):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt
