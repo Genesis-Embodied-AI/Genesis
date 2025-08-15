@@ -20,7 +20,8 @@ def fem_material():
     )
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_multiple_fem_entities(fem_material, show_viewer):
     """Test adding multiple FEM entities to the scene"""
     scene = gs.Scene(
@@ -61,7 +62,7 @@ def test_multiple_fem_entities(fem_material, show_viewer):
         scene.step()
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.required
 def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path, cube_verts_and_faces):
     """
     Test tetrahedralization of a FEM entity with a small maxvolume value that introduces
@@ -175,7 +176,7 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
     )
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.required
 def test_maxvolume(fem_material, show_viewer, box_obj_path):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
@@ -206,6 +207,8 @@ def fem_material_linear():
     return gs.materials.FEM.Elastic()
 
 
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -255,6 +258,8 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
         )
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -301,6 +306,8 @@ def fem_material_linear_corotated():
     return gs.materials.FEM.Elastic(model="linear_corotated")
 
 
+# FIXME: Compilation is crashing on Apple Metal backend
+@pytest.mark.required
 def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -357,6 +364,8 @@ def fem_material_linear_corotated_soft():
     return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
 
 
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -410,6 +419,8 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
         )
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_box_hard_vertex_constraint(show_viewer):
     """
     Test if a box with hard vertex constraints has those vertices fixed,
@@ -486,6 +497,8 @@ def test_box_hard_vertex_constraint(show_viewer):
         )
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_box_soft_vertex_constraint(show_viewer):
     """Test if a box with strong soft vertex constraints has those vertices near."""
     scene = gs.Scene(
@@ -536,6 +549,8 @@ def test_box_soft_vertex_constraint(show_viewer):
     )
 
 
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -601,6 +616,8 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     )
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
     Test if a box with hard vertex constraints has those vertices fixed, and that updating and removing constraints
@@ -699,6 +716,8 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
     )
 
 
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
     Test if a box with hard vertex constraints has those vertices fixed, and collisiong with a sphere works correctly.
@@ -786,6 +805,8 @@ def fem_material_linear_corotated_rough():
     return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
 
 
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
     """
     Test if the Franka Panda can successfully grasp the cube.
@@ -876,6 +897,8 @@ def fem_material_linear_corotated_soft_rough():
     return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
 
 
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough, show_viewer):
     """
     Test if the Franka Panda can successfully grasp the soft sphere.

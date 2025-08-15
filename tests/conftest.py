@@ -180,6 +180,21 @@ def tol():
 
 
 @pytest.fixture
+def precision(request, backend):
+    import genesis as gs
+
+    precision = None
+    for mark in request.node.iter_markers("precision"):
+        if mark.args:
+            if precision is not None:
+                pytest.fail("'precision' can only be specified once.")
+            (precision,) = mark.args
+    if precision is None:
+        precision = "64" if backend == gs.cpu else "32"
+    return precision
+
+
+@pytest.fixture
 def mujoco_compatibility(request):
     mujoco_compatibility = None
     for mark in request.node.iter_markers("mujoco_compatibility"):
@@ -271,14 +286,14 @@ def taichi_offline_cache(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend, taichi_offline_cache):
+def initialize_genesis(request, backend, precision, taichi_offline_cache):
     import pyglet
+    import taichi as ti
     import genesis as gs
     from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
     logging_level = request.config.getoption("--log-cli-level")
     debug = request.config.getoption("--dev")
-    precision = "64" if backend == gs.cpu else "32"
 
     try:
         if not taichi_offline_cache:
@@ -289,7 +304,13 @@ def initialize_genesis(request, backend, taichi_offline_cache):
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
-        gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
+
+        ti_runtime = ti.lang.impl.get_runtime()
+        ti_arch = ti_runtime.prog.config().arch
+        if ti_arch == ti.metal and precision == "64":
+            gs.destroy()
+            pytest.skip("Apple Metal GPU does not support 64bits precision.")
+
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")
