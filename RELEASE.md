@@ -1,5 +1,9 @@
 # Genesis Release Note
 
+## latest
+
+* [Bug Fix] Fix a minor bug in `examples/rigid/franka_cube.py`
+
 ## 0.3.0
 
 This release focuses primarily on stability, covering everything from MJCF/URDF parsing to rendering and physics, backend by a new CI infrastructure running more than 200 unit tests on all supported platforms. The most requested Mujoco features that were previously missing have been implemented. Native support of batching has been extended to all solvers except Stable Fluid, motion planning, and rendering via [gs-madrona](https://github.com/Genesis-Embodied-AI/gs-madrona). Finally, support of soft body dynamics has been enhanced, with the introduction of constraints and coupling between soft and rigid body dynamics.
