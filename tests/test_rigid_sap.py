@@ -95,7 +95,7 @@ def test_franka_panda_grasp_rigid_cube(show_viewer):
             linesearch_ftol=1e-10,
         ),
         show_viewer=show_viewer,
-        show_FPS=True,
+        show_FPS=False,
     )
 
     friction = 1.0
@@ -104,6 +104,11 @@ def test_franka_panda_grasp_rigid_cube(show_viewer):
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         material=gs.materials.Rigid(coup_friction=friction, friction=friction),
     )
+    # Only allow finger contact to accelerate
+    for geom in franka.geoms:
+        if "finger" not in geom.link.name:
+            geom._contype = 0
+            geom._conaffinity = 0
     asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
