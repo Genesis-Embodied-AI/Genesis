@@ -1,29 +1,35 @@
-from typing import Literal, TYPE_CHECKING
 from dataclasses import dataclass
+from typing import Literal, TYPE_CHECKING
 
 import numpy as np
-import torch
 import numpy.typing as npt
 import taichi as ti
+import torch
 
 import genesis as gs
-from genesis.engine.entities.base_entity import Entity
-from genesis.options.solvers import RigidOptions
 import genesis.utils.geom as gu
-from genesis.utils import linalg as lu
-from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
-from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
-from genesis.engine.states.solvers import RigidSolverState
-from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
 
+from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
+from genesis.engine.entities.base_entity import Entity
+from genesis.engine.solvers.rigid.contact_island import ContactIsland
+from genesis.engine.states.solvers import RigidSolverState
+from genesis.options.solvers import RigidOptions
+from genesis.styles import colors, formats
+from genesis.utils import linalg as lu
+from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
+
+from ....utils.sdf_decomp import SDF
 from ..base_solver import Solver
-from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from ....utils.sdf_decomp import SDF
+from .contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
+from .collider_decomp import Collider
+from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
+    import genesis.engine.solvers.rigid.array_class
+
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
@@ -67,6 +73,9 @@ def _sanitize_sol_params(
 
 @ti.data_oriented
 class RigidSolver(Solver):
+    # override typing
+    _entities: list[RigidEntity] = gs.List()
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -149,11 +158,10 @@ class RigidSolver(Solver):
             EntityClass = AvatarEntity
             if visualize_contact:
                 gs.raise_exception("AvatarEntity does not support 'visualize_contact=True'.")
+        elif isinstance(morph, gs.morphs.Drone):
+            EntityClass = DroneEntity
         else:
-            if isinstance(morph, gs.morphs.Drone):
-                EntityClass = DroneEntity
-            else:
-                EntityClass = RigidEntity
+            EntityClass = RigidEntity
 
         if morph.is_free:
             verts_state_start = self.n_free_verts
@@ -185,6 +193,7 @@ class RigidSolver(Solver):
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
         )
+        assert isinstance(entity, RigidEntity)
         self._entities.append(entity)
 
         return entity
@@ -249,6 +258,9 @@ class RigidSolver(Solver):
 
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
+        # Note optional hibernation_threshold_acc/vel params at the bottom of the initialization list.
+        # This is caused by this code being also run by AvatarSolver, which inherits from this class
+        # but does not have all the attributes of the base class.
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
             use_hibernation=getattr(self, "_use_hibernation", False),
@@ -273,6 +285,8 @@ class RigidSolver(Solver):
             ls_tolerance=getattr(self._options, "ls_tolerance", 1e-6),
             n_equalities=self._n_equalities,
             n_equalities_candidate=self.n_equalities_candidate,
+            hibernation_thresh_acc=getattr(self, "_hibernation_thresh_acc", 0.0),
+            hibernation_thresh_vel=getattr(self, "_hibernation_thresh_vel", 0.0),
         )
 
         # when the migration is finished, we will remove the about two lines
@@ -289,8 +303,8 @@ class RigidSolver(Solver):
                 self.awake_dofs = self._rigid_global_info.awake_dofs
                 self.n_awake_links = self._rigid_global_info.n_awake_links
                 self.awake_links = self._rigid_global_info.awake_links
-                self.n_awake_entities = self._rigid_global_info.data_manager.n_awake_entities
-                self.awake_entities = self._rigid_global_info.data_manager.awake_entities
+                self.n_awake_entities = self._rigid_global_info.n_awake_entities
+                self.awake_entities = self._rigid_global_info.awake_entities
 
             self._init_mass_mat()
             self._init_dof_fields()
@@ -704,8 +718,8 @@ class RigidSolver(Solver):
             )
 
     def _init_geom_fields(self):
-        self.geoms_info = self.data_manager.geoms_info
-        self.geoms_state = self.data_manager.geoms_state
+        self.geoms_info: array_class.GeomsInfo = self.data_manager.geoms_info
+        self.geoms_state: array_class.GeomsState = self.data_manager.geoms_state
         self.geoms_init_AABB = self._rigid_global_info.geoms_init_AABB
         self._geoms_render_T = np.empty((self.n_geoms_, self._B, 4, 4), dtype=np.float32)
 
@@ -762,8 +776,8 @@ class RigidSolver(Solver):
             )
 
     def _init_vgeom_fields(self):
-        self.vgeoms_info = self.data_manager.vgeoms_info
-        self.vgeoms_state = self.data_manager.vgeoms_state
+        self.vgeoms_info: array_class.VGeomsInfo = self.data_manager.vgeoms_info
+        self.vgeoms_state: array_class.VGeomsState = self.data_manager.vgeoms_state
         self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_vgeoms > 0:
@@ -912,11 +926,14 @@ class RigidSolver(Solver):
             dofs_info=self.dofs_info,
             geoms_state=self.geoms_state,
             geoms_info=self.geoms_info,
+            entities_state=self.entities_state,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            contact_island=self.constraint_solver.contact_island,
         )
         # timer.stamp("kernel_step_1")
+
         if isinstance(self.sim.coupler, SAPCoupler):
             self.update_qvel()
         else:
@@ -936,6 +953,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
+                contact_island=self.constraint_solver.contact_island,
             )
             # timer.stamp("kernel_step_2")
 
@@ -980,9 +998,12 @@ class RigidSolver(Solver):
             dofs_state=self.dofs_state,
             dofs_info=self.dofs_info,
             joints_info=self.joints_info,
+            entities_state=self.entities_state,
             entities_info=self.entities_info,
+            geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            contact_island=self.constraint_solver.contact_island,
         )
 
     def _func_update_acc(self):
@@ -1253,7 +1274,6 @@ class RigidSolver(Solver):
         pass
 
     def substep_post_coupling(self, f):
-
         from genesis.engine.couplers import SAPCoupler
 
         if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
@@ -1272,6 +1292,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
+                contact_island=self.constraint_solver.contact_island,
             )
 
     def substep_post_coupling_grad(self, f):
@@ -3041,9 +3062,12 @@ def kernel_forward_dynamics(
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
     joints_info: array_class.JointsInfo,
+    entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
+    geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    contact_island: ti.template(),  # ContactIsland
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -3051,9 +3075,12 @@ def kernel_forward_dynamics(
         dofs_state=dofs_state,
         dofs_info=dofs_info,
         joints_info=joints_info,
+        entities_state=entities_state,
         entities_info=entities_info,
+        geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
+        contact_island=contact_island,
     )
 
 
@@ -3756,9 +3783,12 @@ def func_forward_dynamics(
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
     joints_info: array_class.JointsInfo,
+    entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
+    geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    contact_island: ti.template(),
 ):
     func_compute_mass_matrix(
         implicit_damping=ti.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
@@ -3779,13 +3809,17 @@ def func_forward_dynamics(
         static_rigid_sim_config=static_rigid_sim_config,
     )
     func_torque_and_passive_force(
+        entities_state=entities_state,
         entities_info=entities_info,
         dofs_state=dofs_state,
         dofs_info=dofs_info,
+        links_state=links_state,
         links_info=links_info,
         joints_info=joints_info,
+        geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
+        contact_island=contact_island,
     )
     func_update_acc(
         update_cacc=False,
@@ -3903,9 +3937,11 @@ def kernel_step_1(
     dofs_info: array_class.DofsInfo,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
+    entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    contact_island: ti.template(),
 ):
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
@@ -3932,9 +3968,12 @@ def kernel_step_1(
         dofs_state=dofs_state,
         dofs_info=dofs_info,
         joints_info=joints_info,
+        entities_state=entities_state,
         entities_info=entities_info,
+        geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
+        contact_island=contact_island,
     )
 
 
@@ -4014,6 +4053,7 @@ def kernel_step_2(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    contact_island: ti.template(),  # ContactIsland
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4048,15 +4088,16 @@ def kernel_step_2(
     )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
-        func_hibernate(
+        func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
             dofs_state=dofs_state,
             entities_state=entities_state,
             entities_info=entities_info,
             links_state=links_state,
             geoms_state=geoms_state,
             collider_state=collider_state,
-            rigid_global_info=rigid_global_info,
+            unused__rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            contact_island=contact_island,
         )
         func_aggregate_awake_entities(
             entities_state=entities_state,
@@ -4928,59 +4969,88 @@ def kernel_update_vgeoms(
 
 
 @ti.func
-def func_hibernate(
-    dofs_state,
-    entities_state,
-    entities_info,
-    links_state,
-    geoms_state,
-    collider_state,
-    rigid_global_info,
+def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
+    dofs_state: array_class.DofsState,
+    entities_state: array_class.EntitiesState,
+    entities_info: array_class.EntitiesInfo,
+    links_state: array_class.LinksState,
+    geoms_state: array_class.GeomsState,
+    collider_state: array_class.ColliderState,
+    unused__rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-):
+    contact_island: ti.template(),  # ContactIsland,
+) -> None:
 
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_e, i_b in ti.ndrange(n_entities, _B):
-        if (
-            not entities_state.hibernated[i_e, i_b] and entities_info.n_dofs[i_e] > 0
-        ):  # We do not hibernate fixed entity
-            hibernate = True
-            for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                if (
-                    ti.abs(dofs_state.acc[i_d, i_b]) > static_rigid_sim_config.hibernation_thresh_acc
-                    or ti.abs(dofs_state.vel[i_d, i_b]) > static_rigid_sim_config.hibernation_thresh_vel
-                ):
-                    hibernate = False
-                    break
+    ci = contact_island
 
-            if hibernate:
-                func_hibernate_entity(
-                    i_e,
-                    i_b,
-                    entities_state=entities_state,
-                    entities_info=entities_info,
-                    dofs_state=dofs_state,
-                    links_state=links_state,
-                    geoms_state=geoms_state,
-                )
-            else:
-                # update collider sort_buffer
-                for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
-                    collider_state.sort_buffer.value[geoms_state.min_buffer_idx[i_g, i_b], i_b] = geoms_state.aabb_min[
-                        i_g, i_b
-                    ][0]
-                    collider_state.sort_buffer.value[geoms_state.max_buffer_idx[i_g, i_b], i_b] = geoms_state.aabb_max[
-                        i_g, i_b
-                    ][0]
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_b in range(_B):
+        for island_idx in range(ci.n_islands[i_b]):
+            was_island_hibernated = ci.island_hibernated[island_idx, i_b]
+
+            if not was_island_hibernated:
+                are_all_entities_okay_for_hibernation = True
+                entity_ref_range = ci.island_entity[island_idx, i_b]
+                for i_entity_ref_offset_ in range(entity_ref_range.n):
+                    entity_ref = entity_ref_range.start + i_entity_ref_offset_
+                    entity_idx = ci.entity_id[entity_ref, i_b]
+
+                    # Hibernated entities already have zero dofs_state.acc/vel
+                    is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
+                    if is_entity_hibernated:
+                        continue
+
+                    for i_d in range(entities_info.dof_start[entity_idx], entities_info.dof_end[entity_idx]):
+                        max_acc = static_rigid_sim_config.hibernation_thresh_acc
+                        max_vel = static_rigid_sim_config.hibernation_thresh_vel
+                        if ti.abs(dofs_state.acc[i_d, i_b]) > max_acc or ti.abs(dofs_state.vel[i_d, i_b]) > max_vel:
+                            are_all_entities_okay_for_hibernation = False
+                            break
+
+                    if not are_all_entities_okay_for_hibernation:
+                        break
+
+                if not are_all_entities_okay_for_hibernation:
+                    # update collider sort_buffer with aabb extents along x-axis
+                    for i_entity_ref_offset_ in range(entity_ref_range.n):
+                        entity_ref = entity_ref_range.start + i_entity_ref_offset_
+                        entity_idx = ci.entity_id[entity_ref, i_b]
+                        for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
+                            min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
+                            max_idx, max_val = geoms_state.max_buffer_idx[i_g, i_b], geoms_state.aabb_max[i_g, i_b][0]
+                            collider_state.sort_buffer.value[min_idx, i_b] = min_val
+                            collider_state.sort_buffer.value[max_idx, i_b] = max_val
+                else:
+                    # perform hibernation
+                    prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
+                    prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
+
+                    for i_entity_ref_offset_ in range(entity_ref_range.n):
+                        entity_ref = entity_ref_range.start + i_entity_ref_offset_
+                        entity_idx = ci.entity_id[entity_ref, i_b]
+
+                        func_hibernate_entity_and_zero_dof_velocities(
+                            entity_idx,
+                            i_b,
+                            entities_state=entities_state,
+                            entities_info=entities_info,
+                            dofs_state=dofs_state,
+                            links_state=links_state,
+                            geoms_state=geoms_state,
+                        )
+
+                        # store entities in the hibernated islands by daisy chaining them
+                        ci.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = entity_idx
+                        prev_entity_idx = entity_idx
 
 
 @ti.func
 def func_aggregate_awake_entities(
-    entities_state,
-    entities_info,
-    rigid_global_info,
+    entities_state: array_class.EntitiesState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
 
@@ -4993,29 +5063,38 @@ def func_aggregate_awake_entities(
     for i_e, i_b in ti.ndrange(n_entities, _B):
         if entities_state.hibernated[i_e, i_b] or entities_info.n_dofs[i_e] == 0:
             continue
-        n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-        rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
 
-        for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
-            rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+        next_awake_entity_idx = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+        rigid_global_info.awake_entities[next_awake_entity_idx, i_b] = i_e
 
-        for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-            n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
-            rigid_global_info.awake_links[n_awake_links, i_b] = i_l
+        n_dofs = entities_info.n_dofs[i_e]
+        entity_dofs_base_idx: ti.int32 = entities_info.dof_start[i_e]
+        awake_dofs_base_idx = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
+        for i in range(n_dofs):
+            rigid_global_info.awake_dofs[awake_dofs_base_idx + i, i_b] = entity_dofs_base_idx + i
+
+        n_links = entities_info.n_links[i_e]
+        entity_links_base_idx: ti.int32 = entities_info.link_start[i_e]
+        awake_links_base_idx = ti.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
+        for i in range(n_links):
+            rigid_global_info.awake_links[awake_links_base_idx + i, i_b] = entity_links_base_idx + i
 
 
 @ti.func
-def func_hibernate_entity(
-    i_e,
-    i_b,
-    entities_state,
-    entities_info,
-    dofs_state,
-    links_state,
-    geoms_state,
-):
+def func_hibernate_entity_and_zero_dof_velocities(
+    i_e: int,
+    i_b: int,
+    entities_state: array_class.EntitiesState,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    links_state: array_class.LinksState,
+    geoms_state: array_class.GeomsState,
+) -> None:
+    """
+    Mark RigidEnity, individual DOFs in DofsState, RigidLinks, and RigidGeoms as hibernated.
 
+    Also, zero out DOF velocitities and accelerations.
+    """
     entities_state.hibernated[i_e, i_b] = True
 
     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
@@ -5028,32 +5107,6 @@ def func_hibernate_entity(
 
     for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
         geoms_state.hibernated[i_g, i_b] = True
-
-
-@ti.func
-def func_wakeup_entity(
-    i_e,
-    i_b,
-    entities_state: array_class.EntitiesState,
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    links_state: array_class.LinksState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-):
-    if entities_state.hibernated[i_e, i_b]:
-        entities_state.hibernated[i_e, i_b] = False
-        n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-        rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
-
-        for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            dofs_state.hibernated[i_d, i_b] = False
-            n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
-            rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
-
-        for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-            links_state.hibernated[i_l, i_b] = False
-            n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
-            rigid_global_info.awake_links[n_awake_links, i_b] = i_l
 
 
 @ti.kernel
@@ -5165,13 +5218,17 @@ def func_clear_external_force(
 
 @ti.func
 def func_torque_and_passive_force(
+    entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
+    links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
+    geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    contact_island: ti.template(),
 ):
     n_entities = entities_info.n_links.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
@@ -5257,13 +5314,22 @@ def func_torque_and_passive_force(
                     if ti.abs(force) > gs.EPS:
                         wakeup = True
 
-        if ti.static(static_rigid_sim_config.use_hibernation):
-            if wakeup:
-                func_wakeup_entity(i_e, i_b)
+        if ti.static(static_rigid_sim_config.use_hibernation) and entities_state.hibernated[i_e, i_b] and wakeup:
+            func_wakeup_entity_and_its_temp_island(
+                i_e,
+                i_b,
+                entities_state,
+                entities_info,
+                dofs_state,
+                links_state,
+                geoms_state,
+                rigid_global_info,
+                contact_island,
+            )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(rigid_global_info._B):
+        for i_b in range(_B):
             for i_d_ in range(rigid_global_info.n_awake_dofs[i_b]):
                 i_d = rigid_global_info.awake_dofs[i_d_, i_b]
                 I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
@@ -5271,7 +5337,7 @@ def func_torque_and_passive_force(
                 dofs_state.qf_passive[i_d, i_b] = -dofs_info.damping[I_d] * dofs_state.vel[i_d, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(rigid_global_info._B):
+        for i_b in range(_B):
             for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
                 i_l = rigid_global_info.awake_links[i_l_, i_b]
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -5465,7 +5531,7 @@ def func_update_force(
         for i_b in range(_B):
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
                 i_e = rigid_global_info.awake_entities[i_e_, i_b]
-                for i_l in range(entities_info.link_end[i_e] - 1 - entities_info.link_start[i_e]):
+                for i in range(entities_info.n_links[i_e]):
                     i_l = entities_info.link_end[i_e] - 1 - i
                     I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                     i_p = links_info.parent_idx[I_l]
@@ -5603,7 +5669,7 @@ def func_compute_qacc(
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_b in ti.range(_B):
+        for i_b in range(_B):
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
                 i_e = rigid_global_info.awake_entities[i_e_, i_b]
                 for i_d1_ in range(entities_info.n_dofs[i_e]):
@@ -5645,11 +5711,11 @@ def func_integrate(
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
                 for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+                    I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     dof_start = joints_info.dof_start[I_j]
                     q_start = joints_info.q_start[I_j]
                     q_end = joints_info.q_end[I_j]
 
-                    I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     joint_type = joints_info.type[I_j]
 
                     if joint_type == gs.JOINT_TYPE.FREE:
