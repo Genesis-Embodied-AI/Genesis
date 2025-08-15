@@ -431,8 +431,8 @@ class SAPCoupler(RBC):
             )
 
     def _init_equality_constraint(self):
-        self.equality_constraint = RigidConstraint(self.sim)
-        self.equality_constraint.build_constraints(
+        self.equality_constraint_handler = RigidConstraintHandler(self.sim)
+        self.equality_constraint_handler.build_constraints(
             self.rigid_solver.equalities_info, self.rigid_solver.joints_info, self.rigid_solver._static_rigid_sim_config
         )
 
@@ -797,7 +797,7 @@ class SAPCoupler(RBC):
         for contact in ti.static(self.contact_handlers):
             contact.compute_regularization()
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_regularization()
+            self.equality_constraint_handler.compute_regularization()
 
     @ti.kernel
     def _init_sap_solve(self, i_step: ti.i32):
@@ -876,7 +876,7 @@ class SAPCoupler(RBC):
     def compute_constraint_contact_gradient_hessian_diag_prec(self):
         self.clear_impulses()
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_gradient_hessian_diag()
+            self.equality_constraint_handler.compute_gradient_hessian_diag()
         for contact in ti.static(self.contact_handlers):
             contact.compute_gradient_hessian_diag()
         self.compute_preconditioner()
@@ -1129,7 +1129,7 @@ class SAPCoupler(RBC):
             self.compute_rigid_pcg_matrix_vector_product()
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_Ap()
+            self.equality_constraint_handler.compute_Ap()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_pcg_matrix_vector_product()
@@ -1274,7 +1274,7 @@ class SAPCoupler(RBC):
             self.compute_rigid_energy(energy)
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_energy(energy)
+            self.equality_constraint_handler.compute_energy(energy)
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_energy(energy)
@@ -1386,8 +1386,8 @@ class SAPCoupler(RBC):
             self.compute_rigid_gradient_alpha()
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_energy_gamma_G()
-            self.equality_constraint.update_gradient_hessian_alpha()
+            self.equality_constraint_handler.compute_energy_gamma_G()
+            self.equality_constraint_handler.update_gradient_hessian_alpha()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_energy_gamma_G()
@@ -1463,7 +1463,7 @@ class SAPCoupler(RBC):
             self.prepare_rigid_search_direction_data()
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.prepare_search_direction_data()
+            self.equality_constraint_handler.prepare_search_direction_data()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.prepare_search_direction_data()
@@ -3580,7 +3580,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
         self.n_contact_candidates[None] = 0
         result_count = ti.min(
             self.coupler.rigid_tet_bvh.query_result_count[None],
-            self.coupler.rigid_tet_bvh.max_n_query_results,
+            self.coupler.rigid_tet_bvh.max_query_results,
         )
         for i_r in range(result_count):
             i_b, i_a, i_q = self.coupler.rigid_tet_bvh.query_result[i_r]
