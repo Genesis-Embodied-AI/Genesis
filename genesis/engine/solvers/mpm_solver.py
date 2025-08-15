@@ -383,7 +383,7 @@ class MPMSolver(Solver):
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
                 for offset in ti.static(ti.grouped(self.stencil_range())):
                     dpos = (offset.cast(gs.ti_float) - fx) * self._dx
-                    weight = ti.cast(1.0, gs.ti_float)
+                    weight = gs.ti_float(1.0)
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
@@ -439,7 +439,7 @@ class MPMSolver(Solver):
                 for offset in ti.static(ti.grouped(self.stencil_range())):
                     dpos = offset.cast(gs.ti_float) - fx
                     grid_vel = self.grid[f, base - self._grid_offset + offset, i_b].vel_out
-                    weight = ti.cast(1.0, gs.ti_float)
+                    weight = gs.ti_float(1.0)
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
@@ -962,11 +962,11 @@ class MPMSolver(Solver):
     def _kernel_update_render_fields(self, f: ti.i32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
-                self.particles_render[i_b, i_p].pos = self.particles[f, i_p, i_b].pos
-                self.particles_render[i_b, i_p].vel = self.particles[f, i_p, i_b].vel
+                self.particles_render[i_p, i_b].pos = self.particles[f, i_p, i_b].pos
+                self.particles_render[i_p, i_b].vel = self.particles[f, i_p, i_b].vel
             else:
-                self.particles_render[i_b, i_p].pos = gu.ti_nowhere()
-            self.particles_render[i_b, i_p].active = self.particles_ng[f, i_p, i_b].active
+                self.particles_render[i_p, i_b].pos = gu.ti_nowhere()
+            self.particles_render[i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
 
         for i_v, i_b in ti.ndrange(self._n_vverts, self._B):
             vvert_pos = ti.Vector.zero(gs.ti_float, 3)
