@@ -247,10 +247,12 @@ def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
     for entity in scene.entities:
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
-        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, 0.0, atol=5e-2
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0."
+            min_pos_z,
+            0.0,  # FIXME: Compute desired penetration analytically
+            atol=5e-2,
+            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0.",
+        )
 
 
 def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
@@ -285,10 +287,12 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
     for entity in scene.entities:
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
-        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, -1e-3, atol=1e-4
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3."
+            min_pos_z,
+            -1e-3,  # FIXME: Compute desired penetration analytically
+            atol=1e-4,
+            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3.",
+        )
 
 
 @pytest.fixture(scope="session")
@@ -331,18 +335,20 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         state = entity.get_state()
         pos = tensor_to_array(state.pos.reshape(-1, 3))
         min_pos_z = np.min(pos[..., 2])
-        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, -1e-3, atol=1e-4
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3."
+            min_pos_z,
+            -1e-3,  # FIXME: Compute desired penetration analytically
+            atol=1e-4,
+            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3.",
+        )
         BV, BF = igl.bounding_box(pos)
-        x_scale = BV[0, 0] - BV[-1, 0]
-        y_scale = BV[0, 1] - BV[-1, 1]
-        z_scale = BV[0, 2] - BV[-1, 2]
-        assert_allclose(x_scale, 0.2, atol=1e-3), f"Entity {entity.uid} X scale {x_scale} is not close to 0.2."
-        assert_allclose(y_scale, 0.2, atol=1e-3), f"Entity {entity.uid} Y scale {y_scale} is not close to 0.2."
-        # The Z scale is expected to be more squashed due to gravity
-        assert_allclose(z_scale, 0.2, atol=2e-3), f"Entity {entity.uid} Z scale {z_scale} is not close to 0.2."
+        scale = BV[0] - BV[-1]
+        assert_allclose(
+            scale,
+            (0.2, 0.2, 0.2 - 1e-3),  # FIXME: Compute desired scale analytically
+            atol=1e-3,
+            err_msg=f"Entity {entity.uid} scale {scale} is not close to 0.2.",
+        )
 
 
 @pytest.fixture(scope="session")
@@ -391,15 +397,17 @@ def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_
     for _ in range(200):
         scene.step()
 
-    depths = [-1e-3, -2e-5]
-    atols = [2e-4, 4e-6]
+    depths = (-1e-3, -2e-5)  # FIXME: Compute desired penetration analytically
+    atols = (2e-4, 4e-6)
     for i, entity in enumerate(scene.entities):
         state = entity.get_state()
         min_pos_z = state.pos[..., 2].min()
-        # The contact requires some penetration to generate enough contact force to cancel out gravity
         assert_allclose(
-            min_pos_z, depths[i], atol=atols[i]
-        ), f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to {depths[i]}."
+            min_pos_z,
+            depths[i],
+            atol=atols[i],
+            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to {depths[i]}.",
+        )
 
 
 def test_box_hard_vertex_constraint(show_viewer):
@@ -442,8 +450,11 @@ def test_box_hard_vertex_constraint(show_viewer):
 
     positions = box.get_state().pos[0][verts_idx]
     assert_allclose(
-        positions, initial_target_poss, tol=0.0
-    ), "Vertices should stay at initial target positions with hard constraints"
+        positions,
+        initial_target_poss,
+        tol=gs.EPS,
+        err_msg="Vertices should stay at initial target positions with hard constraints",
+    )
     new_target_poss = initial_target_poss + gs.tensor(
         [[0.1, 0.1, 0.1], [0.1, 0.1, 0.1]],
     )
@@ -454,8 +465,11 @@ def test_box_hard_vertex_constraint(show_viewer):
 
     positions_after_update = box.get_state().pos[0][verts_idx]
     assert_allclose(
-        positions_after_update, new_target_poss, tol=0.0
-    ), "Vertices should be at new target positions after updating constraints"
+        positions_after_update,
+        new_target_poss,
+        tol=gs.EPS,
+        err_msg="Vertices should be at new target positions after updating constraints",
+    )
 
     box.remove_vertex_constraints()
 
@@ -463,11 +477,13 @@ def test_box_hard_vertex_constraint(show_viewer):
         scene.step()
 
     positions_after_removal = box.get_state().pos[0][verts_idx]
-
     with np.testing.assert_raises(AssertionError):
         assert_allclose(
-            positions_after_removal, new_target_poss, tol=1e-3
-        ), "Vertices should have moved after removing constraints"
+            positions_after_removal,
+            new_target_poss,
+            tol=1e-3,
+            err_msg="Vertices should have moved after removing constraints",
+        )
 
 
 def test_box_soft_vertex_constraint(show_viewer):
@@ -512,10 +528,12 @@ def test_box_soft_vertex_constraint(show_viewer):
         scene.step()
 
     positions = box.get_state().pos[0][verts_idx]
-
     assert_allclose(
-        positions, target_poss, tol=5e-5
-    ), "Vertices should be near target positions with strong soft constraints"
+        positions,
+        target_poss,
+        tol=5e-5,
+        err_msg="Vertices should be near target positions with strong soft constraints",
+    )
 
 
 def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
@@ -547,16 +565,15 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
 
     # Build the scene
     scene.build()
-    for _ in range(200):
+    for _ in range(300):
         scene.step()
 
     state = sphere.get_state()
     center = state.pos.mean(axis=(0, 1))
     min_pos_z = state.pos[..., 2].min()
-    # The contact requires some penetration to generate enough contact force to cancel out gravity
     assert_allclose(
         min_pos_z,
-        -1.0e-3,
+        -1.0e-3,  # FIXME: Compute desired penetration analytically
         atol=1e-4,
         err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3.",
     )
@@ -572,7 +589,7 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     min_pos_z = link_verts[..., 2].min()
     assert_allclose(
         min_pos_z,
-        -1.0e-4,
+        -1.0e-4,  # FIXME: Compute desired penetration analytically
         atol=5e-5,
         err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4.",
     )
@@ -628,8 +645,11 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
     positions = cube.get_state().pos[0][verts_idx]
     assert_allclose(
-        positions, initial_target_poss, tol=gs.EPS
-    ), "Vertices should stay at initial target positions with hard constraints"
+        positions,
+        initial_target_poss,
+        tol=gs.EPS,
+        err_msg="Vertices should stay at initial target positions with hard constraints",
+    )
     new_target_poss = initial_target_poss + gs.tensor(
         [[0.1, 0.1, 0.1]],
     )
@@ -642,8 +662,11 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
     positions_after_update = cube.get_state().pos[0][verts_idx]
     assert_allclose(
-        positions_after_update, new_target_poss, tol=gs.EPS
-    ), "Vertices should be at new target positions after updating constraints"
+        positions_after_update,
+        new_target_poss,
+        tol=gs.EPS,
+        err_msg="Vertices should be at new target positions after updating constraints",
+    )
 
     cube.remove_vertex_constraints()
     if show_viewer:
@@ -663,15 +686,17 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
     velocity = state.vel.mean(axis=(0, 1))
     assert_allclose(
-        velocity,
-        np.array([0.0, 0.0, 0.0], dtype=np.float32),
-        atol=1e-5,
-        err_msg=f"Cube velocity {velocity} should be close to zero after settling.",
+        velocity, 0.0, atol=1e-5, err_msg=f"Cube velocity {velocity} should be close to zero after settling."
     )
 
     # The contact requires some penetration to generate enough contact force to cancel out gravity
     min_pos_z = state.pos[..., 2].min()
-    assert_allclose(min_pos_z, -2.0e-5, atol=5e-6), f"Cube minimum Z position {min_pos_z} is not close to -2.0e-5."
+    assert_allclose(
+        min_pos_z,
+        -2.0e-5,  # FIXME: Compute desired penetration analytically
+        atol=5e-6,
+        err_msg=f"Cube minimum Z position {min_pos_z} is not close to -2.0e-5.",
+    )
 
 
 def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
@@ -725,8 +750,11 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     pos = cube.get_state().pos
     fixed_pos = pos[0][verts_idx]
     assert_allclose(
-        fixed_pos, initial_target_poss, tol=gs.EPS
-    ), "Vertices should stay at initial target positions with hard constraints"
+        fixed_pos,
+        initial_target_poss,
+        tol=gs.EPS,
+        err_msg="Vertices should stay at initial target positions with hard constraints",
+    )
 
     state = sphere.get_state()
     center = state.pos.mean(axis=(0, 1))
@@ -740,16 +768,16 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     # Using a larger tolerance here since the sphere is rolling, rolling friction is not accurately modeled.
     velocity = state.vel.mean(axis=(0, 1))
     assert_allclose(
-        velocity,
-        np.array([0.0, 0.0, 0.0], dtype=np.float32),
-        atol=0.03,
-        err_msg=f"Sphere velocity {velocity} should be close to zero after settling.",
+        velocity, 0.0, atol=0.03, err_msg=f"Sphere velocity {velocity} should be close to zero after settling."
     )
 
     min_sphere_pos_z = state.pos[..., 2].min()
     assert_allclose(
-        min_sphere_pos_z, -1e-3, atol=2e-4
-    ), f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface."
+        min_sphere_pos_z,
+        -1e-3,  # FIXME: Compute desired penetration analytically
+        atol=2e-4,
+        err_msg=f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface.",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -838,10 +866,7 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
             new_pos = cube.get_state().pos.mean(axis=(0, 1))
 
     assert_allclose(
-        new_pos,
-        old_pos,
-        atol=5e-4,
-        err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}.",
+        new_pos, old_pos, atol=5e-4, err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}."
     )
 
 

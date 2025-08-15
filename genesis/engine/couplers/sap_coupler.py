@@ -167,6 +167,8 @@ class SAPCoupler(RBC):
         self._linesearch_max_step_size = options.linesearch_max_step_size
         self._hydroelastic_stiffness = options.hydroelastic_stiffness
         self._point_contact_stiffness = options.point_contact_stiffness
+        if gs.ti_float is ti.f32:
+            gs.logger.warning("Beware SAPCoupler may be instable when using precision='32'.")
         if options.fem_floor_contact_type == "tet":
             self._fem_floor_contact_type = FEMFloorContactType.TET
         elif options.fem_floor_contact_type == "vert":
@@ -232,6 +234,7 @@ class SAPCoupler(RBC):
                 self.rigid_floor_vert_contact = RigidFloorVertContactHandler(self.sim)
                 self.contact_handlers.append(self.rigid_floor_vert_contact)
 
+            # TODO: Dynamically added constraints are not supported for now
             if self.rigid_solver.n_equalities > 0:
                 self._init_equality_constraint()
 
@@ -276,7 +279,7 @@ class SAPCoupler(RBC):
             self.rigid_tri_bvh = LBVH(self.rigid_tri_aabb, max_n_query_result_per_aabb)
 
     def _init_equality_constraint(self):
-        self.equality_constraint = RigidConstraint(self.sim)
+        self.equality_constraint = RigidConstraintHandler(self.sim)
         self.equality_constraint.build_constraints(
             self.rigid_solver.equalities_info, self.rigid_solver.joints_info, self.rigid_solver._static_rigid_sim_config
         )
@@ -623,7 +626,7 @@ class SAPCoupler(RBC):
     def compute_regularization(self):
         for contact in ti.static(self.contact_handlers):
             contact.compute_regularization()
-        if ti.static(self.rigid_solver.is_active()) and ti.static(self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
             self.equality_constraint.compute_regularization()
 
     @ti.kernel
@@ -1544,7 +1547,7 @@ class SAPCoupler(RBC):
 
 
 @ti.data_oriented
-class BaseConstraint(RBC):
+class BaseConstraintHandler(RBC):
     """
     Base class for constraint handling in SAPCoupler.
     """
@@ -1604,7 +1607,7 @@ class BaseConstraint(RBC):
 
 
 @ti.data_oriented
-class RigidConstraint(BaseConstraint):
+class RigidConstraintHandler(BaseConstraintHandler):
     """
     Rigid body constraints in SAPCoupler. Currently only support joint equality constraints.
     """
@@ -1640,8 +1643,8 @@ class RigidConstraint(BaseConstraint):
     ):
         self.n_constraints[None] = 0
         self.Jt.fill(0.0)
-        # TODO: Maybe support different constraints for each batch in the future. For example
-        # For now all batches have the same constraints
+        # TODO: Maybe support different constraints for each batch in the future.
+        # For now all batches have the same constraints.
         dt2 = self.sim._substep_dt**2
         for i_b, i_e in ti.ndrange(self._B, self.rigid_solver.n_equalities):
             if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:

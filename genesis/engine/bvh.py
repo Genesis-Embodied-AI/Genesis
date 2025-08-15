@@ -73,7 +73,7 @@ class LBVH(RBC):
             Number of AABBs per batch.
         n_batches : int
             Number of batches.
-        max_n_query_results : int
+        max_query_results : int
             Maximum number of query results allowed.
         max_stack_depth : int
             Maximum stack depth for BVH traversal.
@@ -102,7 +102,7 @@ class LBVH(RBC):
         internal_node_visited : ti.field
             Flags indicating if an internal node has been visited during traversal, shape (n_batches, n_aabbs - 1).
         query_result : ti.field
-            Query results as a vector of (batch id, self id, query id), shape (max_n_query_results).
+            Query results as a vector of (batch id, self id, query id), shape (max_query_results).
         query_result_count : ti.field
             Counter for the number of query results.
 
