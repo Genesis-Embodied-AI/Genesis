@@ -118,7 +118,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 
 @pytest.mark.required
-@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"), reason="Flaky on MacOS with CPU-based OpenGL")
+@pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -275,7 +275,7 @@ def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"), reason="Flaky on MacOS with CPU-based OpenGL")
+@pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,

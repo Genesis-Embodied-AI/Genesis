@@ -114,7 +114,7 @@ class PBDTetEntity(ParticleEntity):
             self.solver.particles[i_p, i_b].dpos = ti.Vector.zero(gs.ti_float, 3)
             self.solver.particles[i_p, i_b].free = True
 
-            self.solver.particles_ng[i_p, i_b].active = active
+            self.solver.particles_ng[i_p, i_b].active = ti.cast(active, gs.ti_bool)
 
         for i_e_ in range(self.n_edges):
             i_e = i_e_ + self._edge_start
