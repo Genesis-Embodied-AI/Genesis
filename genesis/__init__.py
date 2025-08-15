@@ -56,6 +56,9 @@ def init(
     if _initialized:
         raise_exception("Genesis already initialized.")
 
+    # Make sure evertything is properly destroyed, just in case initialization failed previously
+    destroy()
+
     # genesis._theme
     global _theme
     is_theme_valid = theme in ("dark", "light", "dumb")

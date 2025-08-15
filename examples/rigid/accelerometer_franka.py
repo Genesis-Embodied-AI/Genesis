@@ -125,7 +125,6 @@ def main():
                 pos=link_pos.tolist(),
                 vec=link_acc.tolist(),
             )
-
             if last_link_vel is not None:
                 scene.draw_debug_arrow(
                     pos=link_pos.tolist(),

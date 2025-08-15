@@ -1,16 +1,17 @@
-import argparse
-import numpy as np
-import genesis as gs
 import time
 import threading
+
 from pynput import keyboard
+import numpy as np
+
+import genesis as gs
 
 
 class DroneController:
     def __init__(self):
-        self.thrust = 14468.429183500699  # Base hover RPM - constant hover
-        self.rotation_delta = 200  # Differential RPM for rotation
-        self.thrust_delta = 10  # Amount to change thrust by when accelerating/decelerating
+        self.thrust = 14475.8  # Base hover RPM - constant hover
+        self.rotation_delta = 200.0  # Differential RPM for rotation
+        self.thrust_delta = 10.0  # Amount to change thrust by when accelerating/decelerating
         self.running = True
         self.rpms = [self.thrust] * 4
         self.pressed_keys = set()
@@ -93,46 +94,37 @@ class DroneController:
 
 def run_sim(scene, drone, controller):
     while controller.running:
-        try:
-            # Update drone with current RPMs
-            rpms = controller.update_thrust()
-            drone.set_propellels_rpm(rpms)
+        # Update drone with current RPMs
+        rpms = controller.update_thrust()
+        drone.set_propellels_rpm(rpms)
 
-            # Update physics
-            scene.step()
+        # Update physics
+        scene.step(refresh_visualizer=False)
 
-            time.sleep(1 / 60)  # Limit simulation rate
-        except Exception as e:
-            print(f"Error in simulation loop: {e}")
-
-    if scene.viewer:
-        scene.viewer.stop()
+        # Limit simulation rate
+        time.sleep(1.0 / scene.viewer.max_FPS)
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=True, help="Enable visualization (default: True)")
-    parser.add_argument("-m", "--mac", action="store_true", default=False, help="Running on MacOS (default: False)")
-    args = parser.parse_args()
-
     # Initialize Genesis
     gs.init(backend=gs.cpu)
 
-    # Create scene with initial camera view
-    viewer_options = gs.options.ViewerOptions(
-        camera_pos=(0.0, -4.0, 2.0),  # Now behind the drone (negative Y)
-        camera_lookat=(0.0, 0.0, 0.5),
-        camera_fov=45,
-        max_FPS=60,
-    )
-
+    # Create scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
             gravity=(0, 0, -9.81),
         ),
-        viewer_options=viewer_options,
-        show_viewer=args.vis,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.0, -2.0, 1.0),
+            camera_lookat=(0.0, 0.0, 0.3),
+            camera_fov=45,
+            max_FPS=60,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
+        show_viewer=True,
     )
 
     # Add entities
@@ -146,11 +138,16 @@ def main():
 
     scene.viewer.follow_entity(drone)
 
-    # Build scene
-    scene.build()
-
     # Initialize controller
     controller = DroneController()
+
+    # Start keyboard listener.
+    # Note that instantiating the listener after building the scene causes segfault on MacOS.
+    listener = keyboard.Listener(on_press=controller.on_press, on_release=controller.on_release)
+    listener.start()
+
+    # Build scene
+    scene.build()
 
     # Print control instructions
     print("\nDrone Controls:")
@@ -158,26 +155,15 @@ def main():
     print("↓ - Move Backward (South)")
     print("← - Move Left (West)")
     print("→ - Move Right (East)")
+    print("space - Increase RPM")
+    print("shift - Decrease RPM")
     print("ESC - Quit\n")
     print("Initial hover RPM:", controller.thrust)
 
-    # Start keyboard listener
-    listener = keyboard.Listener(on_press=controller.on_press, on_release=controller.on_release)
-    listener.start()
+    # Run simulation in another thread
+    threading.Thread(target=run_sim, args=(scene, drone, controller)).start()
+    scene.viewer.run()
 
-    if args.mac:
-        # Run simulation in another thread
-        sim_thread = threading.Thread(target=run_sim, args=(scene, drone, controller))
-        sim_thread.start()
-
-        if args.vis:
-            scene.viewer.start()
-
-        # Wait for threads to finish
-        sim_thread.join()
-    else:
-        # Run simulation in main thread
-        run_sim(scene, drone, controller)
     listener.stop()
 
 

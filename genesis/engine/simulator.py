@@ -21,7 +21,6 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .couplers import LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
 from .solvers.base_solver import Solver
 from .solvers import (
@@ -34,8 +33,10 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
+from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+from genesis.sensors.sensor_manager import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -108,7 +109,7 @@ class Simulator(RBC):
         self._steps_local = options._steps_local
 
         self._cur_substep_global = 0
-        self._gravity = np.array(options.gravity)
+        self._gravity = np.array(options.gravity, dtype=gs.np_float)
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -151,6 +152,9 @@ class Simulator(RBC):
         # entities
         self._entities: list[Entity] = gs.List()
         self._dummy = False  # used to force kernel compilation during scene.build()
+
+        # sensors
+        self._sensor_manager = SensorManager(self)
 
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
@@ -206,6 +210,8 @@ class Simulator(RBC):
 
         if self.n_envs > 0 and self.sf_solver.is_active():
             gs.raise_exception("Batching is not supported for SF solver as of now.")
+
+        self._sensor_manager.build()
 
         # hybrid
         for entity in self._entities:
@@ -275,6 +281,8 @@ class Simulator(RBC):
 
         if self.rigid_solver.is_active():
             self.rigid_solver.clear_external_force()
+
+        self._sensor_manager.step()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
@@ -404,7 +412,8 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity, envs_idx=None):
         for solver in self._solvers:
-            solver.set_gravity(gravity, envs_idx)
+            if solver.is_active():
+                solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

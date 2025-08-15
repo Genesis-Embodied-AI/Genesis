@@ -101,7 +101,7 @@ def main():
         "finger_joint1",
         "finger_joint2",
     )
-    gripper_dofs_idx = [franka.get_joint(name).dofs_idx_local[0] for name in gripper_joints_name]
+    gripper_dofs_idx = [hand.get_joint(name).dofs_idx_local[0] for name in gripper_joints_name]
 
     # Optional: set control gains
     hand.set_dofs_kp(

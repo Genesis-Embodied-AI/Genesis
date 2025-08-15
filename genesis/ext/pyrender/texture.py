@@ -163,6 +163,7 @@ class Texture(object):
     ##################
     # OpenGL code
     ##################
+
     def _add_to_context(self):
         if self._texid is not None:
             return

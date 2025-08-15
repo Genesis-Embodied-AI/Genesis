@@ -57,6 +57,7 @@ RenderFlags_SKIP_CULL_FACES = RenderFlags.SKIP_CULL_FACES
 RenderFlags_SHADOWS_DIRECTIONAL = RenderFlags.SHADOWS_DIRECTIONAL
 RenderFlags_SHADOWS_POINT = RenderFlags.SHADOWS_POINT
 RenderFlags_SKIP_FLOOR = RenderFlags.SKIP_FLOOR
+RenderFlags_OFFSCREEN = RenderFlags.OFFSCREEN
 RenderFlags_REFLECTIVE_FLOOR = RenderFlags.REFLECTIVE_FLOOR
 RenderFlags_FLAT = RenderFlags.FLAT
 
@@ -289,8 +290,8 @@ class JITRenderer:
         self.pbr_mat = np.zeros((n, 9), np.float32)  # base_color <- 4, metallic <- 1, roughness <- 1, emissive <- 3
         self.spec_mat = np.zeros((n, 11), np.float32)  # diffuse <- 4, specular <- 3, glossiness <- 1, emissive <- 3
         self.render_flags = np.zeros(
-            (n, 7), np.int8
-        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent, env shared)
+            (n, 8), np.int8
+        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent, marker, env shared)
         self.mode = np.zeros(n, np.int32)
         self.n_instances = np.zeros(n, np.int32)
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
@@ -336,7 +337,8 @@ class JITRenderer:
             self.render_flags[i, 3] = isinstance(material, MetallicRoughnessMaterial)
             self.render_flags[i, 4] = primitive.is_floor and not floor_existed
             self.render_flags[i, 5] = node_list[i].mesh.is_transparent
-            self.render_flags[i, 6] = primitive.env_shared
+            self.render_flags[i, 6] = node_list[i].mesh.is_marker
+            self.render_flags[i, 7] = primitive.env_shared
 
             if primitive.is_floor:
                 floor_existed = True
@@ -414,6 +416,8 @@ class JITRenderer:
             env_idx,
             gl,
         ):
+            is_rgba = not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG)
+
             det_reflection = np.linalg.det(reflection_mat)
             last_pid = -1
             lighting_texture = 0
@@ -421,12 +425,16 @@ class JITRenderer:
             trans_idx = [i for i in range(len(vao_id)) if render_flags[i, 5]]
             idx = solid_idx + trans_idx
             for id in idx:
-                if render_flags[id, 4] and (flags & RenderFlags_SKIP_FLOOR):
+                # Only render markers on the main graphical window, while skipping plane-reflection
+                if ((render_flags[id, 4] or render_flags[id, 6]) and flags & RenderFlags_SKIP_FLOOR) or (
+                    render_flags[id, 6] and (not is_rgba or flags & RenderFlags_OFFSCREEN)
+                ):
                     continue
+
                 pid = program_id[id]
                 if pid != last_pid:
                     gl.glUseProgram(pid)
-                    if not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG or flags & RenderFlags_FLAT):
+                    if is_rgba and not flags & RenderFlags_FLAT:
                         lighting_texture = bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl)
                         set_uniform_3fv(pid, "cam_pos", cam_pos, gl)
                         set_uniform_matrix_4fv(pid, "reflection_mat", reflection_mat, gl)
@@ -438,21 +446,22 @@ class JITRenderer:
 
                 active_texture = lighting_texture
 
-                if render_flags[id, 4] and (flags & RenderFlags_REFLECTIVE_FLOOR):
-                    gl.glActiveTexture(GL_TEXTURE0 + active_texture)
-                    gl.glBindTexture(GL_TEXTURE_2D, floor_tex)
-                    set_uniform_1i(pid, "floor_tex", active_texture, gl)
-                    set_uniform_1i(pid, "floor_flag", 1, gl)
-                    set_uniform_2f(pid, "screen_size", screen_size[0], screen_size[1], gl)
-                    active_texture += 1
-                elif flags & RenderFlags_REFLECTIVE_FLOOR:
-                    set_uniform_1i(pid, "floor_tex", 0, gl)
-                    set_uniform_1i(pid, "floor_flag", 0, gl)
+                if flags & RenderFlags_REFLECTIVE_FLOOR:
+                    if render_flags[id, 4]:
+                        gl.glActiveTexture(GL_TEXTURE0 + active_texture)
+                        gl.glBindTexture(GL_TEXTURE_2D, floor_tex)
+                        set_uniform_1i(pid, "floor_tex", active_texture, gl)
+                        set_uniform_1i(pid, "floor_flag", 1, gl)
+                        set_uniform_2f(pid, "screen_size", screen_size[0], screen_size[1], gl)
+                        active_texture += 1
+                    else:
+                        set_uniform_1i(pid, "floor_tex", 0, gl)
+                        set_uniform_1i(pid, "floor_flag", 0, gl)
 
                 set_uniform_matrix_4fv(pid, "M", pose[id], gl)
                 gl.glBindVertexArray(vao_id[id])
 
-                if not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG or flags & RenderFlags_FLAT):
+                if is_rgba and not flags & RenderFlags_FLAT:
                     tf = textures[id, 0]
                     texture_list = [
                         "normal_texture",
@@ -492,7 +501,7 @@ class JITRenderer:
                     wf = render_flags[id, 1]
                     if flags & RenderFlags_FLIP_WIREFRAME:
                         wf = not wf
-                    if (flags & RenderFlags_ALL_WIREFRAME) or wf:
+                    if wf or flags & RenderFlags_ALL_WIREFRAME:
                         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
                     else:
                         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
@@ -516,7 +525,7 @@ class JITRenderer:
                         continue
                     set_uniform_3fv(pid, "color", color_list[id], gl)
 
-                if render_flags[id, 6] or env_idx == -1:
+                if render_flags[id, 7] or env_idx == -1:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstanced(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
@@ -558,8 +567,10 @@ class JITRenderer:
         ):
             last_pid = -1
             for id in range(len(vao_id)):
-                if render_flags[id, 5]:
+                # Do not render shadows for markers and transparent objects
+                if render_flags[id, 5] or render_flags[id, 6]:
                     continue
+
                 pid = program_id[id]
                 if pid != last_pid:
                     gl.glUseProgram(pid)
@@ -579,7 +590,7 @@ class JITRenderer:
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
 
-                if render_flags[id, 6] or env_idx == -1:
+                if render_flags[id, 7] or env_idx == -1:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstanced(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
@@ -621,8 +632,10 @@ class JITRenderer:
         ):
             last_pid = -1
             for id in range(len(vao_id)):
-                if render_flags[id, 5]:
+                # Do not render shadows for markers and transparent objects
+                if render_flags[id, 5] or render_flags[id, 6]:
                     continue
+
                 pid = program_id[id]
                 if pid != last_pid:
                     gl.glUseProgram(pid)
@@ -643,7 +656,7 @@ class JITRenderer:
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
 
-                if render_flags[id, 6] or env_idx == -1:
+                if render_flags[id, 7] or env_idx == -1:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstanced(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]

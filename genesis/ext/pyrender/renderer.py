@@ -10,7 +10,6 @@ import PIL
 import pyglet
 import numpy as np
 from OpenGL.GL import *
-import matplotlib.pyplot as plt
 
 from .constants import (
     DEFAULT_Z_FAR,
@@ -115,7 +114,7 @@ class Renderer(object):
     def point_size(self, value):
         self._point_size = float(value)
 
-    def render(self, scene, flags, seg_node_map=None, is_first_pass=True):
+    def render(self, scene, flags, seg_node_map=None, *, is_first_pass=True, force_skip_shadows=False):
         """Render a scene with the given set of flags.
 
         Parameters
@@ -144,10 +143,10 @@ class Renderer(object):
             self._update_context(scene, flags)
             self.jit.update(scene)
 
-        if bool(flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.SEG or flags & RenderFlags.FLAT):
+        if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.FLAT:
             flags &= ~RenderFlags.REFLECTIVE_FLOOR
 
-        if bool(flags & RenderFlags.ENV_SEPARATE) and bool(flags & RenderFlags.OFFSCREEN):
+        if flags & RenderFlags.ENV_SEPARATE and flags & RenderFlags.OFFSCREEN:
             n_envs = scene.n_envs
             use_env_idx = True
         else:
@@ -159,14 +158,14 @@ class Renderer(object):
             env_idx = i if use_env_idx else -1
 
             # Render necessary shadow maps
-            if not bool(flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.SEG):
+            if not (force_skip_shadows or flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
                 for ln in scene.light_nodes:
                     take_pass = False
-                    if isinstance(ln.light, DirectionalLight) and bool(flags & RenderFlags.SHADOWS_DIRECTIONAL):
+                    if isinstance(ln.light, DirectionalLight) and flags & RenderFlags.SHADOWS_DIRECTIONAL:
                         take_pass = True
-                    elif isinstance(ln.light, SpotLight) and bool(flags & RenderFlags.SHADOWS_SPOT):
+                    elif isinstance(ln.light, SpotLight) and flags & RenderFlags.SHADOWS_SPOT:
                         take_pass = False
-                    elif isinstance(ln.light, PointLight) and bool(flags & RenderFlags.SHADOWS_POINT):
+                    elif isinstance(ln.light, PointLight) and flags & RenderFlags.SHADOWS_POINT:
                         take_pass = True
                     if take_pass:
                         if isinstance(ln.light, PointLight):
@@ -180,37 +179,28 @@ class Renderer(object):
                 self._floor_pass(scene, flags, env_idx=env_idx)
 
             retval = self._forward_pass(scene, flags, seg_node_map=seg_node_map, env_idx=env_idx)
-            if isinstance(retval, tuple):
+            if retval is not None:
                 if retval_list is None:
-                    retval_list = tuple([[val] for val in retval])
+                    retval_list = tuple([val] for val in retval)
                 else:
                     for idx, val in enumerate(retval):
                         retval_list[idx].append(val)
-            elif retval is not None:
-                if retval_list is None:
-                    retval_list = [retval]
-                else:
-                    retval_list.append(retval)
 
             # If necessary, make normals pass
             if flags & (RenderFlags.VERTEX_NORMALS | RenderFlags.FACE_NORMALS):
-                self._normals_pass(scene, flags, env_idx=env_idx)
-
-        if use_env_idx:
-            if isinstance(retval_list, list):
-                retval_list = np.stack(retval_list, axis=0)
-            elif isinstance(retval_list, tuple):
-                retval_list = tuple([np.stack(val_list, axis=0) for val_list in retval_list])
-        else:
-            if isinstance(retval_list, list):
-                retval_list = retval_list[0]
-            elif isinstance(retval_list, tuple):
-                retval_list = tuple([val_list[0] for val_list in retval_list])
+                self._normal_pass(scene, flags, env_idx=env_idx)
 
         # Update camera settings for retrieving depth buffers
         self._latest_znear = scene.main_camera_node.camera.znear
         self._latest_zfar = scene.main_camera_node.camera.zfar
 
+        if retval_list is None:
+            return
+
+        if use_env_idx:
+            retval_list = tuple(np.stack(val_list, axis=0) for val_list in retval_list)
+        else:
+            retval_list = tuple([val_list[0] for val_list in retval_list])
         return retval_list
 
     def render_text(
@@ -313,114 +303,6 @@ class Renderer(object):
         for i, text in enumerate(texts):
             font.render_string(text, x, int(y - i * font_pt * 1.1), scale, TextAlign.TOP_LEFT)
 
-    def read_depth_buf(self):
-        """Read and return the current viewport's color buffer.
-
-        Returns
-        -------
-        depth_im : (h, w) float32
-            The depth buffer in linear units.
-        """
-        width, height = self.viewport_width, self.viewport_height
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
-        glReadBuffer(GL_FRONT)
-        depth_buf = glReadPixels(
-            0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT
-        )
-
-        depth_im = np.frombuffer(depth_buf, dtype=np.float32)
-        depth_im = depth_im.reshape((height, width))
-        depth_im = np.flip(depth_im, axis=0)
-
-        inf_inds = (depth_im == 1.0)
-        depth_im = 2.0 * depth_im - 1.0
-        z_near, z_far = self._latest_znear, self._latest_zfar
-        noninf = np.logical_not(inf_inds)
-        if z_far is None:
-            depth_im[noninf] = 2 * z_near / (1.0 - depth_im[noninf])
-        else:
-            depth_im[noninf] = ((2.0 * z_near * z_far) /
-                                (z_far + z_near - depth_im[noninf] *
-                                (z_far - z_near)))
-        depth_im[inf_inds] = 0.0
-
-        # Resize for macos if needed
-        if sys.platform == 'darwin':
-            depth_im = self._resize_image(depth_im)
-
-        return depth_im
-
-    def read_color_buf(self):
-        """Read and return the current viewport's color buffer.
-
-        Alpha cannot be computed for an on-screen buffer.
-
-        Returns
-        -------
-        color_im : (h, w, 3) uint8
-            The color buffer in RGB byte format.
-        """
-        # Extract color image from frame buffer
-        width, height = self.viewport_width, self.viewport_height
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
-        glReadBuffer(GL_FRONT)
-        color_buf = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
-
-        # Re-format them into numpy arrays
-        color_im = np.frombuffer(color_buf, dtype=np.uint8)
-        color_im = color_im.reshape((height, width, 3))
-        color_im = np.flip(color_im, axis=0)
-
-        # Resize for macos if needed
-        if sys.platform == "darwin":
-            color_im = self._resize_image(color_im, True)
-
-        return color_im
-
-    def get_tex_image(self, tex_id, bind_target=GL_TEXTURE_2D, read_target=GL_TEXTURE_2D, width=None, height=None):
-        """Read and return the current viewport's color buffer.
-
-        Returns
-        -------
-        depth_im : (h, w) float32
-            The depth buffer in linear units.
-        """
-        # width, height = self.viewport_width, self.viewport_height
-        # width, height = 8192, 8192
-        # glBindFramebuffer(GL_READ_FRAMEBUFFER, self._shadow_fb)
-        # glReadBuffer(GL_NONE)
-        # depth_buf = glReadPixels(
-        #     0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT
-        # )
-
-        glBindTexture(bind_target, tex_id)
-        depth_buf = glGetTexImage(read_target, 0, GL_RGB, GL_FLOAT)
-
-        depth_im = np.frombuffer(depth_buf, dtype=np.float32)
-        if width is None:
-            height = int(depth_im.size**0.5)
-            width = height
-        depth_im = depth_im.reshape((height, width, 3))
-        depth_im = np.flip(depth_im, axis=0)
-
-        return depth_im
-
-        inf_inds = depth_im == 1.0
-        depth_im = 2.0 * depth_im - 1.0
-        z_near, z_far = self._latest_znear, self._latest_zfar
-        noninf = np.logical_not(inf_inds)
-        if z_far is None:
-            depth_im[noninf] = 2 * z_near / (1.0 - depth_im[noninf])
-        else:
-            depth_im[noninf] = (2.0 * z_near * z_far) / (z_far + z_near - depth_im[noninf] * (z_far - z_near))
-        depth_im[inf_inds] = 0.0
-
-        # # Resize for macos if needed
-        # if sys.platform == 'darwin':
-        #     depth_im = self._resize_image(depth_im)
-
-        return depth_im
-
     def delete(self):
         """Free all allocated OpenGL resources."""
         # Free shaders
@@ -496,7 +378,7 @@ class Renderer(object):
         self._configure_forward_pass_viewport(flags)
 
         # Clear it
-        if bool(flags & RenderFlags.SEG):
+        if flags & RenderFlags.SEG:
             glClearColor(0.0, 0.0, 0.0, 1.0)
             if seg_node_map is None:
                 seg_node_map = {}
@@ -505,10 +387,10 @@ class Renderer(object):
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        if not bool(flags & RenderFlags.SEG):
-            glEnable(GL_MULTISAMPLE)
-        else:
+        if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY:
             glDisable(GL_MULTISAMPLE)
+        else:
+            glEnable(GL_MULTISAMPLE)
 
         # Set up camera matrices
         V, P = self._get_camera_matrices(scene)
@@ -539,8 +421,6 @@ class Renderer(object):
             self.jit.forward_pass(
                 self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, floor_tex=floor_tex, env_idx=env_idx
             )
-            # self.jit.forward_pass(self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL,
-            #                       reflection_mat=np.diag(np.array([1.0, 1.0, -1.0, 1.0], dtype=np.float32)))
 
         # If doing offscreen render, copy result from framebuffer and return
         if flags & RenderFlags.OFFSCREEN:
@@ -571,12 +451,7 @@ class Renderer(object):
 
         self.jit.shadow_mapping_pass(self, V, P, flags, ProgramFlags.NONE, env_idx=env_idx)
 
-        # dep = self.get_depth_image(light.shadow_texture._texid)
-        # plt.imshow(dep)
-        # plt.show()
-        # plt.savefig('tmp/tmp_dep.jpg')
-
-    def _normals_pass(self, scene, flags, env_idx=-1):
+    def _normal_pass(self, scene, flags, env_idx=-1):
         # Set up viewport for render
         self._configure_forward_pass_viewport(flags)
         program = None
@@ -610,7 +485,7 @@ class Renderer(object):
                 program.set_uniform("V", V)
                 program.set_uniform("P", P)
                 program.set_uniform("normal_magnitude", 0.05 * primitive.scale)
-                program.set_uniform("normal_color", np.array([0.1, 0.1, 1.0, 1.0]))
+                program.set_uniform("normal_color", np.array((0.1, 0.1, 1.0, 1.0)))
 
                 # Finally, bind and draw the primitive
                 self._bind_and_draw_primitive(
@@ -682,7 +557,7 @@ class Renderer(object):
             wf = material.wireframe
             if flags & RenderFlags.FLIP_WIREFRAME:
                 wf = not wf
-            if (flags & RenderFlags.ALL_WIREFRAME) or wf:
+            if wf or flags & RenderFlags.ALL_WIREFRAME:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
             else:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
@@ -728,107 +603,31 @@ class Renderer(object):
         # Unbind mesh buffers
         primitive._unbind()
 
-    def _bind_lighting(self, scene, program, node, flags):
-        """Bind all lighting uniform values for a scene."""
-        max_n_lights = self._compute_max_n_lights(flags)
-
-        n_d = min(len(scene.directional_light_nodes), max_n_lights[0])
-        n_s = min(len(scene.spot_light_nodes), max_n_lights[1])
-        n_p = min(len(scene.point_light_nodes), max_n_lights[2])
-        program.set_uniform("ambient_light", scene.ambient_light)
-        program.set_uniform("n_directional_lights", n_d)
-        program.set_uniform("n_spot_lights", n_s)
-        program.set_uniform("n_point_lights", n_p)
-        plc = 0
-        slc = 0
-        dlc = 0
-
-        light_nodes = scene.light_nodes
-        if (
-            len(scene.directional_light_nodes) > max_n_lights[0]
-            or len(scene.spot_light_nodes) > max_n_lights[1]
-            or len(scene.point_light_nodes) > max_n_lights[2]
-        ):
-            light_nodes = self._sorted_nodes_by_distance(scene, scene.light_nodes, node)
-
-        for n in light_nodes:
-            light = n.light
-            pose = scene.get_pose(n)
-            position = pose[:3, 3]
-            direction = -pose[:3, 2]
-
-            if isinstance(light, PointLight):
-                if plc == max_n_lights[2]:
-                    continue
-                b = "point_lights[{}].".format(plc)
-                plc += 1
-                shadow = bool(flags & RenderFlags.SHADOWS_POINT)
-                program.set_uniform(b + "position", position)
-            elif isinstance(light, SpotLight):
-                if slc == max_n_lights[1]:
-                    continue
-                b = "spot_lights[{}].".format(slc)
-                slc += 1
-                shadow = bool(flags & RenderFlags.SHADOWS_SPOT)
-                las = 1.0 / max(0.001, np.cos(light.innerConeAngle) - np.cos(light.outerConeAngle))
-                lao = -np.cos(light.outerConeAngle) * las
-                program.set_uniform(b + "direction", direction)
-                program.set_uniform(b + "position", position)
-                program.set_uniform(b + "light_angle_scale", las)
-                program.set_uniform(b + "light_angle_offset", lao)
-            else:
-                if dlc == max_n_lights[0]:
-                    continue
-                b = "directional_lights[{}].".format(dlc)
-                dlc += 1
-                shadow = bool(flags & RenderFlags.SHADOWS_DIRECTIONAL)
-                program.set_uniform(b + "direction", direction)
-
-            program.set_uniform(b + "color", light.color)
-            program.set_uniform(b + "intensity", light.intensity)
-            # if light.range is not None:
-            #     program.set_uniform(b + 'range', light.range)
-            # else:
-            #     program.set_uniform(b + 'range', 0)
-
-            if shadow:
-                self._bind_texture(light.shadow_texture, b + "shadow_map", program)
-                if not isinstance(light, PointLight):
-                    V, P = self._get_light_cam_matrices(scene, n, flags)
-                    program.set_uniform(b + "light_matrix", P.dot(V))
-                else:
-                    raise NotImplementedError("Point light shadows not implemented")
-
-    def _sorted_nodes_by_distance(self, scene, nodes, compare_node):
-        nodes = list(nodes)
-        if compare_node is not None:
-            compare_posn = scene.get_pose(compare_node)[:3, 3]
-            nodes.sort(key=lambda n: np.linalg.norm(scene.get_pose(n)[:3, 3] - compare_posn))
-        return nodes
-
     ###########################################################################
     # Context Management
     ###########################################################################
 
     def _update_context(self, scene, flags):
-        # Update meshes
-        scene_meshes = scene.meshes
+        # Get existing and new meshes
+        scene_meshes_new = scene.meshes.copy()
+        scene_meshes_old = self._meshes
 
-        # Add new meshes to context
-        for mesh in scene_meshes - self._meshes:
-            for p in mesh.primitives:
-                p._add_to_context()
-
-        # Remove old meshes from context
-        for mesh in self._meshes - scene_meshes:
+        # Remove from context old meshes that are now irrelevant
+        for mesh in scene_meshes_old - scene_meshes_new:
             for p in mesh.primitives:
                 p.delete()
 
-        self._meshes = scene_meshes.copy()
+        # Update set of meshes right away, so that the context can be cleaned up correctly in case of failure
+        self._meshes = scene_meshes_new
+
+        # Add new meshes to context
+        for mesh in scene_meshes_new - scene_meshes_old:
+            for p in mesh.primitives:
+                p._add_to_context()
 
         # Update mesh textures
         mesh_textures = set()
-        for m in scene_meshes:
+        for m in scene_meshes_new:
             for p in m.primitives:
                 mesh_textures |= p.material.textures
 
@@ -1075,7 +874,7 @@ class Renderer(object):
         # If using offscreen render, bind main framebuffer
         if flags & RenderFlags.OFFSCREEN:
             self._configure_main_framebuffer()
-            if flags & RenderFlags.SEG:
+            if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY:
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb)
             else:
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb_ms)
@@ -1232,9 +1031,9 @@ class Renderer(object):
         self._main_fb_dims = (None, None)
 
     def _read_main_framebuffer(self, scene, flags):
-        width, height = self._main_fb_dims[0], self._main_fb_dims[1]
+        width, height = self._main_fb_dims
 
-        if not (flags & RenderFlags.SEG):
+        if not (flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):
             # Bind framebuffer and blit buffers
             glBindFramebuffer(GL_READ_FRAMEBUFFER, self._main_fb_ms)
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self._main_fb)
@@ -1250,137 +1049,32 @@ class Renderer(object):
                 z_far = -1.0
             depth_im = self.jit.read_depth_buf(width, height, z_near, z_far)
 
-            # Resize for macos if needed
-            if sys.platform == "darwin":
-                depth_im = self._resize_image(depth_im)
-        else:
-            depth_im = None
+            # Resize
+            depth_im = self._resize_image(depth_im, antialias=False)
 
         if flags & RenderFlags.DEPTH_ONLY:
-            return depth_im
+            return (depth_im,)
 
         # Read color
         color_im = self.jit.read_color_buf(width, height, flags & RenderFlags.RGBA)
 
-        # Resize for macos if needed
-        if sys.platform == "darwin":
-            color_im = self._resize_image(color_im, not (flags & RenderFlags.SEG))
+        # Resize
+        color_im = self._resize_image(color_im, antialias=not flags & RenderFlags.SEG)
 
-        return color_im, depth_im
+        if flags & RenderFlags.RET_DEPTH:
+            return color_im, depth_im
+        return (color_im,)
 
-    def _resize_image(self, value, antialias=False):
-        """If needed, rescale the render for MacOS."""
+    def _resize_image(self, value, antialias):
+        """Rescale the generated image if necessary."""
+        if self.dpscale == 1:
+            return value
+
         img = PIL.Image.fromarray(value)
-        resample = PIL.Image.NEAREST
-        if antialias:
-            resample = PIL.Image.BILINEAR
         size = (self.viewport_width // self.dpscale, self.viewport_height // self.dpscale)
+        resample = PIL.Image.BILINEAR if antialias else PIL.Image.NEAREST
         img = img.resize(size, resample=resample)
-        return np.array(img)
-
-    ###########################################################################
-    # Shadowmap Debugging
-    ###########################################################################
-
-    def _forward_pass_no_reset(self, scene, flags, env_idx=-1):
-        # Set up camera matrices
-        V, P = self._get_camera_matrices(scene)
-
-        # Now, render each object in sorted order
-        for node in scene.sorted_mesh_nodes():
-            mesh = node.mesh
-
-            # Skip the mesh if it's not visible
-            if not mesh.is_visible:
-                continue
-
-            for primitive in mesh.primitives:
-
-                # First, get and bind the appropriate program
-                program = self._get_primitive_program(primitive, flags, ProgramFlags.USE_MATERIAL)
-                program._bind()
-
-                # Set the camera uniforms
-                program.set_uniform("V", V)
-                program.set_uniform("P", P)
-                program.set_uniform("cam_pos", scene.get_pose(scene.main_camera_node)[:3, 3])
-
-                # Next, bind the lighting
-                if not flags & RenderFlags.DEPTH_ONLY and not flags & RenderFlags.FLAT:
-                    self._bind_lighting(scene, program, node, flags)
-
-                # Finally, bind and draw the primitive
-                self._bind_and_draw_primitive(
-                    primitive=primitive,
-                    pose=scene.get_pose(node),
-                    program=program,
-                    flags=flags,
-                    env_idx=env_idx,
-                )
-                self._reset_active_textures()
-
-        # Unbind the shader and flush the output
-        if program is not None:
-            program._unbind()
-        glFlush()
-
-    def _render_light_shadowmaps(self, scene, light_nodes, flags, tile=False, env_idx=-1):
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
-        glClearColor(*scene.bg_color)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glEnable(GL_DEPTH_TEST)
-        glDepthMask(GL_TRUE)
-        glDepthFunc(GL_LESS)
-        glDepthRange(0.0, 1.0)
-
-        w, h = self.viewport_width, self.viewport_height
-        viewport_dims = {
-            (0, 2): [0, h // 2, w // 2, h],
-            (1, 2): [w // 2, h // 2, w, h],
-            (0, 3): [0, h // 2, w // 2, h],
-            (1, 3): [w // 2, h // 2, w, h],
-            (2, 3): [0, 0, w // 2, h // 2],
-            (0, 4): [0, h // 2, w // 2, h],
-            (1, 4): [w // 2, h // 2, w, h],
-            (2, 4): [0, 0, w // 2, h // 2],
-            (3, 4): [w // 2, 0, w, h // 2],
-        }
-
-        num_nodes = len(light_nodes)
-        for i, ln in enumerate(light_nodes):
-            light = ln.light
-
-            if light.shadow_texture is None:
-                raise ValueError("Light does not have a shadow texture")
-
-            if tile:
-                glViewport(*viewport_dims[(i, num_nodes + 1)])
-            else:
-                glViewport(0, 0, self.viewport_width, self.viewport_height)
-
-            program = self._get_debug_quad_program()
-            program._bind()
-            self._bind_texture(light.shadow_texture, "depthMap", program)
-            self._render_debug_quad()
-            self._reset_active_textures()
-            glFlush()
-            if not tile:
-                return
-        glViewport(*viewport_dims[(num_nodes, num_nodes + 1)])
-        self._forward_pass_no_reset(scene, flags, env_idx=env_idx)
-
-    def _get_debug_quad_program(self):
-        program = self._program_cache.get_program(vertex_shader="debug_quad.vert", fragment_shader="debug_quad.frag")
-        if not program._in_context():
-            program._add_to_context()
-        return program
-
-    def _render_debug_quad(self):
-        x = glGenVertexArrays(1)
-        glBindVertexArray(x)
-        glDrawArrays(GL_TRIANGLES, 0, 6)
-        glBindVertexArray(0)
-        glDeleteVertexArrays(1, [x])
+        return np.array(img, copy=False)
 
     def reload_program(self):
         self._program_cache.clear()

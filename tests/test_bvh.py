@@ -1,4 +1,5 @@
 import torch
+import taichi as ti
 import numpy as np
 import pytest
 
@@ -117,12 +118,17 @@ def test_build_tree(lbvh):
                 assert_allclose(parent_max, parent_max_expected, atol=1e-6, rtol=1e-5)
 
 
+@ti.kernel
+def query_kernel(lbvh: ti.template(), aabbs: ti.template()):
+    lbvh.query(aabbs)
+
+
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
     aabbs = lbvh.aabbs
 
     # Query the tree
-    lbvh.query(aabbs)
+    query_kernel(lbvh, aabbs)
 
     query_result_count = lbvh.query_result_count.to_numpy()
     if query_result_count > lbvh.max_n_query_results:

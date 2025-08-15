@@ -23,12 +23,12 @@ def main():
             camera_fov=40,
             max_FPS=200,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             enable_joint_limit=False,
             enable_collision=False,
             gravity=(0, 0, -0),
         ),
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################

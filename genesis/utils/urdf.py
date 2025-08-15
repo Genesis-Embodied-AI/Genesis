@@ -1,5 +1,6 @@
 import os
 from itertools import chain
+from pathlib import Path
 
 import trimesh
 import numpy as np
@@ -54,7 +55,7 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
 
 
 def parse_urdf(morph, surface):
-    if isinstance(morph.file, str):
+    if isinstance(morph.file, (str, Path)):
         path = os.path.join(get_assets_dir(), morph.file)
         robot = urdfpy.URDF.load(path)
     else:
@@ -262,6 +263,7 @@ def parse_urdf(morph, surface):
             gs.raise_exception(f"Unsupported URDF joint type: {joint.joint_type}")
 
         j_info["dofs_invweight"] = np.zeros(j_info["n_dofs"])
+        j_info["dofs_frictionloss"] = np.zeros(j_info["n_dofs"])
         j_info["sol_params"] = gu.default_solver_params()
         j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
         j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])

@@ -20,10 +20,10 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             # constraint_solver=gs.constraint_solver.Newton,
         ),
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################

@@ -16,30 +16,18 @@ from OpenGL.GL import *
 import genesis as gs
 from genesis.vis.rasterizer_context import RasterizerContext
 
+# Importing Tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
+# Note that destroying the window will cause segfault at exit.
 if sys.platform.startswith("darwin"):
-    # Mac OS
     from tkinter import Tk
-    from tkinter import filedialog
-else:
-    try:
-        from Tkinter import Tk
-        from Tkinter import tkFileDialog as filedialog
-    except Exception:
-        try:
-            from tkinter import Tk
-            from tkinter import filedialog as filedialog
-        except Exception:
-            pass
+    from tkinter import filedialog as filedialog
 
-
-try:
     root = Tk()
     root.withdraw()
-except:
-    pass
+else:
+    root = None
 
 import pyglet
-from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from pyglet import clock
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
@@ -246,6 +234,7 @@ class Viewer(pyglet.window.Window):
             "cull_faces": True,
             "offscreen": False,
             "point_size": 1.0,
+            "rgb": True,
             "seg": False,
             "depth": False,
         }
@@ -280,10 +269,6 @@ class Viewer(pyglet.window.Window):
                 self._render_flags[key] = kwargs[key]
             elif key in self.viewer_flags:
                 self._viewer_flags[key] = kwargs[key]
-
-        # # TODO MAC OS BUG FOR SHADOWS
-        # if sys.platform == 'darwin':
-        #     self._render_flags['shadows'] = False
 
         self._registered_keys = {}
         if registered_keys is not None:
@@ -633,11 +618,12 @@ class Viewer(pyglet.window.Window):
 
         self._offscreen_result_semaphore.release()
 
-    def render_offscreen(self, camera_node, render_target, depth=False, seg=False, normal=False):
-        if seg:
-            self.render_flags["seg"] = True
-        if depth:
-            self.render_flags["depth"] = True
+    def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
+        if rgb and seg:
+            gs.raise_exception("RGB and segmentation map cannot be rendered in the same forward pass.")
+        self.render_flags["rgb"] = rgb
+        self.render_flags["seg"] = seg
+        self.render_flags["depth"] = depth
         self.pending_offscreen_camera = (camera_node, render_target, normal)
         if self._run_in_thread:
             # send_offscreen_request
@@ -647,10 +633,9 @@ class Viewer(pyglet.window.Window):
         else:
             # Force offscreen rendering synchronously
             self.draw_offscreen()
-        if seg:
-            self.render_flags["seg"] = False
-        if depth:
-            self.render_flags["depth"] = False
+        self.render_flags["rgb"] = True
+        self.render_flags["seg"] = False
+        self.render_flags["depth"] = False
         return self.offscreen_result
 
     def wait_until_initialized(self):
@@ -675,7 +660,7 @@ class Viewer(pyglet.window.Window):
         camera, target, normal = self.pending_offscreen_camera
         self.clear()
         retval = self._render(camera, target, normal)
-        self.offscreen_result = retval if retval else [None, None]
+        self.offscreen_result = retval if retval else (None, None)
         self.pending_offscreen_camera = None
         self.render_flags["offscreen"] = False
         self._offscreen_result_semaphore.release()
@@ -920,6 +905,9 @@ class Viewer(pyglet.window.Window):
                 self.save_video()
                 self.set_caption(self.viewer_flags["window_title"])
             else:
+                # Importing moviepy is very slow and not used very often. Let's delay import.
+                from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
+
                 self.video_recorder = FFMPEG_VideoWriter(
                     filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
                     fps=self.viewer_flags["refresh_rate"],
@@ -1040,6 +1028,8 @@ class Viewer(pyglet.window.Window):
         self._trackball = Trackball(self._default_camera_pose, self.viewport_size, scale, centroid)
 
     def _get_save_filename(self, file_exts):
+        global root
+
         file_types = {
             "mp4": ("video files", "*.mp4"),
             "png": ("png files", "*.png"),
@@ -1048,14 +1038,28 @@ class Viewer(pyglet.window.Window):
             "all": ("all files", "*"),
         }
         filetypes = [file_types[x] for x in file_exts]
+        save_dir = self.viewer_flags["save_directory"]
+        if save_dir is None:
+            save_dir = os.getcwd()
+
+        # Importing tkinter is very slow and not used very often. Let's delay import.
         try:
-            save_dir = self.viewer_flags["save_directory"]
-            if save_dir is None:
-                save_dir = os.getcwd()
-            filename = filedialog.asksaveasfilename(
-                initialdir=save_dir, title="Select file save location", filetypes=filetypes
+            from tkinter import Tk
+            from tkinter import filedialog as filedialog
+        except ImportError:
+            from Tkinter import Tk
+            from Tkinter import tkFileDialog as filedialog
+
+        try:
+            if root is None:
+                root = Tk()
+                root.withdraw()
+            dialog = filedialog.SaveAs(
+                root, initialdir=save_dir, title="Select file save location", filetypes=filetypes
             )
+            filename = dialog.show()
         except Exception:
+            gs.logger.warning("Failed to open file save location dialog.")
             return None
 
         if not filename:
@@ -1066,11 +1070,12 @@ class Viewer(pyglet.window.Window):
         filename = self._get_save_filename(["png", "jpg", "gif", "all"])
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)
-            imageio.imwrite(filename, self._renderer.read_color_buf())
+            data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
+            imageio.imwrite(filename, img_arr)
 
     def _record(self):
         """Save another frame for the GIF."""
-        data = self._renderer.read_color_buf()
+        data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
         if not np.all(data == 0.0):
             self.video_recorder.write_frame(data)
 
@@ -1141,8 +1146,13 @@ class Viewer(pyglet.window.Window):
 
         if self.render_flags["depth"]:
             flags |= RenderFlags.RET_DEPTH
+            if not (self.render_flags["rgb"] or self.render_flags["seg"]):
+                flags |= RenderFlags.DEPTH_ONLY
 
-        retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+        if self.render_flags["rgb"] or self.render_flags["depth"] or self.render_flags["seg"]:
+            retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+        else:
+            retval = ()
 
         if normal:
             class CustomShaderCache:
@@ -1165,8 +1175,8 @@ class Viewer(pyglet.window.Window):
             if self.render_flags["env_separate_rigid"]:
                 flags |= RenderFlags.ENV_SEPARATE
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, _ = renderer.render(scene, flags, is_first_pass=False)
-            retval = retval + (normal_arr,)
+            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False)
+            retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache
 
@@ -1234,7 +1244,7 @@ class Viewer(pyglet.window.Window):
         except OpenGL.error.Error:
             # Invalid OpenGL context. Closing before raising.
             self.close()
-            return
+            raise
 
         # At this point, we are all set to display the graphical window, finally!
         self.set_visible(True)

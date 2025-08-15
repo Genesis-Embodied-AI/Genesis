@@ -4,11 +4,9 @@ import pickle as pkl
 import time
 from itertools import combinations
 
-import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 from matplotlib.patches import FancyArrowPatch
-from mpl_toolkits.mplot3d import proj3d
 
 try:
     from pygel3d import graph, hmesh
@@ -220,6 +218,9 @@ class Arrow3D(FancyArrowPatch):
         self._verts3d = xs, ys, zs
 
     def do_3d_projection(self, renderer=None):
+        # Importing mpl_toolkits is very slow and not used very often. Let's delay import.
+        from mpl_toolkits.mplot3d import proj3d
+
         xs3d, ys3d, zs3d = self._verts3d
         xs, ys, zs = proj3d.proj_transform(xs3d, ys3d, zs3d, self.axes.M)
         self.set_positions((xs[0], ys[0]), (xs[1], ys[1]))
@@ -238,6 +239,9 @@ def plot_nxgraph(
     node_size=100,
     plot_node_num=True,
 ):
+    # Importing matplotlib is very slow and not used very often. Let's delay import.
+    import matplotlib.pyplot as plt
+
     if pos is None:
         pos = nx.spring_layout(G, dim=3, seed=779)
 

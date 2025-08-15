@@ -6,7 +6,7 @@ from .options import Options
 from .surfaces import Surface
 
 
-class Renderer(Options):
+class RendererOptions(Options):
     """
     This is the base class for all `gs.renderers.*` classes.
     Note that this is not an actual renderer, but rather a renderer configuration specifying which renderer to use and its parameters.
@@ -15,7 +15,7 @@ class Renderer(Options):
     pass
 
 
-class Rasterizer(Renderer):
+class Rasterizer(RendererOptions):
     """
     Rasterizer renderer. This has no parameter to be configured.
 
@@ -27,7 +27,7 @@ class Rasterizer(Renderer):
     pass
 
 
-class RayTracer(Renderer):
+class RayTracer(RendererOptions):
     """
     RayTracer renderer.
 
@@ -96,3 +96,23 @@ class RayTracer(Renderer):
                 self.env_quat = gs.utils.geom.xyz_to_quat(np.array(self.env_euler), rpy=True, degrees=True)
             else:
                 gs.logger.warning("`env_euler` is ignored when `env_quat` is specified.")
+
+        if self.env_surface is not None:
+            self.env_surface.update_texture()
+
+
+class BatchRenderer(RendererOptions):
+    """
+    BatchRenderer renderer.
+
+    Note
+    ----
+    This renderer is used to render the scene in a batch.
+
+    Parameters
+    ----------
+    use_rasterizer : bool, optional
+        Whether to use the rasterizer renderer. Defaults to False.
+    """
+
+    use_rasterizer: bool = False

@@ -157,19 +157,11 @@ class Raytracer:
         self.lights = []
         for light in options.lights:
             light_intensity = light.get("intensity", 1.0)
-            self.lights.append(
-                SphereLight(
-                    radius=light["radius"],
-                    pos=light["pos"],
-                    surface=gs.surfaces.Emission(
-                        color=(
-                            light["color"][0] * light_intensity,
-                            light["color"][1] * light_intensity,
-                            light["color"][2] * light_intensity,
-                        ),
-                    ),
-                )
+            light_surface = gs.surfaces.Emission(
+                color=map(lambda x: x * light_intensity, light["color"]),
             )
+            light_surface.update_texture()
+            self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
 
         LuisaRenderPy.init(
             context_path=LRP_PATH,
@@ -604,7 +596,7 @@ class Raytracer:
         if camera_model == "pinhole":
             self._cameras[camera_name] = LuisaRenderPy.PinholeCamera(
                 name=camera_name,
-                pose=self.get_transform(camera.transform),
+                pose=self.get_transform(np.eye(4)),
                 film=LuisaRenderPy.Film(resolution=camera.res),
                 filter=LuisaRenderPy.Filter(),
                 spp=camera.spp,
@@ -613,7 +605,7 @@ class Raytracer:
         elif camera_model == "thinlens":
             self._cameras[camera_name] = LuisaRenderPy.ThinLensCamera(
                 name=camera_name,
-                pose=self.get_transform(camera.transform),
+                pose=self.get_transform(np.eye(4)),
                 film=LuisaRenderPy.Film(resolution=camera.res),
                 filter=LuisaRenderPy.Filter(),
                 spp=camera.spp,

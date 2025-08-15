@@ -3,13 +3,11 @@ requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# name = "genesis-world-nightly"
-# version = "0.0.3"
 name = "genesis-world"
-version = "0.2.1"
+version = "0.3.0"
 description = "A universal and generative physics engine"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
     "taichi >= 1.7.2",
@@ -57,11 +55,58 @@ dependencies = [
     "z3-solver",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
-    # Motion Planning library
-    # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
-    #          Fix OMPL DLL search directory.
-    "ompl>=1.7.0; platform_system != 'Windows'"
+    # Native batch renderer specifically designed for Genesis
+    "gs-madrona>=0.0.2; platform_system == 'Linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
+    # Used for mesh simplification
+    "fast_simplification>=0.1.12",
+    # Surface reconstruction library for particle data from SPH simulations
+    "pysplashsurf",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pytest",
+    "pytest-xdist",
+    "pytest-forked",
+    "pytest-random-order",
+    "pytest-print",
+    "pytest-rerunfailures",
+    "syrupy",
+    "huggingface_hub",
+    "wandb",
+    "ipython",
+]
+docs = [
+    # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
+    # See https://github.com/kivy/kivy/issues/8230 which tracks this issue.
+    "sphinx==6.2.1",
+    "sphinx-autobuild",
+    "pydata_sphinx_theme",
+    # For spelling
+    "sphinxcontrib.spelling",
+    # Type hints support
+    "sphinx-autodoc-typehints",
+    # Copy button for code snippets
+    "sphinx_copybutton",
+    # Markdown parser
+    "myst-parser",
+    "sphinx-subfigure",
+    "sphinxcontrib-video",
+    "sphinx-togglebutton",
+    "sphinx_design",
+]
+render = [
+    "pybind11[global]",
+    "open3d",
+]
+usd = [
+    # Used for parsing `.usd` mesh files
+    "usd-core",
+]
+
+[project.scripts]
+gs = "genesis._main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -92,7 +137,7 @@ addopts = [
     "--dist=worksteal",
     "--random-order-bucket=global",
     "--random-order-seed=0",
-    "--max-worker-restart=0",
+    # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=40.0",
     "-m not benchmarks",
@@ -106,41 +151,3 @@ markers = [
     "required: marks minimal test set that must pass systematically on any environment before merging.",
 ]
 log_cli_level = "WARNING"
-
-[project.scripts]
-gs = "genesis._main:main"
-
-[project.optional-dependencies]
-dev = [
-    "black",
-    "pytest",
-    "pytest-xdist",
-    "pytest-forked",
-    "pytest-random-order",
-    "pytest-print",
-    "pytest-rerunfailures",
-    "huggingface_hub",
-    "wandb",
-]
-docs = [
-    # Note that currently sphinx 7 does not work, so we must use v6.2.1. See https://github.com/kivy/kivy/issues/8230 which tracks this issue. Once fixed we can use a later version
-    "sphinx==6.2.1",
-    "sphinx-autobuild",
-    "pydata_sphinx_theme",
-    # For spelling
-    "sphinxcontrib.spelling",
-    # Type hints support
-    "sphinx-autodoc-typehints",
-    # Copy button for code snippets
-    "sphinx_copybutton",
-    # Markdown parser
-    "myst-parser",
-    "sphinx-subfigure",
-    "sphinxcontrib-video",
-    "sphinx-togglebutton",
-    "sphinx_design",
-]
-render = [
-    "pybind11[global]",
-    "open3d",
-]
