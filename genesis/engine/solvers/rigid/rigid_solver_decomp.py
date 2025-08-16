@@ -1,27 +1,26 @@
-from typing import Literal, TYPE_CHECKING
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-import torch
 import numpy.typing as npt
 import taichi as ti
+import torch
 
 import genesis as gs
-from genesis.engine.entities.base_entity import Entity
-from genesis.options.solvers import RigidOptions
-import genesis.utils.geom as gu
-from genesis.utils import linalg as lu
-from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
-from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
-from genesis.engine.states.solvers import RigidSolverState
-from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
+from genesis.engine.entities.base_entity import Entity
+from genesis.engine.states.solvers import RigidSolverState
+from genesis.options.solvers import RigidOptions
+from genesis.styles import colors, formats
+from genesis.utils import linalg as lu
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_field_to_torch
 
+from ....utils.sdf_decomp import SDF
 from ..base_solver import Solver
 from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from ....utils.sdf_decomp import SDF
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -145,6 +144,8 @@ class RigidSolver(Solver):
         self._cur_step = -1
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
+        from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
+
         if isinstance(material, gs.materials.Avatar):
             EntityClass = AvatarEntity
             if visualize_contact:

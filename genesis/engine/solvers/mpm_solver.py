@@ -1,22 +1,22 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import taichi as ti
 import torch
 
 import genesis as gs
-from genesis.options.solvers import MPMOptions
 import genesis.utils.geom as gu
-from genesis.engine.boundaries import CubeBoundary
-from genesis.engine.entities import MPMEntity
-from genesis.engine.states.solvers import MPMSolverState
 import genesis.utils.sdf_decomp as sdf_decomp
+from genesis.engine.boundaries import CubeBoundary
+from genesis.engine.states.solvers import MPMSolverState
+from genesis.options.solvers import MPMOptions
 
 from .base_solver import Solver
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
-    from genesis.engine.solvers.base_solver import Solver
     from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
 
 
 @ti.data_oriented
@@ -233,6 +233,8 @@ class MPMSolver(Solver):
                 )
 
     def add_entity(self, idx, material, morph, surface):
+        from genesis.engine.entities import MPMEntity
+
         self.add_material(material)
 
         # create entity

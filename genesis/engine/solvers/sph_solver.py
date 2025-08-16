@@ -4,7 +4,6 @@ import taichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
-from genesis.engine.entities import SPHEntity
 from genesis.engine.states.solvers import SPHSolverState
 
 from .base_solver import Solver
@@ -152,6 +151,8 @@ class SPHSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def add_entity(self, idx, material, morph, surface):
+        from genesis.engine.entities import SPHEntity
+
         entity = SPHEntity(
             scene=self.scene,
             solver=self,

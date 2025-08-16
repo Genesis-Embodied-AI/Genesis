@@ -6,12 +6,6 @@ import taichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
-from genesis.engine.entities import (
-    PBD2DEntity,
-    PBD3DEntity,
-    PBDFreeParticleEntity,
-    PBDParticleEntity,
-)
 from genesis.engine.states.solvers import PBDSolverState
 from genesis.utils.geom import SpatialHasher
 
@@ -236,6 +230,8 @@ class PBDSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def add_entity(self, idx, material, morph, surface):
+        from genesis.engine.entities import PBD2DEntity, PBD3DEntity, PBDFreeParticleEntity, PBDParticleEntity
+
         if isinstance(material, gs.materials.PBD.Cloth):
             entity = PBD2DEntity(
                 scene=self.scene,

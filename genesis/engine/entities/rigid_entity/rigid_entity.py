@@ -8,6 +8,7 @@ import torch
 import trimesh
 
 import genesis as gs
+import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
 from genesis.engine.materials.base import Material
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
@@ -1330,15 +1331,16 @@ class RigidEntity(Entity):
     ):
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             # save original qpos
             # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
-            self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]]
+            self._IK_qpos_orig[qs_idx[i_q_], i_b] = self._solver.qpos[qs_idx[i_q_], i_b]
             # set new qpos
-            self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
+            self._solver.qpos[qs_idx[i_q_], i_b] = qpos[i_b_, i_q_]
             # run FK
-            self._solver._func_forward_kinematics_entity(
+            rigid_solver_decomp.func_forward_kinematics_entity(
                 self._idx_in_solver,
-                envs_idx[i_b_],
+                i_b,
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.joints_state,
@@ -1352,19 +1354,21 @@ class RigidEntity(Entity):
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
-                links_pos[i_b_, i_l_, i] = self._solver.links_state.pos[links_idx[i_l_], envs_idx[i_b_]]
+                links_pos[i_b_, i_l_, i] = self._solver.links_state.pos[links_idx[i_l_], i_b]
             for i in ti.static(range(4)):
-                links_quat[i_b_, i_l_, i] = self._solver.links_state.quat[links_idx[i_l_], envs_idx[i_b_]]
+                links_quat[i_b_, i_l_, i] = self._solver.links_state.quat[links_idx[i_l_], i_b]
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
             # restore original qpos
-            self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
+            self._solver.qpos[qs_idx[i_q_], i_b] = self._IK_qpos_orig[qs_idx[i_q_], i_b]
             # run FK
-            self._solver._func_forward_kinematics_entity(
+            rigid_solver_decomp.func_forward_kinematics_entity(
                 self._idx_in_solver,
-                envs_idx[i_b_],
+                i_b,
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.joints_state,

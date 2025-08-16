@@ -1,10 +1,10 @@
 import math
+
 import numpy as np
 import taichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.entities import SFParticleEntity
 from genesis.engine.boundaries import CubeBoundary
 
 from .base_solver import Solver

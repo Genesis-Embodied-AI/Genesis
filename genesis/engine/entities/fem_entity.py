@@ -7,11 +7,10 @@ import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, to_gs_tensor, tensor_to_array
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, tensor_to_array, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -829,6 +828,8 @@ class FEMEntity(Entity):
             link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
             link_idx = -1
         else:
+            from genesis.engine.entities.rigid_entity import RigidLink
+
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
             link_init_pos = self._sanitize_input_tensor(link.get_pos(), dtype=gs.tc_float)
             link_init_quat = self._sanitize_input_tensor(link.get_quat(), dtype=gs.tc_float)
