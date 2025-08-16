@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
-import taichi as ti
+import gstaichi as ti
 
 from ..rigid_entity import RigidEntity
 from .avatar_joint import AvatarJoint

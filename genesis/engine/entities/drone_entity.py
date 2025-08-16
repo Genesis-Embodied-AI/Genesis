@@ -2,7 +2,7 @@ import os
 import xml.etree.ElementTree as ET
 
 import torch
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.misc as mu

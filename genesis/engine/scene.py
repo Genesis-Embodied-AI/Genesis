@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-import taichi as ti
+import gstaichi as ti
 from numpy.typing import ArrayLike
 
 import genesis as gs

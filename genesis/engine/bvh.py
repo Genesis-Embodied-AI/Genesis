@@ -1,5 +1,5 @@
 import genesis as gs
-import taichi as ti
+import gstaichi as ti
 from genesis.repr_base import RBC
 import numpy as np
 

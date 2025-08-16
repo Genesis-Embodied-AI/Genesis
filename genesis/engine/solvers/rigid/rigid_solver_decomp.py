@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
+import gstaichi as ti
 import numpy as np
 import numpy.typing as npt
-import taichi as ti
 import torch
 
 import genesis as gs
@@ -2597,7 +2597,7 @@ def kernel_init_dof_fields(
     # taichi variables
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
-    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
+    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to gstaichi
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):

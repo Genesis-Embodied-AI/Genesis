@@ -4,7 +4,7 @@ import os
 import inspect
 from typing import Any, Type, cast
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import numpy as np
@@ -1953,7 +1953,7 @@ class DataManager:
         self.entities_state = get_entities_state(solver)
 
 
-# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
+# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to gstaichi
 DofsState = ti.template() if not use_ndarray else StructDofsState
 DofsInfo = ti.template() if not use_ndarray else StructDofsInfo
 GeomsState = ti.template() if not use_ndarray else StructGeomsState

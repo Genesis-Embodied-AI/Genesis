@@ -3,7 +3,7 @@ from itertools import chain
 from typing import Literal, TYPE_CHECKING
 
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import torch
 import trimesh
 

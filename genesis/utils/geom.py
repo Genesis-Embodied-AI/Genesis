@@ -5,7 +5,7 @@ import numba as nb
 import torch
 import torch.nn.functional as F
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 

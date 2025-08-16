@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import taichi as ti
+import gstaichi as ti
 import torch
 
 import genesis as gs

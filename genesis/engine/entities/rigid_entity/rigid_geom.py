@@ -6,7 +6,7 @@ import igl
 import numpy as np
 from numpy.typing import NDArray
 import skimage
-import taichi as ti
+import gstaichi as ti
 import torch
 import trimesh
 
