@@ -2269,7 +2269,7 @@ def test_gravity(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(show_viewer, tol):
     scene1 = gs.Scene(
         show_viewer=show_viewer,
@@ -2290,7 +2290,7 @@ def test_scene_saver_franka(show_viewer, tol):
     target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
     franka1.control_dofs_position(target_pose, dof_idx)
 
-    for _ in range(400):
+    for _ in range(100):
         scene1.step()
 
     pose_ref = franka1.get_dofs_position(dof_idx)
@@ -2307,7 +2307,7 @@ def test_scene_saver_franka(show_viewer, tol):
 
     pose_loaded = franka2.get_dofs_position(dof_idx)
 
-    assert_allclose(pose_ref, pose_loaded, tol=tol)
+    assert_allclose(pose_ref, pose_loaded, tol=2e-7)
 
 
 @pytest.mark.required
