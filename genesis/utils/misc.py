@@ -10,7 +10,7 @@ import sys
 import os
 from dataclasses import dataclass
 from collections import OrderedDict
-from typing import Any, Type, NoReturn
+from typing import Any, Type, NoReturn, Optional
 
 import numpy as np
 import cpuinfo
@@ -175,12 +175,13 @@ def get_platform():
     assert False, f"Unknown platform name {name}"
 
 
-def get_device(backend: gs_backend):
+def get_device(backend: gs_backend, device_idx: Optional[int] = None):
     if backend == gs_backend.cuda:
         if not torch.cuda.is_available():
             gs.raise_exception("torch cuda not available")
 
-        device_idx = torch.cuda.current_device()
+        if device_idx is None:
+            device_idx = torch.cuda.current_device()
         device = torch.device("cuda", device_idx)
         device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
@@ -192,13 +193,14 @@ def get_device(backend: gs_backend):
 
         # on mac, cpu and gpu are in the same device
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps", 0)
+        device = torch.device("mps", device_idx)
 
     elif backend == gs_backend.vulkan:
         if torch.cuda.is_available():
             device, device_name, total_mem, _ = get_device(gs_backend.cuda)
         elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
-            device_idx = torch.xpu.current_device()
+            if device_idx is None:
+                device_idx = torch.xpu.current_device()
             device = torch.device("xpu", device_idx)
             device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
@@ -220,7 +222,7 @@ def get_device(backend: gs_backend):
     else:
         device_name = cpuinfo.get_cpu_info()["brand_raw"]
         total_mem = psutil.virtual_memory().total / 1024**3
-        device = torch.device("cpu")
+        device = torch.device("cpu", device_idx)
 
     return device, device_name, total_mem, backend
 

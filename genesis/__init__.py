@@ -29,6 +29,7 @@ from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
 from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device, get_cache_dir
+from .utils.misc import ALLOCATE_TENSOR_WARNING
 
 
 os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(get_cache_dir(), "numba"))
@@ -71,6 +72,9 @@ def init(
         logging_level = _logging.DEBUG if debug else _logging.INFO
     logger = Logger(logging_level, logger_verbose_time)
     atexit.register(destroy)
+
+    # FIXME: Disable this warning for now, because it is not useful without printing the entire traceback
+    gs.logger.addFilter(lambda record: record.msg != ALLOCATE_TENSOR_WARNING)
 
     # Must delay raising exception after logger initialization
     if not is_theme_valid:
@@ -211,8 +215,8 @@ def init(
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=ti_arch,
-            # debug is causing segfault on some machines
-            debug=False,
+            # Add a (hidden) mechanism to forceable disable taichi debug mode as it is still a bit experimental
+            debug=debug and backend == gs.cpu and (os.environ.get("TI_DEBUG") != "0"),
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
