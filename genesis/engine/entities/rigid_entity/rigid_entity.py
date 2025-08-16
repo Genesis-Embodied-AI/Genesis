@@ -1326,7 +1326,7 @@ class RigidEntity(Entity):
             # set new qpos
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
             # run FK
-            self._solver._func_forward_kinematics_entity(
+            self._solver.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
                 self._solver.links_state,
@@ -1352,7 +1352,7 @@ class RigidEntity(Entity):
             # restore original qpos
             self._solver.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
             # run FK
-            self._solver._func_forward_kinematics_entity(
+            self._solver.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
                 self._solver.links_state,
