@@ -1,5 +1,5 @@
 import torch
-import taichi as ti
+import gstaichi as ti
 import numpy as np
 import pytest
 
@@ -44,7 +44,7 @@ def test_expand_bits():
     Test the expand_bits function for LBVH.
     A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
     """
-    import taichi as ti
+    import gstaichi as ti
 
     @ti.kernel
     def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()):

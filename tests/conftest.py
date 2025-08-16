@@ -290,7 +290,7 @@ def taichi_offline_cache(request):
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, backend, precision, taichi_offline_cache):
     import pyglet
-    import taichi as ti
+    import gstaichi as ti
     import genesis as gs
     from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 

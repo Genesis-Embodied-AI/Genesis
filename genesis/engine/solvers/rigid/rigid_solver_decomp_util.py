@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 import genesis.utils.array_class as array_class
 

@@ -17,12 +17,12 @@ import cpuinfo
 import psutil
 import torch
 
-import taichi as ti
-from taichi.lang.util import to_pytorch_type
-from taichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
-from taichi.lang import impl
-from taichi.types import primitive_types
-from taichi.lang.exception import handle_exception_from_cpp
+import gstaichi as ti
+from gstaichi.lang.util import to_pytorch_type
+from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
+from gstaichi.lang import impl
+from gstaichi.types import primitive_types
+from gstaichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
