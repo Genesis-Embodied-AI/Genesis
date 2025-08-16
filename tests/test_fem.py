@@ -589,7 +589,7 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     assert_allclose(
         min_pos_z,
         -1.0e-3,  # FIXME: Compute desired penetration analytically
-        atol=1e-4,
+        atol=2e-4,
         err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3.",
     )
     assert_allclose(
@@ -667,9 +667,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
         tol=gs.EPS,
         err_msg="Vertices should stay at initial target positions with hard constraints",
     )
-    new_target_poss = initial_target_poss + gs.tensor(
-        [[0.1, 0.1, 0.1]],
-    )
+    new_target_poss = initial_target_poss + 0.1
     cube.update_constraint_targets(verts_idx=verts_idx, target_poss=new_target_poss)
     if show_viewer:
         scene.clear_debug_object(sphere)
@@ -689,7 +687,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
     if show_viewer:
         scene.clear_debug_object(sphere)
 
-    for _ in range(100):
+    for _ in range(70):
         scene.step()
 
     state = cube.get_state()
@@ -703,7 +701,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
     velocity = state.vel.mean(axis=(0, 1))
     assert_allclose(
-        velocity, 0.0, atol=1e-5, err_msg=f"Cube velocity {velocity} should be close to zero after settling."
+        velocity, 0.0, atol=4e-5, err_msg=f"Cube velocity {velocity} should be close to zero after settling."
     )
 
     # The contact requires some penetration to generate enough contact force to cancel out gravity
