@@ -1,5 +1,5 @@
 import torch
-import taichi as ti
+import gstaichi as ti
 import numpy as np
 import pytest
 
