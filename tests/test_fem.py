@@ -516,3 +516,69 @@ def test_box_soft_vertex_constraint(show_viewer):
     assert_allclose(
         positions, target_poss, tol=5e-5
     ), "Vertices should be near target positions with strong soft constraints"
+
+
+def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.2),
+            radius=0.2,
+        ),
+        material=fem_material_linear_corotated_soft,
+    )
+
+    asset_path = get_hf_dataset(pattern="heavy_three_joint_link.xml")
+    link = scene.add_entity(
+        gs.morphs.MJCF(file=f"{asset_path}/heavy_three_joint_link.xml", scale=0.5, pos=(-0.5, -0.5, 0.4)),
+    )
+
+    # Build the scene
+    scene.build()
+    for _ in range(200):
+        scene.step()
+
+    state = sphere.get_state()
+    center = state.pos.mean(axis=(0, 1))
+    min_pos_z = state.pos[..., 2].min()
+    # The contact requires some penetration to generate enough contact force to cancel out gravity
+    assert_allclose(
+        min_pos_z,
+        -1.0e-3,
+        atol=1e-4,
+        err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3.",
+    )
+    assert_allclose(
+        center,
+        np.array([0.0, 0.0, 0.2], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Sphere center {center} moves too far from [0.0, 0.0, 0.2].",
+    )
+
+    link_verts = link.get_verts()
+    center = link_verts.mean(axis=0)
+    min_pos_z = link_verts[..., 2].min()
+    assert_allclose(
+        min_pos_z,
+        -1.0e-4,
+        atol=5e-5,
+        err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4.",
+    )
+    assert_allclose(
+        center,
+        np.array([-0.5, -0.5, 0.04], dtype=np.float32),
+        atol=0.2,
+        err_msg=f"Link center {center} moves too far from [-0.5, -0.5, 0.04].",
+    )

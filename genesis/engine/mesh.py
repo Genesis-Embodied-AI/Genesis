@@ -4,10 +4,7 @@ import pickle as pkl
 import fast_simplification
 import numpy as np
 import numpy.typing as npt
-import pyvista as pv
-import tetgen
 import trimesh
-import pymeshlab
 
 import genesis as gs
 from genesis.options.surfaces import Surface
@@ -125,6 +122,9 @@ class Mesh(RBC):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
+            # Importing pymeshlab is very slow and not used very often. Let's delay import.
+            import pymeshlab
+
             gs.logger.info("Remeshing for tetrahedralization...")
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(vertex_matrix=self.verts, face_matrix=self.faces))
@@ -151,6 +151,10 @@ class Mesh(RBC):
         """
         Tetrahedralize the mesh.
         """
+        # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+        import pyvista as pv
+        import tetgen
+
         pv_obj = pv.PolyData(
             self.verts, np.concatenate([np.full((self.faces.shape[0], 1), self.faces.shape[1]), self.faces], axis=1)
         )
