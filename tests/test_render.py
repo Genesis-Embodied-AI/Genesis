@@ -103,7 +103,7 @@ def test_segmentation(segmentation_level, particle_mode):
     scene.build()
 
     seg_num = len(materials) + (3 if segmentation_level == "link" else 2)
-    idx_dict = scene.get_segmentation_idx_dict()
+    idx_dict = scene.segmentation_idx_dict
     assert len(idx_dict) == seg_num
     comp_key = 0
     for seg_key in idx_dict.values():

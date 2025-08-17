@@ -1111,23 +1111,15 @@ class Scene(RBC):
             )
 
     @gs.assert_built
-    def get_segmentation_idx_dict(self):
-        """
-        Returns a dictionary mapping segmentation indices to scene entities.
-
-        In the segmentation map:
-        - Index 0 corresponds to the background (-1).
-        - Indices > 0 correspond to scene elements, which may be represented as:
-            - `entity_id`
-            - `(entity_id, link_id)`
-            - `(entity_id, link_id, geom_id)`
-          depending on the material type and the configured segmentation level.
-        """
-        return self._visualizer.segmentation_idx_dict
-
-    @gs.assert_built
     def render_all_cameras(
-        self, rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, antialiasing=False, force_render=False
+        self,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
+        antialiasing=False,
+        force_render=False,
     ):
         """
         Render the scene for all cameras using the batch renderer.
@@ -1411,3 +1403,18 @@ class Scene(RBC):
     def pbd_solver(self):
         """The scene's `pbd_solver`, managing all the `PBDEntity` in the scene."""
         return self._sim.pbd_solver
+
+    @property
+    def segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+        """
+        return self._visualizer.segmentation_idx_dict

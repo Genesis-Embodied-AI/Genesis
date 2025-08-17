@@ -473,6 +473,22 @@ class Camera(RBC):
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
+    def distance_center_to_plane(self, center_dis):
+        P = self.projection_matrix
+        width, height = self.res
+        fx = P[0, 0] * width / 2.0
+        fy = P[1, 1] * height / 2.0
+        cx = (1.0 - P[0, 2]) * width / 2.0
+        cy = (1.0 + P[1, 2]) * height / 2.0
+
+        v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+        u = u.reshape((-1,))
+        v = v.reshape((-1,))
+
+        xd = (u + 0.5 - cx) / fx
+        yd = (v + 0.5 - cy) / fy
+        return center_dis / np.sqrt(xd**2 + yd**2 + 1.0)
+
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
         """
@@ -493,12 +509,12 @@ class Camera(RBC):
         # Compute the (denormalized) depth map using PyRender systematically.
         # TODO: Add support of BatchRendered (requires access to projection matrix)
         if self._batch_renderer is not None:
-            if self._batch_renderer.use_rasterizer:
-                _, depth_arr, _, _ = self._batch_render(
-                    rgb=False, depth=True, segmentation=False, normal=False,
-                )
-            else:
-                gs.raise_exception("point cloud only support in BatchRender with rasterizer.")
+            _, depth_arr, _, _ = self._batch_render(
+                rgb=False,
+                depth=True,
+                segmentation=False,
+                normal=False,
+            )
         elif self._rasterizer is not None:
             self._rasterizer.update_scene()
             _, depth_arr, _, _ = self._rasterizer.render_camera(
@@ -509,7 +525,7 @@ class Camera(RBC):
 
         # Convert OpenGL projection matrix to camera intrinsics
         P = self.projection_matrix
-        height, width = depth_arr.shape
+        width, height = self.res
         fx = P[0, 0] * width / 2.0
         fy = P[1, 1] * height / 2.0
         cx = (1.0 - P[0, 2]) * width / 2.0
@@ -518,7 +534,7 @@ class Camera(RBC):
         # Extract camera pose if needed
         if world_frame:
             T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
-            cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
+            cam_pose = self.transform @ T_OPENGL_TO_OPENCV
 
         # Mask out invalid depth
         mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
@@ -534,10 +550,10 @@ class Camera(RBC):
         world_y = depth_grid * (v + 0.5 - cy) / fy
         world_z = depth_grid
 
-        point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth_arr.size,), dtype=np.float32)), axis=-1)
+        point_cloud = np.stack((world_x, world_y, world_z, np.ones((width * height,), dtype=np.float32)), axis=-1)
         if world_frame:
             point_cloud = point_cloud @ cam_pose.T
-        point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
+        point_cloud = point_cloud[:, :3].reshape((width, height, 3))
         return point_cloud, mask
 
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
@@ -892,7 +908,7 @@ class Camera(RBC):
     @property
     def n_envs(self):
         return max(self._visualizer.scene.n_envs, 1)
-    
+
     @property
     def projection_matrix(self):
         """Return the projection matrix for this camera."""
@@ -900,9 +916,11 @@ class Camera(RBC):
         t = np.tan(np.deg2rad(0.5 * self._fov))
         n = self.near
         f = self.far
-        return np.array([
-            [1.0 / (a * t), 0.0, 0.0, 0.0],
-            [0.0, 1.0 / t, 0.0, 0.0],
-            [0.0, 0.0, (f + n) / (n - f), (2 * f * n) / (n - f)],
-            [0.0, 0.0, -1.0, 0.0],
-        ])
+        return np.array(
+            [
+                [1.0 / (a * t), 0.0, 0.0, 0.0],
+                [0.0, 1.0 / t, 0.0, 0.0],
+                [0.0, 0.0, (f + n) / (n - f), (2 * f * n) / (n - f)],
+                [0.0, 0.0, -1.0, 0.0],
+            ]
+        )

@@ -13,19 +13,23 @@ from genesis.utils.misc import tensor_to_array
 from .rasterizer_context import SegmentationManager
 
 try:
-    from gs_madrona.renderer_gs import MadronaBatchRendererAdapter
+    from gs_madrona.renderer_gs import MadronaBatchRendererAdapter, GeomRetriever
 except ImportError as e:
     gs.raise_exception_from("Madrona batch renderer is only supported on Linux x86-64.", e)
 
 
 class IMAGE_TYPE(enum.IntEnum):
     RGB = 0
-    DEPTH = 3
-    SEGMENTATION = 1
-    NORMAL = 2
+    DEPTH = 1
+    SEGMENTATION = 2
+    NORMAL = 3
+    NUM_TYPES = 4
 
 
-class GeomRetriever:
+TYPES = (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENTATION)  # order of RenderOption
+
+
+class GenesisGeomRetriever(GeomRetriever):
     def __init__(self, rigid_solver, seg_level):
         self.rigid_solver = rigid_solver
         self.seg_manager = SegmentationManager()
@@ -57,6 +61,7 @@ class GeomRetriever:
         else:
             gs.raise_exception(f"Unsupported segmentation level: {self.seg_level}")
 
+    # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_meshes_static(self):
         args = {}
         vgeoms = self.rigid_solver.vgeoms
@@ -161,6 +166,7 @@ class GeomRetriever:
 
         return args
 
+    # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_property_torch(self, num_worlds):
         geom_rgb_torch = self.rigid_solver.vgeoms_info.color.to_torch()
         geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)  # Cast to int32
@@ -174,6 +180,7 @@ class GeomRetriever:
         geom_sizes = geom_sizes.unsqueeze(0).repeat(num_worlds, 1, 1)
         return geom_mat_ids, geom_rgb, geom_sizes
 
+    # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_state_torch(self):
         geom_pos = self.rigid_solver.vgeoms_state.pos.to_torch()
         geom_rot = self.rigid_solver.vgeoms_state.quat.to_torch()
@@ -240,7 +247,7 @@ class BatchRenderer(RBC):
         self._lights = gs.List()
         self._use_rasterizer = renderer_options.use_rasterizer
         self._renderer = None
-        self._geom_retriever = GeomRetriever(self._visualizer.scene.rigid_solver, vis_options.segmentation_level)
+        self._geom_retriever = GenesisGeomRetriever(self._visualizer.scene.rigid_solver, vis_options.segmentation_level)
         self._data_cache = {}
         self._t = -1
 
@@ -348,70 +355,62 @@ class BatchRenderer(RBC):
             self._data_cache.clear()
 
         # Fetch available cached data
+        req = [rgb, depth, segmentation, normal]
         cache_key = (antialiasing,)
-        rgb_arr = self._data_cache.get((IMAGE_TYPE.RGB, cache_key), None)
-        depth_arr = self._data_cache.get((IMAGE_TYPE.DEPTH, cache_key), None)
-        segmentation_arr = self._data_cache.get((IMAGE_TYPE.SEGMENTATION, cache_key), None)
-        normal_arr = self._data_cache.get((IMAGE_TYPE.NORMAL, cache_key), None)
+        cached = [self._data_cache.get((t, cache_key), None) for t in range(IMAGE_TYPE.NUM_TYPES)]
+        need = [(req[t] and cached[t]) for t in range(IMAGE_TYPE.NUM_TYPES)]
 
-        # Force disabling rendering whenever cached data is already available
-        rgb_ = rgb and rgb_arr is None
-        depth_ = depth and depth_arr is None
-        segmentation_ = segmentation and segmentation_arr is None
-        normal_ = normal and normal_arr is None
+        # Early return if everything requested is already cached
+        if not any(need.values()):
+            return tuple(cached[t] if req[t] else None for t in range(IMAGE_TYPE.NUM_TYPES))
 
-        # Early return if there is nothing to do
-        if not (rgb_ or depth_ or segmentation_ or normal_):
-            return (
-                rgb_arr if rgb else None,
-                depth_arr if depth else None,
-                segmentation_arr if segmentation else None,
-                normal_arr if normal else None,
-            )
-
-        # Update scene
+        # Update scene render only what’s needed (flags still passed to renderer)
         self.update_scene()
-
-        # Render frame
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
-        render_options = np.array((rgb_, depth_, normal_, segmentation_, antialiasing), dtype=np.uint32)
-        rgba_arr_all, depth_arr_all, segmentation_arr_all, normal_arr_all = self._renderer.render(
-            cameras_pos, cameras_quat, render_options
+        render_flags = np.array(
+            (
+                *(need[t] for t in TYPES),
+                antialiasing,
+            ),
+            dtype=np.uint32,
         )
+        rgba_all, depth_all, seg_all, normal_all = self._renderer.render(cameras_pos, cameras_quat, render_flags)
 
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
-        buffers = [
-            tensor_to_array(rgba_arr_all[..., :3].flip(-1)) if rgb else None,
-            tensor_to_array(depth_arr_all[..., 0]) if depth else None,
-            tensor_to_array(segmentation_arr_all[..., 0]) if segmentation else None,
-            tensor_to_array(normal_arr_all[..., :3].flip(-1)) if normal else None,
+        rendered = [
+            tensor_to_array(rgba_all[..., :3].flip(-1)) if need[IMAGE_TYPE.RGB] else None,
+            tensor_to_array(depth_all[..., 0]) if need[IMAGE_TYPE.DEPTH] else None,
+            tensor_to_array(seg_all[..., 0]) if need[IMAGE_TYPE.SEGMENTATION] else None,
+            tensor_to_array(normal_all[..., :3].flip(-1)) if need[IMAGE_TYPE.NORMAL] else None,
         ]
+
+        # convert center distance depth to plane distance
+        if self._use_rasterizer:
+            if need[IMAGE_TYPE.DEPTH]:
+                for i, camera in enumerate(self._cameras):
+                    depth_all[i] = camera.distance_center_to_plane(depth_all[i])
+
         # convert seg geom idx to seg_idxc
-        if segmentation:
-            seg_geoms = buffers[2]
+        if need[IMAGE_TYPE.SEGMENTATION]:
+            seg_geoms = rendered[IMAGE_TYPE.SEGMENTATION]
             mask = seg_geoms != -1
             seg_geoms[mask] = self._geom_retriever.geom_idxc[seg_geoms[mask]]
 
-        for i, data in enumerate(buffers):
+        for t, data in enumerate(rendered):
             if data is not None:
                 data = data.swapaxes(0, 1)
                 if self._visualizer.scene.n_envs == 0:
                     data = data.squeeze(1)
-                buffers[i] = tuple(data)
+                rendered[t] = tuple(data)
 
-        # Update cache
         self._t = self._visualizer.scene.t
-        if rgb_:
-            rgb_arr = self._data_cache[(IMAGE_TYPE.RGB, cache_key)] = buffers[0]
-        if depth_:
-            depth_arr = self._data_cache[(IMAGE_TYPE.DEPTH, cache_key)] = buffers[1]
-        if segmentation_:
-            segmentation_arr = self._data_cache[(IMAGE_TYPE.SEGMENTATION, cache_key)] = buffers[2]
-        if normal_:
-            normal_arr = self._data_cache[(IMAGE_TYPE.NORMAL, cache_key)] = buffers[3]
+        for t in TYPES:
+            if need[t]:
+                self._data_cache[(t, cache_key)] = rendered[t]
 
-        return rgb_arr, depth_arr, segmentation_arr, normal_arr
+        # Return in the required order, or None if not requested
+        return tuple(rendered[t] if need[t] else cached[t] if req[t] else None for t in range(IMAGE_TYPE.NUM_TYPES))
 
     def colorize_seg_idxc_arr(self, seg_idxc_arr):
         return self._geom_retriever.seg_manager.colorize_seg_idxc_arr(seg_idxc_arr)
@@ -437,7 +436,3 @@ class BatchRenderer(RBC):
     @property
     def seg_idxc_map(self):
         return self._geom_retriever.seg_manager.seg_idxc_map
-
-    @property
-    def use_rasterizer(self):
-        return self._use_rasterizer
