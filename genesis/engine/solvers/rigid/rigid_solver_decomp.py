@@ -3531,7 +3531,7 @@ def kernel_rigid_entity_inverse_kinematics(
 
         if custom_init_qpos:
             for i_q in range(rigid_entity.n_qs):
-                rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b] = init_qpos[i_b, i_q]
+                rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b] = init_qpos[i_b_, i_q]
 
         for i_error in range(n_error_dims):
             rigid_entity._IK_err_pose_best[i_error, i_b] = 1e4
@@ -3558,7 +3558,7 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     i_l_ee = links_idx[i_ee]
 
-                    tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
+                    tgt_pos_i = ti.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
                     err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
@@ -3566,7 +3566,7 @@ def kernel_rigid_entity_inverse_kinematics(
                         solved = False
 
                     tgt_quat_i = ti.Vector(
-                        [quats[i_ee, i_b, 0], quats[i_ee, i_b, 1], quats[i_ee, i_b, 2], quats[i_ee, i_b, 3]]
+                        [quats[i_ee, i_b_, 0], quats[i_ee, i_b_, 1], quats[i_ee, i_b_, 2], quats[i_ee, i_b_, 3]]
                     )
                     err_rot_i = gu.ti_quat_to_rotvec(
                         gu.ti_transform_quat_by_quat(gu.ti_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i)
@@ -3678,7 +3678,7 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     i_l_ee = links_idx[i_ee]
 
-                    tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
+                    tgt_pos_i = ti.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
                     err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
@@ -3686,7 +3686,7 @@ def kernel_rigid_entity_inverse_kinematics(
                         solved = False
 
                     tgt_quat_i = ti.Vector(
-                        [quats[i_ee, i_b, 0], quats[i_ee, i_b, 1], quats[i_ee, i_b, 2], quats[i_ee, i_b, 3]]
+                        [quats[i_ee, i_b_, 0], quats[i_ee, i_b_, 1], quats[i_ee, i_b_, 2], quats[i_ee, i_b_, 3]]
                     )
                     err_rot_i = gu.ti_quat_to_rotvec(
                         gu.ti_transform_quat_by_quat(gu.ti_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i)
