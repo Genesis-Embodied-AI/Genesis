@@ -1059,8 +1059,8 @@ class RigidEntity(Entity):
     def inverse_kinematics_multilink(
         self,
         links,
-        poss=[],
-        quats=[],
+        poss=None,
+        quats=None,
         init_qpos=None,
         respect_joint_limit=True,
         max_samples=50,
@@ -1132,13 +1132,15 @@ class RigidEntity(Entity):
         if n_links == 0:
             gs.raise_exception("Target link not provided.")
 
-        if len(poss) == 0:
+        poss = list(poss) if poss is not None else []
+        if not poss:
             poss = [None for _ in range(n_links)]
             pos_mask = [False, False, False]
         elif len(poss) != n_links:
             gs.raise_exception("Accepting only `poss` with length equal to `links` or empty list.")
 
-        if len(quats) == 0:
+        quats = list(quats) if quats is not None else []
+        if not quats:
             quats = [None for _ in range(n_links)]
             rot_mask = [False, False, False]
         elif len(quats) != n_links:
@@ -1155,9 +1157,11 @@ class RigidEntity(Entity):
                 )
                 link_pos_mask.append(True)
             else:
-                poss[i] = torch.as_tensor(
-                    self._solver._batch_array(gu.zero_pos(), True), dtype=gs.tc_float, device=gs.device
-                )
+                pos_zero = torch.as_tensor(gu.zero_pos(), dtype=gs.tc_float, device=gs.device)
+                if self._solver.n_envs == 0:
+                    poss[i] = pos_zero
+                else:
+                    poss[i] = torch.tile(pos_zero, (self._solver.n_envs, 1))
                 link_pos_mask.append(False)
             if quats[i] is not None:
                 quats[i] = self._solver._process_dim(
@@ -1165,9 +1169,11 @@ class RigidEntity(Entity):
                 )
                 link_rot_mask.append(True)
             else:
-                quats[i] = torch.as_tensor(
-                    self._solver._batch_array(gu.identity_quat(), True), dtype=gs.tc_float, device=gs.device
-                )
+                quat_zero = torch.as_tensor(gu.identity_quat(), dtype=gs.tc_float, device=gs.device)
+                if self._solver.n_envs == 0:
+                    quats[i] = quat_zero
+                else:
+                    quats[i] = torch.tile(quat_zero, (self._solver.n_envs, 1))
                 link_rot_mask.append(False)
 
         if init_qpos is not None:
