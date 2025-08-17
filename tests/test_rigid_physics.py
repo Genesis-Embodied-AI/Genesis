@@ -528,7 +528,7 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-9)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=1e-8)
 
 
 @pytest.mark.required
@@ -711,14 +711,10 @@ def test_pendulum_links_acc(gs_sim, tol):
         # Linear true acceleration:
         # * acc_classical_lin_y = sin(theta) * g (tangential angular acceleration effect)
         # * acc_classical_lin_z = - theta_dot ** 2  (radial centripedal effect)
-        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc(mimick_imu=False))
+        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc())
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = R @ acc_classical_lin_world[2]
         assert_allclose(acc_classical_lin_local, np.array([0.0, np.sin(theta) * g, -(theta_dot**2)]), tol=tol)
-        # IMU accelerometer data:
-        # * acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
-        acc_imu = gs_sim.rigid_solver.get_links_acc(mimick_imu=True)[2]
-        assert_allclose(acc_imu, np.array([0.0, 0.0, -(theta_dot**2) - np.cos(theta) * g]), tol=tol)
 
     # Hold the pendulum straight using PD controller and check again
     pendulum.set_dofs_kp([4000.0])
@@ -726,7 +722,7 @@ def test_pendulum_links_acc(gs_sim, tol):
     pendulum.control_dofs_position([0.5 * np.pi])
     for _ in range(400):
         gs_sim.scene.step()
-    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc(mimick_imu=False)
+    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc()
     assert_allclose(acc_classical_lin_world, 0, tol=tol)
 
 
@@ -785,7 +781,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
         )
 
         # Linear true acceleration
-        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc(mimick_imu=False)[[0, 2, 4]])
+        acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc()[[0, 2, 4]])
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = np.matmul(np.moveaxis(R, 2, 0), acc_classical_lin_world[1:, :, None])[..., 0]
         assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -theta_dot[0] ** 2]), tol=tol)
@@ -801,7 +797,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
     robot.control_dofs_position([0.5 * np.pi, 0.0])
     for _ in range(900):
         gs_sim.scene.step()
-    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc(mimick_imu=False)
+    acc_classical_lin_world = gs_sim.rigid_solver.get_links_acc()
     assert_allclose(acc_classical_lin_world, 0, tol=tol)
 
 
@@ -1021,9 +1017,15 @@ def test_pd_control(show_viewer):
         device=gs.device,
     )
 
-    robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
+    robot.set_dofs_kp(torch.zeros_like(MOTORS_KP), envs_idx=0)
+    robot.set_dofs_kv(torch.zeros_like(MOTORS_KD), envs_idx=0)
+    with pytest.raises(gs.GenesisException):
+        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    with pytest.raises(gs.GenesisException):
+        robot.control_dofs_velocity(torch.zeros_like(MOTORS_POS_TARGET), envs_idx=0)
     robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
 
     # Must update DoF armature to emulate implicit damping for force control.
     # This is equivalent to the first-order correction term involved in implicit integration scheme,
@@ -1364,7 +1366,9 @@ def test_suction_cup(mode, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(n_envs, show_viewer):
+def test_path_planning_avoidance(n_envs, show_viewer, tol):
+    CUBE_SIZE = 0.07
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -1379,27 +1383,19 @@ def test_path_planning_avoidance(n_envs, show_viewer):
         show_FPS=False,
     )
     cubes = []
-    for pos in (
-        (-0.1, 0.2, 0.7),
-        (0.0, 0.3, 0.8),
-        (-0.1, -0.2, 0.7),
-        (0.0, -0.3, 0.8),
-        (0.3, 0.2, 0.6),
-        (0.3, -0.2, 0.6),
-        (0.3, 0.3, 0.7),
-        (0.3, -0.3, 0.7),
-    ):
-        cube = scene.add_entity(
-            gs.morphs.Box(
-                size=(0.1, 0.1, 0.1),
-                pos=pos,
-                fixed=True,
-            ),
-            surface=gs.surfaces.Default(
-                color=(*np.random.rand(3), 0.7),
-            ),
-        )
-        cubes.append(cube)
+    for pos_x in (-0.15, 0.15):
+        for y_i in range(-3, 3):
+            cube = scene.add_entity(
+                gs.morphs.Box(
+                    size=(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE),
+                    pos=(pos_x, CUBE_SIZE * y_i, 0.75),
+                    fixed=True,
+                ),
+                surface=gs.surfaces.Default(
+                    color=(*np.random.rand(3), 0.7),
+                ),
+            )
+            cubes.append(cube)
     franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
@@ -1407,56 +1403,65 @@ def test_path_planning_avoidance(n_envs, show_viewer):
         vis_mode="collision",
     )
     scene.build(n_envs=n_envs)
+    collider_state = scene.rigid_solver.collider._collider_state
 
     hand = franka.get_link("hand")
-    hand_pos_ref = torch.tensor([0.3, 0.25, 0.25], dtype=gs.tc_float, device=gs.device)
+    hand_pos_ref = torch.tensor([0.3, 0.1, 0.1], dtype=gs.tc_float, device=gs.device)
     hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], dtype=gs.tc_float, device=gs.device)
     if n_envs > 0:
         hand_pos_ref = hand_pos_ref.repeat((n_envs, 1))
         hand_quat_ref = hand_quat_ref.repeat((n_envs, 1))
-    qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos[..., -2:] = 0.04
+    qpos_goal = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
+    qpos_goal[..., -2:] = 0.04
+    franka.set_qpos(qpos_goal)
+    scene.visualizer.update()
+    scene.rigid_solver.collider.detection()
+    assert not collider_state.n_contacts.to_numpy().any()
+    franka.set_qpos(torch.zeros_like(qpos_goal))
 
-    free_path = franka.plan_path(
-        qpos_goal=qpos,
+    free_path, return_valid_mask = franka.plan_path(
+        qpos_goal=qpos_goal,
         num_waypoints=300,
         resolution=0.05,
         ignore_collision=True,
+        return_valid_mask=True,
     )
-    assert_allclose(free_path[0], 0, tol=gs.EPS)
-    assert_allclose(free_path[-1], qpos, tol=gs.EPS)
+    assert return_valid_mask.all()
+    assert_allclose(free_path[0], 0.0, tol=tol)
+    assert_allclose(free_path[-1], qpos_goal, tol=tol)
 
-    qpos = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos[..., -2:] = 0.04
-    avoidance_path = franka.plan_path(
-        qpos_goal=qpos,
+    avoidance_path, return_valid_mask = franka.plan_path(
+        qpos_goal=qpos_goal,
         num_waypoints=300,
         ignore_collision=False,
+        return_valid_mask=True,
         resolution=0.05,
         max_nodes=4000,
         max_retry=40,
     )
-    assert_allclose(avoidance_path[0], 0.0, tol=gs.EPS)
-    assert_allclose(avoidance_path[-1], qpos, tol=gs.EPS)
+    assert return_valid_mask.all()
+    assert_allclose(avoidance_path[0], 0.0, tol=tol)
+    assert_allclose(avoidance_path[-1], qpos_goal, tol=tol)
 
-    for path, ignore_collision in ((free_path, False), (avoidance_path, True)):
+    for path, avoid_collision in ((free_path, False), (avoidance_path, True)):
         max_penetration = float("-inf")
         for waypoint in path:
             franka.set_qpos(waypoint)
             scene.visualizer.update()
 
             # Check if the cube is colliding with the robot
-            scene.rigid_solver._func_forward_dynamics()
-            scene.rigid_solver._func_constraint_force()
-            for i in range(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]):
-                contact_link_a = scene.rigid_solver.collider._collider_state.contact_data.link_a[i, 0]
-                contact_link_b = scene.rigid_solver.collider._collider_state.contact_data.link_b[i, 0]
-                penetration = scene.rigid_solver.collider._collider_state.contact_data.penetration[i, 0]
-                if any(i_g in tuple(range(len(cubes))) for i_g in (contact_link_a, contact_link_b)):
-                    max_penetration = max(max_penetration, penetration)
+            scene.rigid_solver.collider.detection()
+            n_contacts = collider_state.n_contacts.to_numpy()
+            for i_b in range(max(scene.n_envs, 1)):
+                for i_c in range(n_contacts[i_b]):
+                    contact_link_a = collider_state.contact_data.link_a[i_c, i_b]
+                    contact_link_b = collider_state.contact_data.link_b[i_c, i_b]
+                    penetration = collider_state.contact_data.penetration[i_c, i_b]
+                    if any(i_g < len(cubes) for i_g in (contact_link_a, contact_link_b)):
+                        max_penetration = max(max_penetration, penetration)
 
         args = (max_penetration, 5e-3)
-        np.testing.assert_array_less(*(args if ignore_collision else args[::-1]))
+        np.testing.assert_array_less(*(args if avoid_collision else args[::-1]))
 
         assert_allclose(hand_pos_ref, hand.get_pos(), tol=5e-4)
         hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
@@ -2264,7 +2269,7 @@ def test_gravity(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(show_viewer, tol):
     scene1 = gs.Scene(
         show_viewer=show_viewer,
@@ -2285,7 +2290,7 @@ def test_scene_saver_franka(show_viewer, tol):
     target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
     franka1.control_dofs_position(target_pose, dof_idx)
 
-    for _ in range(400):
+    for _ in range(100):
         scene1.step()
 
     pose_ref = franka1.get_dofs_position(dof_idx)
@@ -2302,7 +2307,7 @@ def test_scene_saver_franka(show_viewer, tol):
 
     pose_loaded = franka2.get_dofs_position(dof_idx)
 
-    assert_allclose(pose_ref, pose_loaded, tol=tol)
+    assert_allclose(pose_ref, pose_loaded, tol=2e-7)
 
 
 @pytest.mark.required

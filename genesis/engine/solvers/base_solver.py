@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import torch
 from genesis.utils.misc import ti_field_to_torch
 
@@ -62,6 +62,10 @@ class Solver(RBC):
         for i_b_ in range(envs_idx.shape[0]):
             for j in ti.static(range(3)):
                 self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
+
+    def get_gravity(self, envs_idx=None, *, unsafe=False):
+        tensor = ti_field_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}

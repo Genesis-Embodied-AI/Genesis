@@ -2,10 +2,11 @@ import os
 import pickle
 import sys
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-import taichi as ti
+import gstaichi as ti
 from numpy.typing import ArrayLike
 
 import genesis as gs
@@ -26,7 +27,6 @@ from genesis.options import (
     PBDOptions,
     ProfilingOptions,
     RigidOptions,
-    SensorOptions,
     SFOptions,
     SimOptions,
     SPHOptions,
@@ -42,6 +42,9 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+
+if TYPE_CHECKING:
+    from genesis.sensors.base_sensor import SensorOptions
 
 
 @gs.assert_initialized
@@ -521,7 +524,7 @@ class Scene(RBC):
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
-    def add_sensor(self, sensor_options: SensorOptions):
+    def add_sensor(self, sensor_options: "SensorOptions"):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt
@@ -1314,7 +1317,7 @@ class Scene(RBC):
         return self._sim.requires_grad
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """Whether the scene has been built."""
         return self._is_built
 

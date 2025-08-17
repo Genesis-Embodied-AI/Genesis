@@ -1,5 +1,5 @@
 from enum import IntEnum
-import taichi as ti
+import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class

@@ -1,6 +1,6 @@
 import igl
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import torch
 
 import genesis as gs
@@ -803,8 +803,9 @@ class FEMEntity(Entity):
                 List of environment indices to apply the constraints to. If None, applies to all environments.
         """
         if self._solver._use_implicit_solver:
-            gs.logger.warning("Ignoring vertex constraint; unsupported with FEM implicit solver.")
-            return
+            if not self._solver._enable_vertex_constraints:
+                gs.logger.warning("Ignoring vertex constraint; FEM implicit solver needs to enable vertex constraints.")
+                return
 
         if not self._solver._constraints_initialized:
             self._solver.init_constraints()

@@ -224,7 +224,7 @@ def get_hf_dataset(
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except HTTPError as e:
+        except (HTTPError, FileNotFoundError) as e:
             num_trials += 1
             if num_trials == num_retry:
                 raise

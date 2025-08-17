@@ -2,13 +2,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
-import taichi as ti
+import gstaichi as ti
 import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+from genesis.engine.solvers.rigid.contact_island import ContactIsland
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
@@ -159,6 +160,10 @@ class ConstraintSolver:
             self.nt_vec = cs.nt_vec
 
         self.reset()
+
+        # Creating a dummy ContactIsland, needed as param for some functions,
+        # and not used when hibernation is not enabled.
+        self.contact_island = ContactIsland(self._collider)
 
     def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
         self._eq_const_info_cache.clear()
