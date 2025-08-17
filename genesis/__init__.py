@@ -17,7 +17,7 @@ with redirect_stdout(_ti_outputs):
     try:
         import gstaichi as ti
     except ImportError:
-        raise ImportError("genesis now uses gstaichi as the backend. Please install gstaichi by 'pip install gstaichi'")
+        raise ImportError("genesis now uses gstaichi as the backend. Please install it by 'pip install gstaichi'")
 try:
     import torch
 except ImportError as e:
