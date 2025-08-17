@@ -155,14 +155,18 @@ class GenesisGeomRetriever(GeomRetriever):
         args["mesh_texcoord_offsets"] = np.array(geom_uv_offsets, np.int32)
         args["geom_rgba"] = np.stack(geom_rgbas, axis=0)
 
-        args["mesh_texcoords"] = np.concatenate(mat_uv_data, axis=0)
+        args["mesh_texcoords"] = np.concatenate(mat_uv_data, axis=0) if mat_uv_data else np.empty((0, 2), np.float32)
         args["tex_widths"] = np.array(mat_texture_widths, np.int32)
         args["tex_heights"] = np.array(mat_texture_heights, np.int32)
         args["tex_nchans"] = np.array(mat_texture_nchans, np.int32)
         args["tex_offsets"] = np.array(mat_texture_offsets, np.int32)
-        args["tex_data"] = np.concatenate(mat_texture_data, axis=0)
-        args["mat_tex_ids"] = np.stack(mat_texture_ids, axis=0)
-        args["mat_rgba"] = np.stack(mat_rgbas, axis=0)
+        args["tex_data"] = np.concatenate(mat_texture_data, axis=0) if mat_texture_data else np.array([], np.uint8)
+        args["mat_tex_ids"] = (
+            np.stack(mat_texture_ids, axis=0)
+            if mat_texture_ids
+            else np.empty((0, self.num_textures_per_material), np.int32)
+        )
+        args["mat_rgba"] = np.stack(mat_rgbas, axis=0) if mat_rgbas else np.empty((0, 4), np.float32)
 
         return args
 
@@ -281,9 +285,14 @@ class BatchRenderer(RBC):
         # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
         # consider storing light properties as taichi fields in Genesis.
         n_lights = len(self._lights)
-        light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
-        light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
-        light_rgb = torch.tensor([light.color for light in self._lights], dtype=gs.tc_float)
+        if n_lights:
+            light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
+            light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
+            light_rgb = torch.tensor([light.color for light in self._lights], dtype=gs.tc_float)
+        else:
+            light_pos = torch.empty((0, 3), dtype=gs.tc_float)
+            light_dir = torch.empty((0, 3), dtype=gs.tc_float)
+            light_rgb = torch.empty((0, 3), dtype=gs.tc_float)
         light_directional = torch.tensor([light.directional for light in self._lights], dtype=gs.tc_int)
         light_castshadow = torch.tensor([light.castshadow for light in self._lights], dtype=gs.tc_int)
         light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=gs.tc_float)
@@ -358,10 +367,10 @@ class BatchRenderer(RBC):
         req = [rgb, depth, segmentation, normal]
         cache_key = (antialiasing,)
         cached = [self._data_cache.get((t, cache_key), None) for t in range(IMAGE_TYPE.NUM_TYPES)]
-        need = [(req[t] and cached[t]) for t in range(IMAGE_TYPE.NUM_TYPES)]
+        need = [(req[t] and cached[t] is None) for t in range(IMAGE_TYPE.NUM_TYPES)]
 
         # Early return if everything requested is already cached
-        if not any(need.values()):
+        if not any(need):
             return tuple(cached[t] if req[t] else None for t in range(IMAGE_TYPE.NUM_TYPES))
 
         # Update scene render only what’s needed (flags still passed to renderer)
@@ -396,6 +405,7 @@ class BatchRenderer(RBC):
             seg_geoms = rendered[IMAGE_TYPE.SEGMENTATION]
             mask = seg_geoms != -1
             seg_geoms[mask] = self._geom_retriever.geom_idxc[seg_geoms[mask]]
+            seg_geoms[~mask] = 0
 
         for t, data in enumerate(rendered):
             if data is not None:
