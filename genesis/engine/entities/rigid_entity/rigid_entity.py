@@ -1155,10 +1155,9 @@ class RigidEntity(Entity):
                 )
                 link_pos_mask.append(True)
             else:
-                if self._solver.n_envs == 0:
-                    poss[i] = gu.zero_pos()
-                else:
-                    poss[i] = self._solver._batch_array(gu.zero_pos(), True)
+                poss[i] = torch.as_tensor(
+                    self._solver._batch_array(gu.zero_pos(), True), dtype=gs.tc_float, device=gs.device
+                )
                 link_pos_mask.append(False)
             if quats[i] is not None:
                 quats[i] = self._solver._process_dim(
@@ -1166,10 +1165,9 @@ class RigidEntity(Entity):
                 )
                 link_rot_mask.append(True)
             else:
-                if self._solver.n_envs == 0:
-                    quats[i] = gu.identity_quat()
-                else:
-                    quats[i] = self._solver._batch_array(gu.identity_quat(), True)
+                quats[i] = torch.as_tensor(
+                    self._solver._batch_array(gu.identity_quat(), True), dtype=gs.tc_float, device=gs.device
+                )
                 link_rot_mask.append(False)
 
         if init_qpos is not None:
@@ -1452,7 +1450,7 @@ class RigidEntity(Entity):
             assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
         # import here to avoid circular import
-        from genesis.utils.path_planing import RRT, RRTConnect
+        from genesis.utils.path_planning import RRT, RRTConnect
 
         match planner:
             case "RRT":
