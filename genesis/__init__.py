@@ -14,10 +14,8 @@ _ti_outputs = io.StringIO()
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    try:
-        import gstaichi as ti
-    except ImportError:
-        raise ImportError("genesis now uses gstaichi as the backend. Please install it by 'pip install gstaichi'")
+    import gstaichi as ti
+
 try:
     import torch
 except ImportError as e:
@@ -187,7 +185,7 @@ def init(
         if backend == gs_backend.cpu:
             taichi_kwargs.update(cpu_max_num_threads=1)
         else:
-            logger.warning("CPU backend is strongly recommended in debug mode.")
+            logger.warning("Debug mode is partially supported for GPU backend.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = True
