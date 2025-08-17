@@ -1,5 +1,5 @@
 import torch
-import taichi as ti
+import gstaichi as ti
 import numpy as np
 import pytest
 
@@ -27,6 +27,7 @@ def lbvh():
     return lbvh
 
 
+@pytest.mark.required
 def test_morton_code(lbvh):
     morton_codes = lbvh.morton_codes.to_numpy()
     # Check that the morton codes are sorted
@@ -37,12 +38,13 @@ def test_morton_code(lbvh):
             ), f"Morton codes are not sorted: {morton_codes[i_b, i]} < {morton_codes[i_b, i - 1]}"
 
 
+@pytest.mark.required
 def test_expand_bits():
     """
     Test the expand_bits function for LBVH.
     A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
     """
-    import taichi as ti
+    import gstaichi as ti
 
     @ti.kernel
     def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()):
@@ -71,6 +73,7 @@ def test_expand_bits():
         ), f"Expected {str_expanded_x}, got {''.join(f'00{bit}' for bit in str_x)}"
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_build_tree(lbvh):
     nodes = lbvh.nodes.to_numpy()
@@ -123,6 +126,7 @@ def query_kernel(lbvh: ti.template(), aabbs: ti.template()):
     lbvh.query(aabbs)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
     aabbs = lbvh.aabbs
@@ -131,10 +135,8 @@ def test_query(lbvh):
     query_kernel(lbvh, aabbs)
 
     query_result_count = lbvh.query_result_count.to_numpy()
-    if query_result_count > lbvh.max_n_query_results:
-        raise ValueError(
-            f"Query result count {query_result_count} exceeds max_n_query_results {lbvh.max_n_query_results}"
-        )
+    if query_result_count > lbvh.max_query_results:
+        raise ValueError(f"Query result count {query_result_count} exceeds max_query_results {lbvh.max_query_results}")
     query_result = lbvh.query_result.to_numpy()
 
     n_aabbs = lbvh.n_aabbs

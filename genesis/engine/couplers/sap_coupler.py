@@ -2,15 +2,16 @@ from typing import TYPE_CHECKING
 import math
 
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH
 from genesis.utils.element import mesh_to_elements, split_all_surface_tets
+import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.constants import IntEnum
+from genesis.constants import IntEnum, EQUALITY_TYPE
 from genesis.engine.solvers.rigid.rigid_solver_decomp import func_update_all_verts
 
 if TYPE_CHECKING:
@@ -134,6 +135,7 @@ class SAPCoupler(RBC):
 
     Note
     ----
+    For now all batches have the same constraints, such as joint equality constraints are consistent among all batches.
     Paper reference: https://arxiv.org/abs/2110.10107
     Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
     Code reference: https://github.com/RobotLocomotion/drake/blob/d7a5096c6d0f131705c374390202ad95d0607fd4/multibody/plant/sap_driver.cc
@@ -165,6 +167,8 @@ class SAPCoupler(RBC):
         self._linesearch_max_step_size = options.linesearch_max_step_size
         self._hydroelastic_stiffness = options.hydroelastic_stiffness
         self._point_contact_stiffness = options.point_contact_stiffness
+        if gs.ti_float is ti.f32:
+            gs.logger.warning("Beware SAPCoupler may be instable when using precision='32'.")
         if options.fem_floor_contact_type == "tet":
             self._fem_floor_contact_type = FEMFloorContactType.TET
         elif options.fem_floor_contact_type == "vert":
@@ -230,6 +234,10 @@ class SAPCoupler(RBC):
                 self.rigid_floor_vert_contact = RigidFloorVertContactHandler(self.sim)
                 self.contact_handlers.append(self.rigid_floor_vert_contact)
 
+            # TODO: Dynamically added constraints are not supported for now
+            if self.rigid_solver.n_equalities > 0:
+                self._init_equality_constraint()
+
         if self._enable_rigid_fem_contact:
             self.rigid_fem_contact = RigidFemTetContactHanlder(self.sim)
             self.contact_handlers.append(self.rigid_fem_contact)
@@ -269,6 +277,12 @@ class SAPCoupler(RBC):
                 // self.rigid_solver.n_faces
             )
             self.rigid_tri_bvh = LBVH(self.rigid_tri_aabb, max_n_query_result_per_aabb)
+
+    def _init_equality_constraint(self):
+        self.equality_constraint = RigidConstraintHandler(self.sim)
+        self.equality_constraint.build_constraints(
+            self.rigid_solver.equalities_info, self.rigid_solver.joints_info, self.rigid_solver._static_rigid_sim_config
+        )
 
     def _init_sap_fields(self):
         self.batch_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
@@ -404,6 +418,7 @@ class SAPCoupler(RBC):
                         f", using {contact.n_contact_pairs[None]}\n"
                     )
             gs.raise_exception(message)
+        self.compute_regularization()
 
     @ti.kernel
     def precompute(self, i_step: ti.i32):
@@ -498,12 +513,12 @@ class SAPCoupler(RBC):
         aabbs = ti.static(self.fem_surface_tet_aabb.aabbs)
         for i_b, i_se in ti.ndrange(self.fem_solver._B, self.fem_solver.n_surface_elements):
             i_e = self.fem_solver.surface_elements[i_se]
-            i_v = self.fem_solver.elements_i[i_e].el2v
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
             aabbs[i_b, i_se].min.fill(np.inf)
             aabbs[i_b, i_se].max.fill(-np.inf)
             for i in ti.static(range(4)):
-                pos_v = self.fem_solver.elements_v[i_step, i_v[i], i_b].pos
+                pos_v = self.fem_solver.elements_v[i_step, i_vs[i], i_b].pos
                 aabbs[i_b, i_se].min = ti.min(aabbs[i_b, i_se].min, pos_v)
                 aabbs[i_b, i_se].max = ti.max(aabbs[i_b, i_se].max, pos_v)
 
@@ -542,7 +557,7 @@ class SAPCoupler(RBC):
             self.compute_unconstrained_gradient_diag(i_step, iter)
 
             # compute contact hessian and gradient
-            self.compute_contact_gradient_hessian_diag_prec()
+            self.compute_constraint_contact_gradient_hessian_diag_prec()
             self.check_sap_convergence()
             # solve for the vertex velocity
             self.pcg_solve()
@@ -606,26 +621,35 @@ class SAPCoupler(RBC):
             norm_thr = self._sap_convergence_atol + self._sap_convergence_rtol * ti.max(
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
-            self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= norm_thr
 
+    @ti.kernel
+    def compute_regularization(self):
+        for contact in ti.static(self.contact_handlers):
+            contact.compute_regularization()
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_regularization()
+
+    @ti.kernel
     def _init_sap_solve(self, i_step: ti.i32):
         self._init_v(i_step)
         self.batch_active.fill(True)
-        for contact in self.contact_handlers:
-            contact.compute_regularization()
+        self.compute_regularization()
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_regularization()
 
+    @ti.func
     def _init_v(self, i_step: ti.i32):
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self._init_v_fem(i_step)
-        if self.rigid_solver.is_active():
+        if ti.static(self.rigid_solver.is_active()):
             self._init_v_rigid(i_step)
 
-    @ti.kernel
+    @ti.func
     def _init_v_fem(self, i_step: ti.i32):
         for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             self.fem_state_v.v[i_b, i_v] = self.fem_solver.elements_v[i_step + 1, i_v, i_b].vel
 
-    @ti.kernel
+    @ti.func
     def _init_v_rigid(self, i_step: ti.i32):
         for i_b, i_d in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_dofs):
             self.rigid_state_dof.v[i_b, i_d] = self.rigid_solver.dofs_state.vel[i_d, i_b]
@@ -681,37 +705,42 @@ class SAPCoupler(RBC):
                 self.rigid_solver.mass_mat[i_d1, i_d0, i_b] * self.rigid_state_dof.v_diff[i_b, i_d0]
             )
 
-    def compute_contact_gradient_hessian_diag_prec(self):
+    @ti.kernel
+    def compute_constraint_contact_gradient_hessian_diag_prec(self):
         self.clear_impulses()
-        for contact in self.contact_handlers:
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_gradient_hessian_diag()
+        for contact in ti.static(self.contact_handlers):
             contact.compute_gradient_hessian_diag()
         self.compute_preconditioner()
 
+    @ti.func
     def clear_impulses(self):
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self.clear_fem_impulses()
-        if self.rigid_solver.is_active():
+        if ti.static(self.rigid_solver.is_active()):
             self.clear_rigid_impulses()
 
-    @ti.kernel
+    @ti.func
     def clear_fem_impulses(self):
         for i_b, i_v in ti.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
             if not self.batch_active[i_b]:
                 continue
             self.fem_state_v[i_b, i_v].impulse.fill(0.0)
 
-    @ti.kernel
+    @ti.func
     def clear_rigid_impulses(self):
         for i_b, i_d in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_dofs):
             if not self.batch_active[i_b]:
                 continue
             self.rigid_state_dof[i_b, i_d].impulse = 0.0
 
+    @ti.func
     def compute_preconditioner(self):
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self.compute_fem_preconditioner()
 
-    @ti.kernel
+    @ti.func
     def compute_fem_preconditioner(self):
         for i_b, i_v in ti.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
             if not self.batch_active[i_b]:
@@ -729,18 +758,16 @@ class SAPCoupler(RBC):
         )
 
     @ti.func
-    def compute_elastic_products(self, i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, src):
+    def compute_elastic_products(self, i_b, i_e, S, i_vs, src):
         p9 = ti.Vector.zero(gs.ti_float, 9)
-        for i in ti.static(range(3)):
-            p9[i * 3 : i * 3 + 3] = (
-                B[0, i] * src[i_b, i_v0] + B[1, i] * src[i_b, i_v1] + B[2, i] * src[i_b, i_v2] + s[i] * src[i_b, i_v3]
-            )
+        for i, j in ti.static(ti.ndrange(3, 4)):
+            p9[i * 3 : i * 3 + 3] = p9[i * 3 : i * 3 + 3] + (S[j, i] * src[i_b, i_vs[j]])
+
         H9_p9 = ti.Vector.zero(gs.ti_float, 9)
-        for i in ti.static(range(3)):
-            H9_p9[i * 3 : i * 3 + 3] = (
-                self.fem_solver.elements_el_hessian[i_b, i, 0, i_e] @ p9[0:3]
-                + self.fem_solver.elements_el_hessian[i_b, i, 1, i_e] @ p9[3:6]
-                + self.fem_solver.elements_el_hessian[i_b, i, 2, i_e] @ p9[6:9]
+
+        for i, j in ti.static(ti.ndrange(3, 3)):
+            H9_p9[i * 3 : i * 3 + 3] = H9_p9[i * 3 : i * 3 + 3] + (
+                self.fem_solver.elements_el_hessian[i_b, i, j, i_e] @ p9[j * 3 : j * 3 + 3]
             )
         return p9, H9_p9
 
@@ -767,26 +794,32 @@ class SAPCoupler(RBC):
                 continue
             V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
             B = self.fem_solver.elements_i[i_e].B
-            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
-            i_v0, i_v1, i_v2, i_v3 = self.fem_solver.elements_i[i_e].el2v
+            S = ti.Matrix.zero(gs.ti_float, 4, 3)
+            S[:3, :] = B
+            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
-            _, new_p9 = self.compute_elastic_products(i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, src)
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                for i in ti.static(range(4)):
+                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
+                        S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+
+            _, new_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, src)
             # atomic
             scale = V_dt2 * damping_beta_factor
-            dst[i_b, i_v0] += (B[0, 0] * new_p9[0:3] + B[0, 1] * new_p9[3:6] + B[0, 2] * new_p9[6:9]) * scale
-            dst[i_b, i_v1] += (B[1, 0] * new_p9[0:3] + B[1, 1] * new_p9[3:6] + B[1, 2] * new_p9[6:9]) * scale
-            dst[i_b, i_v2] += (B[2, 0] * new_p9[0:3] + B[2, 1] * new_p9[3:6] + B[2, 2] * new_p9[6:9]) * scale
-            dst[i_b, i_v3] += (s[0] * new_p9[0:3] + s[1] * new_p9[3:6] + s[2] * new_p9[6:9]) * scale
+            for i in ti.static(range(4)):
+                dst[i_b, i_vs[i]] += (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * scale
 
+    @ti.kernel
     def init_pcg_solve(self):
         self.init_pcg_state()
-        if self.fem_solver.is_active():
+        if ti.static(self.fem_solver.is_active()):
             self.init_fem_pcg_solve()
-        if self.rigid_solver.is_active():
+        if ti.static(self.rigid_solver.is_active()):
             self.init_rigid_pcg_solve()
         self.init_pcg_active()
 
-    @ti.kernel
+    @ti.func
     def init_pcg_state(self):
         for i_b in ti.ndrange(self._B):
             self.batch_pcg_active[i_b] = self.batch_active[i_b]
@@ -795,7 +828,7 @@ class SAPCoupler(RBC):
             self.pcg_state[i_b].rTr = 0.0
             self.pcg_state[i_b].rTz = 0.0
 
-    @ti.kernel
+    @ti.func
     def init_fem_pcg_solve(self):
         for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_pcg_active[i_b]:
@@ -853,9 +886,9 @@ class SAPCoupler(RBC):
                     out[i_b, i_d] -= self.rigid_solver.mass_mat_L[i_d, j_d, i_b] * out[i_b, j_d]
 
     @ti.func
-    def rigid_solve_contact(self, vec, out, n_contact_pairs, i_bs):
+    def rigid_solve_jacobian(self, vec, out, n_contact_pairs, i_bs, dim):
         # Step 1: Solve w st. L^T @ w = y
-        for i_p, i_e, k in ti.ndrange(n_contact_pairs, self.rigid_solver.n_entities, 3):
+        for i_p, i_e, k in ti.ndrange(n_contact_pairs, self.rigid_solver.n_entities, dim):
             i_b = i_bs[i_p]
             entity_dof_start = self.rigid_solver.entities_info.dof_start[i_e]
             entity_dof_end = self.rigid_solver.entities_info.dof_end[i_e]
@@ -867,12 +900,12 @@ class SAPCoupler(RBC):
                     out[i_p, i_d][k] -= self.rigid_solver.mass_mat_L[j_d, i_d, i_b] * out[i_p, j_d][k]
 
         # Step 2: z = D^{-1} w
-        for i_p, i_d, k in ti.ndrange(n_contact_pairs, self.rigid_solver.n_dofs, 3):
+        for i_p, i_d, k in ti.ndrange(n_contact_pairs, self.rigid_solver.n_dofs, dim):
             i_b = i_bs[i_p]
             out[i_p, i_d][k] *= self.rigid_solver.mass_mat_D_inv[i_d, i_b]
 
         # Step 3: Solve x st. L @ x = z
-        for i_p, i_e, k in ti.ndrange(n_contact_pairs, self.rigid_solver.n_entities, 3):
+        for i_p, i_e, k in ti.ndrange(n_contact_pairs, self.rigid_solver.n_entities, dim):
             i_b = i_bs[i_p]
             entity_dof_start = self.rigid_solver.entities_info.dof_start[i_e]
             entity_dof_end = self.rigid_solver.entities_info.dof_end[i_e]
@@ -881,7 +914,7 @@ class SAPCoupler(RBC):
                 for j_d in range(entity_dof_start, i_d):
                     out[i_p, i_d][k] -= self.rigid_solver.mass_mat_L[i_d, j_d, i_b] * out[i_p, j_d][k]
 
-    @ti.kernel
+    @ti.func
     def init_rigid_pcg_solve(self):
         for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
             if not self.batch_pcg_active[i_b]:
@@ -898,7 +931,7 @@ class SAPCoupler(RBC):
             self.pcg_rigid_state_dof[i_b, i_d].p = self.pcg_rigid_state_dof[i_b, i_d].z
             self.pcg_state[i_b].rTz += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
 
-    @ti.kernel
+    @ti.func
     def init_pcg_active(self):
         for i_b in ti.ndrange(self._B):
             if not self.batch_pcg_active[i_b]:
@@ -927,6 +960,9 @@ class SAPCoupler(RBC):
             self.compute_fem_pcg_matrix_vector_product()
         if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_pcg_matrix_vector_product()
+        # Constraint
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_Ap()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_pcg_matrix_vector_product()
@@ -1062,13 +1098,16 @@ class SAPCoupler(RBC):
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
 
-    @ti.kernel
+    @ti.func
     def compute_total_energy(self, i_step: ti.i32, energy: ti.template()):
         energy.fill(0.0)
         if ti.static(self.fem_solver.is_active()):
             self.compute_fem_energy(i_step, energy)
         if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_energy(energy)
+        # Constraint
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_energy(energy)
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_energy(energy)
@@ -1101,10 +1140,17 @@ class SAPCoupler(RBC):
 
             V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
             B = self.fem_solver.elements_i[i_e].B
-            s = -B[0, :] - B[1, :] - B[2, :]  # s is the negative sum of B rows
-            i_v0, i_v1, i_v2, i_v3 = self.fem_solver.elements_i[i_e].el2v
+            S = ti.Matrix.zero(gs.ti_float, 4, 3)
+            S[:3, :] = B
+            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+            i_vs = self.fem_solver.elements_i[i_e].el2v
 
-            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, B, s, i_v0, i_v1, i_v2, i_v3, self.fem_state_v.v_diff)
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                for i in ti.static(range(4)):
+                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
+                        S[i, :] = ti.Vector.zero(gs.ti_float, 3)
+
+            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, self.fem_state_v.v_diff)
             energy[i_b] += 0.5 * p9.dot(H9_p9) * damping_beta_factor * V_dt2
 
     @ti.func
@@ -1124,12 +1170,9 @@ class SAPCoupler(RBC):
                 continue
             energy[i_b] += 0.5 * self.rigid_state_dof.v_diff[i_b, i_d] * self.rigid_state_dof.mass_v_diff[i_b, i_d]
 
-    def init_linesearch(self, i_step: ti.i32):
-        self._kernel_init_linesearch(1.0 / self._linesearch_tau)
-        self.compute_total_energy(i_step, self.linesearch_state.prev_energy)
-
+    @ti.kernel
     def init_exact_linesearch(self, i_step: ti.i32):
-        self._kernel_init_linesearch(self._linesearch_max_step_size)
+        self._func_init_linesearch(self._linesearch_max_step_size)
         self.compute_total_energy(i_step, self.linesearch_state.prev_energy)
         self.prepare_search_direction_data()
         self.update_velocity_linesearch()
@@ -1137,7 +1180,7 @@ class SAPCoupler(RBC):
         self.check_initial_exact_linesearch_convergence()
         self.init_newton_linesearch()
 
-    @ti.kernel
+    @ti.func
     def init_newton_linesearch(self):
         for i_b in ti.ndrange(self._B):
             if not self.batch_linesearch_active[i_b]:
@@ -1164,7 +1207,7 @@ class SAPCoupler(RBC):
                 self.batch_linesearch_active[i_b] = False
                 self.linesearch_state[i_b].step_size = self.linesearch_state[i_b].alpha_max
 
-    @ti.kernel
+    @ti.func
     def compute_line_energy_gradient_hessian(self, i_step: ti.i32):
         self.init_linesearch_energy_gradient_hessian()
         if ti.static(self.fem_solver.is_active()):
@@ -1174,7 +1217,11 @@ class SAPCoupler(RBC):
         if ti.static(self.rigid_solver.is_active()):
             self.compute_rigid_energy_alpha(self.linesearch_state.energy)
             self.compute_rigid_gradient_alpha()
-
+        # Constraint
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.compute_energy_gamma_G()
+            self.equality_constraint.update_gradient_hessian_alpha()
+        # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_energy_gamma_G()
             contact.update_gradient_hessian_alpha()
@@ -1241,12 +1288,16 @@ class SAPCoupler(RBC):
                 continue
             energy[i_b] += alpha[i_b] * dp[i_b, i_d] * (v[i_b, i_d] - v_star[i_d, i_b])
 
-    @ti.kernel
+    @ti.func
     def prepare_search_direction_data(self):
         if ti.static(self.fem_solver.is_active()):
             self.prepare_fem_search_direction_data()
         if ti.static(self.rigid_solver.is_active()):
             self.prepare_rigid_search_direction_data()
+        # Constraint
+        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+            self.equality_constraint.prepare_search_direction_data()
+        # Contact
         for contact in ti.static(self.contact_handlers):
             contact.prepare_search_direction_data()
         self.compute_d2ellA_dalpha2()
@@ -1255,12 +1306,27 @@ class SAPCoupler(RBC):
     def compute_d2ellA_dalpha2(self):
         for i_b in ti.ndrange(self._B):
             self.linesearch_state[i_b].d2ellA_dalpha2 = 0.0
+        if ti.static(self.fem_solver.is_active()):
+            self.compute_fem_d2ellA_dalpha2()
+        if ti.static(self.rigid_solver.is_active()):
+            self.compute_rigid_d2ellA_dalpha2()
 
+    @ti.func
+    def compute_fem_d2ellA_dalpha2(self):
         for i_b, i_v in ti.ndrange(self._B, self.fem_solver.n_vertices):
             if not self.batch_linesearch_active[i_b]:
                 continue
             self.linesearch_state[i_b].d2ellA_dalpha2 += self.pcg_fem_state_v[i_b, i_v].x.dot(
                 self.linesearch_fem_state_v[i_b, i_v].dp
+            )
+
+    @ti.func
+    def compute_rigid_d2ellA_dalpha2(self):
+        for i_b, i_d in ti.ndrange(self._B, self.rigid_solver.n_dofs):
+            if not self.batch_linesearch_active[i_b]:
+                continue
+            self.linesearch_state[i_b].d2ellA_dalpha2 += (
+                self.pcg_rigid_state_dof[i_b, i_d].x * self.linesearch_rigid_state_dof[i_b, i_d].dp
             )
 
     @ti.func
@@ -1275,8 +1341,8 @@ class SAPCoupler(RBC):
             self.pcg_rigid_state_dof.x, self.linesearch_rigid_state_dof.dp, self.batch_linesearch_active
         )
 
-    @ti.kernel
-    def _kernel_init_linesearch(self, step_size: float):
+    @ti.func
+    def _func_init_linesearch(self, step_size: float):
         for i_b in ti.ndrange(self._B):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
             if not self.batch_linesearch_active[i_b]:
@@ -1307,7 +1373,7 @@ class SAPCoupler(RBC):
             )
             self.linesearch_rigid_state_dof[i_b, i_d].x_prev = self.rigid_state_dof.v[i_b, i_d]
 
-    @ti.kernel
+    @ti.func
     def check_initial_exact_linesearch_convergence(self):
         for i_b in ti.ndrange(self._B):
             if not self.batch_linesearch_active[i_b]:
@@ -1363,7 +1429,7 @@ class SAPCoupler(RBC):
         self.compute_total_energy(i_step, self.linesearch_state.energy)
         self.check_linesearch_convergence()
 
-    @ti.kernel
+    @ti.func
     def update_velocity_linesearch(self):
         if ti.static(self.fem_solver.is_active()):
             self.update_fem_velocity_linesearch()
@@ -1401,13 +1467,14 @@ class SAPCoupler(RBC):
         for i in range(self._n_linesearch_iterations):
             self.one_exact_linesearch_iter(i_step)
 
+    @ti.kernel
     def one_exact_linesearch_iter(self, i_step: ti.i32):
         self.update_velocity_linesearch()
         self.compute_line_energy_gradient_hessian(i_step)
         self.compute_f_df_bracket()
         self.find_next_step_size()
 
-    @ti.kernel
+    @ti.func
     def compute_f_df_bracket(self):
         """
         Compute the function (derivative of total energy) value and its derivative to alpha.
@@ -1433,7 +1500,7 @@ class SAPCoupler(RBC):
             if ti.abs(self.linesearch_state[i_b].f) < self._linesearch_ftol:
                 self.batch_linesearch_active[i_b] = False
 
-    @ti.kernel
+    @ti.func
     def find_next_step_size(self):
         for i_b in ti.ndrange(self._B):
             if not self.batch_linesearch_active[i_b]:
@@ -1477,6 +1544,229 @@ class SAPCoupler(RBC):
     def active_solvers(self):
         """All the active solvers managed by the scene's simulator."""
         return self.sim.active_solvers
+
+
+@ti.data_oriented
+class BaseConstraintHandler(RBC):
+    """
+    Base class for constraint handling in SAPCoupler.
+    """
+
+    def __init__(
+        self,
+        simulator: "Simulator",
+        stiffness: float = 1e8,
+        beta: float = 0.1,
+    ) -> None:
+        self.sim = simulator
+        self.stiffness = stiffness
+        self.beta = beta
+        self._B = simulator._B
+        self.coupler = simulator.coupler
+        self.sap_constraint_info_type = ti.types.struct(
+            k=gs.ti_float,  # constraint stiffness
+            R=gs.ti_float,  # Regularization
+            R_inv=gs.ti_float,  # Inverse of R
+            v_hat=gs.ti_float,  # Stablization velocity
+            energy=gs.ti_float,  # energy
+            gamma=gs.ti_float,  # contact impulse
+            G=gs.ti_float,  # Hessian matrix
+            dvc=gs.ti_float,  # change in constraint velocity
+        )
+
+    @ti.func
+    def compute_constraint_regularization(self, sap_info, i_c, w_rms, time_step):
+        beta_factor = self.beta**2 / (4.0 * ti.math.pi**2)
+        dt2 = time_step**2
+        k = sap_info[i_c].k
+        R = max(beta_factor * w_rms, 1.0 / (dt2 * k))
+        sap_info[i_c].R = R
+        sap_info[i_c].R_inv = 1.0 / R
+
+    @ti.func
+    def compute_constraint_gamma_G(self, sap_info, i_c, vc):
+        y = (sap_info[i_c].v_hat - vc) * sap_info[i_c].R_inv
+        sap_info[i_c].gamma = y
+        sap_info[i_c].G = sap_info[i_c].R_inv
+
+    @ti.func
+    def compute_energy(self, energy: ti.template()):
+        constraints = ti.static(self.constraints)
+        sap_info = ti.static(constraints.sap_info)
+        for i_c in range(self.n_constraints[None]):
+            i_b = constraints[i_c].batch_idx
+            if self.coupler.batch_linesearch_active[i_b]:
+                vc = self.compute_vc(i_c)
+                self.compute_constraint_energy(sap_info, i_c, vc)
+                energy[i_b] += sap_info[i_c].energy
+
+    @ti.func
+    def compute_constraint_energy(self, sap_info, i_c, vc):
+        y = (sap_info[i_c].v_hat - vc) * sap_info[i_c].R_inv
+        sap_info[i_c].energy = 0.5 * y**2 * sap_info[i_c].R
+
+
+@ti.data_oriented
+class RigidConstraintHandler(BaseConstraintHandler):
+    """
+    Rigid body constraints in SAPCoupler. Currently only support joint equality constraints.
+    """
+
+    def __init__(
+        self,
+        simulator: "Simulator",
+        stiffness: float = 1e8,
+        beta: float = 0.1,
+    ) -> None:
+        super().__init__(simulator, stiffness, beta)
+        self.rigid_solver = simulator.rigid_solver
+        self.constraint_solver = simulator.rigid_solver.constraint_solver
+        self.max_constraints = simulator.rigid_solver.n_equalities * self._B
+        self.n_constraints = ti.field(gs.ti_int, shape=())
+        self.constraint_type = ti.types.struct(
+            batch_idx=gs.ti_int,  # batch index
+            i_dof1=gs.ti_int,  # index of the first DOF in the constraint
+            i_dof2=gs.ti_int,  # index of the second DOF in the constraint
+            sap_info=self.sap_constraint_info_type,  # SAP info for the constraint
+        )
+        self.constraints = self.constraint_type.field(shape=(self.max_constraints,))
+        self.Jt = ti.field(gs.ti_float, shape=(self.max_constraints, self.rigid_solver.n_dofs))
+        self.M_inv_Jt = ti.field(gs.ti_float, shape=(self.max_constraints, self.rigid_solver.n_dofs))
+        self.W = ti.field(gs.ti_float, shape=(self.max_constraints,))
+
+    @ti.kernel
+    def build_constraints(
+        self,
+        equalities_info: array_class.EqualitiesInfo,
+        joints_info: array_class.JointsInfo,
+        static_rigid_sim_config: ti.template(),
+    ):
+        self.n_constraints[None] = 0
+        self.Jt.fill(0.0)
+        # TODO: Maybe support different constraints for each batch in the future.
+        # For now all batches have the same constraints.
+        dt2 = self.sim._substep_dt**2
+        for i_b, i_e in ti.ndrange(self._B, self.rigid_solver.n_equalities):
+            if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
+                i_c = ti.atomic_add(self.n_constraints[None], 1)
+                self.constraints[i_c].batch_idx = i_b
+                I_joint1 = (
+                    [equalities_info.eq_obj1id[i_e, i_b], i_b]
+                    if ti.static(static_rigid_sim_config.batch_joints_info)
+                    else equalities_info.eq_obj1id[i_e, i_b]
+                )
+                I_joint2 = (
+                    [equalities_info.eq_obj2id[i_e, i_b], i_b]
+                    if ti.static(static_rigid_sim_config.batch_joints_info)
+                    else equalities_info.eq_obj2id[i_e, i_b]
+                )
+                i_dof1 = joints_info.dof_start[I_joint1]
+                i_dof2 = joints_info.dof_start[I_joint2]
+                self.constraints[i_c].i_dof1 = i_dof1
+                self.constraints[i_c].i_dof2 = i_dof2
+                self.constraints[i_c].sap_info.k = self.stiffness
+                self.constraints[i_c].sap_info.R_inv = dt2 * self.stiffness
+                self.constraints[i_c].sap_info.R = 1.0 / self.constraints[i_c].sap_info.R_inv
+                self.constraints[i_c].sap_info.v_hat = 0.0
+                self.Jt[i_c, i_dof1] = 1.0
+                self.Jt[i_c, i_dof2] = -1.0
+
+    @ti.func
+    def compute_regularization(self):
+        dt_inv = 1.0 / self.sim._substep_dt
+        q = ti.static(self.rigid_solver.dofs_state.pos)
+        sap_info = ti.static(self.constraints.sap_info)
+        for i_c in range(self.n_constraints[None]):
+            i_b = self.constraints[i_c].batch_idx
+            g0 = q[self.constraints[i_c].i_dof1, i_b] - q[self.constraints[i_c].i_dof2, i_b]
+            self.constraints[i_c].sap_info.v_hat = -g0 * dt_inv
+            W = self.compute_delassus(i_c)
+            self.compute_constraint_regularization(sap_info, i_c, W, self.sim._substep_dt)
+
+    @ti.func
+    def compute_delassus_world_frame(self):
+        self.coupler.rigid_solve_jacobian(
+            self.Jt, self.M_inv_Jt, self.n_constraints[None], self.constraints.batch_idx, 1
+        )
+        self.W.fill(0.0)
+        for i_c, i_d in ti.ndrange(self.n_constraints[None], self.rigid_solver.n_dofs):
+            self.W[i_c] += self.M_inv_Jt[i_c, i_d] * self.Jt[i_c, i_d]
+
+    @ti.func
+    def compute_delassus(self, i_c):
+        return self.W[i_c]
+
+    @ti.func
+    def compute_Jx(self, i_c, x):
+        i_b = self.constraints[i_c].batch_idx
+        i_dof1 = self.constraints[i_c].i_dof1
+        i_dof2 = self.constraints[i_c].i_dof2
+        return x[i_b, i_dof1] - x[i_b, i_dof2]
+
+    @ti.func
+    def add_Jt_x(self, y, i_c, x):
+        i_b = self.constraints[i_c].batch_idx
+        i_dof1 = self.constraints[i_c].i_dof1
+        i_dof2 = self.constraints[i_c].i_dof2
+        y[i_b, i_dof1] += x
+        y[i_b, i_dof2] -= x
+
+    @ti.func
+    def compute_vc(self, i_c):
+        return self.compute_Jx(i_c, self.coupler.rigid_state_dof.v)
+
+    @ti.func
+    def compute_gradient_hessian_diag(self):
+        constraints = ti.static(self.constraints)
+        sap_info = ti.static(constraints.sap_info)
+        for i_c in range(self.n_constraints[None]):
+            vc = self.compute_vc(i_c)
+            self.compute_constraint_gamma_G(sap_info, i_c, vc)
+            self.add_Jt_x(self.coupler.rigid_state_dof.gradient, i_c, -sap_info[i_c].gamma)
+            self.add_Jt_x(self.coupler.rigid_state_dof.impulse, i_c, sap_info[i_c].gamma)
+
+    @ti.func
+    def compute_Ap(self):
+        constraints = ti.static(self.constraints)
+        sap_info = ti.static(constraints.sap_info)
+        for i_c in range(self.n_constraints[None]):
+            # Jt @ G @ J @ p
+            x = self.compute_Jx(i_c, self.coupler.pcg_rigid_state_dof.p)
+            x = sap_info[i_c].G * x
+            self.add_Jt_x(self.coupler.pcg_rigid_state_dof.Ap, i_c, x)
+
+    @ti.func
+    def prepare_search_direction_data(self):
+        constraints = ti.static(self.constraints)
+        sap_info = ti.static(constraints.sap_info)
+        for i_c in range(self.n_constraints[None]):
+            i_b = constraints[i_c].batch_idx
+            if self.coupler.batch_linesearch_active[i_b]:
+                sap_info[i_c].dvc = self.compute_Jx(i_c, self.coupler.pcg_rigid_state_dof.x)
+
+    @ti.func
+    def compute_energy_gamma_G(self):
+        constraints = ti.static(self.constraints)
+        sap_info = ti.static(constraints.sap_info)
+        for i_c in range(self.n_constraints[None]):
+            vc = self.compute_vc(i_c)
+            self.compute_constraint_energy_gamma_G(sap_info, i_c, vc)
+
+    @ti.func
+    def compute_constraint_energy_gamma_G(self, sap_info, i_c, vc):
+        self.compute_constraint_gamma_G(sap_info, i_c, vc)
+        sap_info[i_c].energy = 0.5 * sap_info[i_c].gamma ** 2 * sap_info[i_c].R
+
+    @ti.func
+    def update_gradient_hessian_alpha(self):
+        dvc = ti.static(self.constraints.sap_info.dvc)
+        gamma = ti.static(self.constraints.sap_info.gamma)
+        G = ti.static(self.constraints.sap_info.G)
+        for i_c in ti.ndrange(self.n_constraints[None]):
+            i_b = self.constraints[i_c].batch_idx
+            if self.coupler.batch_linesearch_active[i_b]:
+                self.coupler.linesearch_state.dell_dalpha[i_b] -= dvc[i_c] * gamma[i_c]
+                self.coupler.linesearch_state.d2ell_dalpha2[i_b] += dvc[i_c] ** 2 * G[i_c]
 
 
 class ContactMode(IntEnum):
@@ -1529,18 +1819,20 @@ class BaseContactHandler(RBC):
         G = ti.static(self.contact_pairs.sap_info.G)
         for i_p in ti.ndrange(self.n_contact_pairs[None]):
             i_b = self.contact_pairs[i_p].batch_idx
-            if not self.coupler.batch_linesearch_active[i_b]:
-                continue
-            self.coupler.linesearch_state.dell_dalpha[i_b] -= dvc[i_p].dot(gamma[i_p])
-            self.coupler.linesearch_state.d2ell_dalpha2[i_b] += dvc[i_p].dot(G[i_p] @ dvc[i_p])
+            if self.coupler.batch_linesearch_active[i_b]:
+                self.coupler.linesearch_state.dell_dalpha[i_b] -= dvc[i_p].dot(gamma[i_p])
+                self.coupler.linesearch_state.d2ell_dalpha2[i_b] += dvc[i_p].dot(G[i_p] @ dvc[i_p])
 
-    @ti.kernel
+    @ti.func
+    def compute_delassus_world_frame(self):
+        pass
+
+    @ti.func
     def compute_regularization(self):
-        dt2_inv = 1.0 / (self.sim._substep_dt**2)
-
+        self.compute_delassus_world_frame()
         for i_p in range(self.n_contact_pairs[None]):
             W = self.compute_delassus(i_p)
-            w_rms = W.norm() / 3.0 * dt2_inv
+            w_rms = W.norm() / 3.0
             self.compute_contact_regularization(self.contact_pairs.sap_info, i_p, w_rms, self.sim._substep_dt)
 
     @ti.func
@@ -1554,11 +1846,10 @@ class BaseContactHandler(RBC):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in range(self.n_contact_pairs[None]):
             i_b = self.contact_pairs[i_p].batch_idx
-            if not self.coupler.batch_linesearch_active[i_b]:
-                continue
-            vc = self.compute_contact_velocity(i_p)
-            self.compute_contact_energy(sap_info, i_p, vc)
-            energy[i_b] += sap_info[i_p].energy
+            if self.coupler.batch_linesearch_active[i_b]:
+                vc = self.compute_contact_velocity(i_p)
+                self.compute_contact_energy(sap_info, i_p, vc)
+                energy[i_b] += sap_info[i_p].energy
 
     @ti.func
     def compute_contact_gamma_G(self, sap_info, i_p, vc):
@@ -1695,7 +1986,7 @@ class RigidContactHandler(BaseContactHandler):
                     self.Jt[i_p, i_d] = self.Jt[i_p, i_d] + jac
                 link = self.rigid_solver.links_info.parent_idx[link_maybe_batch]
 
-    @ti.kernel
+    @ti.func
     def compute_gradient_hessian_diag(self):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in range(self.n_contact_pairs[None]):
@@ -1703,16 +1994,6 @@ class RigidContactHandler(BaseContactHandler):
             self.compute_contact_gamma_G(sap_info, i_p, vc)
             self.add_Jt_x(self.coupler.rigid_state_dof.gradient, i_p, -sap_info[i_p].gamma)
             self.add_Jt_x(self.coupler.rigid_state_dof.impulse, i_p, sap_info[i_p].gamma)
-
-    @ti.kernel
-    def compute_regularization(self):
-        dt2_inv = 1.0 / (self.sim._substep_dt**2)
-
-        self.compute_delassus_world_frame()
-        for i_p in range(self.n_contact_pairs[None]):
-            W = self.compute_delassus(i_p)
-            w_rms = W.norm() / 3.0 * dt2_inv
-            self.compute_contact_regularization(self.contact_pairs.sap_info, i_p, w_rms, self.sim._substep_dt)
 
     @ti.func
     def compute_pcg_matrix_vector_product(self):
@@ -1735,9 +2016,8 @@ class RigidContactHandler(BaseContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in ti.ndrange(self.n_contact_pairs[None]):
             i_b = self.contact_pairs[i_p].batch_idx
-            if not self.coupler.batch_linesearch_active[i_b]:
-                continue
-            sap_info[i_p].dvc = self.compute_Jx(i_p, self.coupler.pcg_rigid_state_dof.x)
+            if self.coupler.batch_linesearch_active[i_b]:
+                sap_info[i_p].dvc = self.compute_Jx(i_p, self.coupler.pcg_rigid_state_dof.x)
 
 
 @ti.data_oriented
@@ -1749,7 +2029,7 @@ class FEMContactHandler(BaseContactHandler):
         super().__init__(simulator)
         self.fem_solver = simulator.fem_solver
 
-    @ti.kernel
+    @ti.func
     def compute_gradient_hessian_diag(self):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in range(self.n_contact_pairs[None]):
@@ -1764,9 +2044,8 @@ class FEMContactHandler(BaseContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in ti.ndrange(self.n_contact_pairs[None]):
             i_b = self.contact_pairs[i_p].batch_idx
-            if not self.coupler.batch_linesearch_active[i_b]:
-                continue
-            sap_info[i_p].dvc = self.compute_Jx(i_p, self.coupler.pcg_fem_state_v.x)
+            if self.coupler.batch_linesearch_active[i_b]:
+                sap_info[i_p].dvc = self.compute_Jx(i_p, self.coupler.pcg_fem_state_v.x)
 
     @ti.func
     def compute_pcg_matrix_vector_product(self):
@@ -1794,7 +2073,7 @@ class RigidFEMContactHandler(RigidContactHandler):
         super().__init__(simulator)
         self.fem_solver = simulator.fem_solver
 
-    @ti.kernel
+    @ti.func
     def compute_gradient_hessian_diag(self):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in range(self.n_contact_pairs[None]):
@@ -1813,9 +2092,10 @@ class RigidFEMContactHandler(RigidContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         for i_p in ti.ndrange(self.n_contact_pairs[None]):
             i_b = self.contact_pairs[i_p].batch_idx
-            if not self.coupler.batch_linesearch_active[i_b]:
-                continue
-            sap_info[i_p].dvc = self.compute_Jx(i_p, self.coupler.pcg_fem_state_v.x, self.coupler.pcg_rigid_state_dof.x)
+            if self.coupler.batch_linesearch_active[i_b]:
+                sap_info[i_p].dvc = self.compute_Jx(
+                    i_p, self.coupler.pcg_fem_state_v.x, self.coupler.pcg_rigid_state_dof.x
+                )
 
     @ti.func
     def compute_pcg_matrix_vector_product(self):
@@ -1860,10 +2140,12 @@ class FEMFloorTetContactHandler(FEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
+        eps: float = 1e-6,
     ) -> None:
         super().__init__(simulator)
         self.name = "FEMFloorTetContact"
         self.fem_solver = self.sim.fem_solver
+        self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             geom_idx=gs.ti_int,  # index of the FEM element
@@ -1914,7 +2196,8 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         self.n_contact_pairs[None] = 0
         # Compute pair from candidates
-        for i_c in range(self.n_contact_candidates[None]):
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
+        for i_c in range(result_count):
             candidate = self.contact_candidates[i_c]
             i_b = candidate.batch_idx
             i_e = candidate.geom_idx
@@ -1954,7 +2237,7 @@ class FEMFloorTetContactHandler(FEMContactHandler):
             deformable_g = self.coupler._hydroelastic_stiffness
             rigid_g = self.coupler.fem_pressure_gradient[i_b, i_e].z
             # TODO A better way to handle corner cases where pressure and pressure gradient are ill defined
-            if total_area < gs.EPS or rigid_g < gs.EPS:
+            if total_area < self.eps or rigid_g < self.eps:
                 continue
             g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
             rigid_k = total_area * g
@@ -1991,7 +2274,11 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         i_g = self.contact_pairs[i_p].geom_idx
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
@@ -1999,10 +2286,15 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         i_g = self.contact_pairs[i_p].geom_idx
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
 
     @ti.func
     def compute_delassus(self, i_p):
+        dt2_inv = 1.0 / self.sim._substep_dt**2
         i_b = self.contact_pairs[i_p].batch_idx
         i_g = self.contact_pairs[i_p].geom_idx
         W = ti.Matrix.zero(gs.ti_float, 3, 3)
@@ -2010,7 +2302,7 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         # With floor, J is Identity times the barycentric coordinates
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            W += self.contact_pairs[i_p].barycentric[i] ** 2 * self.fem_solver.pcg_state_v[i_b, i_v].prec
+            W += self.contact_pairs[i_p].barycentric[i] ** 2 * dt2_inv * self.fem_solver.pcg_state_v[i_b, i_v].prec
         return W
 
 
@@ -2026,9 +2318,11 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
+        eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
         self.name = "FEMSelfTetContact"
+        self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             geom_idx0=gs.ti_int,  # index of the FEM element0
@@ -2061,7 +2355,11 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     def compute_candidates(self, f: ti.i32):
         overflow = False
         self.n_contact_candidates[None] = 0
-        for i_r in ti.ndrange(self.coupler.fem_surface_tet_bvh.query_result_count[None]):
+        result_count = ti.min(
+            self.coupler.fem_surface_tet_bvh.query_result_count[None],
+            self.coupler.fem_surface_tet_bvh.max_query_results,
+        )
+        for i_r in range(result_count):
             i_b, i_sa, i_sq = self.coupler.fem_surface_tet_bvh.query_result[i_r]
             i_a = self.fem_solver.surface_elements[i_sa]
             i_q = self.fem_solver.surface_elements[i_sq]
@@ -2138,7 +2436,8 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         sap_info = ti.static(self.contact_pairs.sap_info)
         normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0], dt=gs.ti_float)  # make normal point outward
         self.n_contact_pairs[None] = 0
-        for i_c in range(self.n_contact_candidates[None]):
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
+        for i_c in range(result_count):
             i_b = self.contact_candidates[i_c].batch_idx
             i_e0 = self.contact_candidates[i_c].geom_idx0
             i_e1 = self.contact_candidates[i_c].geom_idx1
@@ -2220,7 +2519,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
             for i in range(2, polygon_n_vertices):
                 accumulate_area_centroid(polygon_vertices, i, total_area, total_area_weighted_centroid)
 
-            if total_area < gs.EPS:
+            if total_area < self.eps:
                 continue
             centroid = total_area_weighted_centroid / total_area
             barycentric0 = tet_barycentric(centroid, tet_vertices0)
@@ -2302,10 +2601,18 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         x_ = world @ x
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
+            else:
+                y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
@@ -2318,13 +2625,22 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         B_ = world @ A @ world.transpose()
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
+            if ti.static(self.fem_solver._enable_vertex_constraints):
+                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
+                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
+            else:
+                y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
 
     @ti.func
     def compute_delassus(self, i_p):
+        dt2_inv = 1.0 / self.sim._substep_dt**2
         i_b = self.contact_pairs[i_p].batch_idx
         i_g0 = self.contact_pairs[i_p].geom_idx0
         i_g1 = self.contact_pairs[i_p].geom_idx1
@@ -2336,10 +2652,10 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         # With floor, J is Identity times the barycentric coordinates
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            W += self.contact_pairs[i_p].barycentric0[i] ** 2 * self.fem_solver.pcg_state_v[i_b, i_v].prec
+            W += self.contact_pairs[i_p].barycentric0[i] ** 2 * dt2_inv * self.fem_solver.pcg_state_v[i_b, i_v].prec
         for i in ti.static(range(4)):
             i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            W += self.contact_pairs[i_p].barycentric1[i] ** 2 * self.fem_solver.pcg_state_v[i_b, i_v].prec
+            W += self.contact_pairs[i_p].barycentric1[i] ** 2 * dt2_inv * self.fem_solver.pcg_state_v[i_b, i_v].prec
         W = world.transpose() @ W @ world
         return W
 
@@ -2408,21 +2724,30 @@ class FEMFloorVertContactHandler(FEMContactHandler):
     def add_Jt_x(self, y, i_p, x):
         i_b = self.contact_pairs[i_p].batch_idx
         i_g = self.contact_pairs[i_p].geom_idx
-        y[i_b, i_g] += x
+        if ti.static(self.fem_solver._enable_vertex_constraints):
+            if not self.fem_solver.vertex_constraints.is_constrained[i_g, i_b]:
+                y[i_b, i_g] += x
+        else:
+            y[i_b, i_g] += x
 
     @ti.func
     def add_Jt_A_J_diag3x3(self, y, i_p, A):
         i_b = self.contact_pairs[i_p].batch_idx
         i_g = self.contact_pairs[i_p].geom_idx
-        y[i_b, i_g] += A
+        if ti.static(self.fem_solver._enable_vertex_constraints):
+            if not self.fem_solver.vertex_constraints.is_constrained[i_g, i_b]:
+                y[i_b, i_g] += A
+        else:
+            y[i_b, i_g] += A
 
     @ti.func
     def compute_delassus(self, i_p):
+        dt2_inv = 1.0 / self.sim._substep_dt**2
         i_b = self.contact_pairs[i_p].batch_idx
         i_g = self.contact_pairs[i_p].geom_idx
         # W = sum (JA^-1J^T)
         # With floor, J is Identity
-        W = self.fem_solver.pcg_state_v[i_b, i_g].prec
+        W = self.fem_solver.pcg_state_v[i_b, i_g].prec * dt2_inv
         return W
 
 
@@ -2481,13 +2806,12 @@ class RigidFloorVertContactHandler(RigidContactHandler):
 
     @ti.func
     def compute_delassus_world_frame(self):
-        dt2 = self.sim._substep_dt**2
-        self.coupler.rigid_solve_contact(
-            self.Jt, self.M_inv_Jt, self.n_contact_pairs[None], self.contact_pairs.batch_idx
+        self.coupler.rigid_solve_jacobian(
+            self.Jt, self.M_inv_Jt, self.n_contact_pairs[None], self.contact_pairs.batch_idx, 3
         )
         self.W.fill(0.0)
         for i_p, i_d, i, j in ti.ndrange(self.n_contact_pairs[None], self.rigid_solver.n_dofs, 3, 3):
-            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j] * dt2
+            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j]
 
     @ti.func
     def compute_delassus(self, i_p):
@@ -2523,11 +2847,11 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
+        eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
         self.name = "RigidFemTetContact"
-        self.fem_solver = self.sim.fem_solver
-        self.rigid_solver = self.sim.rigid_solver
+        self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
             geom_idx0=gs.ti_int,  # index of the FEM element
@@ -2565,7 +2889,10 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
     def compute_candidates(self, f: ti.i32):
         self.n_contact_candidates[None] = 0
         overflow = False
-        for i_r in ti.ndrange(self.coupler.rigid_tri_bvh.query_result_count[None]):
+        result_count = ti.min(
+            self.coupler.rigid_tri_bvh.query_result_count[None], self.coupler.rigid_tri_bvh.max_query_results
+        )
+        for i_r in range(result_count):
             i_b, i_a, i_sq = self.coupler.rigid_tri_bvh.query_result[i_r]
             i_q = self.fem_solver.surface_elements[i_sq]
             i_v0 = self.rigid_solver.faces_info.verts_idx[i_a][0]
@@ -2622,7 +2949,8 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
         overflow = False
         normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0])  # make normal point outward
         self.n_contact_pairs[None] = 0
-        for i_c in range(self.n_contact_candidates[None]):
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
+        for i_c in range(result_count):
             i_b = self.contact_candidates[i_c].batch_idx
             i_e = self.contact_candidates[i_c].geom_idx0
             i_f = self.contact_candidates[i_c].geom_idx1
@@ -2689,8 +3017,6 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
                     area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
                 )
 
-            if total_area < gs.EPS:
-                continue
             centroid = total_area_weighted_centroid / total_area
             barycentric0 = tet_barycentric(centroid, tet_vertices)
             barycentric1 = tri_barycentric(centroid, tri_vertices, normal=self.contact_candidates[i_c].normal)
@@ -2699,7 +3025,7 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
             deformable_g = self.coupler._hydroelastic_stiffness
             rigid_g = self.coupler.fem_pressure_gradient[i_b, i_e].dot(self.contact_candidates[i_c].normal)
             pressure = barycentric0.dot(tet_pressures)
-            if total_area < gs.EPS or rigid_g < gs.EPS:
+            if total_area < self.eps or rigid_g < self.eps:
                 continue
             g = rigid_g * deformable_g / (deformable_g + rigid_g)  # harmonic average
             rigid_k = total_area * g
@@ -2739,22 +3065,23 @@ class RigidFemTetContactHanlder(RigidFEMContactHandler):
 
     @ti.func
     def compute_delassus_world_frame(self):
-        dt2 = self.sim._substep_dt**2
+        dt2_inv = 1.0 / self.sim._substep_dt**2
         # rigid
-        self.coupler.rigid_solve_contact(
-            self.Jt, self.M_inv_Jt, self.n_contact_pairs[None], self.contact_pairs.batch_idx
+        self.coupler.rigid_solve_jacobian(
+            self.Jt, self.M_inv_Jt, self.n_contact_pairs[None], self.contact_pairs.batch_idx, 3
         )
         self.W.fill(0.0)
         for i_p, i_d, i, j in ti.ndrange(self.n_contact_pairs[None], self.rigid_solver.n_dofs, 3, 3):
-            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j] * dt2
+            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j]
 
         # fem
+        barycentric0 = ti.static(self.contact_pairs.barycentric0)
         for i_p in range(self.n_contact_pairs[None]):
             i_g0 = self.contact_pairs[i_p].geom_idx0
             i_b = self.contact_pairs[i_p].batch_idx
             for i in ti.static(range(4)):
                 i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-                self.W[i_p] += self.contact_pairs[i_p].barycentric0[i] ** 2 * self.fem_solver.pcg_state_v[i_b, i_v].prec
+                self.W[i_p] += barycentric0[i_p][i] ** 2 * dt2_inv * self.fem_solver.pcg_state_v[i_b, i_v].prec
 
     @ti.func
     def compute_delassus(self, i_p):

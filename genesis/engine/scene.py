@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-import taichi as ti
+import gstaichi as ti
 from numpy.typing import ArrayLike
 
 import genesis as gs
@@ -1288,7 +1288,7 @@ class Scene(RBC):
         return self._sim.requires_grad
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """Whether the scene has been built."""
         return self._is_built
 
