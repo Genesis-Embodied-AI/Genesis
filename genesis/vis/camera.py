@@ -11,6 +11,9 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
+from genesis.utils.image_exporter import normalize_depth
+
+T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
 
 
 # quat for Madrona needs to be transformed to y-forward
@@ -149,6 +152,11 @@ class Camera(RBC):
         self._multi_env_transform_tensor = torch.empty((n_envs, 4, 4), dtype=gs.tc_float, device=gs.device)
         self._multi_env_quat_tensor = torch.empty((n_envs, 4), dtype=gs.tc_float, device=gs.device)
 
+        is_parallel = self._visualizer.scene.n_envs > 0
+        if is_parallel:
+            self._env_idx = self._visualizer._scene._sanitize_envs_idx(self._env_idx)
+        else:
+            self._env_idx = 0
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
         self._rasterizer = self._visualizer.rasterizer
@@ -156,21 +164,17 @@ class Camera(RBC):
         self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
 
         if self._batch_renderer is not None:
-            self._rgb_stacked = True
-            self._other_stacked = True
+            self._rgb_stacked = is_parallel
+            self._other_stacked = is_parallel
         else:
-            if self._env_idx is None:
-                self._env_idx = 0
-            elif not isinstance(self._env_idx, int) or self._env_idx >= max(self._visualizer.scene.n_envs, 1):
-                gs.raise_exception("Tracked environment index out-of-bounds")
             if self._raytracer is not None:
                 self._raytracer.add_camera(self)
                 self._rgb_stacked = False
                 self._other_stacked = False
             else:
                 self._rasterizer.add_camera(self)
-                self._rgb_stacked = self._visualizer._context.env_separate_rigid
-                self._other_stacked = self._visualizer._context.env_separate_rigid
+                self._rgb_stacked = is_parallel and self._visualizer._context.env_separate_rigid
+                self._other_stacked = is_parallel and self._visualizer._context.env_separate_rigid
 
         self._is_built = True
         self.set_pose(
@@ -443,13 +447,7 @@ class Camera(RBC):
 
             other_env = " Environment 0" if self._other_stacked else ""
             if depth:
-                depth_min = depth_np.min()
-                depth_max = depth_np.max()
-                if depth_max - depth_min > gs.EPS:
-                    depth_normalized = (depth_max - depth_np) / (depth_max - depth_min)
-                    depth_img = (depth_normalized * 255).astype(np.uint8)
-                else:
-                    depth_img = np.zeros_like(depth_arr, dtype=np.uint8)
+                depth_img = normalize_depth(depth_np[..., None], np.inf, "linear")
                 if self._other_stacked:
                     depth_img = depth_img[0]
                 cv2.imshow(f"{title + other_env} [Depth]", depth_img)
@@ -482,9 +480,6 @@ class Camera(RBC):
         cy = (1.0 + P[1, 2]) * height / 2.0
 
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
-        u = u.reshape((-1,))
-        v = v.reshape((-1,))
-
         xd = (u + 0.5 - cx) / fx
         yd = (v + 0.5 - cy) / fy
         return center_dis / np.sqrt(xd**2 + yd**2 + 1.0)
@@ -531,29 +526,24 @@ class Camera(RBC):
         cx = (1.0 - P[0, 2]) * width / 2.0
         cy = (1.0 + P[1, 2]) * height / 2.0
 
-        # Extract camera pose if needed
-        if world_frame:
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
-            cam_pose = self.transform @ T_OPENGL_TO_OPENCV
-
         # Mask out invalid depth
         mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
 
         # Compute normalized pixel coordinates
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
-        u = u.reshape((-1,))
-        v = v.reshape((-1,))
 
         # Convert to world coordinates
-        depth_grid = depth_arr[v, u]
+        depth_grid = depth_arr[..., v, u]
         world_x = depth_grid * (u + 0.5 - cx) / fx
         world_y = depth_grid * (v + 0.5 - cy) / fy
         world_z = depth_grid
 
-        point_cloud = np.stack((world_x, world_y, world_z, np.ones((width * height,), dtype=np.float32)), axis=-1)
+        point_cloud = np.stack((world_x, world_y, world_z, np.ones_like(world_z, dtype=np.float32)), axis=-1)
         if world_frame:
-            point_cloud = point_cloud @ cam_pose.T
-        point_cloud = point_cloud[:, :3].reshape((width, height, 3))
+            cam_pose = self.transform @ T_OPENGL_TO_OPENCV  # (n, 4, 4) or (4, 4)
+            point_cloud = np.matmul(point_cloud, cam_pose.swapaxes(-1, -2))
+
+        point_cloud = point_cloud[..., :3]
         return point_cloud, mask
 
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):

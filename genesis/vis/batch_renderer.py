@@ -388,17 +388,18 @@ class BatchRenderer(RBC):
 
         # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
         rendered = [
-            tensor_to_array(rgba_all[..., :3].flip(-1)) if need[IMAGE_TYPE.RGB] else None,
-            tensor_to_array(depth_all[..., 0]) if need[IMAGE_TYPE.DEPTH] else None,
-            tensor_to_array(seg_all[..., 0]) if need[IMAGE_TYPE.SEGMENTATION] else None,
-            tensor_to_array(normal_all[..., :3].flip(-1)) if need[IMAGE_TYPE.NORMAL] else None,
+            tensor_to_array(rgba_all[..., :3].flip(-1).swapaxes(0, 1)) if need[IMAGE_TYPE.RGB] else None,
+            tensor_to_array(depth_all[..., 0].swapaxes(0, 1)) if need[IMAGE_TYPE.DEPTH] else None,
+            tensor_to_array(seg_all[..., 0].swapaxes(0, 1)) if need[IMAGE_TYPE.SEGMENTATION] else None,
+            tensor_to_array(normal_all[..., :3].flip(-1).swapaxes(0, 1)) if need[IMAGE_TYPE.NORMAL] else None,
         ]
 
         # convert center distance depth to plane distance
-        if self._use_rasterizer:
+        if not self._use_rasterizer:
             if need[IMAGE_TYPE.DEPTH]:
+                depth_centers = rendered[IMAGE_TYPE.DEPTH]
                 for i, camera in enumerate(self._cameras):
-                    depth_all[i] = camera.distance_center_to_plane(depth_all[i])
+                    depth_centers[i] = camera.distance_center_to_plane(depth_centers[i])
 
         # convert seg geom idx to seg_idxc
         if need[IMAGE_TYPE.SEGMENTATION]:
@@ -409,7 +410,6 @@ class BatchRenderer(RBC):
 
         for t, data in enumerate(rendered):
             if data is not None:
-                data = data.swapaxes(0, 1)
                 if self._visualizer.scene.n_envs == 0:
                     data = data.squeeze(1)
                 rendered[t] = tuple(data)

@@ -26,7 +26,10 @@ class ImageComponent:
 
     def check_frame_shape(self, frame):
         if frame.ndim == 3:
-            frame = frame[None, ...]
+            if frame.shape[-1] == self.channel:
+                frame = frame[None, ...]
+            else:
+                frame = frame[..., None]
         elif frame.ndim == 2:
             frame = frame.reshape((1, *frame.shape, 1))
         if frame.ndim != 4 or frame.shape[-1] != self.channel:

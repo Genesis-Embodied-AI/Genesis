@@ -347,7 +347,10 @@ def test_render_api(show_viewer):
 
 
 @pytest.mark.required
-def test_point_cloud(show_viewer):
+@pytest.mark.parametrize(
+    "render_type", [RENDER_TYPE.RASTERIZER, RENDER_TYPE.BATCHRENDER_RASTERIZER, RENDER_TYPE.BATCHRENDER_RAYTRACER]
+)
+def test_point_cloud(show_viewer, render_type):
     CAMERA_DIST = 8.0
     OBJ_OFFSET = 10.0
     BOX_HALFSIZE = 1.0
@@ -356,6 +359,7 @@ def test_point_cloud(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
+        renderer=get_render_options(render_type),
     )
     scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -368,6 +372,8 @@ def test_point_cloud(show_viewer):
         pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
         lookat=(0.0, OBJ_OFFSET, 0.0),
         GUI=show_viewer,
+        near=2.0,
+        far=15.0,
     )
     scene.add_entity(
         morph=gs.morphs.Box(
@@ -380,15 +386,16 @@ def test_point_cloud(show_viewer):
         pos=(0.0, -OBJ_OFFSET, CAMERA_DIST),
         lookat=(0.0, -OBJ_OFFSET, 0.0),
         GUI=show_viewer,
+        near=2.0,
+        far=15.0,
     )
     camera_box_2 = scene.add_camera(
         pos=np.array((CAMERA_DIST, CAMERA_DIST - OBJ_OFFSET, CAMERA_DIST)),
         lookat=(0.0, -OBJ_OFFSET, 0.0),
         GUI=show_viewer,
+        near=2.0,
+        far=15.0,
     )
-    for camera in scene.visualizer.cameras:
-        camera._near = 2.0
-        camera._far = 15.0
     scene.build()
 
     if show_viewer:

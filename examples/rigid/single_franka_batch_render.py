@@ -13,7 +13,7 @@ def main():
     parser.add_argument("-b", "--n_envs", type=int, default=3)
     parser.add_argument("-s", "--n_steps", type=int, default=2)
     parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
-    parser.add_argument("-o", "--output_dir", type=str, default="img_output/test")
+    parser.add_argument("-o", "--output_dir", type=str, default="data/test")
     parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
     parser.add_argument("-d", "--debug", action="store_true", default=False)
     parser.add_argument("-l", "--seg_level", type=str, default="link")
@@ -110,10 +110,14 @@ def main():
             )
             exporter.export_frame_all_cameras(i, rgb=color, depth=depth, segmentation=seg, normal=normal)
         else:
-            color, depth, seg, normal = cam_0.render(
-                rgb=False, depth=True, segmentation=True, colorize_seg=True, normal=False,
+            color, depth, seg, normal = cam_1.render(
+                rgb=False,
+                depth=True,
+                segmentation=True,
+                colorize_seg=True,
+                normal=False,
             )
-            exporter.export_frame_single_camera(i, cam_0.idx, rgb=seg, depth=depth, segmentation=None, normal=normal)
+            exporter.export_frame_single_camera(i, cam_1.idx, rgb=seg, depth=depth, segmentation=None, normal=normal)
     if args.debug:
         debug_cam.stop_recording("debug_cam.mp4")
 
