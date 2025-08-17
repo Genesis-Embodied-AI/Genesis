@@ -1452,7 +1452,7 @@ class RigidEntity(Entity):
             assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
         # import here to avoid circular import
-        from genesis.utils.path_planing import RRT, RRTConnect
+        from genesis.utils.path_planning import RRT, RRTConnect
 
         match planner:
             case "RRT":

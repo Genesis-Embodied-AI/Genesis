@@ -14,8 +14,10 @@ _ti_outputs = io.StringIO()
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    import gstaichi as ti
-
+    try:
+        import gstaichi as ti
+    except ImportError:
+        raise ImportError("genesis now uses gstaichi as the backend. Please install it by 'pip install gstaichi'")
 try:
     import torch
 except ImportError as e:
