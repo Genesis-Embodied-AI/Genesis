@@ -91,7 +91,7 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
         self._morph_heterogeneous = morph_heterogeneous
-        self._is_heterogeneous = morph_heterogeneous is not None
+        self._enable_heterogeneous = not (morph_heterogeneous is None or len(morph_heterogeneous) == 0)
 
         self._load_model()
 
@@ -107,6 +107,76 @@ class RigidEntity(Entity):
         else:
             gs.raise_exception(f"Unsupported morph: {morph}.")
 
+    def _load_heterogeneous(self):
+        # TODO
+
+        # handle self._requires_jac_and_IK
+        # handle self._is_local_collision_mask
+        # handle contact pair validity
+        # handle max ndof, nlink, etc
+        # only support  primitive and mesh
+        # com can be off
+
+        self.list_het_link_start = gs.List()
+        self.list_het_link_end = gs.List()
+        self.list_het_n_links = gs.List()
+        self.list_het_geom_group_start = gs.List()
+        self.list_het_geom_group_end = gs.List()
+
+        self.list_het_link_start.append(self._link_start)
+        self.list_het_n_links.append(len(self._links))
+        self.list_het_link_end.append(self._link_start + len(self._links))
+        self.list_het_geom_group_start.append(self._geom_start)
+        self.list_het_geom_group_end.append(self._geom_start + len(self.geoms))
+
+        if self._enable_heterogeneous:
+            for morph in self._morph_heterogeneous:
+                if isinstance(morph, gs.morphs.Mesh):
+                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                elif isinstance(morph, gs.morphs.Primitive):
+                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                else:
+                    gs.raise_exception(
+                        f"morph_heterogeneous only supports primitive and mesh, Unsupported morph: {morph}."
+                    )
+
+                if len(self._links) != 1:
+                    gs.raise_exception("morph_heterogeneous only supports single link entity.")
+
+                link = self._links[0]
+                cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
+
+                # Add visual geometries
+                for g_info in vg_infos:
+                    link._add_vgeom(
+                        vmesh=g_info["vmesh"],
+                        init_pos=g_info.get("pos", gu.zero_pos()),
+                        init_quat=g_info.get("quat", gu.identity_quat()),
+                    )
+                # Add collision geometries
+                for g_info in cg_infos:
+                    friction = self.material.friction
+                    if friction is None:
+                        friction = g_info.get("friction", gu.default_friction())
+                    link._add_geom(
+                        mesh=g_info["mesh"],
+                        init_pos=g_info.get("pos", gu.zero_pos()),
+                        init_quat=g_info.get("quat", gu.identity_quat()),
+                        type=g_info["type"],
+                        friction=friction,
+                        sol_params=g_info["sol_params"],
+                        data=g_info.get("data"),
+                        needs_coup=self.material.needs_coup,
+                        contype=g_info["contype"],
+                        conaffinity=g_info["conaffinity"],
+                    )
+
+                self.list_het_link_start.append(self.list_het_link_end[-1])
+                self.list_het_link_end.append(self._link_start + len(self._links))
+                self.list_het_n_links.append(self.list_het_link_end[-1] - self.list_het_link_start[-1])
+                self.list_het_geom_group_start.append(self.list_het_geom_group_end[-1])
+                self.list_het_geom_group_end.append(self.list_het_geom_group_end[-1] + len(cg_infos))
+
     def _load_model(self):
         self._links = gs.List()
         self._joints = gs.List()
@@ -114,29 +184,7 @@ class RigidEntity(Entity):
 
         self.load_morph(self._morph)
 
-        self.link_start_initial = self._link_start
-        self.link_end_initial = self._link_start + len(self._links)
-        self.n_links_initial = self.link_end_initial - self.link_start_initial
-
-        if self._is_heterogeneous:
-            self.list_link_start_heterogeneous = gs.List()
-            self.list_link_end_heterogeneous = gs.List()
-            self.list_n_links_heterogeneous = gs.List()
-            self.list_link_start_heterogeneous.append(self.link_start_initial)
-            self.list_n_links_heterogeneous.append(self.n_links_initial)
-            self.list_link_end_heterogeneous.append(self.link_end_initial)
-
-            if isinstance(self._morph, gs.morphs.Terrain):
-                gs.raise_exception("Terrain is not supported for heterogeneous morphs.")
-            for morph in self._morph_heterogeneous:
-                self.load_morph(morph)
-
-                self.list_link_start_heterogeneous.append(self.list_link_end_heterogeneous[-1])
-                self.list_link_end_heterogeneous.append(self._link_start + len(self._links))
-                self.list_n_links_heterogeneous.append(
-                    self.list_link_end_heterogeneous[-1] - self.list_link_start_heterogeneous[-1]
-                )
-
+        self._load_heterogeneous()
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
@@ -149,7 +197,7 @@ class RigidEntity(Entity):
                 if link.idx not in parent_link.child_idxs:
                     parent_link.child_idxs.append(link.idx)
 
-    def _load_primitive(self, morph, surface):
+    def _load_primitive(self, morph, surface, load_geom_only_for_heterogeneous=False):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -214,6 +262,9 @@ class RigidEntity(Entity):
                 )
             )
 
+        if load_geom_only_for_heterogeneous:
+            return g_infos
+
         link, (joint,) = self._add_by_info(
             l_info=dict(
                 is_robot=False,
@@ -238,7 +289,7 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _load_mesh(self, morph, surface):
+    def _load_mesh(self, morph, surface, load_geom_only_for_heterogeneous=False):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -283,6 +334,9 @@ class RigidEntity(Entity):
                         sol_params=gu.default_solver_params(),
                     )
                 )
+
+        if load_geom_only_for_heterogeneous:
+            return g_infos
 
         link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
 
@@ -744,6 +798,37 @@ class RigidEntity(Entity):
             )
             joints.append(joint)
 
+        cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, l_info["is_robot"])
+
+        # Add visual geometries
+        for g_info in vg_infos:
+            link._add_vgeom(
+                vmesh=g_info["vmesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+            )
+        # Add collision geometries
+        for g_info in cg_infos:
+            friction = self.material.friction
+            if friction is None:
+                friction = g_info.get("friction", gu.default_friction())
+            link._add_geom(
+                mesh=g_info["mesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+                type=g_info["type"],
+                friction=friction,
+                sol_params=g_info["sol_params"],
+                data=g_info.get("data"),
+                needs_coup=self.material.needs_coup,
+                contype=g_info["contype"],
+                conaffinity=g_info["conaffinity"],
+            )
+
+        return link, joints
+
+    @staticmethod
+    def _convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot):
         # Separate collision from visual geometry for post-processing
         cg_infos, vg_infos = [], []
         for g_info in g_infos:
@@ -769,7 +854,7 @@ class RigidEntity(Entity):
             # the non-physical part that is added to the original geometries to convexify them are generally inside
             # the mechanical structure and not interacting directly with the outer world. On top of that, not only
             # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
-            if l_info["is_robot"]:
+            if is_robot:
                 decompose_error_threshold = morph.decompose_robot_error_threshold
             else:
                 decompose_error_threshold = morph.decompose_object_error_threshold
@@ -789,33 +874,7 @@ class RigidEntity(Entity):
             mesh = g_info["mesh"]
             mesh.set_color((*np.random.rand(3), 0.7))
 
-        # Add visual geometries
-        for g_info in vg_infos:
-            link._add_vgeom(
-                vmesh=g_info["vmesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-            )
-
-        # Add collision geometries
-        for g_info in cg_infos:
-            friction = self.material.friction
-            if friction is None:
-                friction = g_info.get("friction", gu.default_friction())
-            link._add_geom(
-                mesh=g_info["mesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-                type=g_info["type"],
-                friction=friction,
-                sol_params=g_info["sol_params"],
-                data=g_info.get("data"),
-                needs_coup=self.material.needs_coup,
-                contype=g_info["contype"],
-                conaffinity=g_info["conaffinity"],
-            )
-
-        return link, joints
+        return cg_infos, vg_infos
 
     def _add_equality(self, name, type, objs_name, data, sol_params):
         objs_id = []

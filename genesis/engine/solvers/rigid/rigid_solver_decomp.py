@@ -211,7 +211,7 @@ class RigidSolver(Solver):
         for entity in self._entities:
             entity._build()
 
-        self._is_heterogeneous = any(entity._is_heterogeneous for entity in self._entities)
+        self._enable_heterogeneous = any(entity._enable_heterogeneous for entity in self._entities)
 
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
@@ -266,10 +266,10 @@ class RigidSolver(Solver):
 
         if self.is_active():
             if hasattr(self._options, "batch_entities_info"):
-                self._options.batch_entities_info = self._options.batch_entities_info or self._is_heterogeneous
-                self._options.batch_links_info = self._options.batch_links_info or self._is_heterogeneous
-                self._options.batch_dofs_info = self._options.batch_dofs_info or self._is_heterogeneous
-                self._options.batch_joints_info = self._options.batch_joints_info or self._is_heterogeneous
+                self._options.batch_entities_info = self._options.batch_entities_info or self._enable_heterogeneous
+                self._options.batch_links_info = self._options.batch_links_info or self._enable_heterogeneous
+                self._options.batch_dofs_info = self._options.batch_dofs_info or self._enable_heterogeneous
+                self._options.batch_joints_info = self._options.batch_joints_info or self._enable_heterogeneous
 
             # Note optional hibernation_threshold_acc/vel params at the bottom of the initialization list.
             # This is caused by this code being also run by AvatarSolver, which inherits from this class
@@ -282,6 +282,7 @@ class RigidSolver(Solver):
                 batch_links_info=getattr(self._options, "batch_links_info", False),
                 batch_dofs_info=getattr(self._options, "batch_dofs_info", False),
                 batch_joints_info=getattr(self._options, "batch_joints_info", False),
+                enable_heterogeneous=getattr(self, "_enable_heterogeneous", False),
                 enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
                 enable_multi_contact=getattr(self, "_enable_multi_contact", True),
                 enable_self_collision=getattr(self, "_enable_self_collision", True),
@@ -605,8 +606,35 @@ class RigidSolver(Solver):
     def _init_link_fields(self):
         self.links_info = self.data_manager.links_info
         self.links_state = self.data_manager.links_state
-
         links = self.links
+
+        # dispatch geoms for heterogeneous simulation
+        links_geom_start = np.array([link.geom_start for link in links], dtype=gs.np_int)
+        links_geom_end = np.array([link.geom_end for link in links], dtype=gs.np_int)
+        if self._options.batch_links_info:
+            # add batch dim, nlinks x self._B
+            links_geom_start = np.tile(links_geom_start[:, None], (1, self._B))
+            links_geom_end = np.tile(links_geom_end[:, None], (1, self._B))
+
+        for i_l, link in enumerate(links):
+            if link._entity._enable_heterogeneous:
+                np_geom_group_start = np.array(link._entity.list_het_geom_group_start)
+                np_geom_group_end = np.array(link._entity.list_het_geom_group_end)
+                n_het = len(np_geom_group_start)
+                base = self._B // n_het
+                extra = self._B % n_het  # first `extra` chunks get one more
+                # dispatch geoms equally for each heterogeneous environment
+                sizes = np.r_[np.full(extra, base + 1), np.full(n_het - extra, base)]
+                geom_idx = np.repeat(np.arange(n_het), sizes)
+
+                links_geom_start[i_l, :] = np_geom_group_start[geom_idx]
+                links_geom_end[i_l, :] = np_geom_group_end[geom_idx]
+                if self._B < n_het:
+                    gs.raise_exception(
+                        f"{link.name}: Batch size {self._B} must be greater than or equal to "
+                        f"the number of heterogeneous environments {n_het}."
+                    )
+
         kernel_init_link_fields(
             links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),
             links_root_idx=np.array([link.root_idx for link in links], dtype=gs.np_int),
@@ -615,6 +643,8 @@ class RigidSolver(Solver):
             links_joint_start=np.array([link.joint_start for link in links], dtype=gs.np_int),
             links_q_end=np.array([link.q_end for link in links], dtype=gs.np_int),
             links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
+            links_geom_start=links_geom_start,
+            links_geom_end=links_geom_end,
             links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
             links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
             links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
@@ -2660,6 +2690,8 @@ def kernel_init_link_fields(
     links_joint_start: ti.types.ndarray(),
     links_q_end: ti.types.ndarray(),
     links_dof_end: ti.types.ndarray(),
+    links_geom_start: ti.types.ndarray(),
+    links_geom_end: ti.types.ndarray(),
     links_joint_end: ti.types.ndarray(),
     links_invweight: ti.types.ndarray(),
     links_is_fixed: ti.types.ndarray(),
@@ -2708,6 +2740,9 @@ def kernel_init_link_fields(
         for j1 in ti.static(range(3)):
             for j2 in ti.static(range(3)):
                 links_info.inertial_i[I][j1, j2] = links_inertial_i[i, j1, j2]
+
+        links_info.geom_start[I] = links_geom_start[I]
+        links_info.geom_end[I] = links_geom_end[I]
 
     for i, b in ti.ndrange(n_links, _B):
         I = [i, b] if ti.static(static_rigid_sim_config.batch_links_info) else i

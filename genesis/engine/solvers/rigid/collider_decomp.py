@@ -1131,31 +1131,37 @@ def func_broad_phase(
     """
     _B = collider_state.active_buffer.shape[1]
     n_geoms = collider_state.active_buffer.shape[0]
+    n_links = links_info.geom_start.shape[0]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         axis = 0
-
+        env_n_geoms = 0
+        for i_l in range(n_links):
+            I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+            env_n_geoms = env_n_geoms + links_info.geom_end[I_l] - links_info.geom_start[I_l]
         # copy updated geom aabbs to buffer for sorting
         if collider_state.first_time[i_b]:
-            for i in range(n_geoms):
-                collider_state.sort_buffer.value[2 * i, i_b] = geoms_state.aabb_min[i, i_b][axis]
-                collider_state.sort_buffer.i_g[2 * i, i_b] = i
-                collider_state.sort_buffer.is_max[2 * i, i_b] = 0
+            for i_l in range(n_links):
+                I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                for i_g in range(links_info.geom_start[I_l], links_info.geom_end[I_l]):
+                    collider_state.sort_buffer.value[2 * i_g, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
+                    collider_state.sort_buffer.i_g[2 * i_g, i_b] = i_g
+                    collider_state.sort_buffer.is_max[2 * i_g, i_b] = 0
 
-                collider_state.sort_buffer.value[2 * i + 1, i_b] = geoms_state.aabb_max[i, i_b][axis]
-                collider_state.sort_buffer.i_g[2 * i + 1, i_b] = i
-                collider_state.sort_buffer.is_max[2 * i + 1, i_b] = 1
+                    collider_state.sort_buffer.value[2 * i_g + 1, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
+                    collider_state.sort_buffer.i_g[2 * i_g + 1, i_b] = i_g
+                    collider_state.sort_buffer.is_max[2 * i_g + 1, i_b] = 1
 
-                geoms_state.min_buffer_idx[i, i_b] = 2 * i
-                geoms_state.max_buffer_idx[i, i_b] = 2 * i + 1
+                    geoms_state.min_buffer_idx[i_g, i_b] = 2 * i_g
+                    geoms_state.max_buffer_idx[i_g, i_b] = 2 * i_g + 1
 
             collider_state.first_time[i_b] = False
 
         else:
             # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
             if ti.static(not static_rigid_sim_config.use_hibernation):
-                for i in range(n_geoms * 2):
+                for i in range(env_n_geoms * 2):
                     if collider_state.sort_buffer.is_max[i, i_b]:
                         collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[
                             collider_state.sort_buffer.i_g[i, i_b], i_b
@@ -1166,7 +1172,7 @@ def func_broad_phase(
                         ][axis]
 
         # insertion sort, which has complexity near O(n) for nearly sorted array
-        for i in range(1, 2 * n_geoms):
+        for i in range(1, 2 * env_n_geoms):
             key_value = collider_state.sort_buffer.value[i, i_b]
             key_is_max = collider_state.sort_buffer.is_max[i, i_b]
             key_i_g = collider_state.sort_buffer.i_g[i, i_b]
@@ -1198,7 +1204,7 @@ def func_broad_phase(
         collider_state.n_broad_pairs[i_b] = 0
         if ti.static(not static_rigid_sim_config.use_hibernation):
             n_active = 0
-            for i in range(2 * n_geoms):
+            for i in range(2 * env_n_geoms):
                 if not collider_state.sort_buffer.is_max[i, i_b]:
                     for j in range(n_active):
                         i_ga = collider_state.active_buffer[j, i_b]
@@ -1248,7 +1254,7 @@ def func_broad_phase(
             if rigid_global_info.n_awake_dofs[i_b] > 0:
                 n_active_awake = 0
                 n_active_hib = 0
-                for i in range(2 * n_geoms):
+                for i in range(2 * env_n_geoms):
                     is_incoming_geom_hibernated = geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
 
                     if not collider_state.sort_buffer.is_max[i, i_b]:
