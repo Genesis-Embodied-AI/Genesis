@@ -15,20 +15,20 @@ def func_wakeup_entity_and_its_temp_island(
     links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    contact_island: array_class.ContactIslandState,
+    contact_island_state: array_class.ContactIslandState,
 ):
     # Note: Original function handled non-hibernated & fixed entities.
     # Now, we require a properly hibernated entity to be passed in.
-    island_idx = contact_island.entity_island[i_e, i_b]
+    island_idx = contact_island_state.entity_island[i_e, i_b]
 
-    for ei in range(contact_island.island_entity.n[island_idx, i_b]):
-        entity_ref = contact_island.island_entity.start[island_idx, i_b] + ei
-        entity_idx = contact_island.entity_id[entity_ref, i_b]
+    for ei in range(contact_island_state.island_entity.n[island_idx, i_b]):
+        entity_ref = contact_island_state.island_entity.start[island_idx, i_b] + ei
+        entity_idx = contact_island_state.entity_id[entity_ref, i_b]
 
         is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
 
         if is_entity_hibernated:
-            contact_island.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = (
+            contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = (
                 INVALID_NEXT_HIBERNATED_ENTITY_IDX
             )
 
