@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 import gstaichi as ti
+import numpy as np
 import torch
 
 import genesis as gs
@@ -13,21 +14,17 @@ from genesis.utils.geom import (
     transform_quat_by_quat,
 )
 
-from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
+from .base_sensor import NoisySensor, NoisySensorMetadata, NoisySensorOptions
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-class IMUOptions(SensorOptions):
+class IMUOptions(NoisySensorOptions):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
-
-    Note
-    ----
-    Accelerometers return the so-called classical linear acceleration in local frame minus gravity.
 
     Parameters
     ----------
@@ -39,51 +36,146 @@ class IMUOptions(SensorOptions):
         The offset of the IMU sensor from the RigidLink.
     euler_offset : tuple[float, float, float]
         The offset of the IMU sensor from the RigidLink in euler angles.
-    accelerometer_bias : tuple[float, float, float]
-        The bias of the accelerometer.
-    gyroscope_bias : tuple[float, float, float]
-        The bias of the gyroscope.
+    acc_axes_skew : float | tuple[float, float, float] | Iterable[float]
+        Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
+        for each axis, and off-diagonal elements account for cross-axis misalignment effects.
+        - If a scalar is provided (float), all off-diagonal elements are set to the scalar value.
+        - If a 3-element vector is provided (tuple[float, float, float]), off-diagonal elements are set.
+    acc_noise_std : tuple[float, float, float]
+        The standard deviation of the white noise for each axis of the accelerometer.
+    acc_bias : tuple[float, float, float]
+        The additive bias for each axis of the accelerometer.
+    acc_bias_drift_std : tuple[float, float, float]
+        The standard deviation of the bias drift for each axis of the accelerometer.
+    gyro_axes_skew : float | tuple[float, float, float] | Iterable[float]
+        Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
+    gyro_noise_std : tuple[float, float, float]
+        The standard deviation of the white noise for each axis of the gyroscope.
+    gyro_bias : tuple[float, float, float]
+        The additive bias for each axis of the gyroscope.
+    gyro_bias_drift_std : tuple[float, float, float]
+        The standard deviation of the bias drift for each axis of the gyroscope.
+    delay : float
+        The delay in seconds before the sensor data is read.
+    jitter : float
+        The time jitter standard deviation in seconds before the sensor data is read.
+    interpolate_for_delay : bool
+        If True, the sensor data is interpolated between data points for delay + jitter.
+        Otherwise, the sensor data at the closest time step will be used.
     """
 
     entity_idx: int
     link_idx_local: int = 0
     pos_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     euler_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    acc_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
+    gyro_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
 
-    accelerometer_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    gyroscope_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    acc_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    gyro_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    acc_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    gyro_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    acc_bias_drift_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    gyro_bias_drift_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def validate(self, scene):
+        super().validate(scene)
         assert self.entity_idx >= 0 and self.entity_idx < len(scene.entities), "Invalid RigidEntity index."
         entity = scene.entities[self.entity_idx]
         assert isinstance(entity, RigidEntity), "Entity at given index is not a RigidEntity."
         assert (
             self.link_idx_local >= 0 and self.link_idx_local < scene.entities[self.entity_idx].n_links
         ), "Invalid RigidLink index."
+        self._validate_axes_skew(self.acc_axes_skew)
+        self._validate_axes_skew(self.gyro_axes_skew)
+
+    def _validate_axes_skew(self, axes_skew):
+        np_axes_skew = np.array(axes_skew)
+        assert np_axes_skew.shape in [(), (3,), (3, 3)], "Invalid input shape for axes alignment."
+        assert np.all(np_axes_skew >= 0.0) and np.all(
+            np_axes_skew <= 1.0
+        ), "Values for axes alignment matrix should be between 0.0 and 1.0."
 
 
 @dataclass
-class IMUSharedMetadata(SharedSensorMetadata):
+class IMUSharedMetadata(NoisySensorMetadata):
     """
     Shared metadata between all IMU sensors.
     """
 
     solver: RigidSolver | None = None
     links_idx: list[int] = field(default_factory=list)
-    offsets_pos: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    offsets_quat: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    acc_bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    ang_bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    offsets_pos: torch.Tensor = torch.tensor([])
+    offsets_quat: torch.Tensor = torch.tensor([])
+    alignment_rot_matrix: torch.Tensor = torch.tensor([])
+
+    acc_indices: torch.Tensor = torch.tensor([])
+    gyro_indices: torch.Tensor = torch.tensor([])
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMU(Sensor):
+class IMU(NoisySensor):
+
+    @gs.assert_built
+    def set_acc_axes_skew(self, axes_skew, envs_idx=None):
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        rot_matrix = self._get_skew_to_alignment_matrix(axes_skew)
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._sensor_idx * 2, :, :] = rot_matrix
+
+    @gs.assert_built
+    def set_gyro_axes_skew(self, axes_skew, envs_idx=None):
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        rot_matrix = self._get_skew_to_alignment_matrix(axes_skew)
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._sensor_idx * 2 + 1, :, :] = rot_matrix
+
+    @gs.assert_built
+    def set_acc_bias(self, bias, envs_idx=None):
+        self._set_metadata_tensor(bias, self._shared_metadata.acc_bias, envs_idx, 3)
+
+    @gs.assert_built
+    def set_gyro_bias(self, bias, envs_idx=None):
+        self._set_metadata_tensor(bias, self._shared_metadata.gyro_bias, envs_idx, 3)
+
+    @gs.assert_built
+    def set_acc_bias_drift_std(self, bias_drift_std, envs_idx=None):
+        self._set_metadata_tensor(bias_drift_std, self._shared_metadata.acc_bias_drift_std, envs_idx, 3)
+
+    @gs.assert_built
+    def set_gyro_bias_drift_std(self, bias_drift_std, envs_idx=None):
+        self._set_metadata_tensor(bias_drift_std, self._shared_metadata.gyro_bias_drift_std, envs_idx, 3)
+
+    @gs.assert_built
+    def set_acc_noise_std(self, noise_std, envs_idx=None):
+        self._set_metadata_tensor(noise_std, self._shared_metadata.acc_noise_std, envs_idx, 3)
+
+    @gs.assert_built
+    def set_gyro_noise_std(self, noise_std, envs_idx=None):
+        self._set_metadata_tensor(noise_std, self._shared_metadata.gyro_noise_std, envs_idx, 3)
+
+    # ================================ internal methods ================================
 
     def build(self):
         """
         Initialize all shared metadata needed to update all IMU sensors.
         """
+        self._options.noise_std = tuple(self._options.acc_noise_std) + tuple(self._options.gyro_noise_std)
+        self._options.bias = tuple(self._options.acc_bias) + tuple(self._options.gyro_bias)
+        self._options.bias_drift_std = tuple(self._options.acc_bias_drift_std) + tuple(
+            self._options.gyro_bias_drift_std
+        )
+        super().build()  # set all shared metadata for the NoisySensor base class
+
+        self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
+            self._shared_metadata.bias
+        )
+        self._shared_metadata.acc_bias_drift_std, self._shared_metadata.gyro_bias_drift_std = (
+            self._view_metadata_as_acc_gyro(self._shared_metadata.bias_drift_std)
+        )
+        self._shared_metadata.acc_noise_std, self._shared_metadata.gyro_noise_std = self._view_metadata_as_acc_gyro(
+            self._shared_metadata.noise_std
+        )
+
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
@@ -100,17 +192,17 @@ class IMU(Sensor):
             quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
         self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
 
-        self._shared_metadata.acc_bias = torch.cat(
+        self._shared_metadata.alignment_rot_matrix = torch.cat(
             [
-                self._shared_metadata.acc_bias,
-                torch.tensor([self._options.accelerometer_bias], dtype=gs.tc_float, device=gs.device),
-            ]
-        )
-        self._shared_metadata.ang_bias = torch.cat(
-            [
-                self._shared_metadata.ang_bias,
-                torch.tensor([self._options.gyroscope_bias], dtype=gs.tc_float, device=gs.device),
-            ]
+                self._shared_metadata.alignment_rot_matrix,
+                torch.stack(
+                    [
+                        self._get_skew_to_alignment_matrix(self._options.acc_axes_skew),
+                        self._get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
+                    ],
+                ).expand(self._manager._sim._B, -1, -1, -1),
+            ],
+            dim=1,
         )
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
@@ -158,21 +250,66 @@ class IMU(Sensor):
     ):
         """
         Update the current measured sensor data for all IMU sensors.
-
-        Note
-        ----
-        `buffered_data` contains the history of ground truth cache, and noise/bias is only applied to the current
-        sensor readout `shared_cache`, not the whole buffer.
         """
         buffered_data.append(shared_ground_truth_cache)
-        cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
-
-        # add bias to the shared_cache
-        *batch_size, n_imus, _ = shared_metadata.offsets_quat.shape
-        strided_shared_cache = shared_cache.reshape((*batch_size, n_imus, 2, 3))
-        strided_shared_cache[..., 0, :] += shared_metadata.acc_bias
-        strided_shared_cache[..., 1, :] += shared_metadata.ang_bias
+        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.jitter_in_steps)
+        cls._apply_delay_to_shared_cache(
+            shared_metadata,
+            shared_cache,
+            buffered_data,
+            shared_metadata.jitter_in_steps,
+            shared_metadata.interpolate_for_delay,
+        )
+        # apply rotation matrix to the shared cache
+        shared_cache_xyz_view = shared_cache.view(shared_cache.shape[0], -1, 3)
+        shared_cache_xyz_view.copy_(
+            torch.matmul(shared_metadata.alignment_rot_matrix, shared_cache_xyz_view.unsqueeze(-1)).squeeze(-1)
+        )
+        # apply additive noise and bias to the shared cache
+        cls._add_noise_drift_bias(shared_metadata, shared_cache)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
+
+    # ================================ helper methods ================================
+
+    def _view_metadata_as_acc_gyro(self, metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Get views of the metadata tensor (B, n_imus * 6) as a tuple of acc and gyro metadata tensors (B, n_imus * 3).
+        """
+        batch_size, n_data = metadata_tensor.shape
+        n_imus = n_data // 6
+        reshaped_tensor = metadata_tensor.reshape(batch_size, n_imus, 2, 3)
+        return (
+            reshaped_tensor[..., 0, :].reshape(batch_size, n_imus * 3),
+            reshaped_tensor[..., 1, :].reshape(batch_size, n_imus * 3),
+        )
+
+    def _get_skew_to_alignment_matrix(
+        self, input: float | tuple[float, float, float] | Iterable[float], matrix: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """
+        Convert the alignment input to a matrix. Modifies in place if provided, else allocate a new matrix.
+        """
+        if matrix is None:
+            matrix = torch.eye(3, dtype=gs.tc_float, device=gs.device)
+
+        if isinstance(input, float):
+            # set off-diagonal elements to the scalar value
+            matrix[~torch.eye(3, dtype=gs.tc_bool)] = input
+        elif isinstance(input, torch.Tensor):
+            matrix.copy_(input)
+        else:
+            np_input = np.array(input)
+            if np_input.shape == (3,):
+                # set off-diagonal elements to the vector values
+                matrix[1, 0] = np_input[0]
+                matrix[2, 0] = np_input[0]
+                matrix[0, 1] = np_input[1]
+                matrix[2, 1] = np_input[1]
+                matrix[0, 2] = np_input[2]
+                matrix[1, 2] = np_input[2]
+            elif np_input.shape == (3, 3):
+                matrix.copy_(torch.tensor(np_input, dtype=gs.tc_float))
+        return matrix
