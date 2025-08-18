@@ -12,7 +12,7 @@ from genesis.utils.element import mesh_to_elements, split_all_surface_tets
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum, EQUALITY_TYPE
-from genesis.engine.solvers.rigid.rigid_solver_decomp import func_update_all_verts
+# from genesis.engine.solvers.rigid.rigid_solver_decomp import func_update_all_verts
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator

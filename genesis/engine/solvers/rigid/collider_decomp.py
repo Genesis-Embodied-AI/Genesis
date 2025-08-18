@@ -288,7 +288,8 @@ class Collider:
 
         self._contacts_info_cache = {}
         # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
-        rigid_solver.kernel_update_geom_aabbs(
+        from . import rigid_solver_decomp_kernels
+        rigid_solver_decomp_kernels.kernel_update_geom_aabbs(
             self._solver.geoms_state,
             self._solver.geoms_init_AABB,
             self._solver._static_rigid_sim_config,
