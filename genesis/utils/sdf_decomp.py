@@ -32,6 +32,7 @@ class SDF:
             )
 
 
+@ti.pure
 @ti.kernel
 def sdf_kernel_init_geom_fields(
     geoms_T_mesh_to_sdf: ti.types.ndarray(),

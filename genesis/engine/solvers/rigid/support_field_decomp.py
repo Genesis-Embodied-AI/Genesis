@@ -95,6 +95,7 @@ class SupportField:
         )
 
 
+@ti.pure
 @ti.kernel
 def _kernel_init_support(
     static_rigid_sim_config: ti.template(),

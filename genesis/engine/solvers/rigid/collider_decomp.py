@@ -476,6 +476,7 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     return matres
 
 
+@ti.pure
 @ti.kernel
 def collider_kernel_reset(
     envs_idx: ti.types.ndarray(),
@@ -495,6 +496,7 @@ def collider_kernel_reset(
 
 
 # only used with hibernation ??
+@ti.pure
 @ti.kernel
 def kernel_collider_clear(
     envs_idx: ti.types.ndarray(),
@@ -547,6 +549,7 @@ def kernel_collider_clear(
             collider_state.n_contacts[i_b] = 0
 
 
+@ti.pure
 @ti.kernel
 def collider_kernel_get_contacts(
     is_padded: ti.template(),
@@ -1110,6 +1113,7 @@ def func_check_collision_valid(
     return is_valid
 
 
+@ti.pure
 @ti.kernel
 def func_broad_phase(
     links_state: array_class.LinksState,
@@ -1347,6 +1351,7 @@ def func_broad_phase(
                                     break
 
 
+@ti.pure
 @ti.kernel
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,
@@ -1449,6 +1454,7 @@ def func_narrow_phase_convex_vs_convex(
                         )
 
 
+@ti.pure
 @ti.kernel
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
@@ -1501,6 +1507,7 @@ def func_narrow_phase_convex_specializations(
                     )
 
 
+@ti.pure
 @ti.kernel
 def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
@@ -1552,6 +1559,7 @@ def func_narrow_phase_any_vs_terrain(
                     )
 
 
+@ti.pure
 @ti.kernel
 def func_narrow_phase_nonconvex_vs_nonterrain(
     links_state: array_class.LinksState,
