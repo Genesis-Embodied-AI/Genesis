@@ -324,6 +324,14 @@ class Scene(RBC):
             else:
                 surface.double_sided = False
 
+        if morph_heterogeneous is not None:
+            # TODO: for now, only support visualizing collision geometry for heterogeneous morphs
+            if vis_mode != "collision":
+                gs.logger.warning(
+                    "Heterogeneous morphs only support visualizing collision geometry. Setting vis_mode to 'collision'."
+                )
+            vis_mode = "collision"
+
         if vis_mode is not None:
             surface.vis_mode = vis_mode
         # validate and populate default surface.vis_mode considering morph type

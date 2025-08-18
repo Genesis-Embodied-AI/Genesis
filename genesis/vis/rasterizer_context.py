@@ -303,6 +303,12 @@ class RasterizerContext:
             dtype=np.float32,
         )
 
+    def get_geom_rendered_envs_idx(self, geom, rendered_envs_idx):
+        geom_rendered_envs_idx = getattr(geom, "rendered_envs_idx", rendered_envs_idx)
+        # intersection of geom.rendered_envs_idx and rendered_envs_idx
+        intersection = np.intersect1d(geom_rendered_envs_idx, rendered_envs_idx)
+        return intersection
+
     def on_rigid(self):
         if self.sim.rigid_solver.is_active():
             # TODO: support dynamic switching in GUI later
@@ -319,7 +325,7 @@ class RasterizerContext:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
-                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
+                    geom_T = geoms_T[geom.idx][self.get_geom_rendered_envs_idx(geom, self.rendered_envs_idx)]
                     self.add_rigid_node(
                         geom,
                         pyrender.Mesh.from_trimesh(
@@ -347,7 +353,7 @@ class RasterizerContext:
                     geoms_T = self.sim.rigid_solver._geoms_render_T
 
                 for geom in geoms:
-                    geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
+                    geom_T = geoms_T[geom.idx][self.get_geom_rendered_envs_idx(geom, self.rendered_envs_idx)]
                     node = self.rigid_nodes[geom.uid]
                     node.mesh._bounds = None
                     for primitive in node.mesh.primitives:

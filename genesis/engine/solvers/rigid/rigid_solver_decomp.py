@@ -268,8 +268,8 @@ class RigidSolver(Solver):
             if hasattr(self._options, "batch_entities_info"):
                 self._options.batch_entities_info = self._options.batch_entities_info or self._enable_heterogeneous
                 self._options.batch_links_info = self._options.batch_links_info or self._enable_heterogeneous
-                self._options.batch_dofs_info = self._options.batch_dofs_info or self._enable_heterogeneous
-                self._options.batch_joints_info = self._options.batch_joints_info or self._enable_heterogeneous
+                # self._options.batch_dofs_info = self._options.batch_dofs_info or self._enable_heterogeneous
+                # self._options.batch_joints_info = self._options.batch_joints_info or self._enable_heterogeneous
 
             # Note optional hibernation_threshold_acc/vel params at the bottom of the initialization list.
             # This is caused by this code being also run by AvatarSolver, which inherits from this class
@@ -634,6 +634,11 @@ class RigidSolver(Solver):
                         f"{link.name}: Batch size {self._B} must be greater than or equal to "
                         f"the number of heterogeneous environments {n_het}."
                     )
+
+                for geom in link.geoms:
+                    geom.rendered_envs_idx = np.where(
+                        (links_geom_start[i_l] <= geom.idx) & (geom.idx < links_geom_end[i_l])
+                    )[0]
 
         kernel_init_link_fields(
             links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),

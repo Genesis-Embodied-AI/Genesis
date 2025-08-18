@@ -1142,19 +1142,21 @@ def func_broad_phase(
             env_n_geoms = env_n_geoms + links_info.geom_end[I_l] - links_info.geom_start[I_l]
         # copy updated geom aabbs to buffer for sorting
         if collider_state.first_time[i_b]:
+            i_buffer = 0
             for i_l in range(n_links):
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                 for i_g in range(links_info.geom_start[I_l], links_info.geom_end[I_l]):
-                    collider_state.sort_buffer.value[2 * i_g, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
-                    collider_state.sort_buffer.i_g[2 * i_g, i_b] = i_g
-                    collider_state.sort_buffer.is_max[2 * i_g, i_b] = 0
+                    collider_state.sort_buffer.value[2 * i_buffer, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
+                    collider_state.sort_buffer.i_g[2 * i_buffer, i_b] = i_g
+                    collider_state.sort_buffer.is_max[2 * i_buffer, i_b] = 0
 
-                    collider_state.sort_buffer.value[2 * i_g + 1, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
-                    collider_state.sort_buffer.i_g[2 * i_g + 1, i_b] = i_g
-                    collider_state.sort_buffer.is_max[2 * i_g + 1, i_b] = 1
+                    collider_state.sort_buffer.value[2 * i_buffer + 1, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
+                    collider_state.sort_buffer.i_g[2 * i_buffer + 1, i_b] = i_g
+                    collider_state.sort_buffer.is_max[2 * i_buffer + 1, i_b] = 1
 
-                    geoms_state.min_buffer_idx[i_g, i_b] = 2 * i_g
-                    geoms_state.max_buffer_idx[i_g, i_b] = 2 * i_g + 1
+                    geoms_state.min_buffer_idx[i_buffer, i_b] = 2 * i_g
+                    geoms_state.max_buffer_idx[i_buffer, i_b] = 2 * i_g + 1
+                    i_buffer = i_buffer + 1
 
             collider_state.first_time[i_b] = False
 
