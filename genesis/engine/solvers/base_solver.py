@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 class Solver(RBC):
     def __init__(self, scene: "Scene", sim: "Simulator", options):
-        self._uid = gs.UID()
+        # self._uid = gs.UID()
         self._sim = sim
         self._scene = scene
         self._dt: float = options.dt

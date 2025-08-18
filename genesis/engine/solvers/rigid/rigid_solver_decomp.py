@@ -946,7 +946,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
         # timer.stamp("kernel_step_1")
 
@@ -969,7 +969,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island=self.constraint_solver.contact_island,
+                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             )
             # timer.stamp("kernel_step_2")
 
@@ -1020,7 +1020,7 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
 
     def _func_update_acc(self):
@@ -1315,7 +1315,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island=self.constraint_solver.contact_island,
+                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             )
 
     def substep_post_coupling_grad(self, f):

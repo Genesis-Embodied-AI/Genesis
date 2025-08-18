@@ -616,7 +616,7 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland
+    contact_island_state: array_class.ContactIslandState,  # ContactIsland
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -629,7 +629,7 @@ def kernel_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island=contact_island,
+        contact_island_state=contact_island_state,
     )
 
 
@@ -1339,7 +1339,7 @@ def func_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
 ):
     func_compute_mass_matrix(
         implicit_damping=ti.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
@@ -1370,7 +1370,7 @@ def func_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island=contact_island,
+        contact_island_state=contact_island_state,
     )
     func_update_acc(
         update_cacc=False,
@@ -1494,7 +1494,7 @@ def kernel_step_1(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
 ):
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
@@ -1526,7 +1526,7 @@ def kernel_step_1(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island=contact_island,
+        contact_island_state=contact_island_state,
     )
 
 
@@ -1607,7 +1607,7 @@ def kernel_step_2(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland
+    contact_island_state: array_class.ContactIslandState,  # ContactIsland
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -1651,7 +1651,7 @@ def kernel_step_2(
             collider_state=collider_state,
             unused__rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            contact_island=contact_island,
+            contact_island_state=contact_island_state,
         )
         func_aggregate_awake_entities(
             entities_state=entities_state,
@@ -2538,12 +2538,11 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     collider_state: array_class.ColliderState,
     unused__rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland,
+    contact_island_state: array_class.ContactIslandState,  # ContactIsland,
 ) -> None:
 
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
-    ci = contact_island
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b in range(_B):
@@ -2790,7 +2789,7 @@ def func_torque_and_passive_force(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
 ):
     n_entities = entities_info.n_links.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
@@ -2886,7 +2885,7 @@ def func_torque_and_passive_force(
                 links_state,
                 geoms_state,
                 rigid_global_info,
-                contact_island,
+                contact_island_state,
             )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
