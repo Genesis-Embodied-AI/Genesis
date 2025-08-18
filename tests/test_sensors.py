@@ -34,8 +34,28 @@ def test_imu_sensor(show_viewer):
         ),
     )
 
-    imu_biased = scene.add_sensor(IMUOptions(entity_idx=box.idx, accelerometer_bias=BIAS, gyroscope_bias=BIAS))
-    imu_delayed = scene.add_sensor(IMUOptions(entity_idx=box.idx, read_delay=DT * 2))
+    imu_biased = scene.add_sensor(IMUOptions(entity_idx=box.idx, acc_bias=BIAS, gyro_bias=BIAS))
+    imu_delayed = scene.add_sensor(IMUOptions(entity_idx=box.idx, delay=DT * 2))
+    imu_noisy = scene.add_sensor(
+        IMUOptions(
+            entity_idx=box.idx,
+            acc_axes_skew=0.01,
+            gyro_axes_skew=(0.02, 0.03, 0.04),
+            acc_noise_std=(0.01, 0.01, 0.01),
+            gyro_noise_std=(0.01, 0.01, 0.01),
+            acc_bias_drift_std=(0.001, 0.001, 0.001),
+            gyro_bias_drift_std=(0.001, 0.001, 0.001),
+            delay=DT,
+            jitter=DT * 0.1,
+            interpolate_for_delay=True,
+        )
+    )
+    imu_skewed = scene.add_sensor(
+        IMUOptions(
+            entity_idx=box.idx,
+            acc_axes_skew=(0.0, 0.0, 1.0),
+        )
+    )
 
     scene.build()
 
@@ -49,9 +69,17 @@ def test_imu_sensor(show_viewer):
     assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-7)
     assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=1e-7)
     assert_allclose(imu_delayed.read()["ang_vel"], 0.0, tol=1e-7)
+    assert_allclose(imu_noisy.read()["lin_acc"], 0.0, tol=1e-1)
+    assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=1e-1)
 
     # shift COM to induce angular velocity
     box.set_COM_shift(torch.tensor([[0.1, 0.1, 0.1]]))
+
+    # try updating noise and bias for accelerometer and gyroscope
+    imu_noisy.set_acc_noise_std([0.01, 0.01, 0.01])
+    imu_noisy.set_gyro_noise_std([0.02, 0.02, 0.02])
+    imu_noisy.set_bias([0.01, 0.01, 0.01, 0.02, 0.02, 0.02])
+    imu_noisy.set_jitter(0.001)
 
     # box collides with ground
     for _ in range(30):
@@ -72,5 +100,6 @@ def test_imu_sensor(show_viewer):
     for _ in range(80):
         scene.step()
 
+    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=1e-7)
     assert_allclose(imu_biased.read()["lin_acc"], torch.tensor([BIAS[0], BIAS[1], BIAS[2] - GRAVITY]), tol=1e-7)
     assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-5)
