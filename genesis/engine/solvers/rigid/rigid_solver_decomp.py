@@ -929,7 +929,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island=self.constraint_solver.contact_island.contact_island_state,
         )
         # timer.stamp("kernel_step_1")
 
@@ -952,7 +952,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island=self.constraint_solver.contact_island,
+                contact_island=self.constraint_solver.contact_island.contact_island_state,
             )
             # timer.stamp("kernel_step_2")
 
@@ -1002,7 +1002,7 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island=self.constraint_solver.contact_island.contact_island_state,
         )
 
     def _func_update_acc(self):
@@ -1291,7 +1291,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island=self.constraint_solver.contact_island,
+                contact_island=self.constraint_solver.contact_island.contact_island_state,
             )
 
     def substep_post_coupling_grad(self, f):
@@ -3078,7 +3078,7 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland
+    contact_island: array_class.ContactIslandState,
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -3799,7 +3799,7 @@ def func_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island: array_class.ContactIslandState,
 ):
     func_compute_mass_matrix(
         implicit_damping=ti.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
@@ -3952,7 +3952,7 @@ def kernel_step_1(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island: array_class.ContactIslandState,
 ):
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
@@ -4064,7 +4064,7 @@ def kernel_step_2(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland
+    contact_island: array_class.ContactIslandState,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4989,7 +4989,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     collider_state: array_class.ColliderState,
     unused__rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland,
+    contact_island: array_class.ContactIslandState,
 ) -> None:
 
     n_entities = entities_state.hibernated.shape[0]
@@ -5239,7 +5239,7 @@ def func_torque_and_passive_force(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island: array_class.ContactIslandState,
 ):
     n_entities = entities_info.n_links.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]

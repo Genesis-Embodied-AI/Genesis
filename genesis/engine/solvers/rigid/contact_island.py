@@ -5,6 +5,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.array_class as array_class
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
@@ -25,57 +26,51 @@ class ContactIsland:
             start=gs.ti_int,
         )
 
-        max_contact_pairs = self.collider._collider_info._max_contact_pairs[None]
-        max_contact_pairs = max(max_contact_pairs, 1)  # can't create 0-sized fields
+        self.contact_island_state = array_class.get_contact_island_state(self.solver, collider)
 
-        self.ci_edges = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs, 2)))
+        self.ci_edges = self.contact_island_state.ci_edges
 
         # maps half-edges (half-edges are referenced by entity_edge range) to actual edge index
         # description: half_edge_ref_to_edge_idx
-        self.edge_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs * 2)))
+        self.edge_id = self.contact_island_state.edge_id
 
         # maps collider_state.contact_data index to island idx
-        self.constraint_list = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs)))
+        self.constraint_list = self.contact_island_state.constraint_list
 
         # analogous to edge_id: maps island's constraint local-index to world's contact index
-        self.constraint_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((max_contact_pairs * 2)))
+        self.constraint_id = self.contact_island_state.constraint_id
 
         # per-entity range of half-edges (indexing into edge_id)
         # description: entity_idx_to_half_edge_ref_range
-        self.entity_edge = struct_agg_list.field(
-            shape=self.solver._batch_shape(self.solver.n_entities), needs_grad=False, layout=ti.Layout.SOA
-        )
+        self.entity_edge = self.contact_island_state.entity_edge
 
         # records number of collision edges per island
         # description: island_idx_to_contact_ref_range
-        self.island_col = struct_agg_list.field(
-            shape=self.solver._batch_shape(self.solver.n_entities), needs_grad=False, layout=ti.Layout.SOA
-        )
+        self.island_col = self.contact_island_state.island_col
 
-        self.island_hibernated = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.solver.n_entities)))
+        self.island_hibernated = self.contact_island_state.island_hibernated
 
         # description: island_idx_to_entity_ref_range
-        self.island_entity = struct_agg_list.field(
-            shape=self.solver._batch_shape(self.solver.n_entities), needs_grad=False, layout=ti.Layout.SOA
-        )
+        self.island_entity = self.contact_island_state.island_entity
 
         # map per-island entity local-index to world's entity index
         # description: entity_ref_to_entity_idx
-        self.entity_id = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape((self.solver.n_entities)))
+        self.entity_id = self.contact_island_state.entity_id
 
         # num all collision edges in world
-        self.n_edges = ti.field(dtype=gs.ti_int, shape=self.solver._B)
-        self.n_islands = ti.field(dtype=gs.ti_int, shape=self.solver._B)
-        self.n_stack = ti.field(dtype=gs.ti_int, shape=self.solver._B)
+        self.n_edges = self.contact_island_state.n_edges
+        self.n_islands = self.contact_island_state.n_islands
+        self.n_stack = self.contact_island_state.n_stack
 
         # description: entity_idx_to_island_idx
-        self.entity_island = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
-        self.stack = ti.field(dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities))
+        self.entity_island = self.contact_island_state.entity_island
+        self.stack = self.contact_island_state.stack
 
         # Used to make islands persist through hibernation:
-        self.entity_idx_to_next_entity_idx_in_hibernated_island = ti.field(
-            dtype=gs.ti_int, shape=self.solver._batch_shape(self.solver.n_entities)
+        self.entity_idx_to_next_entity_idx_in_hibernated_island = (
+            self.contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island
         )
+
         self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
 
     @ti.kernel
