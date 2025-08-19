@@ -182,7 +182,7 @@ class IMU(NoisySensor):
         self._shared_metadata.links_idx.append(self._options.entity_idx + self._options.link_idx_local)
         self._shared_metadata.offsets_pos = torch.cat(
             [
-                self._shared_metadata.offsets_pos,
+                self._shared_metadata.offsets_pos.to(gs.device),
                 torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
             ]
         )
@@ -190,32 +190,36 @@ class IMU(NoisySensor):
         quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
         if self._shared_metadata.solver.n_envs > 0:
             quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
-        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
+        self._shared_metadata.offsets_quat = torch.cat(
+            [self._shared_metadata.offsets_quat.to(gs.device), quat_tensor], dim=-2
+        )
 
         self._shared_metadata.alignment_rot_matrix = torch.cat(
             [
-                self._shared_metadata.alignment_rot_matrix,
+                self._shared_metadata.alignment_rot_matrix.to(gs.device),
                 torch.stack(
                     [
                         self._get_skew_to_alignment_matrix(self._options.acc_axes_skew),
                         self._get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
                     ],
-                ).expand(self._manager._sim._B, -1, -1, -1),
+                )
+                .expand(self._manager._sim._B, -1, -1, -1)
+                .to(gs.device),
             ],
             dim=1,
         )
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
+    def get_return_format(self) -> dict[str, tuple[int, ...]]:
         return {
             "lin_acc": (3,),
             "ang_vel": (3,),
         }
 
-    def _get_cache_length(self) -> int:
+    def get_cache_length(self) -> int:
         return 1
 
     @classmethod
-    def _update_shared_ground_truth_cache(
+    def update_shared_ground_truth_cache(
         cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         """
@@ -241,7 +245,7 @@ class IMU(NoisySensor):
         strided_ground_truth_cache[..., 1, :].copy_(local_ang)
 
     @classmethod
-    def _update_shared_cache(
+    def update_shared_cache(
         cls,
         shared_metadata: dict[str, Any],
         shared_ground_truth_cache: torch.Tensor,
@@ -269,7 +273,7 @@ class IMU(NoisySensor):
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
 
     @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
+    def get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
     # ================================ helper methods ================================
