@@ -339,7 +339,7 @@ class NoisySensorMetadata(SharedSensorMetadata):
 
 class NoisySensor(Sensor):
     """
-    Base class for all noisy sensors.
+    Base class for sensors with noise, bias, drift, and jitter.
     """
 
     @gs.assert_built
