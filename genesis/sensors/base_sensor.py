@@ -8,7 +8,11 @@ import torch
 
 import genesis as gs
 from genesis.options import Options
+from genesis.options.recording import RecordingOptions
 from genesis.repr_base import RBC
+
+from .data_handlers import DataHandler
+from .data_recorder import SensorDataRecorder
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -73,12 +77,13 @@ class Sensor(RBC):
         self._sensor_idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
         self._shared_metadata: SharedSensorMetadata = sensor_manager._sensors_metadata[type(self)]
+        self._data_recorder: SensorDataRecorder | None = None
 
         self._delay_steps = round(self._options.delay / self._manager._sim.dt)
         self._shared_metadata.delay_steps.append(self._delay_steps)
 
         self._shape_indices: list[tuple[int, int]] = []
-        return_format = self._get_return_format()
+        return_format = self.get_return_format()
         return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
         tensor_size = 0
         for shape in return_shapes:
@@ -86,7 +91,7 @@ class Sensor(RBC):
             self._shape_indices.append((tensor_size, tensor_size + data_size))
             tensor_size += data_size
 
-        self._cache_size = self._get_cache_length() * tensor_size
+        self._cache_size = self.get_cache_length() * tensor_size
         self._shared_metadata.cache_sizes.append(self._cache_size)
 
         self._cache_idx: int = -1  # initialized by SensorManager during build
@@ -100,7 +105,7 @@ class Sensor(RBC):
         """
         raise NotImplementedError("Sensors must implement `build()`.")
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
+    def get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
         Data format of the read() return value.
 
@@ -114,23 +119,21 @@ class Sensor(RBC):
         """
         raise NotImplementedError("Sensors must implement `return_format()`.")
 
-    def _get_cache_length(self) -> int:
+    def get_cache_length(self) -> int:
         """
         The length of the cache for this sensor instance, e.g. number of points for a Lidar point cloud.
         """
         raise NotImplementedError("Sensors must implement `cache_length()`.")
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor
-    ):
+    def update_shared_ground_truth_cache(cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor):
         """
         Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
         """
         raise NotImplementedError("Sensors must implement `update_shared_ground_truth_cache()`.")
 
     @classmethod
-    def _update_shared_cache(
+    def update_shared_cache(
         cls,
         shared_metadata: dict[str, Any],
         shared_ground_truth_cache: torch.Tensor,
@@ -146,13 +149,13 @@ class Sensor(RBC):
         raise NotImplementedError("Sensors must implement `update_shared_cache_with_noise()`.")
 
     @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
+    def get_cache_dtype(cls) -> torch.dtype:
         """
         The dtype of the cache for this sensor.
         """
         raise NotImplementedError("Sensors must implement `get_cache_dtype()`.")
 
-    # =============================== shared methods ===============================
+    # =============================== public shared methods ===============================
 
     @gs.assert_built
     def read(self, envs_idx: List[int] | None = None):
@@ -168,6 +171,44 @@ class Sensor(RBC):
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
+    def add_recorder(self, handler: "DataHandler", rec_options: RecordingOptions | None = None):
+        """
+        Add a sensor data recorder that processes data from this sensor.
+        """
+        if self._data_recorder is None:
+            self._data_recorder = self._manager.create_data_recorder(self)
+        self._data_recorder.add_handler(handler, rec_options)
+
+    def start_recording(self):
+        """
+        Start recording the sensor data.
+        """
+        if self._data_recorder is None:
+            gs.raise_exception("Sensor data recorder not found. Call `add_recorder()` first.")
+        self._data_recorder.start()
+
+    def pause_recording(self):
+        """
+        Pause recording the sensor data.
+        """
+        if self._data_recorder is None:
+            gs.raise_exception("Sensor data recorder not found. Call `add_recorder()` first.")
+        self._data_recorder.pause()
+
+    def stop_recording(self):
+        """
+        Stop recording the sensor data.
+        """
+        if self._data_recorder is None:
+            gs.raise_exception("Sensor data recorder not found. Call `add_recorder()` first.")
+        self._data_recorder.stop()
+
+    @property
+    def is_built(self) -> bool:
+        return self._manager._sim._scene._is_built
+
+    # =============================== private shared methods ===============================
+
     @classmethod
     def _apply_delay_to_shared_cache(
         cls,
@@ -180,7 +221,7 @@ class Sensor(RBC):
         """
         Applies the read delay to the shared cache tensor by copying the buffered data at the appropriate index.
 
-        NOTE: This is a helper method for `_update_shared_cache()` to apply the delay to the shared cache tensor.
+        NOTE: This is a helper method for `update_shared_cache()` to apply the delay to the shared cache tensor.
 
         Parameters
         ----------
@@ -220,14 +261,14 @@ class Sensor(RBC):
         self, tensor: torch.Tensor, envs_idx: list[int] | None
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """
-        Formats the flattened cache tensor into a dict of tensors using the format specified in `_get_return_format()`.
+        Formats the flattened cache tensor into a dict of tensors using the format specified in `get_return_format()`.
 
         NOTE: This method does not clone the data tensor, it should have been cloned by the caller.
         """
 
         envs_idx = self._sanitize_envs_idx(envs_idx)
 
-        return_format = self._get_return_format()
+        return_format = self.get_return_format()
         return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
         return_values = []
 
@@ -245,10 +286,6 @@ class Sensor(RBC):
 
     def _sanitize_envs_idx(self, envs_idx) -> torch.Tensor:
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
-
-    @property
-    def is_built(self) -> bool:
-        return self._manager._sim._scene._is_built
 
 
 class NoisySensorOptions(SensorOptions):
@@ -356,36 +393,45 @@ class NoisySensor(Sensor):
         batch_size = self._manager._sim._B
 
         self._shared_metadata.bias = torch.cat(
-            [self._shared_metadata.bias, torch.tensor([self._options.bias], dtype=gs.tc_float).expand(batch_size, -1)],
+            [
+                self._shared_metadata.bias.to(gs.device),
+                torch.tensor([self._options.bias], dtype=gs.tc_float, device=gs.device).expand(batch_size, -1),
+            ],
             dim=-1,
         )
         self._shared_metadata.bias_drift_std = torch.cat(
             [
-                self._shared_metadata.bias_drift_std,
-                torch.tensor([self._options.bias_drift_std], dtype=gs.tc_float).expand(batch_size, -1),
+                self._shared_metadata.bias_drift_std.to(gs.device),
+                torch.tensor([self._options.bias_drift_std], dtype=gs.tc_float, device=gs.device).expand(
+                    batch_size, -1
+                ),
             ],
             dim=-1,
         )
         self._shared_metadata.bias_drift = torch.zeros_like(self._shared_metadata.bias_drift_std)
         self._shared_metadata.noise_std = torch.cat(
             [
-                self._shared_metadata.noise_std,
-                torch.tensor([self._options.noise_std], dtype=gs.tc_float).expand(batch_size, -1),
+                self._shared_metadata.noise_std.to(gs.device),
+                torch.tensor([self._options.noise_std], dtype=gs.tc_float, device=gs.device).expand(batch_size, -1),
             ],
             dim=-1,
         )
         self._shared_metadata.jitter_std_in_steps = torch.cat(
             [
-                self._shared_metadata.jitter_std_in_steps,
-                torch.tensor([self._options.jitter / self._manager._sim.dt], dtype=gs.tc_float).expand(batch_size, -1),
+                self._shared_metadata.jitter_std_in_steps.to(gs.device),
+                torch.tensor(
+                    [self._options.jitter / self._manager._sim.dt], dtype=gs.tc_float, device=gs.device
+                ).expand(batch_size, -1),
             ],
             dim=-1,
         )
-        self._shared_metadata.jitter_in_steps = torch.zeros_like(self._shared_metadata.jitter_std_in_steps)
+        self._shared_metadata.jitter_in_steps = torch.zeros_like(
+            self._shared_metadata.jitter_std_in_steps, device=gs.device
+        )
         self._shared_metadata.interpolate_for_delay.append(self._options.interpolate_for_delay)
 
     @classmethod
-    def _update_shared_cache(
+    def update_shared_cache(
         cls,
         shared_metadata: NoisySensorMetadata,
         shared_ground_truth_cache: torch.Tensor,
@@ -417,5 +463,5 @@ class NoisySensor(Sensor):
         shared_cache += torch.normal(shared_metadata.bias, shared_metadata.noise_std) + shared_metadata.bias_drift
 
     @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
+    def get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
