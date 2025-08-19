@@ -1241,7 +1241,6 @@ def get_dofs_state(solver):
         "act_length": V(dtype=gs.ti_float, shape=shape),
         "pos": V(dtype=gs.ti_float, shape=shape),
         "vel": V(dtype=gs.ti_float, shape=shape),
-        "vel_prev": V(dtype=gs.ti_float, shape=shape),
         "acc": V(dtype=gs.ti_float, shape=shape),
         "acc_smooth": V(dtype=gs.ti_float, shape=shape),
         "qf_smooth": V(dtype=gs.ti_float, shape=shape),
@@ -1944,6 +1943,7 @@ class StructEntitiesInfo:
     geom_end: V_ANNOTATION
     n_geoms: V_ANNOTATION
     gravity_compensation: V_ANNOTATION
+    is_local_collision_mask: V_ANNOTATION
 
 
 def get_entities_info(solver):
