@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 import genesis as gs
-from genesis.sensors.data_handlers import LivePlot
+from genesis.sensors.data_handlers import PyQtGraphPlotter
 
 
 def main():
@@ -58,13 +58,13 @@ def main():
         )
     )
     imu.add_recorder(
-        handler=LivePlot(title="IMU Accelerometer Measured Data", labels=["acc_x", "acc_y", "acc_z"]),
+        handler=PyQtGraphPlotter(title="IMU Accelerometer Measured Data", labels=["acc_x", "acc_y", "acc_z"]),
         rec_options=gs.options.RecordingOptions(
             preprocess_func=lambda data, ground_truth_data: data["lin_acc"],
         ),
     )
     imu.add_recorder(
-        handler=LivePlot(title="IMU Accelerometer Ground Truth Data", labels=["acc_x", "acc_y", "acc_z"]),
+        handler=PyQtGraphPlotter(title="IMU Accelerometer Ground Truth Data", labels=["acc_x", "acc_y", "acc_z"]),
         rec_options=gs.options.RecordingOptions(
             preprocess_func=lambda data, ground_truth_data: ground_truth_data["lin_acc"],
         ),

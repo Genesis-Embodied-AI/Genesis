@@ -1,5 +1,6 @@
 import csv
 import os
+import sys
 from collections.abc import Iterable
 from typing import Callable, Optional
 
@@ -243,7 +244,7 @@ class NPZFileWriter(DataHandler):
         gs.logger.info("NPZ data saved.")
 
 
-class LivePlot(DataHandler):
+class PyQtGraphPlotter(DataHandler):
     """
     Real-time plot using PyQtGraph for live sensor data visualization.
 
@@ -254,9 +255,9 @@ class LivePlot(DataHandler):
     ----------
     labels : list[str]
         Labels for each data channel to plot.
-    widget_size : tuple[int, int], optional
+    vis_window_size : tuple[int, int], optional
         The size of the plot window. Defaults to (800, 600).
-    window_size : int, optional
+    rolling_window_size : int, optional
         Number of data points to display in the rolling window. Defaults to 100.
     title : str, optional
         Plot window title. Defaults to "Live Sensor Data".
@@ -265,19 +266,25 @@ class LivePlot(DataHandler):
     def __init__(
         self,
         labels: list[str],
-        widget_size: tuple[int, int] = (800, 600),
-        window_size: int = 100,
+        vis_window_size: tuple[int, int] = (800, 600),
+        rolling_window_size: int = 100,
         title: str = "Live Sensor Data",
     ):
+        if "pyqtgraph" not in sys.modules:
+            gs.raise_exception(
+                "PyQtGraphPlotter: pyqtgraph is not installed. Please install it with `pip install pyqtgraph`."
+            )
+
         self.labels = labels
-        self.window_size = window_size
+        self.vis_window_size = vis_window_size
+        self.rolling_window_size = rolling_window_size
         self.title = title
 
         self.x_data = []
         self.y_data = [[] for _ in labels]
 
         self.app = None
-        self.win = None
+        self.widget = None
         self.plot_widget = None
         self.curves = []
 
@@ -288,29 +295,27 @@ class LivePlot(DataHandler):
         else:
             self.app = pg.QtWidgets.QApplication.instance()
 
-        self.win = pg.GraphicsLayoutWidget(show=True, title=self.title)
-        self.win.resize(800, 600)
+        self.widget = pg.GraphicsLayoutWidget(show=True, title=self.title)
+        self.widget.resize(*self.vis_window_size)
 
-        self.plot_widget = self.win.addPlot(title=self.title)
+        self.plot_widget = self.widget.addPlot(title=self.title)
         self.plot_widget.setLabel("left", "Value")
         self.plot_widget.setLabel("bottom", "Time Step")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.addLegend()
 
-        # Create curves for each data channel
         self.curves = []
-        colors = ["r", "g", "b", "c", "m", "y", "w"]  # Basic PyQtGraph colors
+        colors = ["r", "g", "b", "c", "m", "y", "w"]  # https://pyqtgraph.readthedocs.io/en/latest/user_guide/style.html
         for i, label in enumerate(self.labels):
             color = colors[i % len(colors)]
             curve = self.plot_widget.plot(pen=pg.mkPen(color=color, width=2), name=label)
             self.curves.append(curve)
 
-        # Reset data storage
         self.x_data.clear()
         for y_list in self.y_data:
             y_list.clear()
 
-        gs.logger.info("LivePlot: created PyQtGraph window")
+        gs.logger.info("PyQtGraphPlotter: created PyQtGraph window")
 
     def process(self, data, cur_time):
         """Process new data point and update plot."""
@@ -318,15 +323,14 @@ class LivePlot(DataHandler):
 
         if len(data) != len(self.labels):
             gs.raise_exception(
-                f"LivePlot: Data length ({len(data)}) doesn't match number of labels ({len(self.labels)})"
+                f"PyQtGraphPlotter: Data length ({len(data)}) doesn't match number of labels ({len(self.labels)})"
             )
 
         self.x_data.append(cur_time)
         for i, value in enumerate(data):
             self.y_data[i].append(float(value))
 
-        # rolling window
-        if len(self.x_data) > self.window_size:
+        if len(self.x_data) > self.rolling_window_size:
             self.x_data.pop(0)
             for y_list in self.y_data:
                 y_list.pop(0)
@@ -339,14 +343,14 @@ class LivePlot(DataHandler):
 
     def cleanup(self):
         """Clean up PyQtGraph resources."""
-        if self.win:
+        if self.widget:
             try:
-                self.win.close()
-                gs.logger.debug("LivePlot: closed PyQtGraph window")
+                self.widget.close()
+                gs.logger.debug("PyQtGraphPlotter: closed PyQtGraph window")
             except Exception as e:
-                gs.logger.warning(f"LivePlot: Error closing window: {e}")
+                gs.logger.warning(f"PyQtGraphPlotter: Error closing window: {e}")
             finally:
-                self.win = None
+                self.widget = None
                 self.plot_widget = None
                 self.curves.clear()
 
