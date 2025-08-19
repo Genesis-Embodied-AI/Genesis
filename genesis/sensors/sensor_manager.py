@@ -4,6 +4,8 @@ import torch
 
 from genesis.utils.ring_buffer import TensorRingBuffer
 
+from .data_recorder import SensorDataRecorder
+
 if TYPE_CHECKING:
     from genesis.options.sensors import SensorOptions
 
@@ -22,11 +24,11 @@ class SensorManager:
         self._buffered_data: dict[Type[torch.dtype], TensorRingBuffer] = {}
         self._cache_slices_by_type: dict[Type["Sensor"], slice] = {}
         self._should_update_cache_by_type: dict[Type["Sensor"], bool] = {}
-
+        self._data_recorders: list[SensorDataRecorder] = []
         self._last_cache_cloned_step: dict[tuple[bool, Type[torch.dtype]], int] = {}
         self._cloned_cache: dict[tuple[bool, Type[torch.dtype]], torch.Tensor] = {}
 
-    def create_sensor(self, sensor_options: "SensorOptions"):
+    def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate(self._sim.scene)
         sensor_cls, metadata_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         self._sensors_by_type.setdefault(sensor_cls, [])
@@ -36,11 +38,16 @@ class SensorManager:
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
 
+    def create_data_recorder(self, sensor: "Sensor") -> SensorDataRecorder:
+        data_recorder = SensorDataRecorder(sensor, self._sim.dt)
+        self._data_recorders.append(data_recorder)
+        return data_recorder
+
     def build(self):
         max_buffer_len = 0
         cache_size_per_dtype = {}
         for sensor_cls, sensors in self._sensors_by_type.items():
-            dtype = sensor_cls._get_cache_dtype()
+            dtype = sensor_cls.get_cache_dtype()
 
             for is_ground_truth in [False, True]:
                 self._last_cache_cloned_step.setdefault((is_ground_truth, dtype), -1)
@@ -67,27 +74,29 @@ class SensorManager:
             self._buffered_data[dtype] = TensorRingBuffer(max_buffer_len, cache_shape, dtype=dtype)
 
         for sensor_cls, sensors in self._sensors_by_type.items():
-            dtype = sensor_cls._get_cache_dtype()
+            dtype = sensor_cls.get_cache_dtype()
             for sensor in sensors:
                 sensor.build()
 
     def step(self):
         for sensor_cls in self._sensors_by_type.keys():
-            dtype = sensor_cls._get_cache_dtype()
+            dtype = sensor_cls.get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
-            sensor_cls._update_shared_ground_truth_cache(
+            sensor_cls.update_shared_ground_truth_cache(
                 self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][cache_slice]
             )
             if self._should_update_cache_by_type[sensor_cls]:
-                sensor_cls._update_shared_cache(
+                sensor_cls.update_shared_cache(
                     self._sensors_metadata[sensor_cls],
                     self._ground_truth_cache[dtype][cache_slice],
                     self._cache[dtype][cache_slice],
                     self._buffered_data[dtype][cache_slice],
                 )
+        for data_recorder in self._data_recorders:
+            data_recorder.step(self._sim.cur_step_global, self._sim.cur_t)
 
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
-        dtype = sensor._get_cache_dtype()
+        dtype = sensor.get_cache_dtype()
         key = (is_ground_truth, dtype)
         if self._last_cache_cloned_step[key] != self._sim.cur_step_global:
             self._last_cache_cloned_step[key] = self._sim.cur_step_global
