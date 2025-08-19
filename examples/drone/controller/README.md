@@ -10,8 +10,7 @@
 - Connect the FC and use mavlink to send FC_data from FCU to PC
 - Use `ls /dev/tty*` to check the port id and modified param `USB_path` in `./config/flight.yaml`
 - Do this since the default mavlink frequence for rc_channle is too low
-- Connect the FC and use mavlink to send FC_data from FCU to PC
-- Use FC to control the sim drone by:
+- Use RC to control the sim drone by:
     ```
     python examples/drone/controller/eval/rc_FPV_eval.py
     ```
