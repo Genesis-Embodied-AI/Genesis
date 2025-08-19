@@ -122,12 +122,16 @@ class RigidEntity(Entity):
         self.list_het_n_links = gs.List()
         self.list_het_geom_group_start = gs.List()
         self.list_het_geom_group_end = gs.List()
+        self.list_het_vgeom_group_start = gs.List()
+        self.list_het_vgeom_group_end = gs.List()
 
         self.list_het_link_start.append(self._link_start)
         self.list_het_n_links.append(len(self._links))
         self.list_het_link_end.append(self._link_start + len(self._links))
         self.list_het_geom_group_start.append(self._geom_start)
         self.list_het_geom_group_end.append(self._geom_start + len(self.geoms))
+        self.list_het_vgeom_group_start.append(self._vgeom_start)
+        self.list_het_vgeom_group_end.append(self._vgeom_start + len(self.vgeoms))
 
         if self._enable_heterogeneous:
             for morph in self._morph_heterogeneous:
@@ -153,6 +157,7 @@ class RigidEntity(Entity):
                         init_pos=g_info.get("pos", gu.zero_pos()),
                         init_quat=g_info.get("quat", gu.identity_quat()),
                     )
+
                 # Add collision geometries
                 for g_info in cg_infos:
                     friction = self.material.friction
@@ -176,6 +181,8 @@ class RigidEntity(Entity):
                 self.list_het_n_links.append(self.list_het_link_end[-1] - self.list_het_link_start[-1])
                 self.list_het_geom_group_start.append(self.list_het_geom_group_end[-1])
                 self.list_het_geom_group_end.append(self.list_het_geom_group_end[-1] + len(cg_infos))
+                self.list_het_vgeom_group_start.append(self.list_het_vgeom_group_end[-1])
+                self.list_het_vgeom_group_end.append(self.list_het_vgeom_group_end[-1] + len(vg_infos))
 
     def _load_model(self):
         self._links = gs.List()
@@ -339,7 +346,7 @@ class RigidEntity(Entity):
             return g_infos
 
         link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
-
+        print("mesh")
         link, (joint,) = self._add_by_info(
             l_info=dict(
                 is_robot=False,

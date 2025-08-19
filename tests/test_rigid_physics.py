@@ -2913,3 +2913,47 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
     assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
     assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_heterogeneous_simulation(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    ########################## entities ##########################
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+
+    morph_heterogeneous = [
+        gs.morphs.Box(
+            size=(0.02, 0.02, 0.02),
+            pos=(0.65, 0.0, 0.02),
+        ),
+        gs.morphs.Sphere(
+            radius=0.015,
+            pos=(0.65, 0.0, 0.02),
+        ),
+        gs.morphs.Sphere(
+            radius=0.025,
+            pos=(0.65, 0.0, 0.02),
+        ),
+    ]
+    grasping_object = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
+        # comment out this line turn off heterogeneous simulation
+        morph_heterogeneous=morph_heterogeneous,
+    )
+    ########################## build ##########################
+    scene.build(n_envs=4, env_spacing=(1, 1))
+
+    for i in range(300):
+        qdofs = grasping_object.get_qpos()
+        scene.step()
+        print(qdofs[:, 2])
+    final_qpos_z = grasping_object.get_qpos()[:, 2]
+    assert_allclose(final_qpos_z, np.array([0.02, 0.01, 0.015, 0.025]), atol=1e-2)

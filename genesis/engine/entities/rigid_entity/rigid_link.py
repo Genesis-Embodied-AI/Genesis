@@ -94,6 +94,45 @@ class RigidLink(RBC):
         self._geoms: list[RigidGeom] = gs.List()
         self._vgeoms: list[RigidVisGeom] = gs.List()
 
+    @staticmethod
+    def compute_inertial_info(init_mesh, inertial_quat, rho):
+        if init_mesh is None:
+            inertial_mass = 0.0
+        else:
+            if init_mesh.is_watertight:
+                inertial_mass = init_mesh.volume * rho
+            else:  # TODO: handle non-watertight mesh
+                inertial_mass = 1.0
+
+        # inertial_pos
+        if init_mesh is None:
+            inertial_pos = gu.zero_pos()
+        else:
+            inertial_pos = np.array(init_mesh.center_mass, dtype=gs.np_float)
+
+        # inertial_i
+        # FIXME: Why coef 0.4 ???
+        if init_mesh is None:  # use sphere inertia with radius 0.1
+            inertial_i = 0.4 * inertial_mass * 0.1**2 * np.eye(3)
+
+        else:
+            # attempt to fix non-watertight mesh by convexifying
+            inertia_mesh = init_mesh.copy()
+            if not inertia_mesh.is_watertight:
+                inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+
+            if inertia_mesh.is_watertight and inertia_mesh.mass > 0:
+                # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
+                T_inertia = gu.trans_quat_to_T(inertial_pos, inertial_quat)
+                inertial_i = inertia_mesh.moment_inertia_frame(T_inertia) / inertia_mesh.mass * inertial_mass
+
+            else:  # approximate with a sphere
+                inertial_i = (
+                    0.4 * inertial_mass * (max(inertia_mesh.bounds[1] - inertia_mesh.bounds[0]) / 2.0) ** 2 * np.eye(3)
+                )
+
+        return inertial_mass, inertial_pos, inertial_i
+
     def _build(self):
         for geom in self._geoms:
             geom._build()
@@ -101,7 +140,7 @@ class RigidLink(RBC):
         for vgeom in self._vgeoms:
             vgeom._build()
 
-        self._init_mesh = self._compose_init_mesh()
+        init_mesh = self._compose_init_mesh(self._geoms, self._vgeoms)
 
         # find root link and check if link is fixed
         solver_links = self._solver.links
@@ -115,55 +154,17 @@ class RigidLink(RBC):
             self._root_idx = gs.np_int(link.idx)
         self.is_fixed = is_fixed
 
-        # inertial_mass and inertia_i
-        if self._inertial_mass is None:
-            if len(self._geoms) == 0 and len(self._vgeoms) == 0:
-                self._inertial_mass = 0.0
-            else:
-                if self._init_mesh.is_watertight:
-                    self._inertial_mass = self._init_mesh.volume * self.entity.material.rho
-                else:  # TODO: handle non-watertight mesh
-                    self._inertial_mass = 1.0
+        mesh_inertial_mass, mesh_inertial_pos, mesh_inertial_i = self.compute_inertial_info(
+            init_mesh, self._inertial_quat, self.entity.material.rho
+        )
 
+        self._inertial_mass = mesh_inertial_mass if self._inertial_mass is None else self._inertial_mass
+        self._inertial_pos = mesh_inertial_pos if self._inertial_pos is None else self._inertial_pos
+        self._inertial_i = mesh_inertial_i if self._inertial_i is None else self._inertial_i
+        self._inertial_i = np.asarray(self._inertial_i, dtype=gs.np_float)
         # Postpone computation of inverse weight if not specified
         if self._invweight is None:
             self._invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
-
-        # inertial_pos
-        if self._inertial_pos is None:
-            if self._init_mesh is None:
-                self._inertial_pos = gu.zero_pos()
-            else:
-                self._inertial_pos = np.array(self._init_mesh.center_mass, dtype=gs.np_float)
-
-        # inertial_i
-        if self._inertial_i is None:
-            # FIXME: Why coef 0.4 ???
-            if self._init_mesh is None:  # use sphere inertia with radius 0.1
-                self._inertial_i = 0.4 * self._inertial_mass * 0.1**2 * np.eye(3)
-
-            else:
-                # attempt to fix non-watertight mesh by convexifying
-                inertia_mesh = self._init_mesh.copy()
-                if not inertia_mesh.is_watertight:
-                    inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
-
-                if inertia_mesh.is_watertight and self._init_mesh.mass > 0:
-                    # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
-                    T_inertia = gu.trans_quat_to_T(self._inertial_pos, self._inertial_quat)
-                    self._inertial_i = (
-                        self._init_mesh.moment_inertia_frame(T_inertia) / self._init_mesh.mass * self._inertial_mass
-                    )
-
-                else:  # approximate with a sphere
-                    self._inertial_i = (
-                        0.4
-                        * self._inertial_mass
-                        * (max(self._init_mesh.bounds[1] - self._init_mesh.bounds[0]) / 2.0) ** 2
-                        * np.eye(3)
-                    )
-
-        self._inertial_i = np.asarray(self._inertial_i, dtype=gs.np_float)
 
         # override invweight if fixed
         if is_fixed:
@@ -173,20 +174,21 @@ class RigidLink(RBC):
 
         self.rsd = rigid_solver_decomp
 
-    def _compose_init_mesh(self):
-        if len(self._geoms) == 0 and len(self._vgeoms) == 0:
+    @staticmethod
+    def _compose_init_mesh(geoms, vgeoms):
+        if len(geoms) == 0 and len(vgeoms) == 0:
             return None
         else:
             init_verts = []
             init_faces = []
             vert_offset = 0
-            if len(self._geoms) > 0:
-                for geom in self._geoms:
+            if len(geoms) > 0:
+                for geom in geoms:
                     init_verts.append(gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat))
                     init_faces.append(geom.init_faces + vert_offset)
                     vert_offset += geom.init_verts.shape[0]
-            elif len(self._vgeoms) > 0:  # use vgeom if there's no geom
-                for vgeom in self._vgeoms:
+            elif len(vgeoms) > 0:  # use vgeom if there's no geom
+                for vgeom in vgeoms:
                     init_verts.append(gu.transform_by_trans_quat(vgeom.init_vverts, vgeom.init_pos, vgeom.init_quat))
                     init_faces.append(vgeom.init_vfaces + vert_offset)
                     vert_offset += vgeom.init_vverts.shape[0]

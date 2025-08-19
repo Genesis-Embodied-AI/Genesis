@@ -1291,6 +1291,8 @@ class StructLinksInfo:
     n_dofs: V_ANNOTATION
     geom_start: V_ANNOTATION
     geom_end: V_ANNOTATION
+    vgeom_start: V_ANNOTATION
+    vgeom_end: V_ANNOTATION
     pos: V_ANNOTATION
     quat: V_ANNOTATION
     invweight: V_ANNOTATION
@@ -1316,6 +1318,8 @@ def get_links_info(solver):
         "n_dofs": V(dtype=gs.ti_int, shape=links_info_shape),
         "geom_start": V(dtype=gs.ti_int, shape=links_info_shape),
         "geom_end": V(dtype=gs.ti_int, shape=links_info_shape),
+        "vgeom_start": V(dtype=gs.ti_int, shape=links_info_shape),
+        "vgeom_end": V(dtype=gs.ti_int, shape=links_info_shape),
         "n_geoms": V(dtype=gs.ti_int, shape=links_info_shape),
         "pos": V(dtype=gs.ti_vec3, shape=links_info_shape),
         "quat": V(dtype=gs.ti_vec4, shape=links_info_shape),

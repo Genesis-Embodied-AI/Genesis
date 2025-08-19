@@ -22,10 +22,6 @@ def main():
         ),
         sim_options=gs.options.SimOptions(
             dt=0.01,
-            # gravity=(0, 0, -0),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            box_box_detection=True,
         ),
         show_viewer=args.vis,
     )
@@ -51,20 +47,7 @@ def main():
             radius=0.025,
             pos=(0.65, 0.0, 0.02),
         ),
-        # gs.morphs.Box(
-        #     size=(0.04, 0.04, 0.04),
-        #     pos=(0.65, 0.0, 0.02),
-        # ),
-        # gs.morphs.Box(
-        #     size=(0.04, 0.04, 0.04),
-        #     pos=(0.65, 0.0, 0.02),
-        # ),
-        # gs.morphs.Box(
-        #     size=(0.04, 0.04, 0.04),
-        #     pos=(0.65, 0.0, 0.02),
-        # ),
     ]
-
     grasping_object = scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
@@ -72,7 +55,6 @@ def main():
         ),
         # comment out this line turn off heterogeneous simulation
         morph_heterogeneous=morph_heterogeneous,
-        vis_mode="collision",
     )
     ########################## build ##########################
     scene.build(n_envs=args.n_envs, env_spacing=(1, 1))

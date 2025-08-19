@@ -603,23 +603,24 @@ class RigidSolver(Solver):
         # just in case
         self.dofs_state.force.fill(0)
 
-    def _init_link_fields(self):
-        self.links_info = self.data_manager.links_info
-        self.links_state = self.data_manager.links_state
-        links = self.links
-
-        # dispatch geoms for heterogeneous simulation
-        links_geom_start = np.array([link.geom_start for link in links], dtype=gs.np_int)
-        links_geom_end = np.array([link.geom_end for link in links], dtype=gs.np_int)
-        if self._options.batch_links_info:
-            # add batch dim, nlinks x self._B
-            links_geom_start = np.tile(links_geom_start[:, None], (1, self._B))
-            links_geom_end = np.tile(links_geom_end[:, None], (1, self._B))
-
-        for i_l, link in enumerate(links):
-            if link._entity._enable_heterogeneous:
+    def process_heterogeneous_link_info(
+        self,
+        links_geom_start,
+        links_geom_end,
+        links_vgeom_start,
+        links_vgeom_end,
+        links_inertial_pos,
+        links_inertial_quat,
+        links_inertial_i,
+        links_inertial_mass,
+    ):
+        for i_l, link in enumerate(self.links):
+            if link.entity._enable_heterogeneous:
+                # handle the mapping from env to het morph
                 np_geom_group_start = np.array(link._entity.list_het_geom_group_start)
                 np_geom_group_end = np.array(link._entity.list_het_geom_group_end)
+                np_vgeom_group_start = np.array(link._entity.list_het_vgeom_group_start)
+                np_vgeom_group_end = np.array(link._entity.list_het_vgeom_group_end)
                 n_het = len(np_geom_group_start)
                 base = self._B // n_het
                 extra = self._B % n_het  # first `extra` chunks get one more
@@ -629,6 +630,8 @@ class RigidSolver(Solver):
 
                 links_geom_start[i_l, :] = np_geom_group_start[geom_idx]
                 links_geom_end[i_l, :] = np_geom_group_end[geom_idx]
+                links_vgeom_start[i_l, :] = np_vgeom_group_start[geom_idx]
+                links_vgeom_end[i_l, :] = np_vgeom_group_end[geom_idx]
                 if self._B < n_het:
                     gs.raise_exception(
                         f"{link.name}: Batch size {self._B} must be greater than or equal to "
@@ -640,6 +643,63 @@ class RigidSolver(Solver):
                         (links_geom_start[i_l] <= geom.idx) & (geom.idx < links_geom_end[i_l])
                     )[0]
 
+                for geom in link.vgeoms:
+                    geom.rendered_envs_idx = np.where(
+                        (links_vgeom_start[i_l] <= geom.idx) & (geom.idx < links_vgeom_end[i_l])
+                    )[0]
+
+                # move the links inertial info for
+                for i_het in range(n_het):
+                    init_mesh = link._compose_init_mesh(
+                        self.geoms[np_geom_group_start[i_het] : np_geom_group_end[i_het]],
+                        [],
+                    )
+                    mesh_inertial_mass, mesh_inertial_pos, mesh_inertial_i = link.compute_inertial_info(
+                        init_mesh, link._inertial_quat, link.entity.material.rho
+                    )
+
+                    pos = np.array([link.inertial_pos for link in self.links], dtype=gs.np_float)
+                    links_inertial_pos[i_l, np.where(geom_idx == i_het)[0]] = mesh_inertial_pos
+                    links_inertial_i[i_l, np.where(geom_idx == i_het)[0]] = mesh_inertial_i
+                    links_inertial_mass[i_l, np.where(geom_idx == i_het)[0]] = mesh_inertial_mass
+
+    def _init_link_fields(self):
+        self.links_info = self.data_manager.links_info
+        self.links_state = self.data_manager.links_state
+        links = self.links
+
+        # dispatch geoms for heterogeneous simulation
+        links_geom_start = np.array([link.geom_start for link in links], dtype=gs.np_int)
+        links_geom_end = np.array([link.geom_end for link in links], dtype=gs.np_int)
+        links_vgeom_start = np.array([link.vgeom_start for link in links], dtype=gs.np_int)
+        links_vgeom_end = np.array([link.vgeom_end for link in links], dtype=gs.np_int)
+        links_inertial_pos = np.array([link.inertial_pos for link in links], dtype=gs.np_float)
+        links_inertial_quat = np.array([link.inertial_quat for link in links], dtype=gs.np_float)
+        links_inertial_i = np.array([link.inertial_i for link in links], dtype=gs.np_float)
+        links_inertial_mass = np.array([link.inertial_mass for link in links], dtype=gs.np_float)
+        if self._options.batch_links_info:
+            # add batch dim, nlinks x self._B
+            links_geom_start = np.stack([links_geom_start] * self._B, axis=-1)
+            links_geom_end = np.stack([links_geom_end] * self._B, axis=-1)
+            links_vgeom_start = np.stack([links_vgeom_start] * self._B, axis=-1)
+            links_vgeom_end = np.stack([links_vgeom_end] * self._B, axis=-1)
+            links_inertial_pos = np.stack([links_inertial_pos] * self._B, axis=1)  # easier for access in init function
+            links_inertial_quat = np.stack([links_inertial_quat] * self._B, axis=1)
+            links_inertial_i = np.stack([links_inertial_i] * self._B, axis=1)
+            links_inertial_mass = np.stack([links_inertial_mass] * self._B, axis=1)
+
+        if self._enable_heterogeneous:
+            self.process_heterogeneous_link_info(
+                links_geom_start,
+                links_geom_end,
+                links_vgeom_start,
+                links_vgeom_end,
+                links_inertial_pos,
+                links_inertial_quat,
+                links_inertial_i,
+                links_inertial_mass,
+            )
+
         kernel_init_link_fields(
             links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),
             links_root_idx=np.array([link.root_idx for link in links], dtype=gs.np_int),
@@ -650,15 +710,17 @@ class RigidSolver(Solver):
             links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
             links_geom_start=links_geom_start,
             links_geom_end=links_geom_end,
+            links_vgeom_start=links_vgeom_start,
+            links_vgeom_end=links_vgeom_end,
             links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
             links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
             links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
             links_pos=np.array([link.pos for link in links], dtype=gs.np_float),
             links_quat=np.array([link.quat for link in links], dtype=gs.np_float),
-            links_inertial_pos=np.array([link.inertial_pos for link in links], dtype=gs.np_float),
-            links_inertial_quat=np.array([link.inertial_quat for link in links], dtype=gs.np_float),
-            links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
-            links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
+            links_inertial_pos=links_inertial_pos,
+            links_inertial_quat=links_inertial_quat,
+            links_inertial_i=links_inertial_i,
+            links_inertial_mass=links_inertial_mass,
             links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
             # taichi variables
             links_info=self.links_info,
@@ -2697,6 +2759,8 @@ def kernel_init_link_fields(
     links_dof_end: ti.types.ndarray(),
     links_geom_start: ti.types.ndarray(),
     links_geom_end: ti.types.ndarray(),
+    links_vgeom_start: ti.types.ndarray(),
+    links_vgeom_end: ti.types.ndarray(),
     links_joint_end: ti.types.ndarray(),
     links_invweight: ti.types.ndarray(),
     links_is_fixed: ti.types.ndarray(),
@@ -2735,19 +2799,21 @@ def kernel_init_link_fields(
 
         for j in ti.static(range(4)):
             links_info.quat[I][j] = links_quat[i, j]
-            links_info.inertial_quat[I][j] = links_inertial_quat[i, j]
+            links_info.inertial_quat[I][j] = links_inertial_quat[I, j]
 
         for j in ti.static(range(3)):
             links_info.pos[I][j] = links_pos[i, j]
-            links_info.inertial_pos[I][j] = links_inertial_pos[i, j]
+            links_info.inertial_pos[I][j] = links_inertial_pos[I, j]
 
-        links_info.inertial_mass[I] = links_inertial_mass[i]
+        links_info.inertial_mass[I] = links_inertial_mass[I]
         for j1 in ti.static(range(3)):
             for j2 in ti.static(range(3)):
-                links_info.inertial_i[I][j1, j2] = links_inertial_i[i, j1, j2]
+                links_info.inertial_i[I][j1, j2] = links_inertial_i[I, j1, j2]
 
         links_info.geom_start[I] = links_geom_start[I]
         links_info.geom_end[I] = links_geom_end[I]
+        links_info.vgeom_start[I] = links_vgeom_start[I]
+        links_info.vgeom_end[I] = links_vgeom_end[I]
 
     for i, b in ti.ndrange(n_links, _B):
         I = [i, b] if ti.static(static_rigid_sim_config.batch_links_info) else i
