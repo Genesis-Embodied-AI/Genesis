@@ -13,12 +13,12 @@
 - Connect the FC and use mavlink to send FC_data from FCU to PC
 - Use FC to control the sim drone by:
     ```
-    python scripts/evaluate/back2nt_eval.py
+    python examples/drone/controller/eval/rc_FPV_eval.py
     ```
 #### Position controller test
 - Try to get the target with no planning, thus **has poor performance**
     ```
-    python scripts/evaluate/pos_ctrl_eval.py
+    python examples/drone/controller/eval/pos_ctrl_eval.py
     ```
 
 ### NOTE
