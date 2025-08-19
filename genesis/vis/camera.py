@@ -497,9 +497,10 @@ class Camera(RBC):
         Returns
         -------
         pc : np.ndarray
-            Numpy array of shape (res[0], res[1], 3) representing the point cloud in each pixel.
+            Numpy array of shape (res[0], res[1], 3) or (N, res[0], res[1], 3).
+            Represents the point cloud in each pixel.
         mask_arr : np.ndarray
-            The valid depth mask.
+            The valid depth mask. boolean array of same shape as depth_arr
         """
         # Compute the (denormalized) depth map using PyRender systematically.
         # TODO: Add support of BatchRendered (requires access to projection matrix)
@@ -527,7 +528,7 @@ class Camera(RBC):
         cy = (1.0 + P[1, 2]) * height / 2.0
 
         # Mask out invalid depth
-        mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
+        mask = (self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3))
 
         # Compute normalized pixel coordinates
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
@@ -541,7 +542,11 @@ class Camera(RBC):
         point_cloud = np.stack((world_x, world_y, world_z, np.ones_like(world_z, dtype=np.float32)), axis=-1)
         if world_frame:
             cam_pose = self.transform @ T_OPENGL_TO_OPENCV  # (n, 4, 4) or (4, 4)
-            point_cloud = np.matmul(point_cloud, cam_pose.swapaxes(-1, -2))
+            if cam_pose.ndim == 2:
+                point_cloud = point_cloud @ cam_pose.T
+            else:
+                point_cloud_reshaped = point_cloud.reshape(-1, height * width, 4)
+                point_cloud = (point_cloud_reshaped @ cam_pose.swapaxes(-1, -2)).reshape(point_cloud.shape)
 
         point_cloud = point_cloud[..., :3]
         return point_cloud, mask
