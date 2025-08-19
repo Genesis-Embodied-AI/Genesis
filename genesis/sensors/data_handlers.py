@@ -12,7 +12,6 @@ from genesis.utils.tools import animate
 
 try:
     import pyqtgraph as pg
-    from pyqtgraph.Qt import QtWidgets
 except ImportError:
     pass
 
@@ -255,10 +254,10 @@ class LivePlot(DataHandler):
     ----------
     labels : list[str]
         Labels for each data channel to plot.
+    widget_size : tuple[int, int], optional
+        The size of the plot window. Defaults to (800, 600).
     window_size : int, optional
         Number of data points to display in the rolling window. Defaults to 100.
-    update_interval : int, optional
-        How often to refresh the plot (every N data points). Defaults to 1.
     title : str, optional
         Plot window title. Defaults to "Live Sensor Data".
     """
@@ -266,22 +265,17 @@ class LivePlot(DataHandler):
     def __init__(
         self,
         labels: list[str],
+        widget_size: tuple[int, int] = (800, 600),
         window_size: int = 100,
-        update_interval: int = 1,
         title: str = "Live Sensor Data",
     ):
         self.labels = labels
         self.window_size = window_size
-        self.update_interval = update_interval
         self.title = title
 
         self.x_data = []
         self.y_data = [[] for _ in labels]
 
-        # Counters
-        self.step_counter = 0
-
-        # PyQtGraph components
         self.app = None
         self.win = None
         self.plot_widget = None
@@ -289,17 +283,14 @@ class LivePlot(DataHandler):
 
     def initialize(self):
         """Initialize PyQtGraph application and plot window."""
-        # Initialize PyQtGraph application (following the documentation pattern)
-        if not QtWidgets.QApplication.instance():
-            self.app = QtWidgets.QApplication([])
+        if not pg.QtWidgets.QApplication.instance():
+            self.app = pg.QtWidgets.QApplication([])
         else:
-            self.app = QtWidgets.QApplication.instance()
+            self.app = pg.QtWidgets.QApplication.instance()
 
-        # Create plot window
         self.win = pg.GraphicsLayoutWidget(show=True, title=self.title)
         self.win.resize(800, 600)
 
-        # Create plot item
         self.plot_widget = self.win.addPlot(title=self.title)
         self.plot_widget.setLabel("left", "Value")
         self.plot_widget.setLabel("bottom", "Time Step")
@@ -318,61 +309,40 @@ class LivePlot(DataHandler):
         self.x_data.clear()
         for y_list in self.y_data:
             y_list.clear()
-        self.step_counter = 0
 
-        gs.logger.info("LivePlot initialized with PyQtGraph")
+        gs.logger.info("LivePlot: created PyQtGraph window")
 
     def process(self, data, cur_time):
         """Process new data point and update plot."""
-        # Convert data to numpy array if it isn't already
         data = np.atleast_1d(data)
 
-        # Ensure data length matches number of labels
         if len(data) != len(self.labels):
-            gs.logger.warning(
+            gs.raise_exception(
                 f"LivePlot: Data length ({len(data)}) doesn't match number of labels ({len(self.labels)})"
             )
-            return
 
-        # Add new data point
-        self.x_data.append(self.step_counter)
+        self.x_data.append(cur_time)
         for i, value in enumerate(data):
             self.y_data[i].append(float(value))
 
-        # Maintain rolling window
+        # rolling window
         if len(self.x_data) > self.window_size:
             self.x_data.pop(0)
             for y_list in self.y_data:
                 y_list.pop(0)
 
-        self.step_counter += 1
-        self._update_plot()
+        for curve, y_data in zip(self.curves, self.y_data):
+            curve.setData(x=self.x_data, y=y_data)
 
-    def _update_plot(self):
-        """Update PyQtGraph plot with current data."""
-        # Get current data snapshot
-        x_data_copy = self.x_data.copy()
-        y_data_copy = [y_list.copy() for y_list in self.y_data]
-
-        try:
-            # Update each curve
-            for curve, y_data in zip(self.curves, y_data_copy):
-                if y_data and x_data_copy:
-                    curve.setData(x=x_data_copy, y=y_data)
-
-            # Process Qt events to update the display (following PyQtGraph patterns)
-            if self.app:
-                self.app.processEvents()
-
-        except Exception as e:
-            gs.logger.warning(f"LivePlot: Error updating plot: {e}")
+        if self.app:
+            self.app.processEvents()
 
     def cleanup(self):
         """Clean up PyQtGraph resources."""
         if self.win:
             try:
                 self.win.close()
-                gs.logger.info("LivePlot: PyQtGraph window closed")
+                gs.logger.debug("LivePlot: closed PyQtGraph window")
             except Exception as e:
                 gs.logger.warning(f"LivePlot: Error closing window: {e}")
             finally:

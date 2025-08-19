@@ -7,9 +7,7 @@ from genesis.utils.ring_buffer import TensorRingBuffer
 from .data_recorder import SensorDataRecorder
 
 if TYPE_CHECKING:
-    from genesis.options.sensors import SensorOptions
-
-    from .base_sensor import Sensor, SharedSensorMetadata
+    from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
 
 
 class SensorManager:

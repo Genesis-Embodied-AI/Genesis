@@ -105,9 +105,15 @@ def main():
             control_franka_circle_path(i)
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
+    except gs.GenesisException as e:
+        gs.logger.error(e)
     finally:
         gs.logger.info("Simulation finished.")
+
+        print("Ground truth data:")
         print(imu.read_ground_truth())
+        print("Measured data:")
+        print(imu.read())
 
     imu.stop_recording()
 
