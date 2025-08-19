@@ -10,6 +10,12 @@ from pydantic_core import core_schema
 import genesis as gs
 from genesis.utils.tools import animate
 
+try:
+    import pyqtgraph as pg
+    from pyqtgraph.Qt import QtWidgets
+except ImportError:
+    pass
+
 
 class DataHandler:
     """Base class for datastream output handlers"""
@@ -17,7 +23,7 @@ class DataHandler:
     def initialize(self):
         raise NotImplementedError()
 
-    def process(self, data):
+    def process(self, data, cur_time):
         raise NotImplementedError()
 
     def cleanup(self):
@@ -52,7 +58,7 @@ class VideoFileWriter(DataHandler):
     def initialize(self):
         self.frames.clear()
 
-    def process(self, data):
+    def process(self, data, cur_time):
         """Expects incoming data to be np.ndarray or list[np.ndarray] if multiple videos are incoming."""
         if self.streams_idx is None:
             self.frames.append(data)
@@ -144,7 +150,7 @@ class VideoFileStreamer(DataHandler):
 
             self.video_writers.append(video_writer)
 
-    def process(self, data):
+    def process(self, data, cur_time):
         if len(self.streams_idx) == 1:
             data = [data]
 
@@ -189,7 +195,7 @@ class CSVFileWriter(DataHandler):
         self.file_handle = open(self.filename, "w", encoding="utf-8", newline="")
         self.csv_writer = csv.writer(self.file_handle)
 
-    def process(self, data):
+    def process(self, data, cur_time):
         # data = np.atleast_1d(data) # Data shape may not be homogeneous
         if not isinstance(data, Iterable):
             data = [data]
@@ -225,7 +231,7 @@ class NPZFileWriter(DataHandler):
     def initialize(self):
         self.all_data.clear()
 
-    def process(self, data):
+    def process(self, data, cur_time):
         self.all_data.append(data)
 
     def cleanup(self):
@@ -236,6 +242,143 @@ class NPZFileWriter(DataHandler):
             gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
             np.savez_compressed(self.filename, np.array(self.all_data, dtype=object))
         gs.logger.info("NPZ data saved.")
+
+
+class LivePlot(DataHandler):
+    """
+    Real-time plot using PyQtGraph for live sensor data visualization.
+
+    Creates a live updating plot window showing sensor data as it arrives.
+    Uses PyQtGraph for efficient real-time plotting performance.
+
+    Parameters
+    ----------
+    labels : list[str]
+        Labels for each data channel to plot.
+    window_size : int, optional
+        Number of data points to display in the rolling window. Defaults to 100.
+    update_interval : int, optional
+        How often to refresh the plot (every N data points). Defaults to 1.
+    title : str, optional
+        Plot window title. Defaults to "Live Sensor Data".
+    """
+
+    def __init__(
+        self,
+        labels: list[str],
+        window_size: int = 100,
+        update_interval: int = 1,
+        title: str = "Live Sensor Data",
+    ):
+        self.labels = labels
+        self.window_size = window_size
+        self.update_interval = update_interval
+        self.title = title
+
+        self.x_data = []
+        self.y_data = [[] for _ in labels]
+
+        # Counters
+        self.step_counter = 0
+
+        # PyQtGraph components
+        self.app = None
+        self.win = None
+        self.plot_widget = None
+        self.curves = []
+
+    def initialize(self):
+        """Initialize PyQtGraph application and plot window."""
+        # Initialize PyQtGraph application (following the documentation pattern)
+        if not QtWidgets.QApplication.instance():
+            self.app = QtWidgets.QApplication([])
+        else:
+            self.app = QtWidgets.QApplication.instance()
+
+        # Create plot window
+        self.win = pg.GraphicsLayoutWidget(show=True, title=self.title)
+        self.win.resize(800, 600)
+
+        # Create plot item
+        self.plot_widget = self.win.addPlot(title=self.title)
+        self.plot_widget.setLabel("left", "Value")
+        self.plot_widget.setLabel("bottom", "Time Step")
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.addLegend()
+
+        # Create curves for each data channel
+        self.curves = []
+        colors = ["r", "g", "b", "c", "m", "y", "w"]  # Basic PyQtGraph colors
+        for i, label in enumerate(self.labels):
+            color = colors[i % len(colors)]
+            curve = self.plot_widget.plot(pen=pg.mkPen(color=color, width=2), name=label)
+            self.curves.append(curve)
+
+        # Reset data storage
+        self.x_data.clear()
+        for y_list in self.y_data:
+            y_list.clear()
+        self.step_counter = 0
+
+        gs.logger.info("LivePlot initialized with PyQtGraph")
+
+    def process(self, data, cur_time):
+        """Process new data point and update plot."""
+        # Convert data to numpy array if it isn't already
+        data = np.atleast_1d(data)
+
+        # Ensure data length matches number of labels
+        if len(data) != len(self.labels):
+            gs.logger.warning(
+                f"LivePlot: Data length ({len(data)}) doesn't match number of labels ({len(self.labels)})"
+            )
+            return
+
+        # Add new data point
+        self.x_data.append(self.step_counter)
+        for i, value in enumerate(data):
+            self.y_data[i].append(float(value))
+
+        # Maintain rolling window
+        if len(self.x_data) > self.window_size:
+            self.x_data.pop(0)
+            for y_list in self.y_data:
+                y_list.pop(0)
+
+        self.step_counter += 1
+        self._update_plot()
+
+    def _update_plot(self):
+        """Update PyQtGraph plot with current data."""
+        # Get current data snapshot
+        x_data_copy = self.x_data.copy()
+        y_data_copy = [y_list.copy() for y_list in self.y_data]
+
+        try:
+            # Update each curve
+            for curve, y_data in zip(self.curves, y_data_copy):
+                if y_data and x_data_copy:
+                    curve.setData(x=x_data_copy, y=y_data)
+
+            # Process Qt events to update the display (following PyQtGraph patterns)
+            if self.app:
+                self.app.processEvents()
+
+        except Exception as e:
+            gs.logger.warning(f"LivePlot: Error updating plot: {e}")
+
+    def cleanup(self):
+        """Clean up PyQtGraph resources."""
+        if self.win:
+            try:
+                self.win.close()
+                gs.logger.info("LivePlot: PyQtGraph window closed")
+            except Exception as e:
+                gs.logger.warning(f"LivePlot: Error closing window: {e}")
+            finally:
+                self.win = None
+                self.plot_widget = None
+                self.curves.clear()
 
 
 class CallbackHandler(DataHandler):
@@ -254,8 +397,8 @@ class CallbackHandler(DataHandler):
     def initialize(self):
         pass
 
-    def process(self, data):
-        self.callback(data)
+    def process(self, data, cur_time):
+        self.callback(data, cur_time)
 
     def cleanup(self):
         pass

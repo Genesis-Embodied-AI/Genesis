@@ -1,12 +1,12 @@
 from .base_sensor import Sensor
-from .imu import IMU
-from .tactile import RigidContactSensor, RigidContactForceSensor, RigidContactForceGridSensor
-from .data_recorder import SensorDataRecorder, RecordingOptions
 from .data_handlers import (
-    DataHandler,
-    VideoFileWriter,
-    VideoFileStreamer,
-    CSVFileWriter,
-    NPZFileWriter,
     CallbackHandler,
+    CSVFileWriter,
+    DataHandler,
+    NPZFileWriter,
+    VideoFileStreamer,
+    VideoFileWriter,
 )
+from .data_recorder import SensorDataRecorder
+from .imu import IMU, IMUOptions
+from .tactile import RigidContactForceGridSensor, RigidContactForceSensor, RigidContactSensor
