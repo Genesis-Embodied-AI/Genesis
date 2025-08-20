@@ -2710,10 +2710,10 @@ class RigidEntity(Entity):
         mass : float
             The total mass of the entity in kg.
         """
-        mass = 0.0
-        for link in self.links:
-            mass += link.get_mass()
-        return mass
+        all_links_mass = self._solver.links_info.inertial_mass.to_numpy()
+        links_idx = np.arange(self.link_start, self.link_end)
+        entity_mass = all_links_mass[links_idx].sum(0)
+        return entity_mass
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

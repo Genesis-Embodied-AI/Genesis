@@ -67,6 +67,11 @@ def main():
         franka.set_qpos(np.array([l_qpos] * args.n_envs))
     scene.step()
 
+    AABB = grasping_object.get_AABB()
+    mass = grasping_object.get_mass()
+    print("heterogeneous AABB", AABB)
+    print("heterogeneous mass", mass)
+
     end_effector = franka.get_link("hand")
     qpos = franka.inverse_kinematics(
         link=end_effector,

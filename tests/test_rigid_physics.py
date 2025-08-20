@@ -2959,4 +2959,8 @@ def test_heterogeneous_simulation(show_viewer, tol):
 
     AABB = grasping_object.get_AABB()
     size_x = AABB[:, 1, 0] - AABB[:, 0, 0]
-    assert_allclose(size_x, np.array([0.04, 0.02, 0.03, 0.05]), atol=1e-2)
+    assert_allclose(size_x, np.array([0.04, 0.02, 0.03, 0.05]), atol=tol)
+    all_mass = grasping_object.get_mass()
+    # assert it's not the same
+    diff_mass = np.abs(np.diff(all_mass)).sum()
+    assert diff_mass > 0.0
