@@ -7,7 +7,6 @@ import torch.nn.functional as F
 
 import genesis as gs
 import genesis.utils.geom as gu
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
 
 
 class PathPlanner(ABC):
@@ -399,7 +398,7 @@ class RRT(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    rigid_solver_decomp.func_forward_kinematics_entity(
+                    gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         self._solver.links_state,
@@ -412,7 +411,7 @@ class RRT(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    rigid_solver_decomp.func_update_geoms(
+                    gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
                         i_b,
                         self._solver.entities_info,
                         self._solver.geoms_info,
@@ -744,7 +743,7 @@ class RRTConnect(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    rigid_solver_decomp.func_forward_kinematics_entity(
+                    gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         self._solver.links_state,
@@ -757,7 +756,7 @@ class RRTConnect(PathPlanner):
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
-                    rigid_solver_decomp.func_update_geoms(
+                    gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
                         i_b,
                         self._solver.entities_info,
                         self._solver.geoms_info,
