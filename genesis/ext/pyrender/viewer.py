@@ -16,19 +16,20 @@ from OpenGL.GL import *
 import genesis as gs
 from genesis.vis.rasterizer_context import RasterizerContext
 
-# Importing Tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
+# Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
+root = None
 if sys.platform.startswith("darwin"):
-    from tkinter import Tk
-    from tkinter import filedialog as filedialog
+    try:
+        from tkinter import Tk
+    except ImportError:
+        # Some minimal Python install may not provide tkinter interface even if it is a standard library
+        pass
 
     root = Tk()
     root.withdraw()
-else:
-    root = None
 
 import pyglet
-from pyglet import clock
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
 from .constants import (
@@ -1042,15 +1043,11 @@ class Viewer(pyglet.window.Window):
         if save_dir is None:
             save_dir = os.getcwd()
 
-        # Importing tkinter is very slow and not used very often. Let's delay import.
         try:
+            # Importing tkinter is very slow and not used very often. Let's delay import.
             from tkinter import Tk
-            from tkinter import filedialog as filedialog
-        except ImportError:
-            from Tkinter import Tk
-            from Tkinter import tkFileDialog as filedialog
+            from tkinter import tkFileDialog as filedialog
 
-        try:
             if root is None:
                 root = Tk()
                 root.withdraw()
@@ -1058,8 +1055,8 @@ class Viewer(pyglet.window.Window):
                 root, initialdir=save_dir, title="Select file save location", filetypes=filetypes
             )
             filename = dialog.show()
-        except Exception:
-            gs.logger.warning("Failed to open file save location dialog.")
+        except Exception as e:
+            gs.logger.warning(f"Failed to open file save location dialog: {e}")
             return None
 
         if not filename:
@@ -1186,36 +1183,47 @@ class Viewer(pyglet.window.Window):
         return retval
 
     def start(self, auto_refresh=True):
-        # Try multiple configs starting with target OpenGL version
-        # and multisampling and removing these options if exception
-        # Note: multisampling not available on all hardware
-        from pyglet.gl import Config
-
+        # Try multiple configs starting with target OpenGL version and multisampling enabled, then removing these
+        # options if not supported.
         confs = [
-            Config(
-                sample_buffers=1,
-                samples=4,
+            pyglet.gl.Config(
                 depth_size=24,
-                double_buffer=True,
+                double_buffer=True,  # Double buffering to avoid flickering
                 major_version=TARGET_OPEN_GL_MAJOR,
                 minor_version=TARGET_OPEN_GL_MINOR,
             ),
-            Config(
-                depth_size=24,
-                double_buffer=True,
-                major_version=TARGET_OPEN_GL_MAJOR,
-                minor_version=TARGET_OPEN_GL_MINOR,
-            ),
-            Config(
-                sample_buffers=1,
-                samples=4,
+            pyglet.gl.Config(
                 depth_size=24,
                 double_buffer=True,
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,
             ),
-            Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
         ]
+        if "PYTEST_VERSION" not in os.environ:
+            # MSAA must be disabled in headless mode for consistency across all platform because it behaves differently
+            # depending on the rendering driver and there is no reliable way to control it. Although MSAAx2 is supported
+            # by all drivers (incl. CPU-based), CPU-based Apple Cocoa using bilinear interpolation for rescaling instead
+            # of nearest neighbors, and there is no way to tweak this behavior.
+            confs = [
+                pyglet.gl.Config(
+                    sample_buffers=1,    # Enable multi-sampling (MSAA)
+                    samples=2,
+                    depth_size=24,
+                    double_buffer=True,
+                    major_version=TARGET_OPEN_GL_MAJOR,
+                    minor_version=TARGET_OPEN_GL_MINOR,
+                ),
+                confs[0],
+                pyglet.gl.Config(
+                    sample_buffers=1,
+                    samples=2,
+                    depth_size=24,
+                    double_buffer=True,
+                    major_version=MIN_OPEN_GL_MAJOR,
+                    minor_version=MIN_OPEN_GL_MINOR,
+                ),
+                confs[1],
+            ]
         for conf in confs:
             # Keep the window invisible for now. It will be displayed only if everything is working fine.
             # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
@@ -1234,7 +1242,7 @@ class Viewer(pyglet.window.Window):
 
         if not self.context:
             raise RuntimeError("Unable to initialize an OpenGL 3+ context")
-        clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
+        pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
@@ -1246,8 +1254,9 @@ class Viewer(pyglet.window.Window):
             self.close()
             raise
 
-        # At this point, we are all set to display the graphical window, finally!
-        self.set_visible(True)
+        # At this point, we are all set to display the graphical window if requested, finally!
+        if not pyglet.options["headless"]:
+            self.set_visible(True)
         self.activate()
 
         if auto_refresh:
