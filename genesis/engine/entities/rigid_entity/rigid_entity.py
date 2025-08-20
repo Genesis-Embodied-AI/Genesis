@@ -44,7 +44,7 @@ class RigidEntity(Entity):
         scene: "Scene",
         solver: "RigidSolver",
         material: Material,
-        morph: Morph,
+        morph: Morph | list[Morph],
         surface: Surface,
         idx: int,
         idx_in_solver,
@@ -63,7 +63,6 @@ class RigidEntity(Entity):
         vface_start=0,
         equality_start=0,
         visualize_contact: bool = False,
-        morph_heterogeneous: list[Morph] | None = None,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
 
@@ -90,8 +89,9 @@ class RigidEntity(Entity):
         self._is_free: bool = morph.is_free
 
         self._is_built: bool = False
-        self._morph_heterogeneous = morph_heterogeneous
-        self._enable_heterogeneous = not (morph_heterogeneous is None or len(morph_heterogeneous) == 0)
+        self._enable_heterogeneous = isinstance(morph, list)
+        self._morph_heterogeneous = morph[1:] if self._enable_heterogeneous else None
+        self._morph = morph[0] if self._enable_heterogeneous else morph
 
         self._load_model()
 
@@ -1990,11 +1990,31 @@ class RigidEntity(Entity):
         if self.n_geoms == 0:
             gs.raise_exception("Entity has no geoms.")
 
-        verts = self.get_verts()
-        AABB = torch.concatenate(
-            [verts.min(axis=-2, keepdim=True)[0], verts.max(axis=-2, keepdim=True)[0]],
-            axis=-2,
+        gs.engine.solvers.rigid.rigid_solver_decomp.kernel_update_geom_aabbs(
+            self._solver.geoms_state,
+            self._solver.geoms_init_AABB,
+            self._solver._static_rigid_sim_config,
         )
+
+        links_aabb = torch.empty((self._solver._B, self.n_links, 6), dtype=gs.tc_float, device=gs.device)
+        # links_idx is self.link_start to self.link_end
+        links_idx = torch.arange(start=self.link_start, end=self.link_end, dtype=gs.tc_int, device=gs.device)
+        envs_idx = torch.arange(self._solver._B, dtype=gs.tc_int, device=gs.device)
+        gs.engine.solvers.rigid.rigid_solver_decomp.kernel_get_links_AABB(
+            links_aabb,
+            links_idx,
+            envs_idx,
+            self._solver.links_info,
+            self._solver.geoms_state,
+            self._solver._static_rigid_sim_config,
+        )
+
+        AABB = torch.empty((self._solver._B, 2, 3), dtype=gs.tc_float, device=gs.device)
+        AABB[:, 0] = links_aabb[:, :, :3].min(dim=1)[0]
+        AABB[:, 1] = links_aabb[:, :, 3:].max(dim=1)[0]
+        if self._solver.n_envs == 0:
+            AABB = AABB.squeeze(0)
+
         return AABB
 
     def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):

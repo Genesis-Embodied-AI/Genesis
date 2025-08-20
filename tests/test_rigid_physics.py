@@ -2957,3 +2957,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
         print(qdofs[:, 2])
     final_qpos_z = grasping_object.get_qpos()[:, 2]
     assert_allclose(final_qpos_z, np.array([0.02, 0.01, 0.015, 0.025]), atol=1e-2)
+
+    AABB = grasping_object.get_AABB()
+    size_x = AABB[:, 1, 0] - AABB[:, 0, 0]
+    assert_allclose(size_x, np.array([0.04, 0.02, 0.03, 0.05]), atol=1e-2)

@@ -268,8 +268,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_entity(
         self,
-        morph: Morph,
-        morph_heterogeneous: list[Morph] | None = None,
+        morph: Morph | list[Morph],
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -280,10 +279,8 @@ class Scene(RBC):
 
         Parameters
         ----------
-        morph : gs.morphs.Morph
-            The morph of the entity.
-        morph_heterogeneous : list[gs.morphs.Morph] | None, optional
-            The heterogeneous morphs of the entity. User can change the morph of the entity across environments.
+        morph : gs.morphs.Morph | list[gs.morphs.Morph]
+            The morph of the entity. If a list of morphs is provided, the entity will be heterogeneous (rigid only).
         material : gs.materials.Material | None, optional
             The material of the entity. If None, use ``gs.materials.Rigid()``.
         surface : gs.surfaces.Surface | None, optional
@@ -309,6 +306,9 @@ class Scene(RBC):
             # small sdf res is sufficient for primitives regardless of size
             if isinstance(morph, gs.morphs.Primitive):
                 material._sdf_max_res = 32
+        else:
+            if isinstance(morph, list):
+                gs.raise_exception("Heterogeneous morphs are not supported for non-rigid materials.")
 
         # some morph should not smooth surface normal
         if isinstance(morph, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
@@ -323,14 +323,6 @@ class Scene(RBC):
                 surface.double_sided = True
             else:
                 surface.double_sided = False
-
-        # if morph_heterogeneous is not None:
-        #     # TODO: for now, only support visualizing collision geometry for heterogeneous morphs
-        #     if vis_mode != "collision":
-        #         gs.logger.warning(
-        #             "Heterogeneous morphs only support visualizing collision geometry. Setting vis_mode to 'collision'."
-        #         )
-        #     vis_mode = "collision"
 
         if vis_mode is not None:
             surface.vis_mode = vis_mode
@@ -408,9 +400,7 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
 
-        entity = self._sim._add_entity(
-            morph, material, surface, visualize_contact, morph_heterogeneous=morph_heterogeneous
-        )
+        entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
 

@@ -157,7 +157,7 @@ class Simulator(RBC):
 
     def _add_entity(
         self,
-        morph: Morph,
+        morph: Morph | list[Morph],
         material,
         surface,
         visualize_contact=False,
@@ -170,9 +170,7 @@ class Simulator(RBC):
             entity = self.avatar_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
 
         elif isinstance(material, gs.materials.Rigid):
-            entity = self.rigid_solver.add_entity(
-                self.n_entities, material, morph, surface, visualize_contact, morph_heterogeneous
-            )
+            entity = self.rigid_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
 
         elif isinstance(material, gs.materials.MPM.Base):
             entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface)

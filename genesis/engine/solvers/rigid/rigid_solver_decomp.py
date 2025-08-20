@@ -154,9 +154,7 @@ class RigidSolver(Solver):
 
         self._cur_step = -1
 
-    def add_entity(
-        self, idx, material, morph, surface, visualize_contact, morph_heterogeneous: list[Morph] | None = None
-    ) -> Entity:
+    def add_entity(self, idx, material, morph: Morph | list[Morph], surface, visualize_contact) -> Entity:
         if isinstance(material, gs.materials.Avatar):
             EntityClass = AvatarEntity
             if visualize_contact:
@@ -195,7 +193,6 @@ class RigidSolver(Solver):
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
-            morph_heterogeneous=morph_heterogeneous,
         )
         assert isinstance(entity, RigidEntity)
         self._entities.append(entity)
@@ -2212,6 +2209,21 @@ class RigidSolver(Solver):
         """
         tensor = ti_field_to_torch(self.links_state.COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
+
+    def get_links_AABB(self, links_idx=None, envs_idx=None, *, unsafe=False):
+        _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
+            None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
+        )
+        tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
+        kernel_get_links_AABB(
+            tensor,
+            links_idx,
+            envs_idx,
+            self.links_info,
+            self.geoms_state,
+            self._static_rigid_sim_config,
+        )
+        return _tensor
 
     def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_field_to_torch(self.links_state.mass_shift, envs_idx, links_idx, transpose=True, unsafe=unsafe)
@@ -6814,6 +6826,35 @@ def kernel_get_links_acc(
 
         for i in ti.static(range(3)):
             tensor[i_b_, i_l_, i] = acc_classic_lin[i]
+
+
+@ti.kernel
+def kernel_get_links_AABB(
+    tensor: ti.types.ndarray(),
+    links_idx: ti.types.ndarray(),
+    envs_idx: ti.types.ndarray(),
+    links_info: array_class.LinksInfo,
+    geoms_state: array_class.GeomsState,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        i_l = links_idx[i_l_]
+        i_b = envs_idx[i_b_]
+
+        lower = gu.ti_vec3(ti.math.inf)
+        upper = gu.ti_vec3(-ti.math.inf)
+        I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+        for i_g in range(links_info.geom_start[I_l], links_info.geom_end[I_l]):
+            print("i_b", i_b, i_g)
+            aabb_min = geoms_state.aabb_min[i_g, i_b]
+            aabb_max = geoms_state.aabb_max[i_g, i_b]
+            lower = ti.min(lower, aabb_min)
+            upper = ti.max(upper, aabb_max)
+
+        for i_3 in ti.static(range(3)):
+            tensor[i_b_, i_l_, i_3] = lower[i_3]
+            tensor[i_b_, i_l_, i_3 + 3] = upper[i_3]
 
 
 @ti.kernel
