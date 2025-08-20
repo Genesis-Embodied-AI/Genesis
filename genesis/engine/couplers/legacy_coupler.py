@@ -4,9 +4,10 @@ import numpy as np
 import gstaichi as ti
 
 import genesis as gs
+import genesis.utils.sdf_decomp as sdf_decomp
+
 from genesis.options.solvers import LegacyCouplerOptions
 from genesis.repr_base import RBC
-import genesis.utils.sdf_decomp as sdf_decomp
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -571,7 +572,7 @@ class LegacyCoupler(RBC):
                         )
 
     @ti.kernel
-    def pbd_rigid(self, f: ti.i32):
+    def kernel_pbd_rigid_collide(self):
         for i_p, i_b in ti.ndrange(self.pbd_solver._n_particles, self.sph_solver._B):
             if self.pbd_solver.particles_ng_reordered[i_p, i_b].active:
                 # NOTE: Couldn't figure out a good way to handle collision with non-free particle. Such collision is not phsically plausible anyway.
@@ -592,7 +593,7 @@ class LegacyCoupler(RBC):
                         )
 
     @ti.func
-    def _func_pbd_collide_with_rigid_geom(self, i, pos_world, vel, mass, normal_prev, geom_idx, batch_idx):
+    def _func_pbd_collide_with_rigid_geom(self, i, pos, vel, mass, normal_prev, geom_idx, batch_idx):
         """
         Resolves collision when a particle is already in collision with a rigid object.
         This function assumes known normal_rigid and influence.
@@ -601,58 +602,61 @@ class LegacyCoupler(RBC):
             geoms_state=self.rigid_solver.geoms_state,
             geoms_info=self.rigid_solver.geoms_info,
             sdf_info=self.rigid_solver.sdf._sdf_info,
-            pos_world=pos_world,
+            pos_world=pos,
             geom_idx=geom_idx,
             batch_idx=batch_idx,
         )
         vel_rigid = self.rigid_solver._func_vel_at_point(
-            pos_world=pos_world,
+            pos_world=pos,
             link_idx=self.rigid_solver.geoms_info.link_idx[geom_idx],
             i_b=batch_idx,
             links_state=self.rigid_solver.links_state,
         )
-        normal_rigid = sdf_decomp.sdf_func_normal_world(
+        contact_normal = sdf_decomp.sdf_func_normal_world(
             geoms_state=self.rigid_solver.geoms_state,
             geoms_info=self.rigid_solver.geoms_info,
             collider_static_config=self.rigid_solver.collider._collider_static_config,
             sdf_info=self.rigid_solver.sdf._sdf_info,
-            pos_world=pos_world,
+            pos_world=pos,
             geom_idx=geom_idx,
             batch_idx=batch_idx,
         )
-        new_pos = pos_world
+        new_pos = pos
+        new_vel = vel
         if signed_dist < self.pbd_solver.particle_size / 2:  # skip non-penetration particles
 
             rvel = vel - vel_rigid
-            rvel_normal_magnitude = rvel.dot(normal_rigid)  # negative if inward
-            rvel_tan = rvel - rvel_normal_magnitude * normal_rigid
-            rvel_tan_norm = rvel_tan.norm(gs.EPS)
+            rvel_normal_magnitude = rvel.dot(contact_normal)  # negative if inward
+            _unused_rvel_tan = rvel - rvel_normal_magnitude * contact_normal
+            _unused_rvel_tan_norm = _unused_rvel_tan.norm(gs.EPS)
 
             #################### rigid -> particle ####################
             stiffness = 1.0  # value in [0, 1]
-            friction = 0.15
-            energy_loss = 0.0  # value in [0, 1]
-            new_pos = pos_world + stiffness * normal_rigid * (self.pbd_solver.particle_size / 2 - signed_dist)
-            v_norm = (new_pos - self.pbd_solver.particles_reordered[i, batch_idx].ipos) / self.pbd_solver._substep_dt
+            _unused_friction = 0.15
+            _unused_energy_loss = 0.0  # value in [0, 1]
+            new_pos = pos + stiffness * contact_normal * (self.pbd_solver.particle_size / 2 - signed_dist)
+            prev_pos = self.pbd_solver.particles_reordered[i, batch_idx].ipos
+            new_vel = (new_pos - prev_pos) / self.pbd_solver._substep_dt
 
-            delta_normal_magnitude = (v_norm - vel).dot(normal_rigid)
+            # why do we do this? is (original value of) vel different than (pos_world - prev_pos) / self.pbd_solver._substep_dt?
+            # delta_vel_dot_normal = (new_vel - vel).dot(contact_normal)
+            # delta_vel_along_normal = delta_vel_dot_normal * contact_normal
 
-            delta_v_norm = delta_normal_magnitude * normal_rigid
-            vel = v_norm
+            # vel = new_vel
 
             #################### particle -> rigid ####################
-            delta_mv = mass * delta_v_norm
-            force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
+            delta_mv = mass * (new_vel - vel)
+            force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - _unused_energy_loss)
 
             self.rigid_solver._func_apply_external_force(
-                pos_world,
+                pos,
                 force,
                 self.rigid_solver.geoms_info.link_idx[geom_idx],
                 batch_idx,
                 self.rigid_solver.links_state,
             )
 
-        return new_pos, vel, normal_rigid
+        return new_pos, new_vel, contact_normal
 
     def preprocess(self, f):
         # preprocess for MPM CPIC
@@ -670,7 +674,17 @@ class LegacyCoupler(RBC):
 
         # PBD <-> Rigid
         if self._rigid_pbd and self.rigid_solver.is_active():
-            self.pbd_rigid(f)
+            # 2-way collision coupling
+            self.kernel_pbd_rigid_collide()
+
+            # 1-way particle to link coupling
+            self.pbd_solver.kernel_pbd_rigid_animate_particles_to_links(self.rigid_solver.links_state)
+
+            # Setting particle velocities and positions here has not effect, why?
+            #
+            # full_step_inv_dt = 1.0 / self.pbd_solver._dt
+            # clamped_inv_dt = min(full_step_inv_dt, 50.0)
+            # self.pbd_solver.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt)
 
         if self.fem_solver.is_active():
             self.fem_surface_force(f)
