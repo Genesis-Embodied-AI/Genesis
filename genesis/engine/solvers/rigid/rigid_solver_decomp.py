@@ -164,6 +164,9 @@ class RigidSolver(Solver):
         else:
             EntityClass = RigidEntity
 
+        morph_heterogeneous = morph[1:] if isinstance(morph, list) else None
+        morph = morph[0] if isinstance(morph, list) else morph
+
         if morph.is_free:
             verts_state_start = self.n_free_verts
         else:
@@ -193,6 +196,7 @@ class RigidSolver(Solver):
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
+            morph_heterogeneous=morph_heterogeneous,
         )
         assert isinstance(entity, RigidEntity)
         self._entities.append(entity)

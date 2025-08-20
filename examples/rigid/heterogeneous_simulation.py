@@ -34,7 +34,11 @@ def main():
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
-    morph_heterogeneous = [
+    morphs_heterogeneous = [
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
         gs.morphs.Box(
             size=(0.02, 0.02, 0.02),
             pos=(0.65, 0.0, 0.02),
@@ -49,12 +53,7 @@ def main():
         ),
     ]
     grasping_object = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
-        ),
-        # comment out this line turn off heterogeneous simulation
-        morph_heterogeneous=morph_heterogeneous,
+        morph=morphs_heterogeneous,
     )
     ########################## build ##########################
     scene.build(n_envs=args.n_envs, env_spacing=(1, 1))

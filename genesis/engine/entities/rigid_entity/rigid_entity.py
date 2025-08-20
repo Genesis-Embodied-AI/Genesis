@@ -44,7 +44,7 @@ class RigidEntity(Entity):
         scene: "Scene",
         solver: "RigidSolver",
         material: Material,
-        morph: Morph | list[Morph],
+        morph: Morph,
         surface: Surface,
         idx: int,
         idx_in_solver,
@@ -63,6 +63,7 @@ class RigidEntity(Entity):
         vface_start=0,
         equality_start=0,
         visualize_contact: bool = False,
+        morph_heterogeneous: list[Morph] | None = None,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
 
@@ -89,9 +90,8 @@ class RigidEntity(Entity):
         self._is_free: bool = morph.is_free
 
         self._is_built: bool = False
-        self._enable_heterogeneous = isinstance(morph, list)
-        self._morph_heterogeneous = morph[1:] if self._enable_heterogeneous else None
-        self._morph = morph[0] if self._enable_heterogeneous else morph
+        self._morph_heterogeneous = morph_heterogeneous
+        self._enable_heterogeneous = not (morph_heterogeneous is None or len(morph_heterogeneous) == 0)
 
         self._load_model()
 
