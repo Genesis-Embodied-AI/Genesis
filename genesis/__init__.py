@@ -185,7 +185,7 @@ def init(
         if backend == gs_backend.cpu:
             taichi_kwargs.update(cpu_max_num_threads=1)
         else:
-            logger.warning("CPU backend is strongly recommended in debug mode.")
+            logger.warning("Debug mode is partially supported for GPU backend.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = True

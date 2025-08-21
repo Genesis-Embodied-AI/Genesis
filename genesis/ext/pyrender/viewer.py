@@ -1071,7 +1071,7 @@ class Viewer(pyglet.window.Window):
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)
             data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
-            imageio.imwrite(filename, img_arr)
+            imageio.imwrite(filename, data)
 
     def _record(self):
         """Save another frame for the GIF."""

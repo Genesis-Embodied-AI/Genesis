@@ -1049,8 +1049,7 @@ class RigidEntity(Entity):
 
         if return_error:
             qpos, error_pose = ret
-            error_pose = error_pose.squeeze(-2)  # 1 single link
-            return qpos, error_pose
+            return qpos, error_pose[..., 0, :]
 
         else:
             return ret
@@ -1059,8 +1058,8 @@ class RigidEntity(Entity):
     def inverse_kinematics_multilink(
         self,
         links,
-        poss=[],
-        quats=[],
+        poss=None,
+        quats=None,
         init_qpos=None,
         respect_joint_limit=True,
         max_samples=50,
@@ -1120,6 +1119,8 @@ class RigidEntity(Entity):
         (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+
         if not self._requires_jac_and_IK:
             gs.raise_exception(
                 "Inverse kinematics and jacobian are disabled for this entity. Set `morph.requires_jac_and_IK` to True if you need them."
@@ -1132,13 +1133,15 @@ class RigidEntity(Entity):
         if n_links == 0:
             gs.raise_exception("Target link not provided.")
 
-        if len(poss) == 0:
+        poss = list(poss) if poss is not None else []
+        if not poss:
             poss = [None for _ in range(n_links)]
             pos_mask = [False, False, False]
         elif len(poss) != n_links:
             gs.raise_exception("Accepting only `poss` with length equal to `links` or empty list.")
 
-        if len(quats) == 0:
+        quats = list(quats) if quats is not None else []
+        if not quats:
             quats = [None for _ in range(n_links)]
             rot_mask = [False, False, False]
         elif len(quats) != n_links:
@@ -1155,10 +1158,9 @@ class RigidEntity(Entity):
                 )
                 link_pos_mask.append(True)
             else:
-                if self._solver.n_envs == 0:
-                    poss[i] = gu.zero_pos()
-                else:
-                    poss[i] = self._solver._batch_array(gu.zero_pos(), True)
+                poss[i] = torch.tile(
+                    torch.as_tensor(gu.zero_pos(), dtype=gs.tc_float, device=gs.device), (len(envs_idx), 1)
+                )
                 link_pos_mask.append(False)
             if quats[i] is not None:
                 quats[i] = self._solver._process_dim(
@@ -1166,10 +1168,9 @@ class RigidEntity(Entity):
                 )
                 link_rot_mask.append(True)
             else:
-                if self._solver.n_envs == 0:
-                    quats[i] = gu.identity_quat()
-                else:
-                    quats[i] = self._solver._batch_array(gu.identity_quat(), True)
+                quats[i] = torch.tile(
+                    torch.as_tensor(gu.identity_quat(), dtype=gs.tc_float, device=gs.device), (len(envs_idx), 1)
+                )
                 link_rot_mask.append(False)
 
         if init_qpos is not None:
@@ -1218,7 +1219,6 @@ class RigidEntity(Entity):
         links_idx_by_dofs = self._get_idx(links_idx_by_dofs, self.n_links, self._link_start, unsafe=False)
         n_links_by_dofs = len(links_idx_by_dofs)
 
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._solver.rigid_entity_inverse_kinematics(
             links_idx,
             poss,
@@ -1246,17 +1246,13 @@ class RigidEntity(Entity):
         )
 
         qpos = self._IK_qpos_best.to_torch(gs.device).transpose(1, 0)
-        if self._solver.n_envs > 0:
-            qpos = qpos[envs_idx]
-        else:
-            qpos = qpos.squeeze(0)
+        qpos = qpos[0 if self._solver.n_envs == 0 else envs_idx]
 
         if return_error:
             error_pose = (
                 self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].permute(2, 0, 1)
             )
-            if self._solver.n_envs == 0:
-                error_pose = error_pose.squeeze(0)
+            error_pose = error_pose[0 if self._solver.n_envs == 0 else envs_idx]
             return qpos, error_pose
         return qpos
 
@@ -1452,7 +1448,7 @@ class RigidEntity(Entity):
             assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
 
         # import here to avoid circular import
-        from genesis.utils.path_planing import RRT, RRTConnect
+        from genesis.utils.path_planning import RRT, RRTConnect
 
         match planner:
             case "RRT":
