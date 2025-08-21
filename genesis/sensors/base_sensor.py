@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.engine.entities import RigidEntity
 from genesis.options import Options
 from genesis.options.recording import RecordingOptions
 from genesis.repr_base import RBC
@@ -28,14 +29,14 @@ class SensorOptions(Options):
 
     Parameters
     ----------
+    delay : float
+        The read delay time in seconds. Data read will be outdated by this amount.
     update_ground_truth_only : bool
         If True, the sensor will only update the ground truth cache, and not the measured cache.
-    delay : float
-        The delay in seconds before the sensor data is read.
     """
 
-    update_ground_truth_only: bool = False
     delay: float = 0.0
+    update_ground_truth_only: bool = False
 
     def validate(self, scene):
         """
@@ -135,7 +136,7 @@ class Sensor(RBC):
     @classmethod
     def update_shared_cache(
         cls,
-        shared_metadata: dict[str, Any],
+        shared_metadata: SharedSensorMetadata,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
@@ -146,7 +147,7 @@ class Sensor(RBC):
         The information in shared_cache should be the final measured sensor data after all noise and post-processing.
         NOTE: The implementation should include applying the delay using the `_apply_delay_to_shared_cache()` method.
         """
-        raise NotImplementedError("Sensors must implement `update_shared_cache_with_noise()`.")
+        raise NotImplementedError("Sensors must implement `update_shared_cache()`.")
 
     @classmethod
     def get_cache_dtype(cls) -> torch.dtype:
@@ -288,7 +289,25 @@ class Sensor(RBC):
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
 
 
-class NoisySensorOptions(SensorOptions):
+class RigidSensorOptionsBase(SensorOptions):
+    """
+    Base class for rigid entity sensor options.
+    """
+
+    entity_idx: int
+    link_idx_local: int = 0
+
+    def validate(self, scene):
+        super().validate(scene)
+        assert self.entity_idx >= 0 and self.entity_idx < len(scene.entities), "Invalid RigidEntity index."
+        entity = scene.entities[self.entity_idx]
+        assert isinstance(entity, RigidEntity), "Entity at given index is not a RigidEntity."
+        assert (
+            self.link_idx_local >= 0 and self.link_idx_local < scene.entities[self.entity_idx].n_links
+        ), "Invalid RigidLink index."
+
+
+class NoisySensorOptionsBase(SensorOptions):
     """
     Base class for noisy sensor options.
 
@@ -307,6 +326,10 @@ class NoisySensorOptions(SensorOptions):
     interpolate_for_delay : bool
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used.
+    delay : float
+        The read delay time in seconds. Data read will be outdated by this amount.
+    update_ground_truth_only : bool
+        If True, the sensor will only update the ground truth cache, and not the measured cache.
     """
 
     bias: tuple[float, ...] = field(default_factory=tuple)
@@ -323,7 +346,7 @@ class NoisySensorOptions(SensorOptions):
 
 
 @dataclass
-class NoisySensorMetadata(SharedSensorMetadata):
+class NoisySensorMetadataBase(SharedSensorMetadata):
     """
     Base class for all common sensor metadata.
     """
@@ -337,7 +360,7 @@ class NoisySensorMetadata(SharedSensorMetadata):
     interpolate_for_delay: list[bool] = field(default_factory=list)
 
 
-class NoisySensor(Sensor):
+class NoisySensorBase(Sensor):
     """
     Base class for sensors with noise, bias, drift, and jitter.
     """
@@ -433,7 +456,7 @@ class NoisySensor(Sensor):
     @classmethod
     def update_shared_cache(
         cls,
-        shared_metadata: NoisySensorMetadata,
+        shared_metadata: NoisySensorMetadataBase,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
@@ -458,7 +481,7 @@ class NoisySensor(Sensor):
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
 
     @classmethod
-    def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadata, shared_cache: torch.Tensor):
+    def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataBase, shared_cache: torch.Tensor):
         shared_metadata.bias_drift += torch.normal(0, shared_metadata.bias_drift_std)
         shared_cache += torch.normal(shared_metadata.bias, shared_metadata.noise_std) + shared_metadata.bias_drift
 
