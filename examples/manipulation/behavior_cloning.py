@@ -1,13 +1,12 @@
 import os
-import torch
 import time
-import torch.nn as nn
-import torch.nn.functional as F
-
-import numpy as np
 from collections import deque
 from collections.abc import Iterator
 
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -39,6 +38,7 @@ class BehaviorCloning:
             state_dim=self._cfg["policy"]["action_head"]["state_obs_dim"],
             action_dim=action_dim,
             device=device,
+            dtype=self._policy.dtype,
         )
 
         # Training state
@@ -95,12 +95,15 @@ class BehaviorCloning:
             backward_time = end_time - start_time
 
             # Compute average losses
-            avg_action_loss = total_action_loss / num_batches if num_batches > 0 else 0.0
-            avg_pose_loss = total_pose_loss / num_batches if num_batches > 0 else 0.0
+            if num_batches == 0:
+                raise ValueError("No batches collected")
+            else:
+                avg_action_loss = total_action_loss / num_batches
+                avg_pose_loss = total_pose_loss / num_batches
 
             fps = (self._num_steps_per_env * self._env.num_envs) / (forward_time)
             # Logging
-            if (it + 1) % 10 == 0:
+            if (it + 1) % self._cfg["log_freq"] == 0:
                 current_lr = self._optimizer.param_groups[0]["lr"]
 
                 tf_writer.add_scalar("loss/action_loss", avg_action_loss, it)
@@ -128,7 +131,7 @@ class BehaviorCloning:
                     tf_writer.add_scalar("reward/mean", np.mean(self._rewbuffer), it)
 
             # Save checkpoints periodically
-            if (it + 1) % 50 == 0:
+            if (it + 1) % self._cfg["save_freq"] == 0:
                 self.save(os.path.join(log_dir, f"checkpoint_{it + 1:04d}.pt"))
 
         tf_writer.close()
@@ -150,6 +153,9 @@ class BehaviorCloning:
         target_quat = F.normalize(target_quat, p=2, dim=1)
 
         # Quaternion distance: 1 - |dot(q1, q2)|
+        # Note: we use this as a proxy for the actual distance between two quaternions
+        # because the impact of the orientation loss (auxiliary task) is not significant
+        # compared to the action loss (main task)
         quat_dot = torch.sum(pred_quat * target_quat, dim=1)
         quat_loss = torch.mean(1.0 - torch.abs(quat_dot))
 
@@ -238,6 +244,7 @@ class ExperienceBuffer:
         state_dim: int,
         action_dim: int,
         device: str = "cpu",
+        dtype: torch.dtype | None = None,
     ):
         self._num_envs = num_envs
         self._max_size = max_size
@@ -249,10 +256,10 @@ class ExperienceBuffer:
         self._size = 0
 
         # Buffers for data
-        self._rgb_obs = torch.empty(max_size, num_envs, *img_shape, dtype=torch.float32, device=device)
-        self._robot_pose = torch.empty(max_size, num_envs, state_dim, dtype=torch.float32, device=device)
-        self._object_poses = torch.empty(max_size, num_envs, 7, dtype=torch.float32, device=device)
-        self._actions = torch.empty(max_size, num_envs, action_dim, dtype=torch.float32, device=device)
+        self._rgb_obs = torch.empty(max_size, num_envs, *img_shape, dtype=dtype, device=device)
+        self._robot_pose = torch.empty(max_size, num_envs, state_dim, dtype=dtype, device=device)
+        self._object_poses = torch.empty(max_size, num_envs, 7, dtype=dtype, device=device)
+        self._actions = torch.empty(max_size, num_envs, action_dim, dtype=dtype, device=device)
 
     def add(
         self,
@@ -280,10 +287,10 @@ class ExperienceBuffer:
 
                 # Yield a mini-batch of data
                 yield {
-                    "rgb_obs": self._rgb_obs[batch_indices].view(-1, *self._img_shape),
-                    "robot_pose": self._robot_pose[batch_indices].view(-1, self._state_dim),
-                    "object_poses": self._object_poses[batch_indices].view(-1, 7),
-                    "actions": self._actions[batch_indices].view(-1, self._action_dim),
+                    "rgb_obs": self._rgb_obs[batch_indices].reshape(-1, *self._img_shape),
+                    "robot_pose": self._robot_pose[batch_indices].reshape(-1, self._state_dim),
+                    "object_poses": self._object_poses[batch_indices].reshape(-1, 7),
+                    "actions": self._actions[batch_indices].reshape(-1, self._action_dim),
                 }
 
     def clear(self) -> None:
@@ -377,7 +384,7 @@ class Policy(nn.Module):
         layers.append(nn.Linear(mlp_input_dim, config["output_dim"]))
         return nn.Sequential(*layers)
 
-    def get_features(self, rgb_obs: torch.Tensor) -> torch.Tensor:
+    def get_features(self, rgb_obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # Split stereo rgb images
         left_rgb = rgb_obs[:, 0:3]  # First 3 channels (RGB)
         right_rgb = rgb_obs[:, 3:6]  # Last 3 channels (RGB)

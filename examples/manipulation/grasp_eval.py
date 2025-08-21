@@ -73,8 +73,8 @@ def get_stereo_frame(env, step_count):
 
     # Split stacked stereo rgb image into left and right images
     left_img, right_img = np.split(stacked_stereo_rgb, 2, axis=2)
-    left_img = cv2.cvtColor(left_img, cv2.COLOR_RGB2BGR)
-    right_img = cv2.cvtColor(right_img, cv2.COLOR_RGB2BGR)
+    cv2.cvtColor(left_img, left_img, cv2.COLOR_RGB2BGR)
+    cv2.cvtColor(right_img, right_img, cv2.COLOR_RGB2BGR)
     stereo_rgb_img = np.concatenate([left_img, right_img], axis=1)
 
     # Add a vertical line separator between the two images

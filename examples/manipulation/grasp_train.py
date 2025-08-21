@@ -113,6 +113,7 @@ def get_train_cfg(exp_name, max_iterations):
         },
         # Training settings
         "buffer_size": 1000,
+        "log_freq": 10,
         "save_freq": 50,
         "eval_freq": 50,
     }
@@ -133,6 +134,7 @@ def get_task_cfgs():
         "box_fixed": True,
         "image_resolution": (64, 64),
         "use_rasterizer": True,
+        "visualize_camera": False,
     }
     reward_scales = {
         "keypoints": 1.0,

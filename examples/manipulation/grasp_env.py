@@ -40,24 +40,24 @@ class GraspEnv:
         # == setup scene ==
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=self.ctrl_dt, substeps=2),
-            viewer_options=gs.options.ViewerOptions(
-                max_FPS=int(0.5 / self.ctrl_dt),
-                camera_pos=(2.0, 0.0, 2.5),
-                camera_lookat=(0.0, 0.0, 0.5),
-                camera_fov=40,
-            ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
             rigid_options=gs.options.RigidOptions(
                 dt=self.ctrl_dt,
                 constraint_solver=gs.constraint_solver.Newton,
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
+            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
+            viewer_options=gs.options.ViewerOptions(
+                max_FPS=int(0.5 / self.ctrl_dt),
+                camera_pos=(2.0, 0.0, 2.5),
+                camera_lookat=(0.0, 0.0, 0.5),
+                camera_fov=40,
+            ),
             profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-            show_viewer=show_viewer,
             renderer=gs.options.renderers.BatchRenderer(
                 use_rasterizer=env_cfg["use_rasterizer"],
             ),
+            show_viewer=show_viewer,
         )
 
         # == add ground ==
@@ -92,14 +92,14 @@ class GraspEnv:
             pos=(1.25, 0.3, 0.3),
             lookat=(0.0, 0.0, 0.0),
             fov=60,
-            GUI=False,
+            GUI=self.env_cfg["visualize_camera"],
         )
         self.right_cam = self.scene.add_camera(
             res=(self.image_width, self.image_height),
             pos=(1.25, -0.3, 0.3),
             lookat=(0.0, 0.0, 0.0),
             fov=60,
-            GUI=False,
+            GUI=self.env_cfg["visualize_camera"],
         )
 
         # build
