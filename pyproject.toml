@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.0"
+version = "0.3.1"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "taichi >= 1.7.2",
+    "gstaichi == 1.0.1",
     "pydantic >= 2.7.1",
     "numpy >= 1.26.4",
     "trimesh",
@@ -56,7 +56,7 @@ dependencies = [
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
-    "gs-madrona>=0.0.2; platform_system == 'Linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
+    "gs-madrona==0.0.3; platform_system == 'Linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations

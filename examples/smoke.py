@@ -2,7 +2,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import cv2
 
 import genesis as gs
