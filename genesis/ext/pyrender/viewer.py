@@ -601,7 +601,10 @@ class Viewer(pyglet.window.Window):
 
         # Delete renderer
         if self._renderer is not None:
-            self._renderer.delete()
+            try:
+                self._renderer.delete()
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
+                pass
         self._renderer = None
 
         # Force clean-up of OpenGL context data
@@ -614,7 +617,7 @@ class Viewer(pyglet.window.Window):
             super().on_close()
             try:
                 pyglet.app.exit()
-            except:
+            except Exception:
                 pass
 
         self._offscreen_result_semaphore.release()
@@ -1251,8 +1254,8 @@ class Viewer(pyglet.window.Window):
             self.refresh()
         except OpenGL.error.Error:
             # Invalid OpenGL context. Closing before raising.
-            self.close()
-            raise
+            self.on_close()
+            return
 
         # At this point, we are all set to display the graphical window if requested, finally!
         if not pyglet.options["headless"]:
