@@ -15,7 +15,7 @@ from genesis.engine.entities import (
 )
 from genesis.engine.states.solvers import PBDSolverState
 from genesis.utils.array_class import LinksState
-from genesis.utils.geom import SpatialHasher, ti_inv_transform_by_trans_quat, ti_transform_by_trans_quat
+from genesis.utils.geom import SpatialHasher
 
 from .base_solver import Solver
 
@@ -36,14 +36,10 @@ class PBDSolver(Solver):
     class ParticleAnimateByLinkInfo:
         """
         Index to and offset from the RigidLink that keyframe-animates this particle.
-
-        And temporary target position and velocity, used for corrective velocity calculation during solving.
         """
 
         link_idx: ti.i32  # not available, possibly due to circular improt: gs.ti_int
         local_pos: ti.math.vec3  # uncomprehendalbe error: gs.ti_vec3
-        target_world_pos: ti.math.vec3
-        target_world_vel: ti.math.vec3
 
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
@@ -812,11 +808,6 @@ class PBDSolver(Solver):
             # boundary collision
             self._kernel_solve_boundary_collision(f)
 
-            # animate particles by links
-            full_step_inv_dt = 1.0 / self._dt
-            clamped_inv_dt = min(full_step_inv_dt, 50.0)
-            self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt)
-
     def substep_post_coupling_grad(self, f):
         pass
 
@@ -986,93 +977,9 @@ class PBDSolver(Solver):
         envs_idx: NDArray[np.int32] | None = None,
     ) -> None:
         envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
-        self._kernel_set_animate_particles_by_link(particles_idx, link_idx, links_state, envs_idx)
-
-    @ti.kernel
-    def _kernel_set_animate_particles_by_link(
-        self,
-        particles_idx: ti.types.ndarray(),  # 1d array
-        link_idx: ti.i32,
-        links_state: LinksState,
-        envs_idx: ti.types.ndarray(),  # 1d array
-    ) -> None:
-        """
-        Sets listed particles in listed environments to be animated by the link.
-
-        Current position of the particle, relatively to the link, is stored and preserved.
-        """
-        for i_env_ in range(envs_idx.shape[0]):
-            i_env = envs_idx[i_env_]
-            link_pos = links_state.pos[link_idx, i_env]
-            link_quat = links_state.quat[link_idx, i_env]
-
-            for i_p_ in range(particles_idx.shape[0]):
-                i_p = particles_idx[i_p_]
-
-                # compute local offset from link to the particle
-                world_pos = self.particles[i_p, i_env].pos
-                local_pos = ti_inv_transform_by_trans_quat(world_pos, link_pos, link_quat)
-
-                # set particle to be animated (not free) and store animation info
-                self.particles[i_p, i_env].free = ti.int32(0)  # optional
-                self.particle_animation_info[i_p, i_env].link_idx = link_idx
-                self.particle_animation_info[i_p, i_env].local_pos = local_pos
-
-    @ti.kernel
-    def kernel_pbd_rigid_animate_particles_to_links(self, links_state: LinksState):
-        """
-        Itearates all particles and environments, and computes target position and velocity for animated particles.
-        """
-        # Warning: when link & particle mass are comparable, you'll need to run particle loop in series,
-        # and only parallelize across environments. Additionally, we'd need to
-        for i_p, i_env in ti.ndrange(self._n_particles, self._B):
-            if self.particle_animation_info[i_p, i_env].link_idx >= 0:
-                # read link state
-                link_idx = self.particle_animation_info[i_p, i_env].link_idx
-                link_pos = links_state.pos[link_idx, i_env]
-                link_quat = links_state.quat[link_idx, i_env]
-
-                # update target pos
-                local_pos = self.particle_animation_info[i_p, i_env].local_pos
-                world_pos = ti_transform_by_trans_quat(local_pos, link_pos, link_quat)
-
-                self.particle_animation_info[i_p, i_env].target_world_pos = world_pos
-
-                # read link state
-                link_lin_vel = links_state.cd_vel[link_idx, i_env]
-                link_ang_vel = links_state.cd_ang[link_idx, i_env]
-                link_com_in_world = links_state.COM[link_idx, i_env]
-
-                # update target vel
-                world_arm = world_pos - link_com_in_world
-                world_vel = link_lin_vel + link_ang_vel.cross(world_arm)
-
-                self.particle_animation_info[i_p, i_env].target_world_vel = world_vel
-
-    @ti.kernel
-    def kernel_pbd_rigid_solve_animate_particles_by_link(self, clamped_inv_dt: ti.f32):
-        """
-        Sets corrective velocity for all animated particle.
-
-        Note, that this step shoudl be done after rigid solver update, and before PDB solver update.
-        Currently, this is done after both rigid and PBD solver updates, hence the corrective velocity
-        is off by a frame.
-
-        Note, it's adviced to clamp inv_dt to avoid large jerks and instability. 1/0.02 might be a good max value.
-        """
-        for i_p, i_env in ti.ndrange(self._n_particles, self._B):
-            if self.particle_animation_info[i_p, i_env].link_idx >= 0:
-
-                # read current and target positions and velocity
-                particle_pos = self.particles[i_p, i_env].pos
-                target_pos = self.particle_animation_info[i_p, i_env].target_world_pos
-                target_vel = self.particle_animation_info[i_p, i_env].target_world_vel
-
-                # compute and apply corrective velocity
-                pos_correction = target_pos - particle_pos
-                corrective_vel = pos_correction * clamped_inv_dt
-                self.particles[i_p, i_env].vel = corrective_vel + target_vel
-                self.particles[i_p, i_env].pos = target_pos
+        self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
+            particles_idx, link_idx, links_state, envs_idx
+        )
 
     @gs.assert_built
     def release_particle(self, particle_idx, i_b):

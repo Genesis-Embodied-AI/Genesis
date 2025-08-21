@@ -8,6 +8,8 @@ import genesis.utils.sdf_decomp as sdf_decomp
 
 from genesis.options.solvers import LegacyCouplerOptions
 from genesis.repr_base import RBC
+from genesis.utils.array_class import LinksState
+from genesis.utils.geom import ti_inv_transform_by_trans_quat, ti_transform_by_trans_quat
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -592,6 +594,77 @@ class LegacyCoupler(RBC):
                             i_b,
                         )
 
+    @ti.kernel
+    def kernel_pbd_rigid_set_animate_particles_by_link(
+        self,
+        particles_idx: ti.types.ndarray(),  # 1d array
+        link_idx: ti.i32,
+        links_state: LinksState,
+        envs_idx: ti.types.ndarray(),  # 1d array
+    ) -> None:
+        """
+        Sets listed particles in listed environments to be animated by the link.
+
+        Current position of the particle, relatively to the link, is stored and preserved.
+        """
+        pdb = self.pbd_solver
+        for i_env_ in range(envs_idx.shape[0]):
+            i_env = envs_idx[i_env_]
+            link_pos = links_state.pos[link_idx, i_env]
+            link_quat = links_state.quat[link_idx, i_env]
+
+            for i_p_ in range(particles_idx.shape[0]):
+                i_p = particles_idx[i_p_]
+
+                # compute local offset from link to the particle
+                world_pos = pdb.particles[i_p, i_env].pos
+                local_pos = ti_inv_transform_by_trans_quat(world_pos, link_pos, link_quat)
+
+                # set particle to be animated (not free) and store animation info
+                pdb.particles[i_p, i_env].free = ti.int32(0)  # optional
+                pdb.particle_animation_info[i_p, i_env].link_idx = link_idx
+                pdb.particle_animation_info[i_p, i_env].local_pos = local_pos
+
+    @ti.kernel
+    def kernel_pbd_rigid_solve_animate_particles_by_link(self, clamped_inv_dt: ti.f32, links_state: LinksState):
+        """
+        Itearates all particles and environments, and sets corrective velocity for all animated particle.
+
+        Computes target position and velocity from the attachment/reference link and local offset position.
+
+        Note, that this step shoudl be done after rigid solver update, and before PDB solver update.
+        Currently, this is done after both rigid and PBD solver updates, hence the corrective velocity
+        is off by a frame.
+
+        Note, it's adviced to clamp inv_dt to avoid large jerks and instability. 1/0.02 might be a good max value.
+        """
+        pdb = self.pbd_solver
+        for i_p, i_env in ti.ndrange(pdb._n_particles, pdb._B):
+            if pdb.particle_animation_info[i_p, i_env].link_idx >= 0:
+
+                # read link state
+                link_idx = pdb.particle_animation_info[i_p, i_env].link_idx
+                link_pos = links_state.pos[link_idx, i_env]
+                link_quat = links_state.quat[link_idx, i_env]
+
+                link_lin_vel = links_state.cd_vel[link_idx, i_env]
+                link_ang_vel = links_state.cd_ang[link_idx, i_env]
+                link_com_in_world = links_state.COM[link_idx, i_env]
+
+                # calculate target pos and vel of the particle
+                local_pos = pdb.particle_animation_info[i_p, i_env].local_pos
+                target_world_pos = ti_transform_by_trans_quat(local_pos, link_pos, link_quat)
+
+                world_arm = target_world_pos - link_com_in_world
+                target_world_vel = link_lin_vel + link_ang_vel.cross(world_arm)
+
+                # compute and apply corrective velocity
+                i_rp = pdb.particles_ng[i_p, i_env].reordered_idx
+                particle_pos = pdb.particles_reordered[i_rp, i_env].pos
+                pos_correction = target_world_pos - particle_pos
+                corrective_vel = pos_correction * clamped_inv_dt
+                pdb.particles_reordered[i_rp, i_env].vel = corrective_vel + target_world_vel
+
     @ti.func
     def _func_pbd_collide_with_rigid_geom(self, i, pos, vel, mass, normal_prev, geom_idx, batch_idx):
         """
@@ -674,17 +747,12 @@ class LegacyCoupler(RBC):
 
         # PBD <-> Rigid
         if self._rigid_pbd and self.rigid_solver.is_active():
-            # 2-way collision coupling
             self.kernel_pbd_rigid_collide()
 
-            # 1-way particle to link coupling
-            self.pbd_solver.kernel_pbd_rigid_animate_particles_to_links(self.rigid_solver.links_state)
-
-            # Setting particle velocities and positions here has not effect, why?
-            #
-            # full_step_inv_dt = 1.0 / self.pbd_solver._dt
-            # clamped_inv_dt = min(full_step_inv_dt, 50.0)
-            # self.pbd_solver.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt)
+            # 1-way: animate particles by links
+            full_step_inv_dt = 1.0 / self.pbd_solver._dt
+            clamped_inv_dt = min(full_step_inv_dt, 50.0)
+            self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.links_state)
 
         if self.fem_solver.is_active():
             self.fem_surface_force(f)
