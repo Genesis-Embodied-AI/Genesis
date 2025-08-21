@@ -4,6 +4,7 @@ import torch
 
 import genesis as gs
 from genesis.sensors.imu import IMUOptions
+from genesis.sensors.tactile import ContactSensorOptions, ForceSensorOptions
 
 from .utils import assert_allclose, assert_array_equal
 
@@ -103,3 +104,68 @@ def test_imu_sensor(show_viewer):
     assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=1e-7)
     assert_allclose(imu_biased.read()["lin_acc"], torch.tensor([BIAS[0], BIAS[1], BIAS[2] - GRAVITY]), tol=1e-7)
     assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-5)
+
+
+def test_rigid_tactile_sensors_gravity_force(show_viewer):
+    """Test if the sensor will detect the correct forces being applied on a falling box."""
+    GRAVITY = -10.0
+    N_ENVS = 0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1e-2,
+            substeps=1,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),  # volume = 1 m^3
+            pos=(0.0, 0.0, 1.1),
+        ),
+        material=gs.materials.Rigid(rho=1.0),  # mass = 1 kg
+    )
+
+    bool_sensor = scene.add_sensor(ContactSensorOptions(entity_idx=box.idx))
+    force_sensor = scene.add_sensor(ForceSensorOptions(entity_idx=box.idx))
+    normtan_force_sensor = scene.add_sensor(ForceSensorOptions(entity_idx=box.idx, return_normtan=True))
+
+    scene.build(n_envs=N_ENVS)
+
+    assert not bool_sensor.read().any(), "RigidContactSensor should not be in contact with the ground yet."
+    assert_array_equal(
+        force_sensor.read()["force"], 0.0, err_msg="RigidContactForceSensor should be zero before contact."
+    )
+    assert_array_equal(
+        normtan_force_sensor.read()["normal"],
+        0.0,
+        err_msg="RigidContactForceSensor normal should be zero before contact.",
+    )
+
+    for _ in range(100):
+        scene.step()
+
+    assert bool_sensor.read().all(), "Sensor should detect contact with the ground"
+    assert_allclose(
+        force_sensor.read()["force"],
+        torch.tensor([0.0, 0.0, -GRAVITY]),
+        tol=1e-6,
+        err_msg="Force should be equal to -gravity (normal) force.",
+    )
+    assert_allclose(
+        force_sensor.read()["magnitude"],
+        -GRAVITY,
+        tol=1e-6,
+        err_msg="Force magnitude should be equal to -gravity (normal) force.",
+    )
+    assert_allclose(
+        normtan_force_sensor.read()["normal"],
+        -GRAVITY,
+        tol=1e-6,
+        err_msg="Normal force should be equal to -gravity (normal) force.",
+    )

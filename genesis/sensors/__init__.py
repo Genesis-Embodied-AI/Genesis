@@ -8,5 +8,5 @@ from .data_handlers import (
     VideoFileWriter,
 )
 from .data_recorder import SensorDataRecorder
-from .imu import IMU, IMUOptions
-from .tactile import RigidContactForceGridSensor, RigidContactForceSensor, RigidContactSensor
+from .imu import IMUOptions
+from .tactile import ContactSensorOptions, ForceSensorOptions

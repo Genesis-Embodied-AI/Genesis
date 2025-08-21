@@ -6,7 +6,6 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.engine.entities import RigidEntity
 from genesis.engine.solvers import RigidSolver
 from genesis.utils.geom import (
     euler_to_quat,
@@ -14,14 +13,14 @@ from genesis.utils.geom import (
     transform_quat_by_quat,
 )
 
-from .base_sensor import NoisySensor, NoisySensorMetadata, NoisySensorOptions
+from .base_sensor import NoisySensorBase, NoisySensorMetadataBase, NoisySensorOptionsBase, RigidSensorOptionsBase
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-class IMUOptions(NoisySensorOptions):
+class IMUOptions(RigidSensorOptionsBase, NoisySensorOptionsBase):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -64,8 +63,6 @@ class IMUOptions(NoisySensorOptions):
         Otherwise, the sensor data at the closest time step will be used.
     """
 
-    entity_idx: int
-    link_idx_local: int = 0
     pos_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     euler_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     acc_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
@@ -80,12 +77,6 @@ class IMUOptions(NoisySensorOptions):
 
     def validate(self, scene):
         super().validate(scene)
-        assert self.entity_idx >= 0 and self.entity_idx < len(scene.entities), "Invalid RigidEntity index."
-        entity = scene.entities[self.entity_idx]
-        assert isinstance(entity, RigidEntity), "Entity at given index is not a RigidEntity."
-        assert (
-            self.link_idx_local >= 0 and self.link_idx_local < scene.entities[self.entity_idx].n_links
-        ), "Invalid RigidLink index."
         self._validate_axes_skew(self.acc_axes_skew)
         self._validate_axes_skew(self.gyro_axes_skew)
 
@@ -98,7 +89,7 @@ class IMUOptions(NoisySensorOptions):
 
 
 @dataclass
-class IMUSharedMetadata(NoisySensorMetadata):
+class IMUSharedMetadata(NoisySensorMetadataBase):
     """
     Shared metadata between all IMU sensors.
     """
@@ -115,7 +106,7 @@ class IMUSharedMetadata(NoisySensorMetadata):
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMU(NoisySensor):
+class IMU(NoisySensorBase):
 
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
