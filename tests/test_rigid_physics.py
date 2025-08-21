@@ -364,6 +364,50 @@ def test_frictionloss(gs_sim, mj_sim, tol):
     assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["hinge_slide"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_set_dofs_frictionloss_physics(gs_sim, mj_sim, tol):
+    (robot,) = gs_sim.entities
+
+    initial_velocity = np.array([1.0, 0.0])
+    robot.set_dofs_velocity(initial_velocity)
+
+    robot.set_dofs_frictionloss(np.array([0.0, 0.0]))
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_zero = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    robot.set_dofs_velocity(initial_velocity)
+    robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_high = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    np.testing.assert_array_less(velocity_high[0], velocity_zero[0])
+    np.testing.assert_array_less(velocity_high[1], velocity_zero[1])
+
+    robot.set_dofs_velocity(initial_velocity)
+    robot.set_dofs_frictionloss(np.array([0.5]), dofs_idx_local=[0])
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_medium = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    np.testing.assert_array_less(velocity_high[0], velocity_medium[0])
+    np.testing.assert_array_less(velocity_medium[0], velocity_zero[0])
+
+    friction_effect = velocity_zero[0] - velocity_high[0]
+    np.testing.assert_array_less(tol, friction_effect)
+
+    slide_friction_effect = velocity_zero[1] - velocity_high[1]
+    np.testing.assert_array_less(tol, slide_friction_effect)
+
+
 # Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
 @pytest.mark.required
 @pytest.mark.multi_contact(False)

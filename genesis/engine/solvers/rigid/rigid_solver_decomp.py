@@ -1887,6 +1887,10 @@ class RigidSolver(Solver):
             kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
         elif name == "damping":
             kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+        elif name == "frictionloss":
+            kernel_set_dofs_frictionloss(
+                tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
+            )
         elif name == "limit":
             kernel_set_dofs_limit(
                 tensor_list[0], tensor_list[1], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
@@ -1914,6 +1918,9 @@ class RigidSolver(Solver):
 
     def set_dofs_damping(self, damping, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
+
+    def set_dofs_frictionloss(self, frictionloss, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        self._set_dofs_info([frictionloss], dofs_idx, "frictionloss", envs_idx, unsafe=unsafe)
 
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx, unsafe=unsafe)
@@ -6440,6 +6447,23 @@ def kernel_set_dofs_damping(
     else:
         for i_d_ in range(dofs_idx.shape[0]):
             dofs_info.damping[dofs_idx[i_d_]] = damping[i_d_]
+
+
+@ti.kernel
+def kernel_set_dofs_frictionloss(
+    frictionloss: ti.types.ndarray(),
+    dofs_idx: ti.types.ndarray(),
+    envs_idx: ti.types.ndarray(),
+    dofs_info: array_class.DofsInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    if ti.static(static_rigid_sim_config.batch_dofs_info):
+        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+            dofs_info.frictionloss[dofs_idx[i_d_], envs_idx[i_b_]] = frictionloss[i_b_, i_d_]
+    else:
+        for i_d_ in range(dofs_idx.shape[0]):
+            dofs_info.frictionloss[dofs_idx[i_d_]] = frictionloss[i_d_]
 
 
 @ti.kernel
