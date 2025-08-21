@@ -81,14 +81,14 @@ class SensorManager:
             dtype = sensor_cls.get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             sensor_cls.update_shared_ground_truth_cache(
-                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][cache_slice]
+                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice]
             )
             if self._should_update_cache_by_type[sensor_cls]:
                 sensor_cls.update_shared_cache(
                     self._sensors_metadata[sensor_cls],
-                    self._ground_truth_cache[dtype][cache_slice],
-                    self._cache[dtype][cache_slice],
-                    self._buffered_data[dtype][cache_slice],
+                    self._ground_truth_cache[dtype][:, cache_slice],
+                    self._cache[dtype][:, cache_slice],
+                    self._buffered_data[dtype][:, cache_slice],
                 )
         for data_recorder in self._data_recorders:
             data_recorder.step(self._sim.cur_step_global, self._sim.cur_t)
