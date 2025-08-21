@@ -4,7 +4,7 @@ import os
 import inspect
 from typing import Any, Type, cast
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import numpy as np
@@ -25,6 +25,8 @@ class StructRigidGlobalInfo:
     awake_dofs: V_ANNOTATION
     n_awake_entities: V_ANNOTATION
     awake_entities: V_ANNOTATION
+    n_awake_links: V_ANNOTATION
+    awake_links: V_ANNOTATION
     qpos0: V_ANNOTATION
     qpos: V_ANNOTATION
     links_T: V_ANNOTATION
@@ -48,6 +50,8 @@ def get_rigid_global_info(solver):
         "awake_dofs": V(dtype=gs.ti_int, shape=f_batch(solver.n_dofs_)),
         "n_awake_entities": V(dtype=gs.ti_int, shape=f_batch()),
         "awake_entities": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
+        "n_awake_links": V(dtype=gs.ti_int, shape=f_batch()),
+        "awake_links": V(dtype=gs.ti_int, shape=f_batch(solver.n_links)),
         "qpos0": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
@@ -184,7 +188,7 @@ def get_constraint_state(constraint_solver, solver):
         "efc_D": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_frictionloss": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_force": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
+        "active": V(dtype=gs.ti_bool, shape=solver._batch_shape(len_constraints_)),
         "prev_active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
         "qfrc_constraint": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "qacc": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
@@ -245,6 +249,7 @@ def get_constraint_state(constraint_solver, solver):
 
 @dataclasses.dataclass
 class StructContactData:
+    # WARNING: cannot add/remove fields here without also updating collider_decomp.py::kernel_collider_clear
     geom_a: V_ANNOTATION
     geom_b: V_ANNOTATION
     penetration: V_ANNOTATION
@@ -1151,6 +1156,7 @@ def get_dofs_state(solver):
         "act_length": V(dtype=gs.ti_float, shape=shape),
         "pos": V(dtype=gs.ti_float, shape=shape),
         "vel": V(dtype=gs.ti_float, shape=shape),
+        "vel_prev": V(dtype=gs.ti_float, shape=shape),
         "acc": V(dtype=gs.ti_float, shape=shape),
         "acc_smooth": V(dtype=gs.ti_float, shape=shape),
         "qf_smooth": V(dtype=gs.ti_float, shape=shape),
@@ -1947,7 +1953,7 @@ class DataManager:
         self.entities_state = get_entities_state(solver)
 
 
-# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
+# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to gstaichi
 DofsState = ti.template() if not use_ndarray else StructDofsState
 DofsInfo = ti.template() if not use_ndarray else StructDofsInfo
 GeomsState = ti.template() if not use_ndarray else StructGeomsState

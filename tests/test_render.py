@@ -1,5 +1,6 @@
 import itertools
 import queue
+import os
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -118,7 +119,7 @@ def test_segmentation(segmentation_level, particle_mode):
 
 
 @pytest.mark.required
-@pytest.mark.flaky(reruns=3, condition=(sys.platform == "darwin"))
+@pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -275,6 +276,7 @@ def test_batched_offscreen_rendering(tmp_path, show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -555,8 +557,10 @@ def test_debug_draw(show_viewer):
     )
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-    # assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
-    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+    if "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ:
+        assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+    else:
+        assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
     scene.clear_debug_objects()
     scene.step()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)

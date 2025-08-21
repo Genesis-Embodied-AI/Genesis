@@ -1,5 +1,5 @@
 import genesis as gs
-import taichi as ti
+import gstaichi as ti
 from genesis.repr_base import RBC
 import numpy as np
 
@@ -73,7 +73,7 @@ class LBVH(RBC):
             Number of AABBs per batch.
         n_batches : int
             Number of batches.
-        max_n_query_results : int
+        max_query_results : int
             Maximum number of query results allowed.
         max_stack_depth : int
             Maximum stack depth for BVH traversal.
@@ -102,7 +102,7 @@ class LBVH(RBC):
         internal_node_visited : ti.field
             Flags indicating if an internal node has been visited during traversal, shape (n_batches, n_aabbs - 1).
         query_result : ti.field
-            Query results as a vector of (batch id, self id, query id), shape (max_n_query_results).
+            Query results as a vector of (batch id, self id, query id), shape (max_query_results).
         query_result_count : ti.field
             Counter for the number of query results.
 
@@ -118,7 +118,7 @@ class LBVH(RBC):
         self.n_batches = aabb.n_batches
 
         # Maximum number of query results
-        self.max_n_query_results = min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF)
+        self.max_query_results = min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF)
         # Maximum stack depth for traversal
         self.max_stack_depth = 64
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(self.n_batches, self.n_aabbs))
@@ -168,7 +168,7 @@ class LBVH(RBC):
         self.internal_node_ready = ti.field(gs.ti_bool, shape=(self.n_batches, self.n_aabbs - 1))
 
         # Query results, vec3 of batch id, self id, query id
-        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_n_query_results))
+        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_query_results))
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
 
@@ -235,12 +235,16 @@ class LBVH(RBC):
             self.morton_codes[i_b, i_a] = ti.Vector([morton_code, i_a], dt=ti.u32)
 
     @ti.func
-    def expand_bits(self, v):
+    def expand_bits(self, v: ti.u32) -> ti.u32:
         """
         Expands a 10-bit integer into 30 bits by inserting 2 zeros before each bit.
         """
         v = (v * ti.u32(0x00010001)) & ti.u32(0xFF0000FF)
-        v = (v * ti.u32(0x00000101)) & ti.u32(0x0F00F00F)
+        # This is to silence taichi debug warning of overflow
+        # Has the same result as v = (v * ti.u32(0x00000101)) & ti.u32(0x0F00F00F)
+        # Performance difference is negligible
+        # See https://github.com/Genesis-Embodied-AI/Genesis/pull/1560 for details
+        v = (v | ((v & 0x00FFFFFF) << 8)) & 0x0F00F00F
         v = (v * ti.u32(0x00000011)) & ti.u32(0xC30C30C3)
         v = (v * ti.u32(0x00000005)) & ti.u32(0x49249249)
         return v
@@ -277,8 +281,8 @@ class LBVH(RBC):
 
         # Reorder morton codes
         for i_b, i_a in ti.ndrange(self.n_batches, self.n_aabbs):
-            code = (self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF
-            idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, ti.i32(code)])
+            code = ti.i32((self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF)
+            idx = ti.i32(self.offset[i_b, i_a] + self.prefix_sum[i_b, code])
             self.tmp_morton_codes[i_b, idx] = self.morton_codes[i_b, i_a]
 
         # Swap the temporary and original morton codes
@@ -351,21 +355,21 @@ class LBVH(RBC):
 
             delta_min = self.delta(i, i - d, i_b)
             l_max = ti.u32(2)
-            while self.delta(i, i + l_max * d, i_b) > delta_min:
+            while self.delta(i, i + ti.i32(l_max) * d, i_b) > delta_min:
                 l_max *= 2
             l = ti.u32(0)
 
             t = l_max // 2
             while t > 0:
-                if self.delta(i, i + (l + t) * d, i_b) > delta_min:
+                if self.delta(i, i + ti.i32(l + t) * d, i_b) > delta_min:
                     l += t
                 t //= 2
-            j = i + l * d
+            j = i + ti.i32(l) * d
             delta_node = self.delta(i, j, i_b)
             s = ti.u32(0)
             t = (l + 1) // 2
             while t > 0:
-                if self.delta(i, i + (s + t) * d, i_b) > delta_node:
+                if self.delta(i, i + ti.i32(s + t) * d, i_b) > delta_node:
                     s += t
                 t = ti.select(t > 1, (t + 1) // 2, 0)
 
@@ -378,7 +382,7 @@ class LBVH(RBC):
             self.nodes[i_b, ti.i32(right)].parent = i
 
     @ti.func
-    def delta(self, i, j, i_b):
+    def delta(self, i: ti.i32, j: ti.i32, i_b: ti.i32):
         """
         Compute the longest common prefix (LCP) of the morton codes of two AABBs.
         """
@@ -386,9 +390,9 @@ class LBVH(RBC):
         if j >= 0 and j < self.n_aabbs:
             result = 64
             for i_bit in range(2):
-                x = self.morton_codes[i_b, ti.i32(i)][i_bit] ^ self.morton_codes[i_b, ti.i32(j)][i_bit]
+                x = self.morton_codes[i_b, i][i_bit] ^ self.morton_codes[i_b, j][i_bit]
                 for b in range(32):
-                    if x & (1 << (31 - b)):
+                    if x & (ti.u32(1) << (31 - b)):
                         result = b + 32 * i_bit
                         break
                 if result != 64:
@@ -441,7 +445,7 @@ class LBVH(RBC):
 
         return is_done
 
-    @ti.kernel
+    @ti.func
     def query(self, aabbs: ti.template()):
         """
         Query the BVH for intersections with the given AABBs.
@@ -449,6 +453,7 @@ class LBVH(RBC):
         The results are stored in the query_result field.
         """
         self.query_result_count[None] = 0
+        overflow = False
 
         n_querys = aabbs.shape[1]
         for i_b, i_q in ti.ndrange(self.n_batches, n_querys):
@@ -468,8 +473,10 @@ class LBVH(RBC):
                         if self.filter(i_a, i_q):
                             continue
                         idx = ti.atomic_add(self.query_result_count[None], 1)
-                        if idx < self.max_n_query_results:
+                        if idx < self.max_query_results:
                             self.query_result[idx] = gs.ti_ivec3(i_b, i_a, i_q)  # Store the AABB index
+                        else:
+                            overflow = True
                     else:
                         # Push children onto the stack
                         if node.right != -1:
@@ -478,6 +485,8 @@ class LBVH(RBC):
                         if node.left != -1:
                             query_stack[stack_depth] = node.left
                             stack_depth += 1
+
+        return overflow
 
 
 @ti.data_oriented
@@ -499,10 +508,13 @@ class FEMSurfaceTetLBVH(LBVH):
 
         This is used to avoid self-collisions in FEM surface tets.
 
-        i_a: index of the found AABB
-        i_q: index of the query AABB
+        Parameters
+        ----------
+        i_a:
+            index of the found AABB
+        i_q:
+            index of the query AABB
         """
-
         result = i_a >= i_q
         i_av = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_a]].el2v
         i_qv = self.fem_solver.elements_i[self.fem_solver.surface_elements[i_q]].el2v

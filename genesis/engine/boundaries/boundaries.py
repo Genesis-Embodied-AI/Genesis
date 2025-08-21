@@ -1,7 +1,7 @@
 import copy
 
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.utils.misc import *

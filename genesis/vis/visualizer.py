@@ -170,10 +170,6 @@ class Visualizer(RBC):
             if self._viewer is not None:
                 self._viewer.update(auto_refresh=True)
 
-            if self._batch_renderer is None:
-                for camera in self._cameras:
-                    self._rasterizer.render_camera(camera)
-
     def build(self):
         self._context.build(self._scene)
 

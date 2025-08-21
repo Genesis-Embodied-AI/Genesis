@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -21,7 +21,6 @@ from genesis.options.solvers import (
 )
 from genesis.repr_base import RBC
 
-from .couplers import LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
 from .solvers.base_solver import Solver
 from .solvers import (
@@ -34,8 +33,10 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
+from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+from genesis.sensors.sensor_manager import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -100,12 +101,12 @@ class Simulator(RBC):
         self.sf_options = sf_options
         self.pbd_options = pbd_options
 
-        self._dt = options.dt
-        self._substep_dt = options.dt / options.substeps
-        self._substeps = options.substeps
-        self._substeps_local = options.substeps_local
-        self._requires_grad = options.requires_grad
-        self._steps_local = options._steps_local
+        self._dt: float = options.dt
+        self._substep_dt: float = options.dt / options.substeps
+        self._substeps: int = options.substeps
+        self._substeps_local: int | None = options.substeps_local
+        self._requires_grad: bool = options.requires_grad
+        self._steps_local: int | None = options._steps_local
 
         self._cur_substep_global = 0
         self._gravity = np.array(options.gravity, dtype=gs.np_float)
@@ -150,6 +151,9 @@ class Simulator(RBC):
 
         # entities
         self._entities: list[Entity] = gs.List()
+
+        # sensors
+        self._sensor_manager = SensorManager(self)
 
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
@@ -205,6 +209,8 @@ class Simulator(RBC):
 
         if self.n_envs > 0 and self.sf_solver.is_active():
             gs.raise_exception("Batching is not supported for SF solver as of now.")
+
+        self._sensor_manager.build()
 
         # hybrid
         for entity in self._entities:
@@ -274,6 +280,8 @@ class Simulator(RBC):
 
         if self.rigid_solver.is_active():
             self.rigid_solver.clear_external_force()
+
+        self._sensor_manager.step()
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
@@ -411,7 +419,7 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def dt(self):
+    def dt(self) -> float:
         """The time duration for each simulation step."""
         return self._dt
 
@@ -436,7 +444,7 @@ class Simulator(RBC):
         return self._requires_grad
 
     @property
-    def n_entities(self):
+    def n_entities(self) -> int:
         """The number of entities in the simulator."""
         return len(self._entities)
 

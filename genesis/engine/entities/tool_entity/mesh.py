@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -86,7 +86,7 @@ class Mesh:
     def sdf_(self, pos_voxels):
         # sdf value from voxels coordinate
         base = ti.floor(pos_voxels, gs.ti_int)
-        signed_dist = ti.cast(0.0, gs.ti_float)
+        signed_dist = gs.ti_float(0.0)
         if (base >= self.sdf_res - 1).any() or (base < 0).any():
             signed_dist = 1.0
         else:
@@ -117,7 +117,7 @@ class Mesh:
     @ti.func
     def normal_(self, pos_voxels):
         # since we are in voxels frame, delta can be a relatively big value
-        delta = ti.cast(1e-2, gs.ti_float)
+        delta = gs.ti_float(1e-2)
         normal_vec = ti.Vector([0, 0, 0], dt=gs.ti_float)
 
         for i in ti.static(range(3)):
@@ -146,7 +146,7 @@ class Mesh:
             signed_dist = self.sdf(f, pos_world, i_b)
             # bigger coup_softness implies that the coupling influence extends further away from the object.
             influence = ti.min(ti.exp(-signed_dist / max(gs.EPS, self.material.coup_softness)), 1)
-            if signed_dist <= 0 or influence > 0.1:
+            if signed_dist <= 0.0 or influence > 0.1:
                 vel_collider = self.vel_collider(f, pos_world, i_b)
 
                 # v w.r.t collider
@@ -154,7 +154,7 @@ class Mesh:
                 normal_vec = self.normal(f, pos_world, i_b)
                 normal_component = rel_v.dot(normal_vec)
 
-                if normal_component < 0:
+                if normal_component < 0.0:
                     # remove inward velocity
                     rel_v_t = rel_v - normal_component * normal_vec
                     rel_v_t_norm = rel_v_t.norm(gs.EPS)
@@ -165,9 +165,10 @@ class Mesh:
                     )
 
                     # tangential component after friction
-                    flag = ti.cast(normal_component < 0, gs.ti_float)
-                    rel_v_t = rel_v_t_friction * flag + rel_v_t * (1 - flag)
-                    vel_mat = vel_collider + rel_v_t * influence + rel_v * (1 - influence)
+                    # FIXME: This formula could be simplified since flag = 1.0 systematically.
+                    flag = ti.cast(normal_component < 0.0, gs.ti_float)
+                    rel_v_t = rel_v_t_friction * flag + rel_v_t * (1.0 - flag)
+                    vel_mat = vel_collider + rel_v_t * influence + rel_v * (1.0 - influence)
 
         return vel_mat
 
