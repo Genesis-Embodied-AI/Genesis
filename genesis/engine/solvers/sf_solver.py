@@ -22,6 +22,7 @@ class SFSolver(Solver):
 
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
+        self._init_gravity = None
 
         if options is None:
             return

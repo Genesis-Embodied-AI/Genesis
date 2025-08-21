@@ -502,10 +502,8 @@ class RigidSolver(Solver):
         # self._rigid_global_info._mass_mat_mask = self._mass_mat_mask
         # self._rigid_global_info.meaninertia = self.meaninertia
         # self._rigid_global_info.mass_parent_mask = self.mass_parent_mask
-        # self._rigid_global_info.gravity = self._gravity
 
-        gravity = np.tile(self.sim.gravity, (self._B, 1))
-        self._rigid_global_info.gravity.from_numpy(gravity)
+        self._rigid_global_info.gravity.copy_from(self._gravity)
 
     def _init_dof_fields(self):
         # if self._use_hibernation:

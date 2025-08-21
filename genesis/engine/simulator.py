@@ -434,11 +434,6 @@ class Simulator(RBC):
         return self._scene
 
     @property
-    def gravity(self):
-        """The gravity vector."""
-        return self._gravity
-
-    @property
     def requires_grad(self):
         """Whether the simulator requires gradients."""
         return self._requires_grad

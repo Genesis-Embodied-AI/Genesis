@@ -21,7 +21,7 @@ class Solver(RBC):
         self._scene = scene
         self._dt: float = options.dt
         self._substep_dt: float = options.dt / sim.substeps
-        self._init_gravity = getattr(options, "gravity", None)
+        self._init_gravity = sim._gravity.copy()
         self._gravity = None
         self._entities: list[Entity] = gs.List()
 
@@ -65,7 +65,7 @@ class Solver(RBC):
 
     def get_gravity(self, envs_idx=None, *, unsafe=False):
         tensor = ti_field_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor.squeeze(0) if self._B == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
