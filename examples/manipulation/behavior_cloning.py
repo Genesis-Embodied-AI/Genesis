@@ -347,6 +347,11 @@ class Policy(nn.Module):
         pose_mlp_cfg["output_dim"] = 7
         self.pose_mlp = self._build_mlp(pose_mlp_cfg)
 
+    @property
+    def dtype(self):
+        """Get the dtype of the policy's parameters."""
+        return next(self.parameters()).dtype
+
     @staticmethod
     def _build_cnn(config: dict) -> nn.Sequential:
         """Build CNN encoder for grayscale images."""

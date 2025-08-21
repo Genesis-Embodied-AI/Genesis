@@ -9,8 +9,6 @@ from genesis.utils.geom import (
     transform_by_quat,
 )
 
-MAX_DEPTH = 10.0  # meters
-
 
 class GraspEnv:
     def __init__(
@@ -238,15 +236,6 @@ class GraspEnv:
     def rescale_action(self, action: torch.Tensor) -> torch.Tensor:
         rescaled_action = action * self.action_scales
         return rescaled_action
-
-    def get_depth_image(self, normalize: bool = True) -> torch.Tensor:
-        # Render depth image from the camera
-        _, depth, _, _ = self.batch_cam.render(rgb=False, depth=True, segmentation=False, normal=False)
-        depth = depth.permute(0, 3, 1, 2)  # shape (B, 1, H, W)
-        if normalize:
-            depth = torch.clamp(depth, min=0.0, max=MAX_DEPTH)
-            depth = (depth - 0.0) / (MAX_DEPTH - 0.0)  # normalize to [0, 1]
-        return depth
 
     def get_stereo_rgb_images(self, normalize: bool = True) -> torch.Tensor:
         rgb_left, _, _, _ = self.left_cam.render(rgb=True, depth=False, segmentation=False, normal=False)

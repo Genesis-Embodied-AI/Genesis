@@ -1,5 +1,4 @@
 import argparse
-import os
 import re
 import pickle
 from importlib import metadata
@@ -17,7 +16,9 @@ try:
         if metadata.version("rsl-rl-lib") != "2.2.4":
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
+    raise ImportError(
+        "Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'."
+    ) from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -31,7 +32,9 @@ def load_rl_policy(env, train_cfg, log_dir):
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     # Find the latest checkpoint
-    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
+    checkpoint_files = [
+        f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)
+    ]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
@@ -51,7 +54,9 @@ def load_bc_policy(env, bc_cfg, log_dir):
     bc_runner = BehaviorCloning(env, bc_cfg, None, device=gs.device)
 
     # Find the latest checkpoint
-    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)]
+    checkpoint_files = [
+        f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)
+    ]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
@@ -73,9 +78,10 @@ def get_stereo_frame(env, step_count):
 
     # Split stacked stereo rgb image into left and right images
     left_img, right_img = np.split(stacked_stereo_rgb, 2, axis=2)
-    cv2.cvtColor(left_img, left_img, cv2.COLOR_RGB2BGR)
-    cv2.cvtColor(right_img, right_img, cv2.COLOR_RGB2BGR)
-    stereo_rgb_img = np.concatenate([left_img, right_img], axis=1)
+    # Convert RGB to BGR for OpenCV display
+    left_img_bgr = cv2.cvtColor(left_img, cv2.COLOR_RGB2BGR)
+    right_img_bgr = cv2.cvtColor(right_img, cv2.COLOR_RGB2BGR)
+    stereo_rgb_img = np.concatenate([left_img_bgr, right_img_bgr], axis=1)
 
     # Add a vertical line separator between the two images
     separator_x = left_img.shape[1]
@@ -87,20 +93,6 @@ def get_stereo_frame(env, step_count):
         thickness=2,
     )
     return stereo_rgb_img
-
-
-def display_stereo_images(env, step_count):
-    """Display left and right RGB images side by side in one window."""
-    stereo_img = get_stereo_frame(env, step_count)
-
-    # Display combined image
-    cv2.imshow("Stereo Cameras", stereo_img)
-
-    # Wait for key press (1ms delay)
-    key = cv2.waitKey(1)
-    if key == 27:  # ESC key
-        return False
-    return True
 
 
 def save_frames_as_video(frames, video_path, fps=60):
@@ -165,11 +157,16 @@ def main():
     # Load configurations
     if args.stage == "rl":
         # For RL, load the standard configs
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(
+            open(log_dir / "cfgs.pkl", "rb")
+        )
     else:
         # For BC, we need to load the configs and create BC config
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(
+            open(log_dir / "cfgs.pkl", "rb")
+        )
 
+    env_cfg["visualize_camera"] = True
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
     # set the box collision
@@ -211,11 +208,6 @@ def main():
                 ee_pose = env.robot.ee_pose.float()
 
                 actions = policy(rgb_obs, ee_pose)
-
-                # Display stereo images for BC evaluation
-                if not display_stereo_images(env, step):
-                    print("Evaluation stopped by user (ESC key pressed)")
-                    break
 
                 # Collect frame for video recording
                 if args.record:
