@@ -7,6 +7,7 @@ import logging as _logging
 import traceback
 from platform import system
 from contextlib import redirect_stdout
+from typing import Callable
 
 # Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
@@ -41,6 +42,12 @@ exit_callbacks = []
 global_scene_list = set()
 
 
+
+def nop(fn: Callable) -> Callable:
+    return fn
+
+
+maybe_pure: Callable
 ########################## init ##########################
 def init(
     seed=None,
@@ -53,7 +60,7 @@ def init(
     logger_verbose_time=False,
     performance_mode: bool = False,  # True: compilation up to 6x slower (GJK), but runs ~1-5% faster
 ):
-    global _initialized
+    global _initialized, maybe_pure
     if _initialized:
         raise_exception("Genesis already initialized.")
 
@@ -253,6 +260,12 @@ def init(
 
     global exit_callbacks
     exit_callbacks = []
+
+    if os.environ.get("GENESIS_BETA_PURE") == "1":
+        logger.info("Enabling pure kernels, for fast cache loading")
+        maybe_pure = ti.pure
+    else:
+        maybe_pure = nop
 
     logger.info(
         f"🚀 Genesis initialized. 🔖 version: ~~<{__version__}>~~, 🌱 seed: ~~<{seed}>~~, 📏 precision: '~~<{precision}>~~', 🐛 debug: ~~<{debug}>~~, 🎨 theme: '~~<{theme}>~~'."

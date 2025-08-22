@@ -20,6 +20,7 @@ from genesis.utils import linalg as lu
 from genesis.utils.misc import ti_field_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
 
 from ....utils.sdf_decomp import SDF
+from .... import maybe_pure
 from ..base_solver import Solver
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
@@ -1227,6 +1228,7 @@ class RigidSolver(Solver):
             torque, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
         )
 
+    @maybe_pure
     @ti.kernel
     def update_qvel(self):
         if ti.static(self._use_hibernation):
