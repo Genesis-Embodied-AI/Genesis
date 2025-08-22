@@ -626,6 +626,24 @@ class LegacyCoupler(RBC):
                 pdb.particle_animation_info[i_p, i_env].local_pos = local_pos
 
     @ti.kernel
+    def kernel_pbd_rigid_clear_animate_particles_by_link(
+        self,
+        particles_idx: ti.types.ndarray(),  # 1d array
+        envs_idx: ti.types.ndarray(),  # 1d array
+    ) -> None:
+        """Detach listed particles from links, and simulate them freely."""
+        pdb = self.pbd_solver
+        for i_env_ in range(envs_idx.shape[0]):
+            i_env = envs_idx[i_env_]
+
+            for i_p_ in range(particles_idx.shape[0]):
+                i_p = particles_idx[i_p_]
+
+                pdb.particles[i_p, i_env].free = ti.int32(1)
+                pdb.particle_animation_info[i_p, i_env].link_idx = -1
+                pdb.particle_animation_info[i_p, i_env].local_pos = ti.math.vec3([0.0, 0.0, 0.0])
+
+    @ti.kernel
     def kernel_pbd_rigid_solve_animate_particles_by_link(self, clamped_inv_dt: ti.f32, links_state: LinksState):
         """
         Itearates all particles and environments, and sets corrective velocity for all animated particle.

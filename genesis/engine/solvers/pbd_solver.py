@@ -38,8 +38,8 @@ class PBDSolver(Solver):
         Index to and offset from the RigidLink that keyframe-animates this particle.
         """
 
-        link_idx: ti.i32  # not available, possibly due to circular improt: gs.ti_int
-        local_pos: ti.math.vec3  # uncomprehendalbe error: gs.ti_vec3
+        link_idx: ti.i32  # gs.ti_int not available before gs.init()
+        local_pos: ti.math.vec3  # gs.ti_vec3 causes uncomprehensible error !!
 
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
@@ -969,6 +969,7 @@ class PBDSolver(Solver):
             self.particles[particle_idx, i_b].vel[i] = vel[i]
         self.particles[particle_idx, i_b].free = 0
 
+    @gs.assert_built
     def set_animate_particles_by_link(
         self,
         particles_idx: NDArray[np.int32],
@@ -980,6 +981,15 @@ class PBDSolver(Solver):
         self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
             particles_idx, link_idx, links_state, envs_idx
         )
+
+    @gs.assert_built
+    def clear_animate_particles_by_link(
+        self,
+        particles_idx: NDArray[np.int32],
+        envs_idx: NDArray[np.int32] | None = None,
+    ) -> None:
+        envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
+        self._sim._coupler.kernel_pbd_rigid_clear_animate_particles_by_link(particles_idx, envs_idx)
 
     @gs.assert_built
     def release_particle(self, particle_idx, i_b):
