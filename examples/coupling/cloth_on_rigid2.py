@@ -1,20 +1,21 @@
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
-
 import argparse
 
 import numpy as np
-from numpy.typing import ArrayLike
+import torch
 
 import genesis as gs
 
 import genesis.utils.geom as gu
 
+from genesis.utils.misc import to_gs_tensor
+
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
-
-dt: float = 2e-2
+    from genesis.engine.materials.base import Material
+    from genesis.options.surfaces import Surface
+    from genesis.options.morphs import Morph
 
 
 def main():
@@ -26,7 +27,8 @@ def main():
     ########################## init ##########################
     gs.init(seed=0, precision="32", logging_level="debug", backend=gs.cpu if args.cpu else gs.gpu)
 
-    particle_size = 1e-2
+    dt: float = 2e-2
+    particle_size: float = 1e-2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -49,42 +51,31 @@ def main():
     )
 
     ########################## entities ##########################
-    frictionless_rigid = gs.materials.Rigid(needs_coup=True, coup_friction=0.0)
+    rigid_material: "Material" = gs.materials.Rigid(needs_coup=True, coup_friction=0.0)
 
-    plane = scene.add_entity(
-        material=frictionless_rigid,
-        morph=gs.morphs.Plane(),
-    )
+    # create ground plane
+    scene.add_entity(gs.morphs.Plane(), rigid_material)
 
-    cube: "RigidEntity" = scene.add_entity(
-        material=frictionless_rigid,
-        morph=gs.morphs.Box(
-            pos=(0.25, 0.25, 0.25),
-            size=(0.25, 0.25, 0.25),
-        ),
-    )
+    # create box
+    box_pos = [0.25, 0.25, 0.25]
+    box_size = [0.25, 0.25, 0.25]
+    box_morph: "Morph" = gs.morphs.Box(pos=box_pos, size=box_size)
+    box: "RigidEntity" = scene.add_entity(box_morph, rigid_material)
 
-    # sphere = scene.add_entity(gs.morphs.Sphere.create((1, 1, 1), 0.5))
-
-    cloth = scene.add_entity(
-        material=gs.materials.PBD.Cloth(),
-        morph=gs.morphs.Mesh(
-            file="meshes/cloth.obj",
-            scale=0.5,
-            pos=(0.25, 0.25, 0.25 + 0.125 + particle_size),  # offset by particle size
-        ),
-        surface=gs.surfaces.Default(
-            color=(0.2, 0.4, 0.8, 1.0),
-            vis_mode="particle",
-        ),
-    )
+    # create cloth
+    cloth_pos = (0.25, 0.25, 0.25 + 0.125 + particle_size)
+    cloth_scale = 0.5
+    cloth_morph: "Morph" = gs.morphs.Mesh(pos=cloth_pos, scale=cloth_scale, file="meshes/cloth.obj")
+    cloth_material: "Material" = gs.materials.PBD.Cloth()
+    cloth_surface: "Surface" = gs.surfaces.Default(color=(0.2, 0.4, 0.8, 1.0))  # , vis_mode="particle")
+    scene.add_entity(cloth_morph, cloth_material, cloth_surface)
 
     ########################## build ##########################
     scene.build(n_envs=0)
 
     particles_idx = np.array([0, 1, 2, 3, 4, 5, 6, 7])
-    link_idx = cube.links[0].idx
-    scene.pbd_solver.set_animate_particles_by_link(particles_idx, link_idx, scene.rigid_solver.links_state)
+    box_link_idx = box.links[0].idx
+    scene.pbd_solver.set_animate_particles_by_link(particles_idx, box_link_idx, scene.rigid_solver.links_state)
 
     horizon = 50
     for i in range(horizon):
@@ -92,16 +83,42 @@ def main():
 
     num_teleports = 5
     for j in range(num_teleports):
-        if j == num_teleports - 3:
-            scene.pbd_solver.clear_animate_particles_by_link(particles_idx)
-        pos = np.zeros(3)
-        pos[0] = np.sin(j) * 0.2
-        pos[1] = np.cos(j) * 0.2
-        pos[2] = 0.5
-        cube.set_pos(pos)
-        cube.set_quat(gu.euler_to_quat((-30 * j, -40 * j, 70 * j)))
+        if j == 2:
+            if False:
+                # Clearing attachment causes the cloth to vanish. Haven't debugged.
+                # All is okay when clearing attachment immeidately, or after 1st teleport.
+                # Not okay when clearng attachment after 2+ teleports:
+                # scene.pbd_solver.clear_animate_particles_by_link(particles_idx)
+                pass
+        new_pos = (0.2 * np.sin(j), 0.2 * np.cos(j), 0.5)
+        new_rot = gu.euler_to_quat((-30 * j, -40 * j, 70 * j))
+        box.set_pos(new_pos)
+        box.set_quat(new_rot)
         for i in range(horizon):
             scene.step()
+
+        # validation of particle positions: todo: move to unit test:
+        unused_f = 0
+        pbd_state: "PBDSolverState" = scene.pbd_solver.get_state(unused_f)
+
+        link_pos = scene.rigid_solver.links[box_link_idx].get_pos()
+        link_quat = scene.rigid_solver.links[box_link_idx].get_quat()
+
+        for i_p_ in range(particles_idx.shape[0]):
+            i_p = particles_idx[i_p_]
+            i_env = 0
+            local_pos = scene.pbd_solver.particle_animation_info.local_pos[i_p, i_env].to_numpy()
+
+            if False:
+                # TODO: compute expected world position = link.pose * local_pos
+                # However, gu.transform_by_trans_quat() below crashes, don't know yet why param is wrong.
+                local_pos = torch.from_numpy(local_pos)
+                expected_world_pos = gu.transform_by_trans_quat(local_pos, link_pos, link_quat)
+
+                # note reversed order of indices:
+                diff = np.linalg.norm(pbd_state.pos[i_env, i_p] - expected_world_pos)
+                if diff > 1e-2:
+                    print(f"Particle {i_p} is not at the expected position. diff: {diff}")
 
 
 if __name__ == "__main__":
