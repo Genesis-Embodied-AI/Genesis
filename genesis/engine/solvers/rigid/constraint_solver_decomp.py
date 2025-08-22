@@ -181,7 +181,7 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-    def handle_constraints(self):
+    def add_constraints(self):
         add_equality_constraints(
             links_info=self._solver.links_info,
             links_state=self._solver.links_state,
@@ -226,10 +226,13 @@ class ConstraintSolver:
                 static_rigid_sim_config=self._solver._static_rigid_sim_config,
             )
 
-        if self._solver._enable_collision or self._solver._enable_joint_limit or self._solver.n_equalities > 0:
-            self.resolve()
-
     def resolve(self):
+        # Early return if there is nothing to solve
+        if not self._solver._enable_collision and not self._solver._enable_joint_limit:
+            has_equality_constraints = np.any(self.constraint_state.ti_n_equalities.to_numpy())
+            if not has_equality_constraints:
+                return
+
         # from genesis.utils.tools import create_timer
 
         # timer = create_timer(name="resolve", level=3, ti_sync=True, skip_first_call=True)

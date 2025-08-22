@@ -133,9 +133,8 @@ class ConstraintSolverIsland:
                     self._func_update_qacc(i_island, i_b)
                     self._func_update_contact_force(i_island, i_b)
 
-    def handle_constraints(self):
+    def add_constraints(self):
         self.contact_island.construct()
-        self.resolve()
 
     @ti.func
     def add_collision_constraints_and_wakeup_entities(self, i_island: int, i_b: int):

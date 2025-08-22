@@ -975,14 +975,17 @@ class RigidSolver(Solver):
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         self._func_constraint_clear()
         # timer.stamp("constraint_solver.clear")
+        if not self._disable_constraint:
+            self.constraint_solver.add_constraints()
+            # timer.stamp("constraint_solver.add_constraints")
 
         if self._enable_collision:
             self.collider.detection()
             # timer.stamp("detection")
 
         if not self._disable_constraint:
-            self.constraint_solver.handle_constraints()
-        # timer.stamp("constraint_solver.handle_constraints")
+            self.constraint_solver.resolve()
+            # timer.stamp("constraint_solver.resolve")
 
     def _func_constraint_clear(self):
         self.constraint_solver.constraint_state.n_constraints.fill(0)
