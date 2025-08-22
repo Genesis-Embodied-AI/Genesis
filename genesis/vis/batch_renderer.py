@@ -1,29 +1,22 @@
-import enum
 import math
 
 import numpy as np
+from PIL import Image
 import torch
 from trimesh.visual.texture import TextureVisuals
 from trimesh.visual.color import ColorVisuals
-from PIL import Image
 
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
-from .rasterizer_context import SegmentationManager
+
+from .rasterizer_context import SegmentationColorMap
+from .visualizer import IMAGE_TYPE
 
 try:
     from gs_madrona.renderer_gs import MadronaBatchRendererAdapter, GeomRetriever
 except ImportError as e:
     gs.raise_exception_from("Madrona batch renderer is only supported on Linux x86-64.", e)
-
-
-class IMAGE_TYPE(enum.IntEnum):
-    RGB = 0
-    DEPTH = 1
-    SEGMENTATION = 2
-    NORMAL = 3
-    NUM_TYPES = 4
 
 
 TYPES = (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENTATION)  # order of RenderOption
@@ -32,7 +25,7 @@ TYPES = (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENT
 class GenesisGeomRetriever(GeomRetriever):
     def __init__(self, rigid_solver, seg_level):
         self.rigid_solver = rigid_solver
-        self.seg_manager = SegmentationManager()
+        self.seg_color_map = SegmentationColorMap()
         self.seg_level = seg_level
         self.geom_idxc = None
 
@@ -46,10 +39,10 @@ class GenesisGeomRetriever(GeomRetriever):
         vgeoms = self.rigid_solver.vgeoms
         for vgeom in vgeoms:
             seg_key = self.get_seg_key(vgeom)
-            seg_idxc = self.seg_manager.seg_key_to_idxc(seg_key)
+            seg_idxc = self.seg_color_map.seg_key_to_idxc(seg_key)
             self.geom_idxc.append(seg_idxc)
         self.geom_idxc = np.array(self.geom_idxc, dtype=np.uint32)
-        self.seg_manager.generate_seg_colors()
+        self.seg_color_map.generate_seg_colors()
 
     def get_seg_key(self, vgeom):
         if self.seg_level == "geom":
@@ -78,7 +71,7 @@ class GenesisGeomRetriever(GeomRetriever):
         geom_data_ids = []
         for vgeom in vgeoms:
             seg_key = self.get_seg_key(vgeom)
-            seg_id = self.seg_manager.seg_key_to_idxc(seg_key)
+            seg_id = self.seg_color_map.seg_key_to_idxc(seg_key)
             geom_data_ids.append(seg_id)
 
         args["mesh_vertices"] = mesh_vertices
@@ -384,14 +377,11 @@ class BatchRenderer(RBC):
             ),
             dtype=np.uint32,
         )
-        rgba_all, depth_all, seg_all, normal_all = self._renderer.render(cameras_pos, cameras_quat, render_flags)
 
-        # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
+        rendered = self._renderer.render(cameras_pos, cameras_quat, render_flags)
         rendered = [
-            tensor_to_array(rgba_all[..., :3].flip(-1).swapaxes(0, 1)) if need[IMAGE_TYPE.RGB] else None,
-            tensor_to_array(depth_all[..., 0].swapaxes(0, 1)) if need[IMAGE_TYPE.DEPTH] else None,
-            tensor_to_array(seg_all[..., 0].swapaxes(0, 1)) if need[IMAGE_TYPE.SEGMENTATION] else None,
-            tensor_to_array(normal_all[..., :3].flip(-1).swapaxes(0, 1)) if need[IMAGE_TYPE.NORMAL] else None,
+            tensor_to_array(rendered[t][..., :3].flip(-1).squeeze(-1).swapaxes(0, 1))
+            if need[t] else None for t in range(IMAGE_TYPE.NUM_TYPES)
         ]
 
         # convert center distance depth to plane distance
@@ -423,7 +413,7 @@ class BatchRenderer(RBC):
         return tuple(rendered[t] if need[t] else cached[t] if req[t] else None for t in range(IMAGE_TYPE.NUM_TYPES))
 
     def colorize_seg_idxc_arr(self, seg_idxc_arr):
-        return self._geom_retriever.seg_manager.colorize_seg_idxc_arr(seg_idxc_arr)
+        return self._geom_retriever.seg_color_map.colorize_seg_idxc_arr(seg_idxc_arr)
 
     def destroy(self):
         self._lights.clear()
@@ -445,4 +435,4 @@ class BatchRenderer(RBC):
 
     @property
     def seg_idxc_map(self):
-        return self._geom_retriever.seg_manager.seg_idxc_map
+        return self._geom_retriever.seg_color_map.idxc_map

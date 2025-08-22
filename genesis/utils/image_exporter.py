@@ -6,11 +6,7 @@ from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 import genesis as gs
-
-RGB_S = "rgb"
-DEPTH_S = "depth"
-SEGMENTATION_S = "segmentation"
-NORMAL_S = "normal"
+from genesis.vis.visualizer import IMAGE_TYPE
 
 
 class ImageComponent:
@@ -95,14 +91,14 @@ class FrameImageExporter:
     """
 
     def __init__(self, export_dir, depth_clip_max=100, depth_scale="linear"):
-        self.image_components = {
-            RGB_S: ImageComponent(RGB_S, 3, None),
-            DEPTH_S: ImageComponent(
-                DEPTH_S, 1, partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale)
+        self.image_components = [
+            ImageComponent(str(IMAGE_TYPE.RGB), 3, None),
+            ImageComponent(
+                str(IMAGE_TYPE.DEPTH), 1, partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale)
             ),
-            SEGMENTATION_S: ImageComponent(SEGMENTATION_S, 1, partial(normalize_segmentation)),
-            NORMAL_S: ImageComponent(NORMAL_S, 3, None),
-        }
+            ImageComponent(str(IMAGE_TYPE.SEGMENTATION), 1, partial(normalize_segmentation)),
+            ImageComponent(str(IMAGE_TYPE.NORMAL), 3, None),
+        ]
         self.export_dir = export_dir
         if not os.path.exists(export_dir):
             os.makedirs(export_dir)
@@ -119,8 +115,8 @@ class FrameImageExporter:
             segmentation: Segmentation image is a sequence of arrays of shape (n_envs, H, W).
             normal: Normal image is a sequence of arrays of shape (n_envs, H, W, 3).
         """
-        component_frames = {RGB_S: rgb, DEPTH_S: depth, SEGMENTATION_S: segmentation, NORMAL_S: normal}
-        ref_component = next((c for c in component_frames.values() if c is not None), None)
+        component_frames = [rgb, depth, segmentation, normal]
+        ref_component = next((c for c in component_frames if c is not None), None)
         if ref_component is None:
             gs.raise_exception("No images to export")
 
@@ -128,15 +124,16 @@ class FrameImageExporter:
         if camera_idx is None:
             camera_idx = range(len(ref_component))
 
-        for name, frames in component_frames.items():
+        for t in range(IMAGE_TYPE.NUM_TYPES):
+            frames = component_frames[t]
             if frames is not None and (not isinstance(frames, (tuple, list)) or len(frames) == 0):
-                gs.raise_exception(f"'{name}' must be a non-empty sequence of arrays.")
+                gs.raise_exception(f"'{str(IMAGE_TYPE(t))}' must be a non-empty sequence of arrays.")
 
         for i_cam in camera_idx:
             frame_args = {}
-            for name, frames in component_frames.items():
-                frame_args[name] = None if frames is None else frames[i_cam]
-                self.export_frame_single_camera(i_step, i_cam, **frame_args)
+            for t in range(IMAGE_TYPE.NUM_TYPES):
+                frame_args[str(IMAGE_TYPE(t))] = None if frames is None else frames[i_cam]
+            self.export_frame_single_camera(i_step, i_cam, **frame_args)
 
     def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, segmentation=None, normal=None):
         """
@@ -150,12 +147,13 @@ class FrameImageExporter:
             segmentation: Segmentation image array of shape (n_envs, H, W).
             normal: Normal image array of shape (n_envs, H, W, 3).
         """
-        component_frames = {RGB_S: rgb, DEPTH_S: depth, SEGMENTATION_S: segmentation, NORMAL_S: normal}
+        component_frames = [rgb, depth, segmentation, normal]
 
-        for name, frames in component_frames.items():
+        for t in range(IMAGE_TYPE.NUM_TYPES):
+            frames = component_frames[t]
             if frames is None:
                 continue
-            component = self.image_components[name]
+            component = self.image_components[t]
             frames = component.check_frame_shape(frames)
             if component.normalize_func is not None:
                 frames = component.normalize_func(frames)

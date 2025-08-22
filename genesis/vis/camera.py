@@ -120,7 +120,7 @@ class Camera(RBC):
         self._initial_transform = None
         if transform is not None:
             self._initial_transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
-        self._aspect_ratio = self._res[0] / self._res[1]
+        self._aspect_ratio = self._res[0] / self._res[1]    # width / height
         self._visualizer = visualizer
         self._is_built = False
         self._attached_link = None
@@ -472,12 +472,10 @@ class Camera(RBC):
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
     def distance_center_to_plane(self, center_dis):
-        P = self.projection_matrix
         width, height = self.res
-        fx = P[0, 0] * width / 2.0
-        fy = P[1, 1] * height / 2.0
-        cx = (1.0 - P[0, 2]) * width / 2.0
-        cy = (1.0 + P[1, 2]) * height / 2.0
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
         xd = (u + 0.5 - cx) / fx
@@ -520,12 +518,10 @@ class Camera(RBC):
             gs.raise_exception("Render point cloud not supported.")
 
         # Convert OpenGL projection matrix to camera intrinsics
-        P = self.projection_matrix
         width, height = self.res
-        fx = P[0, 0] * width / 2.0
-        fy = P[1, 1] * height / 2.0
-        cx = (1.0 - P[0, 2]) * width / 2.0
-        cy = (1.0 + P[1, 2]) * height / 2.0
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
         # Mask out invalid depth
         mask = (self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3))
@@ -895,10 +891,8 @@ class Camera(RBC):
     def intrinsics(self):
         """The current intrinsics matrix of the camera."""
         # compute intrinsics using fov and resolution
-        f = 0.5 * self._res[1] / np.tan(np.deg2rad(0.5 * self._fov))
-        cx = 0.5 * self._res[0]
-        cy = 0.5 * self._res[1]
-        return np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
+        f = self.f
+        return np.array([[f, 0, self.cx], [0, f, self.cy], [0, 0, 1]])
 
     @property
     def n_envs(self):
@@ -919,3 +913,15 @@ class Camera(RBC):
                 [0.0, 0.0, -1.0, 0.0],
             ]
         )
+
+    @property
+    def f(self):
+        return 0.5 * self._res[1] / np.tan(np.deg2rad(0.5 * self._fov))
+
+    @property
+    def cx(self):
+        return 0.5 * self._res[0]
+    
+    @property
+    def cy(self):
+        return 0.5 * self._res[1]

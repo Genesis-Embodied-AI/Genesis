@@ -3,12 +3,10 @@ import queue
 import os
 import re
 import sys
-from io import BytesIO
 import time
 import enum
 
 import numpy as np
-from PIL import Image
 import pyglet
 import pytest
 import torch
@@ -32,22 +30,6 @@ class RENDER_TYPE(enum.IntEnum):
     BATCHRENDER_RAYTRACER = 3
 
 
-class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
-    def matches(self, *, serialized_data, snapshot_data) -> bool:
-        img_arrays = []
-        for data in (serialized_data, snapshot_data):
-            buffer = BytesIO()
-            buffer.write(data)
-            buffer.seek(0)
-            img_arrays.append(np.asarray(Image.open(buffer)))
-        img_delta = img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)
-        return np.std(img_delta) < IMG_STD_ERR_THR
-
-    # def diff_snapshots(self, serialized_data, snapshot_data) -> "SerializableData":
-    #     # re-run pixelmatch and return a diff image (can cache on the class instance)
-    #     pass
-
-
 def get_render_options(render_type):
     if render_type == RENDER_TYPE.RASTERIZER:
         return gs.renderers.Rasterizer()
@@ -55,11 +37,6 @@ def get_render_options(render_type):
         return gs.renderers.RayTracer()
     else:
         return gs.renderers.BatchRenderer(use_rasterizer=render_type == RENDER_TYPE.BATCHRENDER_RASTERIZER)
-
-
-@pytest.fixture
-def png_snapshot(snapshot):
-    return snapshot.use_extension(PixelMatchSnapshotExtension)
 
 
 @pytest.mark.required
