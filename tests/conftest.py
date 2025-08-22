@@ -1,16 +1,28 @@
+import base64
 import gc
 import os
 import re
 import sys
 from enum import Enum
+from io import BytesIO
+from pathlib import Path
 
+import numpy as np
+import pyglet
 import pytest
 from _pytest.mark import Expression, MarkMatcher
+from PIL import Image
+from syrupy.extensions.image import PNGImageSnapshotExtension
+from syrupy.location import PyTestLocation
 
-# Mock tkinter module for backward compatibility because old Genesis versions require it
+has_display = True
 try:
-    import tkinter
-except ImportError:
+    from tkinter import Tk
+
+    root = Tk()
+    root.destroy()
+except Exception:  # ImportError, TclError
+    # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
     tkinter = type(sys)("tkinter")
     tkinter.Tk = type(sys)("Tk")
     tkinter.filedialog = type(sys)("filedialog")
@@ -18,9 +30,26 @@ except ImportError:
     sys.modules["tkinter.Tk"] = tkinter.Tk
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
+    # Assuming headless server if tkinder is not installed
+    has_display = False
+
+has_egl = True
+try:
+    pyglet.lib.load_library("EGL")
+except ImportError:
+    has_egl = False
+
+if not has_display and has_egl:
+    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis
+    pyglet.options["headless"] = True
+    os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
+
+
+IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
 TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
+IMG_STD_ERR_THR = 0.8
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -155,7 +184,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
-    return pytestconfig.getoption("--vis")
+    return pytestconfig.getoption("--vis") and IS_INTERACTIVE_VIEWER_AVAILABLE
 
 
 @pytest.fixture(scope="session")
@@ -413,3 +442,44 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
             f.write(f"f {a} {b} {c} {d}\n")
 
     return filename
+
+
+class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
+    def matches(self, *, serialized_data, snapshot_data) -> bool:
+        img_arrays = []
+        for data in (serialized_data, snapshot_data):
+            buffer = BytesIO()
+            buffer.write(data)
+            buffer.seek(0)
+            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
+        img_delta = np.abs(img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)).astype(np.uint8)
+        if np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR:
+            raw_bytes = BytesIO()
+            img_obj = Image.fromarray(img_delta)
+            img_obj.save(raw_bytes, "PNG")
+            raw_bytes.seek(0)
+            print(base64.b64encode(raw_bytes.read()))
+            return False
+        return True
+
+
+@pytest.fixture
+def png_snapshot(request, snapshot):
+    snapshot_obj = snapshot.use_extension(PixelMatchSnapshotExtension)
+    snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
+    snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
+
+    must_update_snapshop = request.config.getoption("--snapshot-update")
+    if must_update_snapshop:
+        for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
+            assert path.is_file()
+            path.unlink()
+    else:
+        from .utils import get_hf_dataset
+
+        snapshot_name_ = "".join(f"[{char}]" if char in ("[", "]") else char for char in snapshot_name)
+        get_hf_dataset(
+            pattern=f"{snapshot_dir.name}/{snapshot_name_}*", repo_name="snapshots", local_dir=snapshot_dir.parent
+        )
+
+    return snapshot_obj
