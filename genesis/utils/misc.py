@@ -6,24 +6,23 @@ import platform
 import random
 import types
 import shutil
-import subprocess
 import sys
 import os
 from dataclasses import dataclass
 from collections import OrderedDict
-from typing import Any, Type
+from typing import Any, Type, NoReturn, Optional
 
 import numpy as np
 import cpuinfo
 import psutil
 import torch
 
-import taichi as ti
-from taichi.lang.util import to_pytorch_type
-from taichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
-from taichi.lang import impl
-from taichi.types import primitive_types
-from taichi.lang.exception import handle_exception_from_cpp
+import gstaichi as ti
+from gstaichi.lang.util import to_pytorch_type
+from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
+from gstaichi.lang import impl
+from gstaichi.types import primitive_types
+from gstaichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
@@ -36,11 +35,11 @@ class DeprecationError(Exception):
     pass
 
 
-def raise_exception(msg="Something went wrong."):
+def raise_exception(msg="Something went wrong.") -> NoReturn:
     raise gs.GenesisException(msg)
 
 
-def raise_exception_from(msg="Something went wrong.", cause=None):
+def raise_exception_from(msg="Something went wrong.", cause=None) -> NoReturn:
     raise gs.GenesisException(msg) from cause
 
 
@@ -57,6 +56,9 @@ class redirect_libc_stderr:
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
+    # --------------------------------------------------
+    # Enter: duplicate stderr → tmp, dup2(target) → stderr
+    # --------------------------------------------------
     def __enter__(self):
         self.stderr_fileno = sys.stderr.fileno()
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
@@ -140,7 +142,7 @@ def assert_built(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if not self.is_built:
-            gs.raise_exception("Scene is not built yet.")
+            gs.raise_exception(f"{type(self).__name__} is not built yet.")
         return method(self, *args, **kwargs)
 
     return wrapper
@@ -173,12 +175,13 @@ def get_platform():
     assert False, f"Unknown platform name {name}"
 
 
-def get_device(backend: gs_backend):
+def get_device(backend: gs_backend, device_idx: Optional[int] = None):
     if backend == gs_backend.cuda:
         if not torch.cuda.is_available():
             gs.raise_exception("torch cuda not available")
 
-        device_idx = torch.cuda.current_device()
+        if device_idx is None:
+            device_idx = torch.cuda.current_device()
         device = torch.device("cuda", device_idx)
         device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
@@ -190,22 +193,22 @@ def get_device(backend: gs_backend):
 
         # on mac, cpu and gpu are in the same device
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps", 0)
+        device = torch.device("mps", device_idx)
 
     elif backend == gs_backend.vulkan:
         if torch.cuda.is_available():
             device, device_name, total_mem, _ = get_device(gs_backend.cuda)
         elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
-            device_idx = torch.xpu.current_device()
+            if device_idx is None:
+                device_idx = torch.xpu.current_device()
             device = torch.device("xpu", device_idx)
             device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
-            getattr(gs, "logger", LOGGER).warning(
-                "No Intel XPU device available. Falling back to CPU for torch device."
-            )
+            logger = getattr(gs, "logger", None) or LOGGER
+            logger.warning("No Intel XPU device available. Falling back to CPU for torch device.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
@@ -219,7 +222,7 @@ def get_device(backend: gs_backend):
     else:
         device_name = cpuinfo.get_cpu_info()["brand_raw"]
         total_mem = psutil.virtual_memory().total / 1024**3
-        device = torch.device("cpu")
+        device = torch.device("cpu", device_idx)
 
     return device, device_name, total_mem, backend
 
@@ -267,6 +270,14 @@ def get_gel_cache_dir():
 
 def get_remesh_cache_dir():
     return os.path.join(get_cache_dir(), "rm")
+
+
+def get_exr_cache_dir():
+    return os.path.join(get_cache_dir(), "exr")
+
+
+def get_usd_cache_dir():
+    return os.path.join(get_cache_dir(), "usd")
 
 
 def clean_cache_files():
@@ -329,7 +340,10 @@ MAX_CACHE_SIZE = 1000
 class FieldMetadata:
     ndim: int
     shape: tuple[int, ...]
-    dtype: ti._lib.core.DataTypeCxx
+    try:
+        dtype: ti._lib.core.DataType
+    except:
+        dtype: ti._lib.core.DataTypeCxx
     mapping_key: Any
 
 
@@ -464,7 +478,7 @@ def ti_field_to_torch(
             if mask is None or isinstance(mask, slice):
                 # Slices are always valid by default. Nothing to check.
                 is_out_of_bounds = False
-            elif isinstance(mask, int):
+            elif isinstance(mask, (int, np.integer)):
                 # Do not allow negative indexing for consistency with Taichi
                 is_out_of_bounds = not (0 <= mask < _field_shape[i])
             elif isinstance(mask, torch.Tensor):
@@ -484,12 +498,12 @@ def ti_field_to_torch(
     # Must convert masks to torch if not slice or int since torch will do it anyway.
     # Note that being contiguous is not required and does not affect performance.
     must_allocate = False
-    is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int)))
+    is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int, np.integer)))
     if is_row_mask_tensor:
         _row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
         must_allocate = _row_mask is not row_mask
         row_mask = _row_mask
-    is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int)))
+    is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int, np.integer)))
     if is_col_mask_tensor:
         _col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
         must_allocate = _col_mask is not col_mask
@@ -529,8 +543,8 @@ def ti_field_to_torch(
     # Extract slice if necessary.
     # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions,
     # because this required allocating GPU data.
-    is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, int)
-    is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, int)
+    is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, (int, np.integer))
+    is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, (int, np.integer))
     try:
         if is_col_mask_tensor and is_row_mask_tensor:
             if not is_single_col and not is_single_row:

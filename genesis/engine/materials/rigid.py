@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 
@@ -88,51 +88,51 @@ class Rigid(Material):
         self._gravity_compensation = float(gravity_compensation)
 
     @property
-    def gravity_compensation(self):
+    def gravity_compensation(self) -> float:
         """Gravity compensation factor. 1.0 cancels gravity."""
         return self._gravity_compensation
 
     @property
-    def friction(self):
+    def friction(self) -> float:
         """Friction coefficient used within the rigid solver."""
         return self._friction
 
     @property
-    def needs_coup(self):
+    def needs_coup(self) -> bool:
         """Whether this material requires solver coupling."""
         return self._needs_coup
 
     @property
-    def coup_friction(self):
+    def coup_friction(self) -> float:
         """Friction coefficient used in coupling interactions."""
         return self._coup_friction
 
     @property
-    def coup_softness(self):
+    def coup_softness(self) -> float:
         """Softness parameter controlling the influence range of coupling."""
         return self._coup_softness
 
     @property
-    def coup_restitution(self):
+    def coup_restitution(self) -> float:
         """Restitution coefficient used during contact in coupling."""
         return self._coup_restitution
 
     @property
-    def sdf_cell_size(self):
+    def sdf_cell_size(self) -> float:
         """Size of each SDF grid cell in meters."""
         return self._sdf_cell_size
 
     @property
-    def sdf_min_res(self):
+    def sdf_min_res(self) -> int:
         """Minimum allowed resolution for the SDF grid."""
         return self._sdf_min_res
 
     @property
-    def sdf_max_res(self):
+    def sdf_max_res(self) -> int:
         """Maximum allowed resolution for the SDF grid."""
         return self._sdf_max_res
 
     @property
-    def rho(self):
+    def rho(self) -> float:
         """Density of the rigid material."""
         return self._rho

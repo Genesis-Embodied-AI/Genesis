@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import genesis as gs
 from genesis.engine.entities import AvatarEntity
 from genesis.engine.states.solvers import AvatarSolverState
@@ -57,9 +57,33 @@ class AvatarSolver(RigidSolver):
 
     @ti.kernel
     def _kernel_forward_kinematics_links_geoms(self, envs_idx: ti.types.ndarray()):
-        for i_b in envs_idx:
-            self._func_forward_kinematics(i_b)
-            self._func_update_geoms(i_b)
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+
+            self._func_forward_kinematics(
+                i_b,
+                self.links_state,
+                self.links_info,
+                self.joints_state,
+                self.joints_info,
+                self.dofs_state,
+                self.dofs_info,
+                self.entities_info,
+                self._rigid_global_info,
+                self._static_rigid_sim_config,
+            )
+            self._func_update_geoms(
+                i_b,
+                self.links_state,
+                self.links_info,
+                self.joints_state,
+                self.joints_info,
+                self.dofs_state,
+                self.dofs_info,
+                self.entities_info,
+                self._rigid_global_info,
+                self._static_rigid_sim_config,
+            )
 
     @ti.func
     def _func_detect_collision(self):
@@ -69,7 +93,17 @@ class AvatarSolver(RigidSolver):
     def get_state(self, f):
         if self.is_active():
             state = AvatarSolverState(self.scene)
-            self._kernel_get_state(state.qpos, state.dofs_vel, state.links_pos, state.links_quat)
+            self._kernel_get_state(
+                state.qpos,
+                state.dofs_vel,
+                state.links_pos,
+                state.links_quat,
+                links_state=self.links_state,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
         else:
             state = None
         return state

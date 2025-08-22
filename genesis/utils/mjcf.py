@@ -234,13 +234,12 @@ def parse_link(mj, i_l, scale):
         j_info["dofs_damping"] = mj.dof_damping[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_invweight"] = mj.dof_invweight0[mj_dof_offset : (mj_dof_offset + n_dofs)]
         j_info["dofs_armature"] = mj.dof_armature[mj_dof_offset : (mj_dof_offset + n_dofs)]
+        j_info["dofs_frictionloss"] = mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)]
         if mj.njnt > 0:
             mj_jnt_offset = i_j if i_j != -1 else 0
             j_info["sol_params"] = np.concatenate((mj.jnt_solref[mj_jnt_offset], mj.jnt_solimp[mj_jnt_offset]))
         else:
             j_info["sol_params"] = gu.default_solver_params()  # Placeholder. It will not be used anyway.
-        if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
-            gs.logger.warning("(MJCF) Friction loss at DoF-level not supported.")
 
         # Parsing joint parameters that are type-specific
         mj_stiffness = mj.jnt_stiffness[i_j] if i_j != -1 else 0.0
@@ -284,9 +283,6 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
 
                 j_info["init_qpos"] *= scale
-
-        if (mj.dof_frictionloss[mj_dof_offset : (mj_dof_offset + n_dofs)] > 0.0).any():
-            gs.logger.warning("(MJCF) Joint Coulomb friction not supported.")
 
         # Parsing actuator parameters
         j_info["dofs_kp"] = np.zeros((n_dofs,), dtype=gs.np_float)

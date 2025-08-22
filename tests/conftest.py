@@ -1,16 +1,28 @@
+import base64
 import gc
 import os
 import re
 import sys
 from enum import Enum
+from io import BytesIO
+from pathlib import Path
 
+import numpy as np
+import pyglet
 import pytest
 from _pytest.mark import Expression, MarkMatcher
+from PIL import Image
+from syrupy.extensions.image import PNGImageSnapshotExtension
+from syrupy.location import PyTestLocation
 
-# Mock tkinter module for backward compatibility because old Genesis versions require it
+has_display = True
 try:
-    import tkinter
-except ImportError:
+    from tkinter import Tk
+
+    root = Tk()
+    root.destroy()
+except Exception:  # ImportError, TclError
+    # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
     tkinter = type(sys)("tkinter")
     tkinter.Tk = type(sys)("Tk")
     tkinter.filedialog = type(sys)("filedialog")
@@ -18,9 +30,26 @@ except ImportError:
     sys.modules["tkinter.Tk"] = tkinter.Tk
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
+    # Assuming headless server if tkinder is not installed
+    has_display = False
+
+has_egl = True
+try:
+    pyglet.lib.load_library("EGL")
+except ImportError:
+    has_egl = False
+
+if not has_display and has_egl:
+    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis
+    pyglet.options["headless"] = True
+    os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
+
+
+IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
 TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
+IMG_STD_ERR_THR = 0.8
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -31,6 +60,10 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
+    # Force disabling forked for non-linux systems
+    if not sys.platform.startswith("linux"):
+        config.option.forked = False
+
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
@@ -48,10 +81,6 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
                 raise ValueError(
                     f"The number of workers for running benchmarks cannot exceed '{max_workers}' on this machine."
                 )
-
-    # Force disabling forked for non-linux systems
-    if not sys.platform.startswith("linux"):
-        config.option.forked = False
 
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
@@ -91,15 +120,20 @@ def pytest_xdist_auto_num_workers(config):
     import psutil
     import genesis as gs
 
-    # Get available memory (RAM & VRAM) and number of physical cores.
-    physical_core_count = psutil.cpu_count(logical=False)
+    # Get available memory (RAM & VRAM) and number of cores
+    physical_core_count = psutil.cpu_count(logical=config.option.logical)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
-    _, _, vram_memory, _ = gs.utils.get_device(gs.gpu)
+    _, _, vram_memory, backend = gs.utils.get_device(gs.gpu)
+    num_gpus = len(_get_gpu_indices())
+    vram_memory *= num_gpus
+    if backend == gs.cpu:
+        # Ignore VRAM if no GPU is available
+        vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
     # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
     # does not completely release memory between each test.
-    if sys.platform == "darwin":
+    if sys.platform in ("darwin", "win32"):
         ram_memory_per_worker = 3.0
         vram_memory_per_worker = 1.0  # Does not really makes sense on Apple Silicon
     elif config.option.forked:
@@ -121,7 +155,7 @@ def pytest_xdist_auto_num_workers(config):
         num_cpu_per_gpu = 4
         num_workers = min(
             num_workers,
-            len(_get_gpu_indices()),
+            num_gpus,
             max(int(physical_core_count / num_cpu_per_gpu), 1),
         )
 
@@ -141,12 +175,16 @@ def pytest_runtest_setup(item):
 
 def pytest_addoption(parser):
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
+    parser.addoption(
+        "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
+    )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+    parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
 
 
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
-    return pytestconfig.getoption("--vis")
+    return pytestconfig.getoption("--vis") and IS_INTERACTIVE_VIEWER_AVAILABLE
 
 
 @pytest.fixture(scope="session")
@@ -170,6 +208,21 @@ def tol():
     import genesis as gs
 
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
+
+
+@pytest.fixture
+def precision(request, backend):
+    import genesis as gs
+
+    precision = None
+    for mark in request.node.iter_markers("precision"):
+        if mark.args:
+            if precision is not None:
+                pytest.fail("'precision' can only be specified once.")
+            (precision,) = mark.args
+    if precision is None:
+        precision = "64" if backend == gs.cpu else "32"
+    return precision
 
 
 @pytest.fixture
@@ -264,25 +317,31 @@ def taichi_offline_cache(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend, taichi_offline_cache):
+def initialize_genesis(request, backend, precision, taichi_offline_cache):
     import pyglet
+    import gstaichi as ti
     import genesis as gs
     from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
     logging_level = request.config.getoption("--log-cli-level")
-    if backend == gs.cpu:
-        precision = "64"
-        debug = True
-    else:
-        precision = "32"
-        debug = False
+    debug = request.config.getoption("--dev")
 
     try:
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
 
+        try:
+            gs.utils.get_device(backend)
+        except gs.GenesisException:
+            pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
-        gs.logger.addFilter(lambda record: ALLOCATE_TENSOR_WARNING not in record.getMessage())
+
+        ti_runtime = ti.lang.impl.get_runtime()
+        ti_arch = ti_runtime.prog.config().arch
+        if ti_arch == ti.metal and precision == "64":
+            gs.destroy()
+            pytest.skip("Apple Metal GPU does not support 64bits precision.")
+
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")
@@ -383,3 +442,44 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
             f.write(f"f {a} {b} {c} {d}\n")
 
     return filename
+
+
+class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
+    def matches(self, *, serialized_data, snapshot_data) -> bool:
+        img_arrays = []
+        for data in (serialized_data, snapshot_data):
+            buffer = BytesIO()
+            buffer.write(data)
+            buffer.seek(0)
+            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
+        img_delta = np.abs(img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)).astype(np.uint8)
+        if np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR:
+            raw_bytes = BytesIO()
+            img_obj = Image.fromarray(img_delta)
+            img_obj.save(raw_bytes, "PNG")
+            raw_bytes.seek(0)
+            print(base64.b64encode(raw_bytes.read()))
+            return False
+        return True
+
+
+@pytest.fixture
+def png_snapshot(request, snapshot):
+    snapshot_obj = snapshot.use_extension(PixelMatchSnapshotExtension)
+    snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
+    snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
+
+    must_update_snapshop = request.config.getoption("--snapshot-update")
+    if must_update_snapshop:
+        for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
+            assert path.is_file()
+            path.unlink()
+    else:
+        from .utils import get_hf_dataset
+
+        snapshot_name_ = "".join(f"[{char}]" if char in ("[", "]") else char for char in snapshot_name)
+        get_hf_dataset(
+            pattern=f"{snapshot_dir.name}/{snapshot_name_}*", repo_name="snapshots", local_dir=snapshot_dir.parent
+        )
+
+    return snapshot_obj

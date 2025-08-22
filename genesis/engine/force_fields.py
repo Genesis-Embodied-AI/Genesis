@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -16,7 +16,7 @@ class ForceField(RBC):
     """
 
     def __init__(self):
-        self._active = ti.field(ti.u1, shape=())
+        self._active = ti.field(gs.ti_bool, shape=())
         self._active[None] = False
 
     def activate(self):

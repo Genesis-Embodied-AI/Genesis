@@ -16,6 +16,7 @@ import numpy as np
 import mujoco
 import torch
 from huggingface_hub import snapshot_download
+from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
 import genesis as gs
@@ -23,10 +24,15 @@ import genesis.utils.geom as gu
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
+from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_FORMATS, USD_FORMATS
 
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
+
+MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
+IMAGE_EXTENSIONS = (".png", ".jpg")
+
 
 # Get repository "root" path (actually test dir is good enough)
 TEST_DIR = os.path.dirname(__file__)
@@ -164,7 +170,14 @@ def get_git_commit_info(ref="HEAD"):
     return revision, timestamp
 
 
-def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check: bool = True):
+def get_hf_dataset(
+    pattern,
+    repo_name: str = "assets",
+    local_dir: str | None = None,
+    num_retry: int = 4,
+    retry_delay: float = 30.0,
+    local_dir_use_symlinks: bool = True,
+):
     assert num_retry >= 1
 
     for _ in range(num_retry):
@@ -173,9 +186,11 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
             # Try downloading the assets
             asset_path = snapshot_download(
                 repo_type="dataset",
-                repo_id="Genesis-Intelligence/assets",
+                repo_id=f"Genesis-Intelligence/{repo_name}",
                 allow_patterns=pattern,
                 max_workers=1,
+                local_dir=local_dir,
+                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful
@@ -183,19 +198,33 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
             for path in Path(asset_path).rglob(pattern):
                 if not path.is_file():
                     continue
+
+                ext = path.suffix.lower()
+                if not ext in (URDF_FORMAT, MJCF_FORMAT, *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
+                    continue
+
                 has_files = True
 
                 if path.stat().st_size == 0:
                     raise HTTPError(f"File '{path}' is empty.")
 
-                if path.suffix.lower() in (".xml", ".urdf"):
+                if path.suffix.lower() in (URDF_FORMAT, MJCF_FORMAT):
                     try:
                         ET.parse(path)
                     except ET.ParseError as e:
                         raise HTTPError(f"Impossible to parse XML file.") from e
+                elif path.suffix.lower() in IMAGE_EXTENSIONS:
+                    try:
+                        Image.open(path)
+                    except UnidentifiedImageError as e:
+                        raise HTTPError(f"Impossible to parse Image file.") from e
+                elif path.suffix.lower() in MESH_EXTENSIONS:
+                    # TODO: Validating mesh files is more tricky. Ignoring them for now.
+                    pass
+
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except HTTPError:
+        except (HTTPError, FileNotFoundError) as e:
             num_trials += 1
             if num_trials == num_retry:
                 raise
@@ -207,7 +236,7 @@ def get_hf_assets(pattern, num_retry: int = 4, retry_delay: float = 30.0, check:
     return asset_path
 
 
-def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
+def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=""):
     assert (tol is not None) ^ (atol is not None or rtol is not None)
     if tol is not None:
         atol = tol
@@ -217,21 +246,22 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     if atol is None:
         atol = 0.0
 
-    if isinstance(actual, torch.Tensor):
-        actual = tensor_to_array(actual)
-    actual = np.asanyarray(actual)
-    if isinstance(desired, torch.Tensor):
-        desired = tensor_to_array(desired)
-    desired = np.asanyarray(desired)
+    args = [actual, desired]
+    for i, arg in enumerate(args):
+        if isinstance(arg, torch.Tensor):
+            arg = tensor_to_array(arg)
+        elif isinstance(arg, (tuple, list)):
+            arg = [tensor_to_array(val) for val in arg]
+        args[i] = np.asanyarray(arg)
 
-    if all(e.size == 0 for e in (actual, desired)):
+    if all(e.size == 0 for e in args):
         return
 
-    np.testing.assert_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
+    np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
-def assert_array_equal(actual, desired, *, err_msg=None):
-    np.testing.assert_array_equal(actual, desired, err_msg=err_msg)
+def assert_array_equal(actual, desired, *, err_msg=""):
+    assert_allclose(actual, desired, atol=0.0, rtol=0.0, err_msg=err_msg)
 
 
 def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
@@ -247,9 +277,9 @@ def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
         gs_robot.set_dofs_velocity(qvel)
     # TODO: This should be moved in `set_state`, `set_qpos`, `set_dofs_position`, `set_dofs_velocity`
     gs_sim.rigid_solver.dofs_state.qf_constraint.fill(0.0)
-    gs_sim.rigid_solver._kernel_forward_dynamics()
+    gs_sim.rigid_solver._func_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()
-    gs_sim.rigid_solver._kernel_update_acc()
+    gs_sim.rigid_solver._func_update_acc()
 
     if gs_sim.scene.visualizer:
         gs_sim.scene.visualizer.update()
@@ -538,6 +568,7 @@ def build_genesis_sim(
     # Force matching Mujoco safety factor for constraint time constant.
     # Note that this time constant affects the penetration depth at rest.
     gs_sim = scene.sim
+    gs_sim.rigid_solver._sol_default_timeconst = None
     gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
 
     # Force recomputation of invweights to make sure it works fine
@@ -668,13 +699,13 @@ def check_mujoco_model_consistency(
     gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
     mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
     gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
     mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
     # FIXME: Masking geometries and equality constraints is not supported for now
@@ -683,14 +714,14 @@ def check_mujoco_model_consistency(
     ).reshape((-1, 7))
     mj_eq_solparams = np.concatenate((mj_sim.model.eq_solref, mj_sim.model.eq_solimp), axis=-1)
     _sanitize_sol_params(
-        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_global_timeconst
+        mj_eq_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_eq_solparams, mj_eq_solparams, tol=tol)
 
     assert_allclose(mj_sim.model.jnt_margin, 0, tol=tol)
     gs_joint_range = np.stack(
         [
-            gs_sim.rigid_solver.dofs_info[gs_sim.rigid_solver.joints_info[i].dof_start].limit.to_numpy()
+            gs_sim.rigid_solver.dofs_info.limit[gs_sim.rigid_solver.joints_info.dof_start[i]].to_numpy()
             for i in gs_joints_idx
         ],
         axis=0,

@@ -6,6 +6,7 @@ import genesis as gs
 from .utils import assert_allclose
 
 
+@pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     ball_pos_init = (0.8, 0.6, 0.12)
 
@@ -13,11 +14,6 @@ def test_rigid_mpm_muscle(show_viewer):
         sim_options=gs.options.SimOptions(
             dt=3e-3,
             substeps=10,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.5, 1.3, 0.5),
-            camera_lookat=(0.0, 0.0, 0.0),
-            camera_fov=40,
         ),
         rigid_options=gs.options.RigidOptions(
             gravity=(0, 0, -9.8),
@@ -28,6 +24,11 @@ def test_rigid_mpm_muscle(show_viewer):
             upper_bound=(1.0, 1.0, 1.0),
             gravity=(0.0, 0.0, 0.0),  # mimic gravity compensation
             enable_CPIC=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 1.3, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=40,
         ),
         show_viewer=show_viewer,
         show_FPS=False,

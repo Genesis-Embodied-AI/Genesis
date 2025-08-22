@@ -1,5 +1,7 @@
 import os
+import sys
 from pathlib import Path
+
 import numpy as np
 import pytest
 import trimesh
@@ -9,7 +11,8 @@ import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 import genesis.utils.usda as usda_utils
 
-from .utils import assert_allclose, assert_array_equal, get_hf_assets
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset
+
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
 NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
@@ -144,10 +147,11 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/combined_srt.glb", "tests/combined_transform.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_dataset(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
@@ -171,10 +175,11 @@ def test_glb_parse_geometry(glb_file):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("glb_file", ["tests/chopper.glb"])
+@pytest.mark.parametrize("glb_file", ["glb/chopper.glb"])
 def test_glb_parse_material(glb_file):
     """Test glb mesh geometry parsing."""
-    glb_file = os.path.join(mu.get_assets_dir(), glb_file)
+    asset_path = get_hf_dataset(pattern=glb_file)
+    glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
@@ -248,9 +253,9 @@ def test_glb_parse_material(glb_file):
 @pytest.mark.required
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
-    asset_path = get_hf_assets(pattern=f"{usd_filename}.glb")
+    asset_path = get_hf_dataset(pattern=f"{usd_filename}.glb")
     glb_file = os.path.join(asset_path, f"{usd_filename}.glb")
-    asset_path = get_hf_assets(pattern=f"{usd_filename}.usdz")
+    asset_path = get_hf_dataset(pattern=f"{usd_filename}.usdz")
     usd_file = os.path.join(asset_path, f"{usd_filename}.usdz")
 
     gs_glb_meshes = gltf_utils.parse_mesh_glb(
@@ -295,26 +300,64 @@ def test_usd_parse(usd_filename):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(
+    sys.version_info[:2] != (3, 10) or sys.platform not in ("linux", "win32"),
+    reason="omniverse-kit used by USD Baking cannot be correctly installed on this platform now.",
+)
+@pytest.mark.parametrize(
+    "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
+)
+@pytest.mark.parametrize("backend", [gs.cuda])
+def test_usd_bake(usd_file, show_viewer):
+    asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
+    usd_file = os.path.join(asset_path, usd_file)
+    gs_usd_meshes = usda_utils.parse_mesh_usd(
+        usd_file, group_by_material=True, scale=1.0, surface=gs.surfaces.Default(), bake_cache=False
+    )
+    for gs_usd_mesh in gs_usd_meshes:
+        require_bake = gs_usd_mesh.metadata["require_bake"]
+        bake_success = gs_usd_mesh.metadata["bake_success"]
+        assert not require_bake or (require_bake and bake_success)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.Mesh(
+            file=usd_file,
+        ),
+    )
+    scene.build()
+
+
+@pytest.mark.required
 def test_urdf_with_existing_glb(tmp_path, show_viewer):
-    assets = Path(gs.utils.get_assets_dir())
-    glb_path = assets / "usd" / "sneaker_airforce.glb"
+    glb_file = "usd/sneaker_airforce.glb"
+    asset_path = get_hf_dataset(pattern=glb_file)
+
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="shoe">
               <link name="base">
                 <visual>
-                  <geometry><mesh filename="{glb_path}"/></geometry>
+                  <geometry><mesh filename="{os.path.join(asset_path, glb_file)}"/></geometry>
                 </visual>
               </link>
             </robot>
          """
     )
+
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+        ),
+    )
     scene.build()
-    scene.step()
 
 
 @pytest.mark.required
@@ -348,7 +391,6 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
     glb_path = tmp_path / f"tex_{n_channels}c.glb"
     urdf_path = tmp_path / f"tex_{n_channels}c.urdf"
     trimesh.Scene([mesh]).export(glb_path)
-
     urdf_path.write_text(
         f"""<robot name="tex{n_channels}c">
               <link name="base">
@@ -359,6 +401,11 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
             </robot>
          """
     )
+
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+        ),
+    )
     scene.build()
-    scene.step()
