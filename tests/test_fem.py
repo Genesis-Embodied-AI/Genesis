@@ -430,10 +430,10 @@ def test_box_hard_vertex_constraint(show_viewer):
         sim_options=gs.options.SimOptions(
             dt=1e-3,
             substeps=1,
+            gravity=(0.0, 0.0, -9.81),
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=False,
-            gravity=(0.0, 0.0, -9.81),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -505,10 +505,10 @@ def test_box_soft_vertex_constraint(show_viewer):
         sim_options=gs.options.SimOptions(
             dt=1e-3,
             substeps=1,
+            gravity=(0.0, 0.0, 0.0),
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=False,
-            gravity=(0.0, 0.0, 0.0),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
