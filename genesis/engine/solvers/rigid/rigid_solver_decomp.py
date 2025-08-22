@@ -975,15 +975,26 @@ class RigidSolver(Solver):
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         self._func_constraint_clear()
         # timer.stamp("constraint_solver.clear")
-        if not self._disable_constraint:
-            self.constraint_solver.add_constraints()
-            # timer.stamp("constraint_solver.add_constraints")
+        if not self._disable_constraint and not self._use_contact_island:
+            self.constraint_solver.add_equality_constraints()
+            # timer.stamp("constraint_solver.add_equality_constraints")
 
         if self._enable_collision:
             self.collider.detection()
             # timer.stamp("detection")
 
         if not self._disable_constraint:
+            if self._use_contact_island:
+                self.constraint_solver.add_constraints()
+                # timer.stamp("constraint_solver.add_constraints")
+            else:
+                self.constraint_solver.add_frictionloss_constraints()
+                if self._enable_collision:
+                    self.constraint_solver.add_collision_constraints()
+                if self._enable_joint_limit:
+                    self.constraint_solver.add_joint_limit_constraints()
+                # timer.stamp("constraint_solver.add_other_constraints")
+
             self.constraint_solver.resolve()
             # timer.stamp("constraint_solver.resolve")
 

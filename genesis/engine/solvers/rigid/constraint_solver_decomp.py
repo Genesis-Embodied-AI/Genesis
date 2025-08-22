@@ -181,7 +181,7 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-    def add_constraints(self):
+    def add_equality_constraints(self):
         add_equality_constraints(
             links_info=self._solver.links_info,
             links_state=self._solver.links_state,
@@ -195,6 +195,7 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
+    def add_frictionloss_constraints(self):
         add_frictionloss_constraints(
             links_info=self._solver.links_info,
             joints_info=self._solver.joints_info,
@@ -205,26 +206,26 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-        if self._solver._enable_collision:
-            add_collision_constraints(
-                links_info=self._solver.links_info,
-                links_state=self._solver.links_state,
-                dofs_state=self._solver.dofs_state,
-                constraint_state=self.constraint_state,
-                collider_state=self._collider._collider_state,
-                static_rigid_sim_config=self._solver._static_rigid_sim_config,
-            )
+    def add_collision_constraints(self):
+        add_collision_constraints(
+            links_info=self._solver.links_info,
+            links_state=self._solver.links_state,
+            dofs_state=self._solver.dofs_state,
+            constraint_state=self.constraint_state,
+            collider_state=self._collider._collider_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
 
-        if self._solver._enable_joint_limit:
-            add_joint_limit_constraints(
-                links_info=self._solver.links_info,
-                joints_info=self._solver.joints_info,
-                dofs_info=self._solver.dofs_info,
-                dofs_state=self._solver.dofs_state,
-                rigid_global_info=self._solver._rigid_global_info,
-                constraint_state=self.constraint_state,
-                static_rigid_sim_config=self._solver._static_rigid_sim_config,
-            )
+    def add_joint_limit_constraints(self):
+        add_joint_limit_constraints(
+            links_info=self._solver.links_info,
+            joints_info=self._solver.joints_info,
+            dofs_info=self._solver.dofs_info,
+            dofs_state=self._solver.dofs_state,
+            rigid_global_info=self._solver._rigid_global_info,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
 
     def resolve(self):
         # Early return if there is nothing to solve
