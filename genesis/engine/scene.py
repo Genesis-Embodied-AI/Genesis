@@ -206,6 +206,11 @@ class Scene(RBC):
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
+    def __del__(self):
+        if self._visualizer is not None:
+            self._visualizer.destroy()
+            self._visualizer = None
+
     def _validate_options(
         self,
         sim_options: SimOptions,

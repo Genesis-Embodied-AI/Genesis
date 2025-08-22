@@ -337,8 +337,8 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
 
         ti_runtime = ti.lang.impl.get_runtime()
-        ti_arch = ti_runtime.prog.config().arch
-        if ti_arch == ti.metal and precision == "64":
+        ti_config = ti.lang.impl.current_cfg()
+        if ti_config.arch == ti.metal and precision == "64":
             gs.destroy()
             pytest.skip("Apple Metal GPU does not support 64bits precision.")
 
