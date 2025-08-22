@@ -1926,6 +1926,10 @@ class RigidSolver(Solver):
             rigid_solver_decomp_kernels.kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
         elif name == "damping":
             rigid_solver_decomp_kernels.kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+        elif name == "frictionloss":
+            rigid_solver_decomp_kernels.kernel_set_dofs_frictionloss(
+                tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
+            )
         elif name == "limit":
             rigid_solver_decomp_kernels.kernel_set_dofs_limit(
                 tensor_list[0], tensor_list[1], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
@@ -1953,6 +1957,9 @@ class RigidSolver(Solver):
 
     def set_dofs_damping(self, damping, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
+
+    def set_dofs_frictionloss(self, frictionloss, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        self._set_dofs_info([frictionloss], dofs_idx, "frictionloss", envs_idx, unsafe=unsafe)
 
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx, unsafe=unsafe)

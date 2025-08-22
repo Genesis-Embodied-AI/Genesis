@@ -1211,6 +1211,7 @@ class StructDofsState:
     act_length: V_ANNOTATION
     pos: V_ANNOTATION
     vel: V_ANNOTATION
+    vel_prev: V_ANNOTATION
     acc: V_ANNOTATION
     acc_smooth: V_ANNOTATION
     qf_smooth: V_ANNOTATION
