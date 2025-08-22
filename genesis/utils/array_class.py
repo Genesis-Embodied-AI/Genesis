@@ -1126,6 +1126,7 @@ class StructDofsState:
     act_length: V_ANNOTATION
     pos: V_ANNOTATION
     vel: V_ANNOTATION
+    vel_prev: V_ANNOTATION
     acc: V_ANNOTATION
     acc_smooth: V_ANNOTATION
     qf_smooth: V_ANNOTATION
@@ -1859,6 +1860,7 @@ class StructEntitiesInfo:
     geom_end: V_ANNOTATION
     n_geoms: V_ANNOTATION
     gravity_compensation: V_ANNOTATION
+    is_local_collision_mask: V_ANNOTATION
 
 
 def get_entities_info(solver):
