@@ -120,7 +120,7 @@ class Camera(RBC):
         self._initial_transform = None
         if transform is not None:
             self._initial_transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
-        self._aspect_ratio = self._res[0] / self._res[1]    # width / height
+        self._aspect_ratio = self._res[0] / self._res[1]  # width / height
         self._visualizer = visualizer
         self._is_built = False
         self._attached_link = None
@@ -921,7 +921,7 @@ class Camera(RBC):
     @property
     def cx(self):
         return 0.5 * self._res[0]
-    
+
     @property
     def cy(self):
         return 0.5 * self._res[1]

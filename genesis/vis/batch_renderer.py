@@ -380,8 +380,8 @@ class BatchRenderer(RBC):
 
         rendered = self._renderer.render(cameras_pos, cameras_quat, render_flags)
         rendered = [
-            tensor_to_array(rendered[t][..., :3].flip(-1).squeeze(-1).swapaxes(0, 1))
-            if need[t] else None for t in range(IMAGE_TYPE.NUM_TYPES)
+            tensor_to_array(rendered[t][..., :3].flip(-1).squeeze(-1).swapaxes(0, 1)) if need[t] else None
+            for t in range(IMAGE_TYPE.NUM_TYPES)
         ]
 
         # convert center distance depth to plane distance

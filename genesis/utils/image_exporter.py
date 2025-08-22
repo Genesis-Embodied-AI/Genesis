@@ -94,7 +94,9 @@ class FrameImageExporter:
         self.image_components = [
             ImageComponent(str(IMAGE_TYPE.RGB), 3, None),
             ImageComponent(
-                str(IMAGE_TYPE.DEPTH), 1, partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale)
+                str(IMAGE_TYPE.DEPTH),
+                1,
+                partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale),
             ),
             ImageComponent(str(IMAGE_TYPE.SEGMENTATION), 1, partial(normalize_segmentation)),
             ImageComponent(str(IMAGE_TYPE.NORMAL), 3, None),
