@@ -953,6 +953,35 @@ def test_robot_scaling(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs, batched", [(0, False), (3, True)])
+def test_gravity(n_envs, batched):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0, 0, -10.0),
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=n_envs)
+
+    if batched:
+        scene.sim.set_gravity(torch.tensor([[0, 0, 1], [1, 0, 0]]), envs_idx=[0, 2])
+        assert_allclose(scene.sim.get_gravity(envs_idx=[0, 2]), torch.tensor([[0, 0, 1], [1, 0, 0]]), tol=1e-12)
+        scene.sim.set_gravity((2, 0, 0))
+        assert_allclose(scene.gravity, np.array([[2, 0, 0]] * n_envs), tol=1e-12)
+        for solver in scene.sim.solvers:
+            assert_allclose(solver._gravity.to_numpy(), np.array([[2, 0, 0]] * n_envs), tol=1e-12)
+    else:
+        scene.sim.set_gravity((0, 0, 1))
+        assert_allclose(scene.gravity, (0, 0, 1), tol=1e-12)
+        for solver in scene.sim.solvers:
+            assert_allclose(solver._gravity.to_numpy(), (0, 0, 1), tol=1e-12)
+
+
+@pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

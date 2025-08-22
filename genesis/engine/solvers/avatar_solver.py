@@ -20,7 +20,6 @@ class AvatarSolver(RigidSolver):
 
     def __init__(self, scene, sim, options):
         Solver.__init__(self, scene, sim, options)
-        self._init_gravity = None
 
         # options
         self._enable_collision = options.enable_collision

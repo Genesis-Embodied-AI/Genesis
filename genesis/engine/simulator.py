@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 import numpy as np
 import gstaichi as ti
+import torch
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -37,6 +38,7 @@ from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
 from genesis.sensors.sensor_manager import SensorManager
+from genesis.utils.misc import ti_field_to_torch
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -109,7 +111,8 @@ class Simulator(RBC):
         self._steps_local: int | None = options._steps_local
 
         self._cur_substep_global = 0
-        self._gravity = np.array(options.gravity, dtype=gs.np_float)
+        self._init_gravity = np.array(options.gravity, dtype=gs.np_float)
+        self._gravity = None
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -196,6 +199,11 @@ class Simulator(RBC):
         self.n_envs = self.scene.n_envs
         self._B = self.scene._B
         self._para_level = self.scene._para_level
+
+        g_np = np.asarray(self._init_gravity, dtype=gs.np_float)
+        g_np = np.tile(g_np, (self._B, 1))
+        self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
+        self._gravity.from_numpy(g_np)
 
         # solvers
         self._rigid_only = self.rigid_solver.is_active()
@@ -410,9 +418,44 @@ class Simulator(RBC):
         return state
 
     def set_gravity(self, gravity, envs_idx=None):
-        for solver in self._solvers:
-            if solver.is_active():
-                solver.set_gravity(gravity, envs_idx)
+        """
+        Set the gravity in the scene.
+
+        Parameters
+        ----------
+        gravity : torch.Tensor | np.ndarray
+            The gravity vector.The gravity should be a 2D array with shape (len(envs_idx), 3).
+        envs_idx : torch.Tensor, Optional
+            The indices of the environments to set the gravity for. If None, the gravity is set for all environments.
+        """
+        if not self.scene.is_built:
+            gs.raise_exception("Simulator is not built yet.")
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+
+        if isinstance(gravity, tuple):
+            gravity = np.asarray(gravity, dtype=gs.np_float)
+        if gravity.ndim == 1:
+            if isinstance(gravity, torch.Tensor):
+                gravity = gravity.repeat(len(envs_idx), 1)
+            else:
+                gravity = np.tile(gravity, (len(envs_idx), 1))
+        assert gravity.shape == (len(envs_idx), 3), "Input gravity array should match (len(envs_idx), 3)"
+        self._kernel_set_gravity(gravity, envs_idx)
+
+        if self.rigid_solver.is_active():
+            if hasattr(self.rigid_solver, "_rigid_global_info"):
+                self.rigid_solver._rigid_global_info.gravity.copy_from(self._gravity)
+
+    @ti.kernel
+    def _kernel_set_gravity(self, gravity: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
+        for i_b_ in range(envs_idx.shape[0]):
+            for j in ti.static(range(3)):
+                self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
+
+    def get_gravity(self, envs_idx=None, *, unsafe=False):
+        tensor = ti_field_to_torch(self._gravity, envs_idx, transpose=False, unsafe=unsafe)
+        return tensor.squeeze(0) if self.scene.n_envs == 0 else tensor
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -432,6 +475,11 @@ class Simulator(RBC):
     def scene(self):
         """The scene object that the simulator is associated with."""
         return self._scene
+
+    @property
+    def gravity(self):
+        """The gravity in the scene."""
+        return self.get_gravity(unsafe=True)
 
     @property
     def requires_grad(self):

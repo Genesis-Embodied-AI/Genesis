@@ -1299,6 +1299,11 @@ class Scene(RBC):
         return self.profiling_options.show_FPS
 
     @property
+    def gravity(self):
+        """The gravity in the scene."""
+        return self._sim.get_gravity(unsafe=True)
+
+    @property
     def viewer(self):
         """The viewer object for the scene."""
         return self._visualizer.viewer

@@ -2269,12 +2269,6 @@ class RigidSolver(Solver):
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
 
-    @gs.assert_built
-    def set_gravity(self, gravity, envs_idx=None):
-        super().set_gravity(gravity, envs_idx)
-        if hasattr(self, "_rigid_global_info"):
-            self._rigid_global_info.gravity.copy_from(self._gravity)
-
     def rigid_entity_inverse_kinematics(
         self,
         links_idx,
