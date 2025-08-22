@@ -230,9 +230,12 @@ class Texture(object):
 
     def _remove_from_context(self):
         if self._texid is not None:
-            # TODO OPENGL BUG?
-            # glDeleteTextures(1, [self._texid])
-            glDeleteTextures([self._texid])
+            try:
+                # TODO OPENGL BUG?
+                # glDeleteTextures(1, [self._texid])
+                glDeleteTextures([self._texid])
+            except OpenGL.error.Error:
+                pass
             self._texid = None
 
     def _in_context(self):
@@ -321,9 +324,12 @@ class CubeMapTexture(object):
 
     def _remove_from_context(self):
         if self._texid is not None:
-            # TODO OPENGL BUG?
-            # glDeleteTextures(1, [self._texid])
-            glDeleteTextures([self._texid])
+            try:
+                # TODO OPENGL BUG?
+                # glDeleteTextures(1, [self._texid])
+                glDeleteTextures([self._texid])
+            except OpenGL.error.Error:
+                pass
             self._texid = None
 
     def _in_context(self):

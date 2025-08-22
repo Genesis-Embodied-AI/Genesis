@@ -343,6 +343,91 @@ def get_contact_cache(solver):
 
 
 @dataclasses.dataclass
+class StructAggList:
+    curr: V_ANNOTATION
+    n: V_ANNOTATION
+    start: V_ANNOTATION
+
+
+def get_agg_list(solver):
+    f_batch = solver._batch_shape
+    n_entities = solver.n_entities
+    kwargs = {
+        "curr": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+        "n": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+        "start": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+    }
+
+    if use_ndarray:
+        return StructAggList(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassAggList:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassAggList()
+
+
+@dataclasses.dataclass
+class StructContactIslandState:
+    ci_edges: V_ANNOTATION
+    edge_id: V_ANNOTATION
+    constraint_list: V_ANNOTATION
+    constraint_id: V_ANNOTATION
+    entity_edge: StructAggList
+    island_col: StructAggList
+    island_hibernated: V_ANNOTATION
+    island_entity: StructAggList
+    entity_id: V_ANNOTATION
+    n_edges: V_ANNOTATION
+    n_islands: V_ANNOTATION
+    n_stack: V_ANNOTATION
+    entity_island: V_ANNOTATION
+    stack: V_ANNOTATION
+    entity_idx_to_next_entity_idx_in_hibernated_island: V_ANNOTATION
+
+
+def get_contact_island_state(solver, collider):
+    max_contact_pairs = collider._collider_info._max_contact_pairs[None]
+    max_contact_pairs = max(max_contact_pairs, 1)  # can't create 0-sized fields
+
+    kwargs = {
+        "ci_edges": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs, 2))),
+        "edge_id": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs * 2))),
+        "constraint_list": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs))),
+        "constraint_id": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs * 2))),
+        "entity_edge": get_agg_list(solver),
+        "island_col": get_agg_list(solver),
+        "island_hibernated": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)),
+        "island_entity": get_agg_list(solver),
+        "entity_id": V(dtype=gs.ti_int, shape=solver._batch_shape((solver.n_entities))),
+        "n_edges": V(dtype=gs.ti_int, shape=solver._B),
+        "n_islands": V(dtype=gs.ti_int, shape=solver._B),
+        "n_stack": V(dtype=gs.ti_int, shape=solver._B),
+        "entity_island": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)),
+        "stack": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)),
+        "entity_idx_to_next_entity_idx_in_hibernated_island": V(
+            dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)
+        ),
+    }
+
+    if use_ndarray:
+        return StructContactIslandState(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactIslandState:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactIslandState()
+
+
+@dataclasses.dataclass
 class StructColliderState:
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
@@ -1126,6 +1211,7 @@ class StructDofsState:
     act_length: V_ANNOTATION
     pos: V_ANNOTATION
     vel: V_ANNOTATION
+    vel_prev: V_ANNOTATION
     acc: V_ANNOTATION
     acc_smooth: V_ANNOTATION
     qf_smooth: V_ANNOTATION
@@ -1859,6 +1945,7 @@ class StructEntitiesInfo:
     geom_end: V_ANNOTATION
     n_geoms: V_ANNOTATION
     gravity_compensation: V_ANNOTATION
+    is_local_collision_mask: V_ANNOTATION
 
 
 def get_entities_info(solver):
@@ -1983,3 +2070,4 @@ SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
 ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
+ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState

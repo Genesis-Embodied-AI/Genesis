@@ -23,7 +23,8 @@ dependencies = [
     "mujoco >= 3.3.0, < 3.4.0",
     "moviepy >= 2.0.0",
     # Used by `pyrender` to manage onscreen graphical windows
-    "pyglet>=1.5",
+    # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
+    "pyglet>=1.5,<2.1.8",
     # Used by `pyrender` to load fonts
     "freetype-py",
     # Used by `pyrender` to write low-level OpenGL rendering pipeline

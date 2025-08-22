@@ -1,3 +1,5 @@
+import os
+
 import pyglet
 import numpy as np
 import torch
@@ -54,7 +56,12 @@ class Visualizer(RBC):
             else:
                 display = pyglet.display.get_display()
                 screen = display.get_default_screen()
-                scale = screen.get_scale()
+                try:
+                    screen_scale = screen.get_scale()
+                except NotImplementedError:
+                    # Probably some headless screen
+                    screen_scale = 1.0
+                screen_height, screen_width = screen.height, screen.width
             self._has_display = True
         except Exception as e:
             if show_viewer:
@@ -69,7 +76,7 @@ class Visualizer(RBC):
                 )
 
             if viewer_options.res is None:
-                viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
+                viewer_height = (screen_height * screen_scale) * VIEWER_DEFAULT_HEIGHT_RATIO
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
                 viewer_options.res = (int(viewer_width), int(viewer_height))
             if viewer_options.run_in_thread is None:
